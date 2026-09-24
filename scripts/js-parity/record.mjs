@@ -188,13 +188,23 @@ function optionSets() {
 	});
 }
 
+// The locales date formatting is recorded for: en-US, and the two other
+// English locales the runtime also ships (en-CA's YYYY-MM-DD short dates,
+// en-GB's day-first ones).
+const dateLocales = ['en-US', 'en-CA', 'en-GB'];
+
 // The option sweep is one golden of its own: every set formatted at three
-// instants in UTC, which pins the pattern each combination produces.
+// instants in UTC, for every locale above, which pins the pattern each
+// combination produces in each.
 function sweep() {
 	process.env.TZ = 'UTC';
 	return optionSets().map((options) => {
-		const format = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', ...options });
-		return { options, want: instants.map((at) => format.format(new Date(at))) };
+		const want = {};
+		for (const locale of dateLocales) {
+			const format = new Intl.DateTimeFormat(locale, { timeZone: 'UTC', ...options });
+			want[locale] = instants.map((at) => format.format(new Date(at)));
+		}
+		return { options, want };
 	});
 }
 
@@ -216,6 +226,22 @@ const dateProbes = [
 	{ name: 'supportedLocalesOf and getCanonicalLocales', code: "return [Intl.DateTimeFormat.supportedLocalesOf(['en-US', 'en']), Intl.getCanonicalLocales(['EN-us', 'de-de', 'id-ID', 'zh-hant-tw'])]" },
 	{ name: 'years before the common era and far from now', code: "const format = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC' })\nconst withEra = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', year: 'numeric', era: 'short', month: 'short', day: 'numeric' })\nreturn [Date.UTC(-5, 5, 1), Date.UTC(0, 5, 1) - 1900 * 365.2425 * 864e5, 8.64e15, -8.64e15, Date.UTC(1, 0, 1)].map(at => [format.format(at), withEra.format(at)])" },
 	{ name: 'a Date argument, a number and nothing', code: "const format = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', dateStyle: 'medium' })\nreturn [format.format(new Date(Date.UTC(2026, 2, 1))), format.format(Date.UTC(2026, 2, 1)), typeof format.format(), format.format.name, format.formatToParts.length]" },
+
+	// en-CA and en-GB (FEAT-9we7kw): the corpus's other two English date
+	// locales, matched the same way en-US is (case-insensitively, ignoring a
+	// -u- extension) and refusing every other locale by name.
+	{ name: "toLocaleDateString('en-CA') is YYYY-MM-DD", code: "const date = new Date(Date.UTC(2026, 2, 1, 17, 5, 9))\nreturn [date.toLocaleDateString('en-CA'), date.toLocaleDateString('en-ca'), date.toLocaleDateString('en-CA', { timeZone: 'UTC' }), new Date(Date.UTC(2026, 0, 4)).toLocaleDateString('en-CA')]" },
+	{ name: 'en-GB is day-first and 24-hour by default', code: "const date = new Date(Date.UTC(2026, 2, 1, 17, 5, 9))\nreturn [date.toLocaleDateString('en-GB', { timeZone: 'UTC' }), date.toLocaleTimeString('en-GB', { timeZone: 'UTC' }), date.toLocaleString('en-GB', { timeZone: 'UTC' }), date.toLocaleDateString('en-gb', { timeZone: 'UTC' })]" },
+	{ name: 'en-CA and en-GB dateStyle and timeStyle', code: "const date = new Date(Date.UTC(2026, 2, 1, 17, 5, 9))\nreturn ['en-CA', 'en-GB'].flatMap(locale => ['full', 'long', 'medium', 'short'].map(style => new Intl.DateTimeFormat(locale, { timeZone: 'UTC', dateStyle: style, timeStyle: style }).format(date)))" },
+	{ name: 'en-CA and en-GB AM/PM markers, forced through hourCycle', code: "const at = [Date.UTC(2026, 0, 1, 5), Date.UTC(2026, 0, 1, 17)]\nreturn ['en-CA', 'en-GB'].flatMap(locale => at.map(ms => new Intl.DateTimeFormat(locale, { timeZone: 'UTC', hour: 'numeric', hourCycle: 'h12' }).format(ms)))" },
+	{ name: 'en-CA and en-GB resolvedOptions default hour cycle', code: "return ['en-CA', 'en-GB'].map(locale => new Intl.DateTimeFormat(locale, { timeZone: 'UTC', hour: 'numeric' }).resolvedOptions())" },
+	// supportedLocalesOf and the refusal of every other English region
+	// (en-AU, de-DE) are deliberate divergences from Node — the runtime
+	// only ever claims the three locales it ships data for — and are
+	// pinned by TestNonEnglishDateFormattingIsANamedError in Go instead;
+	// a parity probe would record Node's own (wider) answer and fail on
+	// purpose.
+	{ name: 'locale matching is the same for en-CA and en-GB as for en-US: case-insensitive, and a -u- extension does not change the locale', code: "return [new Intl.DateTimeFormat('en-ca').resolvedOptions().locale, new Intl.DateTimeFormat('EN-GB').resolvedOptions().locale, new Intl.DateTimeFormat('en-CA-u-hc-h23', { hour: 'numeric' }).resolvedOptions(), new Intl.DateTimeFormat('en-GB-u-hc-h12', { hour: 'numeric' }).format(Date.UTC(2026, 0, 1, 5)), Intl.DateTimeFormat.supportedLocalesOf(['en-US', 'en-CA', 'en-GB', 'en'])]" },
 ];
 
 // ---- Intl.NumberFormat and Number.prototype.toLocaleString -----------------

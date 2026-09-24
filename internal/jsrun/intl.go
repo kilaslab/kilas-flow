@@ -11,8 +11,9 @@ package jsrun
 // error. Nothing here falls back to English, or to a default, when it was asked
 // for something it cannot do.
 //
-//   - Dates format in en-US only. Asking for another locale is a RangeError,
-//     never English text in place of German.
+//   - Dates format in en-US, en-CA or en-GB only. Asking for another locale
+//     is a RangeError, never English text in place of German, or one
+//     English locale's layout in place of another's.
 //   - Numbers format in any locale golang.org/x/text knows, with its CLDR
 //     separators and digits, corrected where CLDR has changed since x/text's
 //     copy (see numberCorrections). An option it cannot honour is an error.
@@ -971,11 +972,20 @@ type dateLocale struct {
 	dayPeriods       []dayPeriod
 	noon, noonNarrow string
 	decimal          string
+	// defaultHourCycle is the cycle a DateTimeFormat uses when neither
+	// hour12 nor hourCycle nor the locale's own -u-hc- extension says
+	// otherwise: h12 for en-US and en-CA, h23 for en-GB.
+	defaultHourCycle string
 }
 
 type dayPeriod struct {
 	from, to int // minutes of the day, [from, to)
 	name     string
+	// narrow is the name at dayPeriod: 'narrow' width, when a locale's
+	// CLDR data actually abbreviates it (en-CA's "aft" for "in the
+	// afternoon"); empty means the locale uses name at every width, as
+	// en-US and en-GB do.
+	narrow string
 }
 
 var styleIndex = map[string]int{"full": 0, "long": 1, "medium": 2, "short": 3}
@@ -1056,13 +1066,131 @@ var enUS = sync.OnceValue(func() *dateLocale {
 	// ICU reads the night as ending at midnight: 00:00 to 12:00 is all
 	// "in the morning".
 	locale.dayPeriods = []dayPeriod{
-		{0, 12 * 60, "in the morning"}, {12 * 60, 18 * 60, "in the afternoon"},
-		{18 * 60, 21 * 60, "in the evening"}, {21 * 60, 24 * 60, "at night"},
+		{0, 12 * 60, "in the morning", ""}, {12 * 60, 18 * 60, "in the afternoon", ""},
+		{18 * 60, 21 * 60, "in the evening", ""}, {21 * 60, 24 * 60, "at night", ""},
 	}
 	locale.noon, locale.noonNarrow = "noon", "n"
 	locale.decimal = "."
+	locale.defaultHourCycle = "h12"
 	return locale
 })
+
+// enCA is en-CA's date data: Canadian English, CLDR as Node 24 (ICU 78)
+// renders it, derived the same way enUS was but sourced from Node's actual
+// Intl output for en-CA rather than transcribed by hand: for each of
+// en-US's skeleton keys, the field order, literal separators and resolved
+// widths (Intl.DateTimeFormat#resolvedOptions, which reports the width
+// actually rendered, not necessarily the one requested — en-US's own "H"
+// skeleton already renders "HH", and en-CA's plain numeric "yMd" renders
+// zero-padded "y-MM-dd") come from Node, and are reassembled into the same
+// LDML pattern shape newDateLocale expects. Names, day periods and the
+// decimal separator are en-US's; en-CA differs in its patterns, the short
+// dateStyle (ISO-ish "y-MM-dd"), and its AM/PM markers ("a.m.", "p.m."
+// rather than "AM", "PM").
+var enCA = sync.OnceValue(func() *dateLocale {
+	base := *enUS()
+	locale := &base
+	locale.tag = "en-CA"
+	locale.available = newDateLocale("en-CA", [][2]string{
+		{"G", "G"}, {"Gy", "y GGG"}, {"GyM", "M/y GGG"}, {"GyMd", "M/d/y GGG"}, {"GyMEd", "EEE, M/d/y GGG"}, {"GyMMM", "MMM y GGG"}, {"GyMMMd", "MMM d, y GGG"}, {"GyMMMEd", "EEE, MMM d, y GGG"},
+		{"y", "y"}, {"yM", "y-MM"}, {"yMd", "y-MM-dd"}, {"yMEd", "EEE, y-MM-dd"}, {"yMMM", "MMM y"}, {"yMMMd", "MMM d, y"},
+		{"yMMMEd", "EEE, MMM d, y"}, {"yMMMM", "MMMM y"},
+		{"M", "L"}, {"Md", "MM-dd"}, {"MEd", "EEE, MM-dd"}, {"MMM", "LLL"}, {"MMMd", "MMM d"}, {"MMMEd", "EEE, MMM d"}, {"MMMMd", "MMMM d"},
+		{"E", "ccc"}, {"Ed", "EEE d"}, {"Eh", "EEE h a"}, {"EBh", "EEE h B"}, {"EBhm", "EEE h:mm B"}, {"EBhms", "EEE h:mm:ss B"},
+		{"Ehm", "EEE h:mm a"}, {"EHm", "EEE HH:mm"}, {"Ehms", "EEE h:mm:ss a"}, {"EHms", "EEE HH:mm:ss"},
+		{"d", "d"},
+		{"a", "a"}, {"Bh", "h B"}, {"Bhm", "h:mm B"}, {"Bhms", "h:mm:ss B"},
+		{"h", "h a"}, {"H", "HH"}, {"hm", "h:mm a"}, {"Hm", "HH:mm"}, {"hms", "h:mm:ss a"}, {"Hms", "HH:mm:ss"},
+		{"hmsv", "h:mm:ss a v"}, {"Hmsv", "HH:mm:ss v"}, {"hmv", "h:mm a v"}, {"Hmv", "HH:mm v"}, {"hv", "h a v"}, {"Hv", "HH v"},
+		{"m", "m"}, {"ms", "mm:ss"}, {"s", "s"}, {"S", "S"}, {"v", "v"},
+	}).available
+	locale.dateStyles = [4]string{"EEEE, MMMM d, y", "MMMM d, y", "MMM d, y", "y-MM-dd"}
+	locale.timeStyles = [4]string{"h:mm:ss a zzzz", "h:mm:ss a z", "h:mm:ss a", "h:mm a"}
+	locale.dateTimeStyles = [4]string{"{1} 'at' {0}", "{1} 'at' {0}", "{1}, {0}", "{1}, {0}"}
+	locale.amPM = [2]string{"a.m.", "p.m."}
+	// The generic "AM/PM" field name (used when a request appends
+	// dayPeriod to a pattern with no room for it) is the locale's own
+	// markers joined by a slash, not en-US's literal "AM/PM".
+	locale.fieldNames[fieldDayPeriod] = "a.m./p.m."
+	// en-CA is the one shipped locale whose narrow day periods actually
+	// abbreviate ("aft" for "in the afternoon"); en-US and en-GB use the
+	// same name at every width, so their table needs no narrow column.
+	locale.dayPeriods = []dayPeriod{
+		{0, 12 * 60, "in the morning", "mor"}, {12 * 60, 18 * 60, "in the afternoon", "aft"},
+		{18 * 60, 21 * 60, "in the evening", "eve"}, {21 * 60, 24 * 60, "at night", "night"},
+	}
+	locale.defaultHourCycle = "h12"
+	return locale
+})
+
+// enGB is en-GB's date data: British English, day-first and 24-hour by
+// default, derived from Node 24 the same way enCA was. It differs from
+// en-US in its patterns, all four dateStyles (day before month, and a
+// 4-digit year even at "short"), all four timeStyles (24-hour, no AM/PM),
+// its AM/PM markers ("am", "pm", used only when a caller explicitly asks
+// for a 12-hour cycle), one month abbreviation ("Sept" for September,
+// where en-US and en-CA use "Sep"), and its default hour cycle (h23).
+var enGB = sync.OnceValue(func() *dateLocale {
+	base := *enUS()
+	locale := &base
+	locale.tag = "en-GB"
+	locale.available = newDateLocale("en-GB", [][2]string{
+		{"G", "G"}, {"Gy", "y GGG"}, {"GyM", "M/y GGG"}, {"GyMd", "dd/MM/y GGG"}, {"GyMEd", "EEE, d/M/y GGG"}, {"GyMMM", "MMM y GGG"}, {"GyMMMd", "d MMM y GGG"}, {"GyMMMEd", "EEE, d MMM y GGG"},
+		{"y", "y"}, {"yM", "MM/y"}, {"yMd", "dd/MM/y"}, {"yMEd", "EEE, dd/MM/y"}, {"yMMM", "MMM y"}, {"yMMMd", "d MMM y"},
+		{"yMMMEd", "EEE, d MMM y"}, {"yMMMM", "MMMM y"},
+		{"M", "L"}, {"Md", "dd/MM"}, {"MEd", "EEE dd/MM"}, {"MMM", "LLL"}, {"MMMd", "d MMM"}, {"MMMEd", "EEE d MMM"}, {"MMMMd", "d MMMM"},
+		{"E", "ccc"}, {"Ed", "EEE d"}, {"Eh", "EEE h a"}, {"EBh", "EEE h B"}, {"EBhm", "EEE h:mm B"}, {"EBhms", "EEE h:mm:ss B"},
+		{"Ehm", "EEE h:mm a"}, {"EHm", "EEE HH:mm"}, {"Ehms", "EEE h:mm:ss a"}, {"EHms", "EEE HH:mm:ss"},
+		{"d", "d"},
+		{"a", "a"}, {"Bh", "h B"}, {"Bhm", "h:mm B"}, {"Bhms", "h:mm:ss B"},
+		{"h", "h a"}, {"H", "HH"}, {"hm", "h:mm a"}, {"Hm", "HH:mm"}, {"hms", "h:mm:ss a"}, {"Hms", "HH:mm:ss"},
+		{"hmsv", "h:mm:ss a v"}, {"Hmsv", "H:mm:ss v"}, {"hmv", "h:mm a v"}, {"Hmv", "HH:mm v"}, {"hv", "h a v"}, {"Hv", "HH v"},
+		{"m", "m"}, {"ms", "mm:ss"}, {"s", "s"}, {"S", "S"}, {"v", "v"},
+		// en-GB's own extra entries (Node 24; en-US and en-CA do not need
+		// them). A bare "H" pads to "HH", but "H" combined with an
+		// explicitly 2-digit minute ("hour: 'numeric', minute: '2-digit'")
+		// does not — Node renders "9:07", not "09:07" — and the same for
+		// hour+2-digit-minute+2-digit-second ("9:07:03"): CLDR evidently
+		// registers these exact width combinations as their own
+		// availableFormats entries rather than deriving them by
+		// width-adjusting "Hm"/"Hms". Adding a weekday, or asking for
+		// 'numeric' (not '2-digit') seconds without a zone, misses these
+		// and falls back to the padded "HH" of "EHm"/"Hms". A zone
+		// changes the rule again: "Hmv" (no seconds) still pads, but
+		// once seconds join it ("Hmsv"), the hour is unpadded regardless
+		// of the seconds' own width — Node's "h,m,s,zone" pattern simply
+		// does not pad the hour at all, unlike its "h,m,s" one.
+		{"Hmm", "H:mm"}, {"Hmmss", "H:mm:ss"},
+		// h24 ("k") has its own padding rule, independent of "H"'s: a
+		// bare hour pads ("09"), hour+minute does not ("9:07", at any
+		// minute width), hour+minute+second pads again unless the
+		// seconds are also 2-digit ("09:07:03" vs "9:07:03").
+		{"k", "kk"}, {"km", "k:mm"}, {"kms", "kk:mm:ss"}, {"kmss", "k:mm:ss"},
+	}).available
+	locale.dateStyles = [4]string{"EEEE, d MMMM y", "d MMMM y", "d MMM y", "dd/MM/y"}
+	locale.timeStyles = [4]string{"HH:mm:ss zzzz", "HH:mm:ss z", "HH:mm:ss", "HH:mm"}
+	locale.dateTimeStyles = [4]string{"{1} 'at' {0}", "{1} 'at' {0}", "{1}, {0}", "{1}, {0}"}
+	locale.amPM = [2]string{"am", "pm"}
+	locale.fieldNames[fieldDayPeriod] = "am/pm" // en-US's literal "AM/PM" does not apply here either
+	locale.monthsShort[8] = "Sept"              // en-US and en-CA use "Sep"
+	locale.defaultHourCycle = "h23"
+	return locale
+})
+
+// dateLocaleFor picks the locale data a resolved locale name formats with.
+// resolveDateLocale only ever returns "en", "en-US", "en-CA" or "en-GB" (or
+// an error), so this always finds a match; "en" formats as en-US, as Node
+// does.
+func dateLocaleFor(name string) *dateLocale {
+	switch name {
+	case "en-CA":
+		return enCA()
+	case "en-GB":
+		return enGB()
+	default:
+		return enUS()
+	}
+}
 
 // match is the result of matching a skeleton against one available pattern.
 type match struct {
@@ -1116,8 +1244,62 @@ func (locale *dateLocale) bestRaw(requested skeleton, include int) (available, m
 	return chosen, best
 }
 
-// adjust fits a matched pattern's fields to the requested widths.
+// numericPaddable reports whether field's width follows the "numeric" vs
+// "2-digit" convention a locale's CLDR data can override from what the
+// skeleton alone would suggest (year, day, hour, and a numerically-keyed
+// month), as opposed to a text field (era, weekday, day period, zone, or a
+// month keyed at a text width) whose own per-field match below already
+// answers correctly — its matched width is always the KEY's narrow internal
+// representative, wider in the pattern only because text needs the room
+// ("GGG" for an era the key spells "G"), never because CLDR overrode it.
+func numericPaddable(field dateField, matched skeleton) bool {
+	switch field {
+	case fieldYear, fieldDay, fieldHour, fieldFraction:
+		return true
+	case fieldMonth:
+		return matched.size[fieldMonth] <= 2
+	}
+	return false
+}
+
+// quirky reports whether a matched pattern's own token for field renders at
+// a width its skeleton key does not declare — en-US's bare "H" key (width
+// 1) renders "HH" (width 2), and en-CA's plain "yMd" renders its month and
+// day zero-padded though the key declares them width 1 each. Only a quirky
+// field can carry that override into a request that did not ask for it; a
+// field whose matched width already equals what it renders (day in "Ed",
+// say) has nothing to carry, and per-field matching already gives the right
+// answer for it.
+func quirky(token patternToken, field dateField, matched skeleton) bool {
+	return numericPaddable(field, matched) && token.size != matched.size[field]
+}
+
 func adjust(tokens []patternToken, requested, matched skeleton, fixFraction bool, decimal string) []patternToken {
+	// lockedIn and quirkyFieldsAllMatch decide, for a quirky field,
+	// whether its override carries into this request. A weekday joining
+	// the pattern locks every quirky field to the override regardless of
+	// what the rest of the request asks (en-CA's "MEd" keeps its
+	// zero-padded month and day even when one of them is requested
+	// 'numeric'), and so does an era joining a year (en-GB's "GyMd" keeps
+	// both zero-padded the same way "GyM", with no quirky day to lock,
+	// does not need to); without either, the override carries only when
+	// every quirky field the request also asks for matches its own key's
+	// width exactly (en-CA's bare "Md" gives up the override for BOTH
+	// month and day the moment either is requested at the other's width —
+	// Node answers "3/01" or "03/1", each field on its own, never a mix
+	// of the override for one and the request for the other).
+	lockedIn := matched.has(fieldWeekday) || matched.has(fieldEra) && matched.has(fieldYear)
+	quirkyFieldsAllMatch := true
+	for _, token := range tokens {
+		field, ok := fieldOf(token.char)
+		if !ok || field == fieldWeekday || field == fieldMinute || field == fieldSecond || !requested.has(field) || !quirky(token, field, matched) {
+			continue
+		}
+		if matched.size[field] != requested.size[field] {
+			quirkyFieldsAllMatch = false
+			break
+		}
+	}
 	out := make([]patternToken, 0, len(tokens)+2)
 	for _, token := range tokens {
 		if token.char == 0 {
@@ -1141,6 +1323,10 @@ func adjust(tokens []patternToken, requested, matched skeleton, fixFraction bool
 		switch {
 		case field == fieldMinute || field == fieldSecond:
 			size = token.size // lengths of these are never matched
+		case quirky(token, field, matched):
+			if lockedIn || quirkyFieldsAllMatch {
+				size = token.size
+			}
 		default:
 			patternNumeric := widthOf(token.char, token.size) > 0
 			skeletonNumeric := matched.width(field) > 0
@@ -1349,10 +1535,12 @@ func readDateTimeOptions(args []any) (dateTimeOptions, error) {
 	return options, nil
 }
 
-// resolveDateLocale picks the locale a date is formatted in. Only en-US data
-// is shipped, so the first requested locale must be English as spoken in
-// the United States; anything else is refused by name rather than answered in
-// English.
+// resolveDateLocale picks the locale a date is formatted in. Only en-US,
+// en-CA and en-GB data is shipped, so the first requested locale must be
+// English as spoken in the United States, Canada or the United Kingdom;
+// anything else is refused by name rather than answered in the wrong
+// layout. Matching is case-insensitive and ignores a -u- extension, as it
+// does for en-US, because parseLocale already folds both away.
 func resolveDateLocale(requested []string) (tag language.Tag, name string, err error) {
 	if len(requested) == 0 {
 		return language.AmericanEnglish, "en-US", nil
@@ -1363,12 +1551,20 @@ func resolveDateLocale(requested []string) (tag language.Tag, name string, err e
 		return tag, "", err
 	}
 	base, script, region := tag.Raw()
-	if base.String() != "en" || (script.String() != "Zzzz" && script.String() != "Latn") || (region.String() != "ZZ" && region.String() != "US") {
+	regionName := region.String()
+	if base.String() != "en" || (script.String() != "Zzzz" && script.String() != "Latn") ||
+		(regionName != "ZZ" && regionName != "US" && regionName != "CA" && regionName != "GB") {
 		return tag, "", rangeError("date formatting in locale %s is not supported", first)
 	}
-	name = "en"
-	if region.String() == "US" {
+	switch regionName {
+	case "US":
 		name = "en-US"
+	case "CA":
+		name = "en-CA"
+	case "GB":
+		name = "en-GB"
+	default:
+		name = "en"
 	}
 	return tag, name, nil
 }
@@ -1386,7 +1582,7 @@ func nativeDateTimeFormat(args []any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	locale := enUS()
+	locale := dateLocaleFor(localeName)
 
 	// The calendar and numbering system: only gregory and latn are shipped.
 	for _, pair := range [][3]string{{"calendar", options.calendar, "gregory"}, {"numberingSystem", options.numbering, "latn"}} {
@@ -1413,7 +1609,8 @@ func nativeDateTimeFormat(args []any) (any, error) {
 	}
 
 	// The hour cycle: hour12 wins, then hourCycle, then the locale's -u-hc,
-	// then the locale's own (h12 for en-US).
+	// then the locale's own default (h12 for en-US and en-CA, h23 for
+	// en-GB).
 	cycle := options.hourCycle
 	extensionCycle := unicodeExtension(tag, "hc")
 	switch {
@@ -1424,7 +1621,7 @@ func nativeDateTimeFormat(args []any) (any, error) {
 	case cycle == "" && extensionCycle != "":
 		cycle = extensionCycle
 	case cycle == "":
-		cycle = "h12"
+		cycle = locale.defaultHourCycle
 	}
 	if extensionCycle != "" && options.hour12 == nil && (options.hourCycle == "" || options.hourCycle == extensionCycle) {
 		localeName += "-u-hc-" + extensionCycle
@@ -1550,9 +1747,11 @@ func optionsSkeleton(options *dateTimeOptions, cycle string) (skeleton, error) {
 	return s, nil
 }
 
-// stylePattern is the pattern for dateStyle and timeStyle. An hour cycle
-// other than the locale's rebuilds the time through the generator, as V8
-// does, so h23 gives "HH:mm" and drops the AM/PM.
+// stylePattern is the pattern for dateStyle and timeStyle. locale.timeStyles
+// is already written in the locale's own default cycle (h12 for en-US and
+// en-CA, h23 for en-GB); an hour cycle other than that default rebuilds the
+// time through the generator instead, as V8 does, so en-US h23 gives
+// "HH:mm" and drops the AM/PM, and en-GB h12 gives "hh:mm a" and gains it.
 func (locale *dateLocale) stylePattern(dateStyle, timeStyle, cycle string) []patternToken {
 	var date, clock []patternToken
 	if dateStyle != "" {
@@ -1560,9 +1759,9 @@ func (locale *dateLocale) stylePattern(dateStyle, timeStyle, cycle string) []pat
 	}
 	if timeStyle != "" {
 		clock = parsePattern(locale.timeStyles[styleIndex[timeStyle]])
-		if cycle != "h12" {
+		if cycle != locale.defaultHourCycle {
 			s := skeletonOfTokens(clock)
-			s.char[fieldHour] = map[string]byte{"h11": 'K', "h23": 'H', "h24": 'k'}[cycle]
+			s.char[fieldHour] = map[string]byte{"h11": 'K', "h12": 'h', "h23": 'H', "h24": 'k'}[cycle]
 			s.char[fieldDayPeriod], s.size[fieldDayPeriod] = 0, 0
 			clock = withHourCycle(locale.bestPattern(s), cycle)
 		}
@@ -1665,7 +1864,16 @@ func nativeFormatDate(args []any) (any, error) {
 		return nil, err
 	}
 	asParts, _ := argument(args, 3).(bool)
-	parts, err := enUS().render(parsePattern(pattern), time.UnixMilli(int64(ms)).In(zone.location), zone)
+	// The locale the pattern was resolved for (nativeDateTimeFormat's
+	// resolved.locale, forwarded by intl.js), so era, month, weekday and
+	// day-period names, and the AM/PM markers, come from the same locale
+	// that chose the pattern. A trailing -u-hc-… extension names an hour
+	// cycle, not a different locale's data.
+	localeName, _ := argument(args, 4).(string)
+	if index := strings.Index(localeName, "-u-"); index >= 0 {
+		localeName = localeName[:index]
+	}
+	parts, err := dateLocaleFor(localeName).render(parsePattern(pattern), time.UnixMilli(int64(ms)).In(zone.location), zone)
 	if err != nil {
 		return nil, err
 	}
@@ -1811,6 +2019,9 @@ func (locale *dateLocale) flexibleDayPeriod(at time.Time, size int, minutes, sec
 	}
 	for _, period := range locale.dayPeriods {
 		if hour*60+at.Minute() >= period.from && hour*60+at.Minute() < period.to {
+			if size == 5 && period.narrow != "" {
+				return period.narrow
+			}
 			return period.name
 		}
 	}

@@ -5,8 +5,9 @@
 // module provides the part of Intl that Code nodes and Luxon use, over Go
 // natives (intl.go):
 //
-//   - Intl.DateTimeFormat, in en-US only. Any other locale is a RangeError,
-//     never English text answering a German request.
+//   - Intl.DateTimeFormat, in en-US, en-CA or en-GB. Any other locale is a
+//     RangeError, never English text answering a German request, or one
+//     English locale's layout answering another's.
 //   - Intl.NumberFormat, in any locale golang.org/x/text knows.
 //   - Intl.Locale, for the week information Luxon's locale weeks read.
 //   - Intl.RelativeTimeFormat refuses every locale by name. Luxon formats
@@ -211,7 +212,7 @@
     }
 
     function formatDate(state, date, asParts) {
-      return native('intl.formatDate', state.pattern, state.zone, timeOf(date), asParts);
+      return native('intl.formatDate', state.pattern, state.zone, timeOf(date), asParts, state.resolved.locale);
     }
 
     function DateTimeFormat(locales, options) {
@@ -423,7 +424,7 @@
         return native('intl.locales', localeList(locales)).filter(check);
       };
     }
-    var english = /^en(-US)?(-u-|$)/;
+    var english = /^en(-US|-CA|-GB)?(-u-|$)/;
     defineMethods(DateTimeFormat, { supportedLocalesOf: supportedLocalesOf(function (tag) { return english.test(tag); }) });
     defineMethods(NumberFormat, { supportedLocalesOf: supportedLocalesOf(function () { return true; }) });
 
