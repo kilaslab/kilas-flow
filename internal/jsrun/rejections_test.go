@@ -57,6 +57,10 @@ func TestAnUncaughtErrorFailsTheRun(t *testing.T) {
 			source: "Promise.resolve().then(() => { throw new Error('then') })\n" + sleep + "return items",
 			text:   "Uncaught Error: then [line 1]", line: 1,
 		},
+		"a throwing timer": {
+			source: "setTimeout(() => { throw new Error('timer') }, 0)\n" + sleep + "return items",
+			text:   "Uncaught Error: timer [line 1]", line: 1,
+		},
 		"a throwing microtask": {
 			source: "queueMicrotask(() => { throw new Error('micro') })\n" + sleep + "return items",
 			text:   "Uncaught Error: micro [line 1]", line: 1,
@@ -127,31 +131,52 @@ func TestTheCodesOwnFailureIsNotUncaught(t *testing.T) {
 }
 
 // An uncaught error belongs to no item: in n8n it ends the whole runner, so
-// it ends the run even when failed items are tolerated.
+// it ends the run even when failed items are tolerated. One an earlier item
+// left behind surfaces while a later item is still running, and is not
+// blamed on it.
 func TestAnUncaughtErrorIsNotAnItemsFailure(t *testing.T) {
-	_, err := newRunner().Run(context.Background(), jsrun.Task{
-		Source: "if ($itemIndex === 1) Promise.reject(new Error('stray'))\n" + sleep + "return $input.item",
-		Items:  numbered(3), Mode: jsrun.ModeEachItem, ContinueOnItemError: true,
-	})
-	script := uncaught(t, err)
-	if script.ItemIndex != -1 || err.Error() != "Uncaught Error: stray [line 1]" {
-		t.Fatalf("Run() error = %q, item %d; want the run failed by the stray rejection", err, script.ItemIndex)
+	for name, test := range map[string]struct{ source, text string }{
+		"a rejection while the item runs": {
+			source: "if ($itemIndex === 1) Promise.reject(new Error('stray'))\n" + sleep + "return $input.item",
+			text:   "Uncaught Error: stray [line 1]",
+		},
+		"a rejection as an earlier item returns": {
+			source: "if ($itemIndex === 0) { Promise.reject(new Error('stray')); return $input.item }\n" + sleep + "return $input.item",
+			text:   "Uncaught Error: stray [line 1]",
+		},
+		"a timer an earlier item armed": {
+			source: "if ($itemIndex === 0) { setTimeout(() => { throw new Error('timer') }, 0); return $input.item }\n" + sleep + "return $input.item",
+			text:   "Uncaught Error: timer [line 1]",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := newRunner().Run(context.Background(), jsrun.Task{
+				Source: test.source, Items: numbered(3), Mode: jsrun.ModeEachItem, ContinueOnItemError: true,
+			})
+			script := uncaught(t, err)
+			if script.ItemIndex != -1 || err.Error() != test.text || len(result.Outcomes) != 0 {
+				t.Fatalf("Run() = %d outcomes, error %q, item %d; want the run ended with %q", len(result.Outcomes), err, script.ItemIndex, test.text)
+			}
+		})
 	}
 }
 
-// A host call's promise is the runtime's own. A promise the code builds on it
-// is the code's.
-func TestAHostCallsPromiseIsTheRuntimes(t *testing.T) {
+// A host call's promise is handed to the code, so it is the code's to handle,
+// as in Node: one that fails with no handler is uncaught, and one the code
+// awaits is not.
+func TestAHostCallsPromiseIsTheCodes(t *testing.T) {
 	runner := newRunner()
 	runner.BindAsyncForTest("failing", func(context.Context, []any) (any, error) {
 		return nil, errors.New("the host said no")
 	})
-	if _, err := runAll(t, runner, "failing()\n"+sleep+"return items", nil); err != nil {
-		t.Fatalf("Run() error = %v, want a host call's own promise not counted", err)
+	for _, source := range []string{"failing()\n" + sleep + "return items", "failing().then(() => {})\n" + sleep + "return items"} {
+		_, err := runAll(t, runner, source, nil)
+		if uncaught(t, err); !strings.Contains(err.Error(), "the host said no") {
+			t.Fatalf("Run() error = %v, want the host call's failure uncaught", err)
+		}
 	}
-	_, err := runAll(t, runner, "failing().then(() => {})\n"+sleep+"return items", nil)
-	if uncaught(t, err); !strings.Contains(err.Error(), "the host said no") {
-		t.Fatalf("Run() error = %v, want the code's derived promise counted", err)
+	if _, err := runAll(t, runner, "try { await failing() } catch (error) {}\n"+sleep+"return items", nil); err != nil {
+		t.Fatalf("Run() error = %v, want an awaited host call's failure handled", err)
 	}
 }
 

@@ -523,7 +523,7 @@ func (v *vm) await(ctx context.Context, returned goja.Value) (goja.Value, error)
 		case job := <-v.jobs:
 			v.pending--
 			if err := job(); err != nil {
-				return nil, v.fail(err)
+				return nil, v.failedJob(err)
 			}
 		case <-v.wake:
 			return nil, v.stopReason()
@@ -549,7 +549,6 @@ func (v *vm) bindAsync(name string, fn func(context.Context, []any) (any, error)
 			arguments[index] = argument.Export()
 		}
 		promise, resolve, reject := v.rt.NewPromise()
-		v.ownPromise(promise)
 		v.pending++
 		go func() {
 			result, err := hostCall(v.hostCtx, fn, arguments)

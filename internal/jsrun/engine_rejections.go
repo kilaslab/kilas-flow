@@ -19,20 +19,19 @@ import (
 // is handled later. The rejections still unhandled are kept in order.
 // Whenever a VM entry returns, goja has drained its job queue. At that point
 // await asks for the first of them while the code's promise is still
-// pending, and that fails the run.
+// pending, and that fails the run. A job, such as a timer's callback, that
+// throws is uncaught in the same way.
 //
-// Two kinds of promise are the runtime's own, and are never counted:
-//
-//   - the promise the code's body returns, which await consumes;
-//   - a host call's promise.
-//
-// A promise the code derives from either is its own.
+// Every promise the code can reach counts, a host call's included: the code
+// was handed it, so handling it is the code's job, as in Node. Only a promise
+// the runtime makes and consumes itself is never counted: the one the code's
+// body returns, which await reads, and any promise marked with ownPromise.
 type rejections struct {
 	next int64
 	// unhandled holds each rejected promise with no handler, with the order
 	// it was rejected in.
 	unhandled map[*goja.Promise]int64
-	// own holds the host calls' promises.
+	// own holds the promises the runtime consumes itself.
 	own map[*goja.Promise]bool
 }
 
@@ -51,12 +50,28 @@ func (v *vm) trackRejections() {
 	})
 }
 
-// ownPromise marks a promise the runtime made for itself.
+// ownPromise marks a promise the runtime makes and consumes itself, which
+// the code never receives, so its rejection is never the code's. It must be
+// called before the promise can be rejected.
 func (v *vm) ownPromise(promise *goja.Promise) { v.rejected.own[promise] = true }
 
 // consumed takes a settled promise out of the count, because the runner has
 // read it.
 func (v *vm) consumed(promise *goja.Promise) { delete(v.rejected.unhandled, promise) }
+
+// failedJob is the error a job ended the run with. A job runs outside
+// anything the code could catch it in, so what the code threw there is
+// uncaught.
+func (v *vm) failedJob(err error) error {
+	var exception *goja.Exception
+	thrown := errors.As(err, &exception)
+	err = v.fail(err)
+	var script *ScriptError
+	if thrown && errors.As(err, &script) {
+		script.Uncaught = true
+	}
+	return err
+}
 
 // uncaught is the first rejection still unhandled, as the error that ends the
 // run, or nil if there is none.

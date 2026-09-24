@@ -5,7 +5,7 @@ status: testing
 priority: low
 parent: EPIC-tjnr1z
 created: "2026-09-23T07:09:43Z"
-updated: "2026-09-23T07:09:43Z"
+updated: "2026-09-24T13:30:00Z"
 ---
 
 # Description
@@ -101,15 +101,14 @@ the container log read back.
   promise is still pending. So a rejection handled within the same drain is
   not unhandled, and a body that settles in the same drain as a stray
   rejection keeps its result, as in n8n.
-- Excluded from the set:
-  - the body's own result promise, which the runner consumes, as it does in
-    per-item mode after a failed item;
-  - host-call promises made by `bindAsync` (the runtime's own).
-
-  Consequence: a host call the code starts and never awaits does not fail the
-  run if it fails. Node would count it. This follows the task's explicit
-  instruction. Promises the code derives from a host call (`.then`) are the
-  code's own and do count.
+- Excluded from the set: only promises the runtime makes and consumes
+  itself. That is the body's own result promise, which the runner reads (as
+  it does in per-item mode after a failed item), and any internal promise
+  marked with `ownPromise`, an opt-in nothing uses yet. A host call's promise
+  is handed to the code, so it counts, as in Node (the controller's ruling in
+  review, fix round 1).
+- A job that throws is uncaught too, for example a timer's callback. It runs
+  outside anything the code could catch it in (fix round 1).
 - **The error.** It fails the run with the script's own error, not n8n's
   generic "Node execution failed". The generic text is an artifact of the
   runner process dying, and the real error is only in n8n's server log, where
@@ -124,8 +123,8 @@ the container log read back.
 
 - `internal/jsrun/engine_rejections.go` holds the tracker and the check. The
   other changes are small:
-  - `engine.go`: one field, one call in `newVM`, `ownPromise` in `bindAsync`,
-    and the check plus `consumed` in `await`;
+  - `engine.go`: one field, one call in `newVM`, and in `await` the check,
+    `consumed`, and `failedJob` for a job's error;
   - `run.go`: `itemScoped` and `forItem` leave an uncaught error to the run;
   - `ScriptError.Uncaught`, which renders as the `Uncaught ` prefix.
 - `crypto.js` no longer lists a throwing callback as a difference from Node.
@@ -133,9 +132,25 @@ the container log read back.
   failing and succeeding case observed above, the body's own failure and
   per-item continue-on-fail, host-call promises, and the flag crossing the
   wire.
-- **For the host-call reply work in the job loop (Task 1).** Any new promise
-  the runtime makes for a host call must be passed to `v.ownPromise`. Any new
-  place that runs a job must go back through `await`'s loop, so that the check
-  runs after it.
+- **For the host-call reply work in the job loop (Task 1).** Any new place
+  that runs a job must go back through `await`'s loop. There the check runs
+  after it, and its error goes through `failedJob`. A promise handed to the
+  code (`httpRequest`'s) must not be passed to `ownPromise`. Only internal
+  plumbing the code never receives may be passed to it.
 - **No changelog entry.** The JavaScript Code node itself has no entry under
   `[Unreleased]` yet, and this fix belongs in that entry when the epic adds it.
+
+## Fix round 1 (2026-09-24)
+
+- **A throwing timer callback was not treated as uncaught.** Its error came
+  back through `await`'s job path as a plain `ScriptError`. That made it
+  item-scoped, and it blamed the item running at the time. `failedJob` now
+  marks what the code threw in a job as uncaught.
+- **Host-call promises now count** (the controller's ruling). `bindAsync` no
+  longer calls `ownPromise`.
+- **New tests:**
+  - a throwing timer, in all-items mode and armed by an earlier item in
+    per-item mode;
+  - an unawaited failing host call;
+  - a stray rejection from item 0, raised as it returns, which surfaces on
+    item 1's first await.
