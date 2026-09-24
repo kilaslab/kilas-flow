@@ -25,6 +25,11 @@
 		{"name":"<!-- in a strict body","code":"'use strict'\n<!-- a comment\nreturn [{ json: { ok: 1 } }]","want":[{"ok":1}]},
 		{"name":"<!-- inside a function keeps the function's source","code":"function f() {\n  <!-- inside\n  return 1\n}\nreturn [{ json: { source: f.toString(), value: f() } }]","want":[{"source":"function f() {\n  <!-- inside\n  return 1\n}","value":1}]},
 		{"name":"a comment that eats what an array needs is a syntax error","code":"const a = [1, <!-- 2]\nreturn [{ json: { a } }]","error":"SyntaxError"},
+		{"name":"a regular expression after a labelled block keeps its <!--","code":"let hit = false\nblock: {}\n/<!--/.test('<!--') && (hit = true)\nreturn [{ json: { hit } }]","want":[{"hit":true}]},
+		{"name":"a regular expression after a case block keeps its <!--","code":"let hit = false\nswitch (1) { case 1: {}\n/<!--/.test('<!--') && (hit = true) }\nreturn [{ json: { hit } }]","want":[{"hit":true}]},
+		{"name":"an object as a property value, divided, then <!--","code":"const o = { a: {} / 2 <!-- a comment\n}\nreturn [{ json: { a: String(o.a) } }]","want":[{"a":"NaN"}]},
+		{"name":"an object in a conditional, divided, then <!--","code":"const t = true ? {} / 2 <!-- a comment\n: 0\nreturn [{ json: { t: String(t) } }]","want":[{"t":"NaN"}]},
+		{"name":"an object after ?? then <!--","code":"const t = null ?? {} / 2 <!-- a comment\nreturn [{ json: { t: String(t) } }]","want":[{"t":"NaN"}]},
 		{"name":"<<!-- is a shift, then !--y","code":"let y = 5\nconst a = 1 <<!--y\nreturn [{ json: { a, y } }]","want":[{"a":1,"y":4}]},
 		{"name":"a regular expression with escaped slashes keeps its <!--","code":"return [{ json: { hit: /\\/\\/<!--/.test('//<!--') } }]","want":[{"hit":true}]},
 		{"name":"-- > with a space is not a comment","code":"let i = 3\n-- > 1\nreturn [{ json: { i } }]","error":"SyntaxError"}

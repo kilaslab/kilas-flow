@@ -144,9 +144,9 @@ again when the workflow is saved — so a workflow that uses one never activates
   three [above](#helpers-and-static-data): use an HTTP Request node before or
   after the Code node;
 - `require()` of any module not in the list above;
-- an HTML-like comment (`<!--`, or `-->` at the start of a line) in the rare
-  code where the runtime cannot tell for certain whether it is a comment.
-  Anywhere else these comments are read as V8 reads them.
+- a `<!--` or `-->` in the rare code the runtime cannot read unambiguously
+  around it, so it cannot tell for certain whether one starts a comment.
+  Anywhere else these HTML-like comments are read as V8 reads them.
 
 The rest fail by name the moment the code reaches them: `$jmespath`,
 `$evaluateExpression`, `$prevNode`, `$input.params`, `$input.context`,
@@ -237,7 +237,7 @@ when the node runs, as a `SyntaxError` with its line, not when it is saved.
   meets carry Node's wording: `JSON.parse` on text that is not JSON, reading a
   property of `undefined`, and calling something that is not a function
   (`items.map is not a function`). That holds whether the code catches the
-  error or not. The engine cannot tell `null` from `undefined` on a property
+  error or not. An error the code builds itself keeps the words it was given. The engine cannot tell `null` from `undefined` on a property
   read, so a read of `null` says "of undefined" where V8 says "of null".
   Rarer errors (destructuring or iterating `undefined`, the `in` operator on
   a primitive) keep the engine's own words, as does an error the code only

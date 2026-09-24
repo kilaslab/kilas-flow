@@ -138,7 +138,7 @@ var blockAfterWord = map[string]bool{"else": true, "do": true, "try": true, "fin
 // block; after any other, it opens an object literal. A lexer cannot always
 // tell (a function expression's body is a block after `)` too), which is
 // why checkHTMLComments holds its reading to goja's.
-var blockAfterPunctuator = map[string]bool{")": true, ";": true, "{": true, "}": true, "=>": true}
+var blockAfterPunctuator = map[string]bool{")": true, ";": true, "{": true, "}": true, "=>": true, ":label": true}
 
 // brace kinds on the lexer's stack.
 const (
@@ -165,6 +165,11 @@ type htmlLexer struct {
 	// previous is the last punctuator read, or "" after a word or literal.
 	previous string
 	braces   []byte
+	// questions counts, for the code outside any brace and inside each open
+	// one, the `?` of conditional expressions still waiting for their `:`.
+	// A `:` that answers none, in a block, ends a label or a case, and a `{`
+	// after it opens a block.
+	questions []int
 	// parens records, for each open parenthesis, whether it is a control
 	// statement's head.
 	parens []bool
@@ -172,7 +177,7 @@ type htmlLexer struct {
 
 // htmlComments lexes a body and blanks its HTML-like comments.
 func htmlComments(source string) htmlScan {
-	lexer := &htmlLexer{source: source, regexp: true, lineStart: true, previous: "{"}
+	lexer := &htmlLexer{source: source, regexp: true, lineStart: true, previous: "{", questions: []int{0}}
 	lexer.run()
 	if lexer.out != nil {
 		lexer.scan.blanked = string(lexer.out)
@@ -297,6 +302,12 @@ func (l *htmlLexer) string(quote byte) {
 	l.token(false, "", "")
 }
 
+// open records an opened brace, or a template's `${`.
+func (l *htmlLexer) open(kind byte) {
+	l.braces = append(l.braces, kind)
+	l.questions = append(l.questions, 0)
+}
+
 // template skips template text up to its closing backquote, or up to a `${`,
 // where the lexer returns to code until the matching `}`.
 func (l *htmlLexer) template() {
@@ -310,7 +321,7 @@ func (l *htmlLexer) template() {
 			l.at += 2
 		case strings.HasPrefix(l.rest(), "${"):
 			l.at += 2
-			l.braces = append(l.braces, braceTemplate)
+			l.open(braceTemplate)
 			l.token(true, "${", "")
 			return
 		default:
@@ -423,7 +434,7 @@ func (l *htmlLexer) punctuator() {
 		if l.word != "" && (blockAfterWord[l.word] || !regexpAfterWord[l.word]) || l.word == "" && blockAfterPunctuator[l.previous] {
 			kind = braceBlock
 		}
-		l.braces = append(l.braces, kind)
+		l.open(kind)
 		l.at++
 		l.token(true, "{", "")
 	case c == '}':
@@ -431,6 +442,7 @@ func (l *htmlLexer) punctuator() {
 		if len(l.braces) > 0 {
 			kind = l.braces[len(l.braces)-1]
 			l.braces = l.braces[:len(l.braces)-1]
+			l.questions = l.questions[:len(l.questions)-1]
 		}
 		l.at++
 		if kind == braceTemplate {
@@ -453,6 +465,28 @@ func (l *htmlLexer) punctuator() {
 	case c == '.':
 		l.at++
 		l.token(false, ".", "")
+	case strings.HasPrefix(rest, "??="):
+		l.at += 3
+		l.token(true, "??=", "")
+	case strings.HasPrefix(rest, "??"):
+		l.at += 2
+		l.token(true, "??", "")
+	case c == '?':
+		l.questions[len(l.questions)-1]++
+		l.at++
+		l.token(true, "?", "")
+	case c == ':':
+		// A `:` answers a pending `?`, or follows a property's name in an
+		// object literal, where a `{` after it is an object too; anywhere
+		// else it ends a label or a case, and a `{` after it is a block.
+		punctuator := ":"
+		if pending := &l.questions[len(l.questions)-1]; *pending > 0 {
+			*pending--
+		} else if len(l.braces) == 0 || l.braces[len(l.braces)-1] == braceBlock {
+			punctuator = ":label"
+		}
+		l.at++
+		l.token(true, punctuator, "")
 	case strings.HasPrefix(rest, "<<="):
 		l.at += 3
 		l.token(true, "<<=", "")

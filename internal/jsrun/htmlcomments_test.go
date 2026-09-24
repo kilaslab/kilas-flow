@@ -93,8 +93,8 @@ func TestAnHTMLLikeCommentTheLexerCannotReadIsRefused(t *testing.T) {
 	_, analyzed := jsrun.Analyze(body, jsrun.ModeAllItems)
 	_, ran := newRunner().Run(context.Background(), jsrun.Task{Source: body})
 	for _, err := range []error{analyzed, ran} {
-		if !errors.Is(err, jsrun.ErrUnsupported) || !strings.Contains(err.Error(), "HTML-like comment") || !strings.Contains(err.Error(), "(line 2)") {
-			t.Errorf("got %v, want the HTML-like comment refused on line 2", err)
+		if !errors.Is(err, jsrun.ErrUnsupported) || !strings.Contains(err.Error(), "has code around a <!-- or --> that this server cannot read unambiguously") || !strings.Contains(err.Error(), "(line 2)") {
+			t.Errorf("got %v, want the code around the <!-- refused on line 2", err)
 		}
 	}
 }
@@ -105,5 +105,16 @@ func TestADecrementBeforeAComparisonIsNotAComment(t *testing.T) {
 	result := mustRun(t, newRunner(), jsrun.Task{Source: "let i = 2, n = 0\nwhile (i-->0) n++\nreturn [{ json: { i, n } }]"})
 	if result.Items[0].JSON["i"] != float64(-1) || result.Items[0].JSON["n"] != float64(2) {
 		t.Errorf("items = %#v", result.Items)
+	}
+}
+
+// A `<!--` that is no comment at all, in a string, is refused the same way
+// when the code around it is what the lexer cannot read, and the refusal
+// says so rather than claiming a comment.
+func TestCodeAroundAnHTMLMarkerThatCannotBeReadIsRefusedAsSuch(t *testing.T) {
+	body := "const s = '<!--'\nconst f = function () { return 4 } / 2 / 1\nreturn [{ json: { s, f } }]"
+	_, err := jsrun.Analyze(body, jsrun.ModeAllItems)
+	if !errors.Is(err, jsrun.ErrUnsupported) || !strings.Contains(err.Error(), "has code around a <!-- or --> that this server cannot read unambiguously (line 1)") {
+		t.Errorf("Analyze() = %v", err)
 	}
 }

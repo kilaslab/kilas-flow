@@ -91,6 +91,11 @@ const htmlComments = [
 	{ name: '<!-- in a strict body', code: "'use strict'\n<!-- a comment\nreturn [{ json: { ok: 1 } }]" },
 	{ name: '<!-- inside a function keeps the function\'s source', code: 'function f() {\n  <!-- inside\n  return 1\n}\nreturn [{ json: { source: f.toString(), value: f() } }]' },
 	{ name: 'a comment that eats what an array needs is a syntax error', code: 'const a = [1, <!-- 2]\nreturn [{ json: { a } }]' },
+	{ name: 'a regular expression after a labelled block keeps its <!--', code: "let hit = false\nblock: {}\n/<!--/.test('<!--') && (hit = true)\nreturn [{ json: { hit } }]" },
+	{ name: 'a regular expression after a case block keeps its <!--', code: "let hit = false\nswitch (1) { case 1: {}\n/<!--/.test('<!--') && (hit = true) }\nreturn [{ json: { hit } }]" },
+	{ name: 'an object as a property value, divided, then <!--', code: 'const o = { a: {} / 2 <!-- a comment\n}\nreturn [{ json: { a: String(o.a) } }]' },
+	{ name: 'an object in a conditional, divided, then <!--', code: 'const t = true ? {} / 2 <!-- a comment\n: 0\nreturn [{ json: { t: String(t) } }]' },
+	{ name: 'an object after ?? then <!--', code: 'const t = null ?? {} / 2 <!-- a comment\nreturn [{ json: { t: String(t) } }]' },
 	{ name: '<<!-- is a shift, then !--y', code: 'let y = 5\nconst a = 1 <<!--y\nreturn [{ json: { a, y } }]' },
 	{ name: 'a regular expression with escaped slashes keeps its <!--', code: "return [{ json: { hit: /\\/\\/<!--/.test('//<!--') } }]" },
 	{ name: '-- > with a space is not a comment', code: 'let i = 3\n-- > 1\nreturn [{ json: { i } }]' },
@@ -190,6 +195,19 @@ const errors = [
 	{ name: "the code's own TypeError", code: "throw new TypeError('value.map is not a function')" },
 	{ name: "the code's own Error", code: "throw new Error(\"Cannot read property 'x' of undefined\")" },
 	{ name: 'a ReferenceError', code: 'return undefinedFunction()' },
+	// The code's own errors in goja's words, and in Node 14's, stay as the
+	// code wrote them.
+	{ name: "the code's own TypeError in Node 14's words", code: "throw new TypeError(\"Cannot read property 'x' of undefined\")" },
+	{ name: "the code's own TypeError saying Value is not a constructor", code: "throw new TypeError('Value is not a constructor')" },
+	{ name: "the code's own TypeError saying Value is not an object", code: "throw new TypeError('Value is not an object: 5')" },
+	{ name: "the code's own TypeError saying Object has no member", code: "throw new TypeError(\"Object has no member 'q'\")" },
+	{ name: "the code's own TypeError saying Not a function", code: "throw new TypeError('Not a function: x')" },
+	{ name: "the code's own TypeError called without new", code: "throw TypeError(\"Cannot read property 'x' of undefined or null\")" },
+	{ name: "the code's own TypeError through globalThis", code: "throw new globalThis.TypeError('Value is not a constructor')" },
+	{ name: "the code's own TypeError through Reflect.construct", code: "throw Reflect.construct(TypeError, [\"Cannot read property 'x' of undefined\"])" },
+	{ name: "the code's own TypeError made in a function", code: "function fail() { return new TypeError(\"Object has no member 'q'\") }\nthrow fail()" },
+	{ name: "the code's own subclass of TypeError", code: "class Missing extends TypeError {}\nthrow new Missing(\"Cannot read property 'x' of undefined\")" },
+	{ name: "the code's own subclass of TypeError with a constructor", code: "class Missing extends TypeError { constructor(m) { super(m) } }\nthrow new Missing(\"Cannot read property 'x' of undefined\")" },
 ];
 
 // ---- JSON.parse -----------------------------------------------------------------

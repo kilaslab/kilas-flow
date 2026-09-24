@@ -22,6 +22,8 @@ func TestHTMLCommentsBlankOnlyTheCommentsByteForByte(t *testing.T) {
 		{source: "if (a) /[/]<!--/.test(b)", blanked: "if (a) /[/]<!--/.test(b)", regexps: [][2]int{{7, 16}}},
 		{source: "a / b <!-- / c", blanked: "a / b         "},
 		{source: "a <<!--b", blanked: "a <<!--b"},
+		{source: "a: {}\n/<!--/", blanked: "a: {}\n/<!--/", regexps: [][2]int{{6, 12}}},
+		{source: "x = c ? {} / 2 <!-- y", blanked: "x = c ? {} / 2       "},
 		{source: "a <!-- x\u2028b", blanked: "a       \u2028b"},
 		{source: "// <!-- \n/* --> */", blanked: "// <!-- \n/* --> */"},
 	} {

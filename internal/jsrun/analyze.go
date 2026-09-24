@@ -149,9 +149,11 @@ func parseWrapped(w wrapped) (*ast.Program, error) {
 	return program, nil
 }
 
-// htmlCommentRefusal is the refusal for a body whose HTML-like comments the
-// runtime could not read with certainty.
-const htmlCommentRefusal = "has an HTML-like comment (<!-- or -->) this server cannot tell apart from the code around it"
+// htmlCommentRefusal is the refusal for a body holding a `<!--` or `-->`
+// whose surrounding code the lexer read differently from goja's parser. The
+// body may hold no comment at all (a `<!--` in a string), so the refusal
+// names the code around it, not a comment.
+const htmlCommentRefusal = "has code around a <!-- or --> that this server cannot read unambiguously"
 
 // classifyParseError tells a construct the engine does not support apart
 // from a plain mistake. goja reports both as "unexpected token", but a user
