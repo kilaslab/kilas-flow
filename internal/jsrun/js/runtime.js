@@ -1653,7 +1653,7 @@
         var item = input[itemIndex];
         var json = item === undefined ? undefined : item.json;
         var args = eachItem ?
-          [json, binaryOf(item), itemIndex, itemIndex, inputRoot] :
+          [json, binaryOf(item), itemIndex, itemIndex, inputRoot, item] :
           [input, inputRoot, json, binaryOf(item), itemIndex, itemIndex];
         return apply(body, self, args);
       },

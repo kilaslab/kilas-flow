@@ -11,12 +11,12 @@ The JavaScript Code nodes and Sort code comparators of the 500 most-viewed n8n t
 | Measured | 330 | |
 | Parse | 329 | 99.7% |
 | Parse and pass analysis | 328 | 99.4% |
-| Run without an error on synthesised input | 242 | 73.8% of accepted |
-| Runtime-error rate | 86 | 26.2% of accepted |
+| Run without an error on synthesised input | 244 | 74.4% of accepted |
+| Runtime-error rate | 84 | 25.6% of accepted |
 
 Of the measured bodies, 51 run once for each item and 0 are Sort comparators. 330 had no pinned data upstream and ran on a stand-in item shaped from the fields the body reads, so a failure among them may be the stand-in's, not the runtime's.
 
-Run time (wall clock of `Runner.Run`, including compiling the body once, on the machine that wrote this file): median **0.57 ms**, p95 **1.49 ms** over 328 runs.
+Run time (wall clock of `Runner.Run`, including compiling the body once, on the machine that wrote this file): median **0.57 ms**, p95 **1.63 ms** over 328 runs.
 
 ## What stops the rest
 
@@ -27,11 +27,11 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | threw: TypeError | 63 |
 | threw: Error | 8 |
 | threw: SyntaxError | 5 |
-| threw: ReferenceError | 3 |
 | invalid-return | 2 |
 | error: this.helpers.prepareBinaryData (not wired in the instrument) | 1 |
 | refused: requires the module "youtube-transcript" | 1 |
 | syntax error | 1 |
+| threw: ReferenceError | 1 |
 | threw: date locale en-CA | 1 |
 | threw: date locale id-ID | 1 |
 | threw: this.helpers.httpRequest (not wired in the instrument) | 1 |
@@ -82,11 +82,11 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 2095/13 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2095/14 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2110/6 | runOnceForEachItem | stand-in | ✓ | ✓ | ✓ | ok |
-| 2137/3 | runOnceForEachItem | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 2137/3 | runOnceForEachItem | stand-in | ✓ | ✓ | ✓ | ok |
 | 2137/7 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
 | 2137/19 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
 | 2137/20 | runOnceForEachItem | stand-in | ✓ | ✓ | · | threw: TypeError |
-| 2137/21 | runOnceForEachItem | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 2137/21 | runOnceForEachItem | stand-in | ✓ | ✓ | ✓ | ok |
 | 2157/24 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2157/32 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2157/33 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: Error |

@@ -218,7 +218,7 @@ function withLimit(promise) {
 function wrapperText(testCase) {
 	if (testCase.mode === 'sortComparator') return `(function (items, $input) { return function (a, b) {\n${testCase.source}\n}; })`;
 	// All-items code has the per-item roots too, at the first item.
-	const parameters = testCase.mode === 'runOnceForEachItem' ? '$json, $binary, $itemIndex, $position, $input' : 'items, $input, $json, $binary, $itemIndex, $position';
+	const parameters = testCase.mode === 'runOnceForEachItem' ? '$json, $binary, $itemIndex, $position, $input, item' : 'items, $input, $json, $binary, $itemIndex, $position';
 	return `(function (${parameters}) { return (async function () {\n${testCase.source}\n}).call(this); })`;
 }
 
@@ -256,7 +256,7 @@ async function runOnce(testCase) {
 		if (eachItem) {
 			for (let index = 0; index < input.length; index++) {
 				setCurrent(index);
-				items.push(...normalise(await withLimit(wrapper.call({ helpers }, input[index].json, binaryOf(input[index]), index, index, inputRoot)), true));
+				items.push(...normalise(await withLimit(wrapper.call({ helpers }, input[index].json, binaryOf(input[index]), index, index, inputRoot, input[index])), true));
 			}
 		} else {
 			items.push(...normalise(await withLimit(wrapper.call({ helpers }, input, inputRoot, input[0]?.json, binaryOf(input[0]), 0, 0)), false));

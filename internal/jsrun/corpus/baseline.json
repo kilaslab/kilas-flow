@@ -15,15 +15,15 @@
     "stubbed": 330,
     "parsed": 329,
     "accepted": 328,
-    "ran": 242,
+    "ran": 244,
     "parseRate": 99.7,
     "acceptRate": 99.4,
-    "runtimeErrorRate": 26.2
+    "runtimeErrorRate": 25.6
   },
   "timing": {
     "runs": 328,
     "medianMillis": 0.57,
-    "p95Millis": 1.49
+    "p95Millis": 1.63
   },
   "blockers": {
     "error: this.helpers.prepareBinaryData (not wired in the instrument)": 1,
@@ -31,7 +31,7 @@
     "refused: requires the module \"youtube-transcript\"": 1,
     "syntax error": 1,
     "threw: Error": 8,
-    "threw: ReferenceError": 3,
+    "threw: ReferenceError": 1,
     "threw: SyntaxError": 5,
     "threw: TypeError": 63,
     "threw: date locale en-CA": 1,
@@ -422,9 +422,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "2137/7",
@@ -462,9 +461,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "2157/24",

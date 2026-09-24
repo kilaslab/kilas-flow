@@ -222,6 +222,25 @@ func TestTheOtherModesRootsAreUndefinedAndSayWhatToUseInstead(t *testing.T) {
 	}
 }
 
+// Per-item code also has `item`, the current input item itself, as n8n's
+// does; all-items code has none, as in n8n.
+func TestPerItemCodeHasTheCurrentItemAsItem(t *testing.T) {
+	result := mustRun(t, newRunner(), jsrun.Task{Mode: jsrun.ModeEachItem, Items: numbered(2),
+		Source: "return { json: { n: item.json.n, same: item === $input.item && item.json === $json } }"})
+	if result.Items[1].JSON["n"] != float64(1) || result.Items[1].JSON["same"] != true {
+		t.Fatalf("items = %#v", result.Items)
+	}
+	all := mustRun(t, newRunner(), jsrun.Task{Items: numbered(1), Source: "return [{ json: { item: typeof item } }]"})
+	if all.Items[0].JSON["item"] != "undefined" {
+		t.Fatalf("items = %#v, want no item root in all-items code", all.Items)
+	}
+	redeclared := mustRun(t, newRunner(), jsrun.Task{Mode: jsrun.ModeEachItem, Items: numbered(1),
+		Source: "const item = $input.item\nreturn item"})
+	if redeclared.Items[0].JSON["n"] != float64(0) {
+		t.Fatalf("items = %#v", redeclared.Items)
+	}
+}
+
 func TestAPlainObjectIsWrappedAsAnItem(t *testing.T) {
 	result := mustRun(t, newRunner(), jsrun.Task{Source: "return [{ a: 1 }, { json: { b: 2 } }]"})
 	if len(result.Items) != 2 || result.Items[0].JSON["a"] != float64(1) || result.Items[1].JSON["b"] != float64(2) {
