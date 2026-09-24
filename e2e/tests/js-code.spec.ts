@@ -373,11 +373,9 @@ test('JavaScript between an HTTP call and an expression keeps every item paired 
 });
 
 test('lineage survives a Code node that filters, reorders and rebuilds items', async ({ server }) => {
-	// What n8n answers. KilasFlow answers by position after a fan-out, so a
-	// reorder after Split Out pairs each item with the wrong one; the native
-	// Sort does the same. When BUG-14gp8r is fixed this test starts passing,
-	// and Playwright fails it until the marker is removed.
-	test.fail(true, 'BUG-14gp8r: $(\'X\').item answers by position after a node that reorders items downstream of a fan-out');
+	// What n8n answers. Each item Split Out makes is an origin of its own
+	// (BUG-14gp8r), so the filter and the sort after it cannot move an item
+	// away from the order it came from, as a pairing by position would.
 	const workflowId = await createWorkflow(
 		server.baseURL,
 		'JS Lineage',

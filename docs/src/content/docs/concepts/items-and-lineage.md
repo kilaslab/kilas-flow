@@ -90,6 +90,7 @@ type PairedItem struct {
 	RunIndex     int    `json:"runIndex"`
 	ItemIndex    int    `json:"itemIndex"`
 	Lost         bool   `json:"lost,omitempty"`
+	Parent       *PairedItem `json:"parent,omitempty"`
 }
 ```
 
@@ -126,6 +127,21 @@ That is the shape of every one-to-one node: Set, HTTP Request, a database query,
 a model call. A node that reorders, filters, aggregates or fans out **must** set
 its own provenance, because guessing there would produce a confident answer that
 happens to be wrong.
+
+### A fan-out's items are origins of their own
+
+When several items of one node's output share one origin — Split Out splitting
+one item's list, a Code node returning several items for one input — the runner
+makes each of them an origin of its own: that node, run, port and position,
+with the origin they shared kept as `Parent`. Everything further down copies
+that stamp, so a Sort, a Filter or a Code node that reorders after the fan-out
+cannot move an item away from the one it came from.
+
+`$('X').item` compares the current item's origin with X's items first, then
+each `Parent` in turn: X after the fan-out shares the item's own origin, X
+before it shares the parent. A fan-out after another nests one level deeper,
+up to sixteen levels; past that the levels in the middle are dropped, and the
+item's own origin, the nearest fan-outs and the root are kept.
 
 A node that tolerates its own failure emits one error item per input item for
 exactly this reason: downstream item counts and lineage survive a tolerated

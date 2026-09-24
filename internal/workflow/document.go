@@ -135,6 +135,15 @@ type PairedItem struct {
 	// instead of quietly returning the first item, which is correct only when
 	// every node processed exactly one item and silently wrong otherwise.
 	Lost bool `json:"lost,omitempty"`
+	// Parent is set on an item a fan-out made — one of several items a node
+	// produced from a single origin, as Split Out does. The item is then its
+	// own origin (this node, port, run and position), so a reorder or a
+	// filter further down still tells it apart from its siblings, and Parent
+	// is the origin it was made from, so a read of a node before the fan-out
+	// still finds the item it descends from. A fan-out after another nests
+	// one level deeper, up to a fixed depth. A PairedItem is never changed
+	// once written, so copies of an item share its Parent.
+	Parent *PairedItem `json:"parent,omitempty"`
 }
 
 // Item is the unit a node receives and emits.
