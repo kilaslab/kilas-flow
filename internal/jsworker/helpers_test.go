@@ -221,3 +221,22 @@ func TestAWorkerRefusesARepliesItDidNotAskFor(t *testing.T) {
 		})
 	}
 }
+
+// A request the code started and never waited for may be answered as the job
+// ends. That is not the worker breaking the protocol: every job succeeds, on
+// one worker.
+func TestARequestTheCodeDidNotWaitForEndsQuietly(t *testing.T) {
+	pool := newTestPool(t, Options{})
+	for attempt := range 20 {
+		_, err := pool.Run(context.Background(), jsrun.Task{
+			Roots:  jsrun.Roots{Helpers: &serverHelpers{}},
+			Source: "this.helpers.httpRequest({ url: 'https://example.com' })\nawait new Promise(resolve => setTimeout(resolve, 1))\nreturn []",
+		})
+		if err != nil {
+			t.Fatalf("attempt %d: Run() error = %v", attempt, err)
+		}
+	}
+	if starts := pool.starts.Load(); starts != 1 {
+		t.Fatalf("%d workers started, want one", starts)
+	}
+}

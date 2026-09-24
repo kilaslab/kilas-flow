@@ -65,7 +65,7 @@ func Serve(in io.Reader, out io.Writer) int {
 		}
 		job := *request.m.Job
 		job.Input = string(request.blob)
-		executed, runErr := runner.Execute(context.Background(), job, server.host())
+		executed, runErr := runner.Execute(context.Background(), job, server.host(request.m.Nonce))
 		server.finish()
 		if err := server.failure(); err != nil {
 			return broken("the server stopped answering", err)
@@ -191,8 +191,12 @@ func (l *link) deliver(reply frame) error {
 }
 
 // finish ends the running job. Calls still outstanding are abandoned: their
-// callers stopped waiting when the job's VM closed.
+// callers stopped waiting when the job's VM closed. It holds the write lock,
+// so no call of the job can be half sent, or sent after it, where the server
+// would read it as the next job's.
 func (l *link) finish() {
+	l.writeMu.Lock()
+	defer l.writeMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.ended, l.current = l.current, ""
@@ -220,21 +224,36 @@ func (l *link) write(m message, blob string) error {
 	return writeFrame(l.writer, m, blob)
 }
 
-// ask sends one call and waits for its reply, until ctx ends or the stream
-// breaks. It is safe from any goroutine.
-func (l *link) ask(ctx context.Context, question message, blob string) (frame, error) {
+// errJobOver refuses a call made after its job ended, by a goroutine the
+// code left behind.
+var errJobOver = errors.New("the job this call belongs to is over")
+
+// ask sends one call of job nonce and waits for its reply, until ctx ends or
+// the stream breaks. It is safe from any goroutine. A call whose job is over,
+// or whose context already ended, is never sent.
+func (l *link) ask(ctx context.Context, nonce string, question message, blob string) (frame, error) {
+	l.writeMu.Lock()
 	l.mu.Lock()
-	if l.err != nil {
+	switch {
+	case l.err != nil:
+		err := l.err
 		l.mu.Unlock()
-		return frame{}, l.err
+		l.writeMu.Unlock()
+		return frame{}, err
+	case l.current != nonce || ctx.Err() != nil:
+		l.mu.Unlock()
+		l.writeMu.Unlock()
+		return frame{}, errJobOver
 	}
 	l.lastID++
 	id := l.lastID
 	answered := make(chan frame, 1)
 	l.waiting[id] = answered
-	question.Type, question.Nonce, question.ID = typeCall, l.current, id
+	question.Type, question.Nonce, question.ID = typeCall, nonce, id
 	l.mu.Unlock()
-	if err := l.write(question, blob); err != nil {
+	err := writeFrame(l.writer, question, blob)
+	l.writeMu.Unlock()
+	if err != nil {
 		l.fail(err)
 		return frame{}, err
 	}
@@ -244,32 +263,31 @@ func (l *link) ask(ctx context.Context, question message, blob string) (frame, e
 	case <-l.broke:
 		return frame{}, l.failure()
 	case <-ctx.Done():
-		l.mu.Lock()
-		delete(l.waiting, id)
-		l.mu.Unlock()
+		// The call stays registered: its reply may still arrive before the
+		// job ends, and is then taken by the buffered channel and dropped.
 		return frame{}, ctx.Err()
 	}
 }
 
-// host answers the code's questions by asking the server.
-func (l *link) host() jsrun.Host {
+// host answers the code's questions for job nonce by asking the server.
+func (l *link) host(nonce string) jsrun.Host {
 	return jsrun.Host{
 		Node: func(name string) (string, bool) {
-			reply, err := l.ask(context.Background(), message{Method: methodNode, Name: name}, "")
+			reply, err := l.ask(context.Background(), nonce, message{Method: methodNode, Name: name}, "")
 			if err != nil || !reply.m.Found {
 				return "", false
 			}
 			return string(reply.blob), true
 		},
 		Pair: func(name string, index int) (int, string) {
-			reply, err := l.ask(context.Background(), message{Method: methodPair, Name: name, Index: index}, "")
+			reply, err := l.ask(context.Background(), nonce, message{Method: methodPair, Name: name, Index: index}, "")
 			if err != nil {
 				return -1, "item lineage is not available here"
 			}
 			return reply.m.Index, reply.m.Reason
 		},
 		StaticData: func(kind string) (string, error) {
-			reply, err := l.ask(context.Background(), message{Method: methodStatic, Name: kind}, "")
+			reply, err := l.ask(context.Background(), nonce, message{Method: methodStatic, Name: kind}, "")
 			if err != nil {
 				return "", errors.New("the workflow static data is not available: the server stopped answering")
 			}
@@ -279,7 +297,7 @@ func (l *link) host() jsrun.Host {
 			return string(reply.blob), nil
 		},
 		Call: func(ctx context.Context, request jsrun.HostRequest) jsrun.HostAnswer {
-			reply, err := l.ask(ctx, message{Method: methodHelper, Request: &request}, string(request.Data))
+			reply, err := l.ask(ctx, nonce, message{Method: methodHelper, Request: &request}, string(request.Data))
 			if err != nil {
 				return jsrun.HostAnswer{Failure: "the server stopped answering: " + err.Error()}
 			}
