@@ -4,25 +4,87 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/kilaslab/kilas-flow/internal/jsrun"
 )
 
+// tooLargePattern matches the shape every bound in js/runtime.js's tooLarge
+// throws: "<what> of <size> is more than the <limit> one call may handle
+// here". size is what the check measured before refusing: an exact input
+// property (an array's length, a buffer's byte length) for a check that
+// reads one number and refuses before ever calling the native built-in, or
+// the running total at the moment a check that accumulates as it goes
+// (join, replace, JSON.stringify) crossed the limit. A message this doesn't
+// match, such as a construct refused for being unsupported rather than
+// oversized, carries no such number.
+var tooLargePattern = regexp.MustCompile(`of (\d+) is more than the \d+ one call may handle here`)
+
+// materialisedSize reads the size a tooLarge message reports, or false for
+// a message that isn't shaped that way.
+func materialisedSize(message string) (size uint64, ok bool) {
+	m := tooLargePattern.FindStringSubmatch(message)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(m[1], 10, 64)
+	return n, err == nil
+}
+
+// defaultAllocRatio is how many times the reported size a refusal may
+// legitimately allocate before refusedQuickly treats it as materialising
+// its output rather than refusing before building it. Calibrated from this
+// file's own sources under -race: every one-number check (an array's or a
+// buffer's own length, read before the native built-in is ever called)
+// costs at most ~2.1x its size, all of it the setup needed to construct a
+// legal input that size; the accumulate-as-you-go checks (join, replace,
+// JSON.stringify) cost more per byte of running total because building the
+// pieces that passed the check before the one that didn't is real,
+// necessary work, up to ~8x for this file's ordinary cases. 12x clears both
+// with room to spare, while staying far under what materialising the whole
+// output first would cost for every one-number check (~40-50x, since each
+// of 16.7M elements becomes its own value, not just a byte) — see
+// TestArrayFromRefusesBeforeMaterialising for that shown directly.
+const defaultAllocRatio = 12
+
 // refusedQuickly runs a body that must fail, with an error whose text
-// contains want, in well under its time limit: two seconds, stretched by
-// what the race detector costs.
-func refusedQuickly(t *testing.T, source, want string) {
+// contains want. The per-call bounds this proves refuse a request up front,
+// before doing any of the work a legal call of the same shape would do:
+// goja cannot interrupt one built-in call (.pine/memory/code-node.md), so a
+// bound that checked only after building its output would still finish and
+// still report the same message, just after allocating what it refused to
+// allocate. A wall clock can't tell those two apart on a loaded machine
+// (BUG-k99658): the elapsed time for either is comfortably under the run's
+// own limit either way, since the whole point of these fixtures (BUG-k99658
+// fix round 1) is that they're cheap. Bytes allocated is the load-independent
+// stand-in — a process's byte counters are moved only by what it itself
+// allocates, never by what else the machine is doing — so this measures the
+// allocation delta around the run and compares it with defaultAllocRatio (or
+// allocRatio, when the call names one: a few checks that accumulate a real
+// partial result before detecting the crossing legitimately cost more, see
+// their call sites) times the size the refused message reports.
+func refusedQuickly(t *testing.T, source, want string, allocRatio ...uint64) {
 	t.Helper()
-	start := time.Now()
+	ratio := uint64(defaultAllocRatio)
+	if len(allocRatio) > 0 {
+		ratio = allocRatio[0]
+	}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
 	_, err := runAll(t, newRunner(), source, nil)
+	runtime.ReadMemStats(&after)
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("%q: Run() error = %v, want one saying %q", source, err, want)
+		return
 	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second*time.Duration(interruptTolerance/50_000_000) {
-		t.Errorf("%q: refusing took %v", source, elapsed)
+	if size, ok := materialisedSize(err.Error()); ok {
+		if allocated, ceiling := after.TotalAlloc-before.TotalAlloc, size*ratio; allocated > ceiling {
+			t.Errorf("%q: refusing allocated %d bytes, more than %dx the %d the message reports; the bound looks checked after building (some of) the output, not before", source, allocated, ratio, size)
+		}
 	}
 }
 
@@ -137,22 +199,43 @@ func TestATypedArrayLengthThatIsNotAnObjectIsCheckedAsALength(t *testing.T) {
 func TestBuiltinsThatAmplifyTheirInputAreBounded(t *testing.T) {
 	for _, source := range []string{
 		"return [{ json: { n: Array(2 ** 20).join('x'.repeat(2 ** 10)).length } }]",
-		"return [{ json: { n: Array(2 ** 20).fill('x'.repeat(2 ** 10)).join('').length } }]",
-		"return [{ json: { n: Array(2 ** 20).fill('x'.repeat(2 ** 10)).toLocaleString().length } }]",
+		// join('') and toLocaleString have no glue to check up front, so they
+		// total each element as they go; a short array of doubled elements
+		// crosses the bound in tens of steps instead of the tens of
+		// thousands a long array of small ones needs.
+		"let big = 'x'\nfor (let i = 0; i < 20; i++) big = big + big\nreturn [{ json: { n: Array(40).fill(big).join('').length } }]",
+		"let big = 'x'\nfor (let i = 0; i < 20; i++) big = big + big\nreturn [{ json: { n: Array(40).fill(big).toLocaleString().length } }]",
 		"return [{ json: { n: new Uint8Array(2 ** 20).join('x'.repeat(2 ** 10)).length } }]",
-		"return [{ json: { n: 'x'.repeat(2 ** 16).replace(/x/g, \"$'\").length } }]",
 		"return [{ json: { n: 'x'.repeat(2 ** 15).replaceAll('x', 'y'.repeat(2 ** 11)).length } }]",
 		"return [{ json: { n: 'x'.repeat(2 ** 12).replace(/x/g, 'y'.repeat(2 ** 14)).length } }]",
-		"class Echo extends RegExp { exec(s) { return this.done ? null : (this.done = true, Object.assign(['x'.repeat(2 ** 20)], { index: 0 })) } }\nreturn [{ json: { n: 'x'.replace(new Echo('x'), '$&'.repeat(64)).length } }]",
-		"const big = 'x'.repeat(2 ** 24)\nreturn [{ json: { n: JSON.stringify(Array(4).fill(big)).length } }]",
+		// big is built by doubling, not repeat: goja's repeat writes one
+		// character at a time, which the race detector slows enough on its
+		// own to threaten the time limit (BUG-k99658); doubling is a copy
+		// per step and reaches the same 16 MiB in 24 steps.
+		"let big = 'x'\nfor (let i = 0; i < 24; i++) big = big + big\nreturn [{ json: { n: JSON.stringify(Array(4).fill(big)).length } }]",
 		"let nested = 0\nfor (let n = 0; n < 3000; n++) nested = [nested]\nreturn [{ json: { n: JSON.stringify(nested, null, 10).length } }]",
-		"const s = 'x'.repeat(2 ** 24)\nreturn [{ json: { n: s.concat(s, s).length } }]",
+		// concat's check totals its arguments' lengths before it concatenates
+		// anything, so a small legal string spread many times over-refuses
+		// without ever building or copying a large one.
+		"const s = 'x'.repeat(2 ** 16)\nreturn [{ json: { n: s.concat(...Array(600).fill(s)).length } }]",
 	} {
 		refusedQuickly(t, source, "a string length of")
 	}
+	// "$'" names everything after the match, so replacing every character of
+	// an all-matching subject makes each replacement almost as long as the
+	// subject itself — the classic quadratic replace pattern. Detecting the
+	// crossing still means having built the replacements that passed before
+	// it, which for this shape is a genuinely larger multiple of the size
+	// reported (measured under -race: ~24x, against ~8x for this test's other
+	// replace cases), so it gets its own, wider ratio rather than loosening
+	// the default for everything else. Object.assign's Echo class exercises
+	// the same "a whole match's worth of prior text is real, legitimate
+	// output" shape through a custom RegExp subclass.
+	refusedQuickly(t, "return [{ json: { n: 'x'.repeat(2 ** 16).replace(/x/g, \"$'\").length } }]", "a string length of", 32)
+	refusedQuickly(t, "class Echo extends RegExp { exec(s) { return this.done ? null : (this.done = true, Object.assign(['x'.repeat(2 ** 20)], { index: 0 })) } }\nreturn [{ json: { n: 'x'.replace(new Echo('x'), '$&'.repeat(64)).length } }]", "a string length of", 32)
 	for _, source := range []string{
 		"return [{ json: { n: Object.keys(new Uint8Array(2 ** 24)).length } }]",
-		"return [{ json: { n: Object.entries('x'.repeat(2 ** 24)).length } }]",
+		"let big = 'x'\nfor (let i = 0; i < 24; i++) big = big + big\nreturn [{ json: { n: Object.entries(big).length } }]",
 		"return [{ json: { n: Object.assign({}, new Uint8Array(2 ** 24)).length } }]",
 	} {
 		refusedQuickly(t, source, "a list of keys of 16777216")
@@ -162,11 +245,11 @@ func TestBuiltinsThatAmplifyTheirInputAreBounded(t *testing.T) {
 		"return [{ json: { n: [...new Uint8Array(2 ** 24)].length } }]",
 		"return [{ json: { n: [...new Uint8Array(2 ** 24).entries()].length } }]",
 		"return [{ json: { n: new Uint8Array(2 ** 24).sort()[0] } }]",
-		"return [{ json: { n: Array.from('x'.repeat(2 ** 24)).length } }]",
+		"let big = 'x'\nfor (let i = 0; i < 24; i++) big = big + big\nreturn [{ json: { n: Array.from(big).length } }]",
 	} {
 		refusedQuickly(t, source, "one call may handle here")
 	}
-	refusedQuickly(t, "return [{ json: { n: [...'x'.repeat(2 ** 24)].length } }]", "a string to iterate over, with a length of 16777216")
+	refusedQuickly(t, "let big = 'x'\nfor (let i = 0; i < 24; i++) big = big + big\nreturn [{ json: { n: [...big].length } }]", "a string to iterate over, with a length of 16777216")
 }
 
 // What the bounded built-ins return is what Node 24 returns for the same

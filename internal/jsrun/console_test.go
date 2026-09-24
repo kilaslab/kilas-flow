@@ -90,14 +90,20 @@ func TestConsoleShowsTypedArraysAndBuffersAsNodeDoes(t *testing.T) {
 }
 
 // %j marks a cycle as Node does, and a value too large to write as JSON at
-// all is marked rather than failing the code.
+// all is marked rather than failing the code. big only needs to be over the
+// characters bound, not built out of many bounded pieces: the check on
+// %j's JSON.stringify runs before any of it is escaped, so building it by
+// doubling (fast, one copy per step) rather than goja's repeat (one
+// character at a time, slow enough alone under the race detector to
+// threaten the time limit) keeps this well clear of BUG-k99658.
 func TestConsoleJSONPlaceholderMarksCyclesAndTextTooLargeToBuild(t *testing.T) {
 	expectPrinted(t, strings.Join([]string{
 		"const cyclic = {}",
 		"cyclic.self = cyclic",
 		"console.log('%j', cyclic)",
-		"const big = 'x'.repeat(2 ** 20)",
-		"console.log('%j done', Array(64).fill(big))",
+		"let big = 'x'",
+		"for (let i = 0; i < 26; i++) big = big + big",
+		"console.log('%j done', big)",
 		"console.log('%j', { a: [1, { b: undefined }] })",
 	}, "\n"), "[Circular]", "[JSON too large to show] done", `{"a":[1,{}]}`)
 }
