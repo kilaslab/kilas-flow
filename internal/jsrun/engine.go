@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -162,6 +163,9 @@ type vm struct {
 	// errorTypes are the error constructors, captured before any user code,
 	// that natives throw through.
 	errorTypes map[string]goja.Value
+	// callbacks are the host functions the runtime's closure was handed. No
+	// script may reach them; they are kept so a test can prove it.
+	callbacks *goja.Object
 	// timers are the armed timers, by the id the timers module gave them.
 	timers map[int64]*timerEntry
 
@@ -213,6 +217,7 @@ func newVM(limits Limits) (*vm, error) {
 	// eval and new Function parse at run time; without this they would read
 	// a file named by a trailing sourceMappingURL comment.
 	rt.SetParserOptions(parser.WithDisableSourceMaps)
+	rt.SetFieldNameMapper(noGoMembers{})
 	rt.SetMaxCallStackSize(limits.MaxCallDepth)
 	hostCtx, stopHost := context.WithCancel(context.Background())
 	v := &vm{
@@ -246,6 +251,22 @@ func newVM(limits Limits) (*vm, error) {
 	}
 	return v, nil
 }
+
+// noGoMembers hides every field and method of a Go value from scripts.
+//
+// goja exposes a Go value handed to a VM through reflection, exported fields
+// and methods included. The runtime never hands one over, but goja_nodejs
+// does: its Buffer keeps its own *Buffer under a symbol on the constructor,
+// and every URL and URLSearchParams is one of its structs, which its
+// functions find again by exporting the object. Exporting does not go through
+// this mapper, so those keep working, and a script sees only an opaque
+// handle. Without it, Buffer's handle offered WrapBytes, which copies an
+// array-like of any length in one call nothing can interrupt (BUG-h6tj4e).
+type noGoMembers struct{}
+
+func (noGoMembers) FieldName(reflect.Type, reflect.StructField) string { return "" }
+
+func (noGoMembers) MethodName(reflect.Type, reflect.Method) string { return "" }
 
 func callable(candidate goja.Value) (goja.Callable, error) {
 	function, ok := goja.AssertFunction(candidate)
@@ -363,6 +384,7 @@ func (v *vm) install(state string, input value, mode Mode, h host) error {
 				return err
 			}
 		}
+		v.callbacks = callbacks
 		factories := v.rt.NewObject()
 		for _, name := range moduleOrder {
 			compiled, err := moduleProgram(name)

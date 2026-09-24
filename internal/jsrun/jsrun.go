@@ -210,10 +210,12 @@ type Runner struct {
 	heapCeiling uint64
 	slots       chan struct{}
 
-	// Test seams, set only by export_test.go.
+	// Test seams, set only by export_test.go and the package's own tests.
 	betweenItems  func()
 	forcedLibrary []string
 	onInterrupt   func(time.Time)
+	// inspect is handed the VM once the code has run, before it is closed.
+	inspect func(*vm)
 }
 
 // NewRunner builds a runner for one deployment.
