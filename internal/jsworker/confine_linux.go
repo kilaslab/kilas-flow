@@ -84,10 +84,16 @@ func confineSelf() confinement {
 	// What the runtime would otherwise read from a file the first time it
 	// is used: the local time zone, which `new Date()` shows.
 	_ = time.Local.String()
-	if covers, err := restrictFilesystem(); err != nil {
+	covers, zones, err := restrictFilesystem()
+	if err != nil {
 		confined.Missing = append(confined.Missing, layerLandlock+": "+err.Error())
 	} else {
 		confined.Active = append(confined.Active, fmt.Sprintf("%s (%s)", layerLandlock, covers))
+	}
+	if zones != nil {
+		// The files stay closed, and a script's time zones will not
+		// resolve: the operator is told so, as a layer missing is.
+		confined.Missing = append(confined.Missing, layerZones+": "+zones.Error())
 	}
 	return confined
 }
@@ -109,40 +115,40 @@ func zoneSources() []string {
 // and signals and abstract Unix sockets outside the domain. Landlock also
 // keeps a process in a domain from tracing one outside it. Files already
 // open, the worker's pipes, are not affected. It reports what the domain
-// covers.
-func restrictFilesystem() (string, error) {
+// covers, and why the time zone database could not be allowed, when it
+// could not.
+func restrictFilesystem() (covers string, zones error, err error) {
 	abi, _, errno := unix.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET, 0, 0, unix.LANDLOCK_CREATE_RULESET_VERSION)
 	if errno != 0 {
-		return "", fmt.Errorf("not available in this kernel (%v)", errno)
+		return "", nil, fmt.Errorf("not available in this kernel (%v)", errno)
 	}
 	attr := unix.LandlockRulesetAttr{Access_fs: handledFileAccess(int(abi))}
-	covers := []string{"files"}
+	covered := []string{"files"}
 	if abi >= 4 {
 		attr.Access_net = unix.LANDLOCK_ACCESS_NET_BIND_TCP | unix.LANDLOCK_ACCESS_NET_CONNECT_TCP
-		covers = append(covers, "TCP")
+		covered = append(covered, "TCP")
 	}
 	if abi >= 6 {
 		attr.Scoped = unix.LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET | unix.LANDLOCK_SCOPE_SIGNAL
-		covers = append(covers, "signals")
+		covered = append(covered, "signals")
 	}
 	// A kernel accepts fields it does not know, as long as they are zero.
 	ruleset, _, errno := unix.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET, uintptr(unsafe.Pointer(&attr)), unsafe.Sizeof(attr), 0)
 	if errno != 0 {
-		return "", fmt.Errorf("the ruleset was refused (%v)", errno)
+		return "", nil, fmt.Errorf("the ruleset was refused (%v)", errno)
 	}
 	defer unix.Close(int(ruleset))
 	// A zone database that cannot be allowed stays closed like every other
 	// file: a script's zones then fail to resolve, and nothing else opens.
 	for _, source := range zoneSources() {
-		if err := grantReading(int(ruleset), source); err != nil {
-			covers = append(covers, "no time zone database: "+err.Error())
+		if zones = grantReading(int(ruleset), source); zones != nil {
 			break
 		}
 	}
 	if err := restrictAllThreads(int(ruleset)); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return strings.Join(covers, ", "), nil
+	return strings.Join(covered, ", "), zones, nil
 }
 
 // handledFileAccess is every filesystem right a landlock ABI knows.

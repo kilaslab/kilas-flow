@@ -23,6 +23,9 @@ const (
 	layerIPC           = "IPC namespace"
 	layerLandlock      = "landlock"
 	layerUndumpable    = "undumpable"
+	// layerZones is not a layer but what landlock leaves a worker to read:
+	// without it, a script's time zones do not resolve.
+	layerZones = "time zone database"
 )
 
 // confinement is what keeps a worker from what the server can reach: the

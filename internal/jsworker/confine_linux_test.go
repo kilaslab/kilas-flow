@@ -23,6 +23,8 @@ import (
 	"time"
 	"unsafe"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/kilaslab/kilas-flow/internal/jsrun"
 )
 
@@ -162,6 +164,15 @@ func readOnManyThreads(file string, outcome func(error) string) string {
 	return worst
 }
 
+// landlockABI is the landlock ABI this kernel has, 0 when it has none.
+func landlockABI() int {
+	abi, _, errno := syscall.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET, 0, 0, unix.LANDLOCK_CREATE_RULESET_VERSION)
+	if errno != 0 {
+		return 0
+	}
+	return int(abi)
+}
+
 // ptraceOutcome attaches to a process and lets it go again at once. ptrace
 // requests must come from the thread that attached.
 func ptraceOutcome(pid int, outcome func(error) string) string {
@@ -283,14 +294,19 @@ func testConfinement(t *testing.T, mode string) {
 			t.Errorf("the worker planted a file in the server's data directory: %v", err)
 		}
 	}
-	if landlocked && strings.Contains(covers, "TCP") {
+	// What landlock must cover is read from the kernel, not from the worker.
+	abi := landlockABI()
+	if landlocked && (strings.Contains(covers, "TCP") != (abi >= 4) || strings.Contains(covers, "signals") != (abi >= 6)) {
+		t.Errorf("landlock = %q on a kernel with landlock ABI %d", covers, abi)
+	}
+	if landlocked && abi >= 4 {
 		refused("dial")
 	}
-	if landlocked && strings.Contains(covers, "signals") {
+	if landlocked && abi >= 6 {
 		refused("dialAbstract", "signalServerGroup", "signalSleeper", "signalServer")
 	}
-	if mode == "probe-no-zones" && landlocked && !strings.Contains(covers, "no time zone database") {
-		t.Errorf("landlock = %q, want it to say the time zone database stayed closed", covers)
+	if mode == "probe-no-zones" && landlocked && !slices.ContainsFunc(worker.Missing, func(layer string) bool { return strings.HasPrefix(layer, layerZones+":") }) {
+		t.Errorf("missing = %q, want the time zone database named, so the operator is warned", worker.Missing)
 	}
 	if !namespaced {
 		return
