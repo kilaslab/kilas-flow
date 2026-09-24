@@ -20,10 +20,12 @@ import (
 // The security review's enumeration (FEAT-vjjs8t): everything a script can
 // reach, walked from the global object, from `this` and the arguments the
 // code is called with, and from an instance of everything the runtime or its
-// libraries construct. Two things are proved over the whole walk:
+// libraries construct. Three things are proved over the whole walk:
 //
 //   - no Go value is exposed through reflection, so no Go method or field is
 //     callable or readable from a script, whatever a library hands it;
+//   - no host callback is reachable, even through the built-ins the runtime
+//     calls while the code runs;
 //   - the surface the runtime adds over a bare goja VM is exactly the
 //     reviewed list in testdata/surface.txt. A property added, removed or
 //     changed without a review fails here; rewrite the list with
@@ -321,8 +323,6 @@ func TestNoGoFieldOrMethodIsReachable(t *testing.T) {
 		}
 	}
 }
-
-var _ = slices.Sort[[]string]
 
 // The runtime's host callbacks, and the kit its modules are built with, stay
 // inside the runtime's closures. None is reachable from anything a script
