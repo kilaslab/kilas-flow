@@ -643,8 +643,12 @@ func (store *GORMWorkflowStore) Delete(ctx context.Context, tenant TenantScope, 
 		if err := tx.Delete(&model).Error; err != nil {
 			return fmt.Errorf("delete workflow: %w", err)
 		}
-		// A soft-deleted workflow keeps its version and execution history, but
-		// it must stop answering immediately.
+		// A soft-deleted workflow keeps its version and execution history,
+		// but its static data is scratch space for runs it will never have.
+		if err := deleteStaticData(tx, tenant.ID, workflowID); err != nil {
+			return err
+		}
+		// It must stop answering immediately.
 		return removeWebhookBindings(tx, tenant.ID, workflowID)
 	})
 }

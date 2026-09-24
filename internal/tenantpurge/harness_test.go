@@ -479,6 +479,11 @@ func (env *purgeEnv) seedTenant(id string) *tenantSeed {
 		env.t.Fatalf("activation of %s bound no route for its webhook node", id)
 	}
 
+	// The static data its Code nodes keep between runs.
+	if err := repository.NewStaticDataStore(env.db.DB).SaveStaticData(ctx, tenant, stored.ID, []byte(`{"global":{"cell":"`+seed.cell+`"}}`)); err != nil {
+		env.t.Fatalf("SaveStaticData(%s) error = %v", id, err)
+	}
+
 	// A workflow the tenant deleted before the tenant itself. workflowModel
 	// soft-deletes, so a purge that only stamps deleted_at would leave the
 	// customer's workflow name in the table.
