@@ -184,6 +184,10 @@ func (l *ledger) call(helpers Helpers) func(context.Context, HostRequest) HostAn
 		if helpers == nil {
 			return HostAnswer{Failure: "this.helpers." + request.Method + " is not available here"}
 		}
+		// A call the code left behind when its run ended does nothing.
+		if ctx.Err() != nil {
+			return HostAnswer{Failure: "the run this call belongs to is over"}
+		}
 		switch request.Method {
 		case HelperHTTPRequest:
 			if request.HTTP == nil {
