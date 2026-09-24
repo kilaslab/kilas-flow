@@ -111,14 +111,14 @@ func TestJsonIsOnlyAvailablePerItem(t *testing.T) {
 // refusal sentence, even when the analyser could not see it coming.
 func TestUnavailableRootsFailWithTheirName(t *testing.T) {
 	for source, subject := range map[string]string{
-		"return [{ json: { value: $jmespath({}, 'a') } }]":                                    "uses $jmespath",
-		"return [{ json: { value: $prevNode.name } }]":                                        "uses $prevNode",
-		"return [{ json: { value: $input.params.operation } }]":                               "uses $input.params",
-		"return [{ json: { value: $input.context.noItemsLeft } }]":                            "uses $input.context",
-		"return [{ json: { value: $execution.customData } }]":                                 "uses $execution.customData",
-		"return [{ json: { value: $secrets.vault } }]":                                        "uses $secrets",
-		"return [{ json: { value: globalThis['$getWorkflow' + 'StaticData']('global') } }]":   "uses $getWorkflowStaticData",
-		"const self = this\nreturn [{ json: { value: await self.helpers.httpRequest({}) } }]": "uses this.helpers.httpRequest",
+		"return [{ json: { value: $jmespath({}, 'a') } }]":                                "uses $jmespath",
+		"return [{ json: { value: $prevNode.name } }]":                                    "uses $prevNode",
+		"return [{ json: { value: $input.params.operation } }]":                           "uses $input.params",
+		"return [{ json: { value: $input.context.noItemsLeft } }]":                        "uses $input.context",
+		"return [{ json: { value: $execution.customData } }]":                             "uses $execution.customData",
+		"return [{ json: { value: $secrets.vault } }]":                                    "uses $secrets",
+		"const self = this\nreturn [{ json: { value: await self.helpers.request({}) } }]": "uses this.helpers.request",
+		"return [{ json: { value: await this.helpers['copy' + 'BinaryFile']() } }]":       "uses this.helpers.copyBinaryFile",
 	} {
 		_, err := runTask(t, jsrun.Task{Source: source})
 		if err == nil || !strings.Contains(err.Error(), "this node's code "+subject+", which this server does not run") {

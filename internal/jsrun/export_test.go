@@ -1,7 +1,6 @@
 package jsrun
 
 import (
-	"context"
 	"time"
 
 	"github.com/dlclark/regexp2/v2"
@@ -17,12 +16,6 @@ func BareGlobalsForTest() []string {
 		out = append(out, name.(string))
 	}
 	return out
-}
-
-// BindAsyncForTest installs an asynchronous host function in every VM the
-// runner creates, the way a node hands the runtime a capability.
-func (runner *Runner) BindAsyncForTest(name string, fn func(context.Context, []any) (any, error)) {
-	runner.testHost = func(v *vm) { _ = v.bindAsync(name, fn) }
 }
 
 // PauseBetweenItemsForTest runs pause between the items of per-item mode,

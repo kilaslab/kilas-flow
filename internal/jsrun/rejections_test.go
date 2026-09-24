@@ -161,22 +161,22 @@ func TestAnUncaughtErrorIsNotAnItemsFailure(t *testing.T) {
 	}
 }
 
-// A host call's promise is handed to the code, so it is the code's to handle,
+// A helper's promise is handed to the code, so it is the code's to handle,
 // as in Node: one that fails with no handler is uncaught, and one the code
 // awaits is not.
-func TestAHostCallsPromiseIsTheCodes(t *testing.T) {
-	runner := newRunner()
-	runner.BindAsyncForTest("failing", func(context.Context, []any) (any, error) {
-		return nil, errors.New("the host said no")
-	})
-	for _, source := range []string{"failing()\n" + sleep + "return items", "failing().then(() => {})\n" + sleep + "return items"} {
-		_, err := runAll(t, runner, source, nil)
+func TestAHelpersPromiseIsTheCodes(t *testing.T) {
+	failing := &fakeHelpers{http: func(context.Context, jsrun.HTTPRequest) (jsrun.HTTPResponse, []byte, error) {
+		return jsrun.HTTPResponse{}, nil, errors.New("the host said no")
+	}}
+	request := "this.helpers.httpRequest({ url: 'https://example.com' })"
+	for _, source := range []string{request + "\n" + sleep + "return items", request + ".then(() => {})\n" + sleep + "return items"} {
+		_, err := helperRun(t, failing, source)
 		if uncaught(t, err); !strings.Contains(err.Error(), "the host said no") {
-			t.Fatalf("Run() error = %v, want the host call's failure uncaught", err)
+			t.Fatalf("Run() error = %v, want the helper's failure uncaught", err)
 		}
 	}
-	if _, err := runAll(t, runner, "try { await failing() } catch (error) {}\n"+sleep+"return items", nil); err != nil {
-		t.Fatalf("Run() error = %v, want an awaited host call's failure handled", err)
+	if _, err := helperRun(t, failing, "try { await "+request+" } catch (error) {}\n"+sleep+"return items"); err != nil {
+		t.Fatalf("Run() error = %v, want an awaited helper's failure handled", err)
 	}
 }
 

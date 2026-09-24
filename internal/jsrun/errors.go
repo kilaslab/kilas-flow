@@ -27,6 +27,14 @@ var (
 	// ErrHostCallLimit reports that the script called into the host, for
 	// example to make an HTTP request, more often than allowed.
 	ErrHostCallLimit = errors.New("code made more host calls than allowed")
+	// ErrFileLimit reports a file, or a request body, larger than a helper
+	// may move between the code and the server in one call.
+	ErrFileLimit = errors.New("code handled a file larger than allowed")
+	// ErrResponseLimit reports an HTTP response larger than the code may be
+	// handed.
+	ErrResponseLimit = errors.New("code received an HTTP response larger than allowed")
+	// ErrStaticDataLimit reports workflow static data grown past its cap.
+	ErrStaticDataLimit = errors.New("code grew the workflow static data larger than allowed")
 	// ErrCallDepth reports runaway recursion. Unlike V8's RangeError, goja's
 	// stack overflow cannot be caught by the script.
 	ErrCallDepth = errors.New("code called functions nested deeper than allowed")
@@ -66,6 +74,22 @@ func timedOut(limit time.Duration) error {
 func outOfMemory(ceiling uint64) error {
 	return named(ErrMemoryLimit, fmt.Sprintf(
 		"code was stopped because the server's memory for scripts reached its %s ceiling", byteSize(int64(ceiling))))
+}
+
+// FileLimitError is a file, or a request body, of size bytes, past the cap
+// on what one helper call may move.
+func FileLimitError(what string, size int64) error {
+	return named(ErrFileLimit, fmt.Sprintf("code handled %s of %s, more than the %s one helper call may move", what, byteSize(size), byteSize(MaxFileBytes)))
+}
+
+// ResponseLimitError is an HTTP response longer than limit bytes.
+func ResponseLimitError(limit int64) error {
+	return named(ErrResponseLimit, fmt.Sprintf("an HTTP response the code asked for is larger than the %s allowed", byteSize(limit)))
+}
+
+// StaticDataLimitError is workflow static data grown past its cap, as JSON.
+func StaticDataLimitError() error {
+	return named(ErrStaticDataLimit, fmt.Sprintf("the workflow static data grew larger than the %s allowed", byteSize(MaxStaticDataBytes)))
 }
 
 // TimeLimitError, MemoryLimitError and EngineFaultError are the failures a

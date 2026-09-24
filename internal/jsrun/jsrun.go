@@ -186,6 +186,10 @@ type Result struct {
 	// names every input item exactly once. Items is nil then; the node that
 	// asked reorders its own items, which keeps their files and lineage.
 	Order []int `json:",omitempty"`
+	// StaticData is the workflow static data the code read, by kind
+	// ("global", "node"), as JSON after a successful run, for the node to
+	// keep with its execution. Kinds the code never read are absent.
+	StaticData map[string]string `json:",omitempty"`
 }
 
 // ItemOutcome is one input item's result in "Run once for each item" mode.
@@ -207,7 +211,6 @@ type Runner struct {
 	slots       chan struct{}
 
 	// Test seams, set only by export_test.go.
-	testHost      func(*vm)
 	betweenItems  func()
 	forcedLibrary []string
 	onInterrupt   func(time.Time)

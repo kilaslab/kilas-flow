@@ -99,15 +99,29 @@ func TestRequireOfAModuleNotShippedIsRefused(t *testing.T) {
 // Credentials are never reachable from a Code node, as in n8n. A class or a
 // function has its own `this`, so only the code's own `this` counts; an
 // arrow function shares it.
-func TestCredentialsAndHelpersAreRefusedOnlyOnTheCodesOwnThis(t *testing.T) {
+func TestCredentialsAreRefusedOnlyOnTheCodesOwnThis(t *testing.T) {
 	refusedFor(t, "const key = await this.getCredentials('api')\nreturn []", "calls this.getCredentials")
 	refusedFor(t, "const get = () => this['getCredentials']\nreturn []", "calls this.getCredentials")
-	refusedFor(t, "const page = await this.helpers.httpRequest({ url: 'https://example.com' })\nreturn []", "uses this.helpers")
-	accepted(t, "class Client { credentials() { return this.getCredentials } }\nfunction helper() { return this.helpers }\nreturn []")
+	accepted(t, "class Client { credentials() { return this.getCredentials } }\nreturn []")
 }
 
-func TestStaticDataIsRefusedUntilItIsSupported(t *testing.T) {
-	refusedFor(t, "const state = $getWorkflowStaticData('global')\nreturn []", "uses $getWorkflowStaticData")
+// Three helpers run; any other the code names is refused before it runs, and
+// one reached by a computed name is refused when it is reached.
+func TestOnlyTheSupportedHelpersAreAccepted(t *testing.T) {
+	accepted(t, strings.Join([]string{
+		"const page = await this.helpers.httpRequest({ url: 'https://example.com' })",
+		"const bytes = await this.helpers['getBinaryDataBuffer'](0, 'data')",
+		"const file = await this.helpers.prepareBinaryData(bytes, 'a.txt')",
+		"const helpers = this.helpers",
+		"return [{ json: { page }, binary: { data: file } }]",
+	}, "\n"))
+	refusedFor(t, "const page = await this.helpers.request({ uri: 'https://example.com' })\nreturn []", "uses this.helpers.request")
+	refusedFor(t, "const get = () => this.helpers['httpRequestWithAuthentication']\nreturn []", "uses this.helpers.httpRequestWithAuthentication")
+	accepted(t, "function helper() { return this.helpers.request }\nreturn []")
+}
+
+func TestStaticDataIsAccepted(t *testing.T) {
+	accepted(t, "const state = $getWorkflowStaticData('global')\nstate.count = (state.count || 0) + 1\nreturn []")
 }
 
 func TestLuxonIsNoticedWhereverTheCodeNamesIt(t *testing.T) {

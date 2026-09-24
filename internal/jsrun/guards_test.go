@@ -102,23 +102,6 @@ func TestAConstructorCallingRegExpPlainlyGetsARegularExpression(t *testing.T) {
 	}
 }
 
-// A host function runs on its own goroutine, outside every guard on the VM's.
-// A panic there must reject the call, not end the server.
-func TestAPanickingHostCallFailsTheRunNotTheServer(t *testing.T) {
-	runner := newRunner()
-	runner.BindAsyncForTest("fragile", func(context.Context, []any) (any, error) {
-		panic("a bug in a capability")
-	})
-	_, err := runner.Run(context.Background(), jsrun.Task{Source: "await fragile()\nreturn []"})
-	if err == nil || !strings.Contains(err.Error(), "the host call failed (a bug in a capability)") {
-		t.Fatalf("Run() error = %v, want the panic turned into a failed call", err)
-	}
-	result, err := runner.Run(context.Background(), jsrun.Task{Source: "try { await fragile() } catch (error) { return [{ json: { caught: error.message.includes('host call failed') } }] }"})
-	if err != nil || result.Items[0].JSON["caught"] != true {
-		t.Fatalf("Run() = %#v, %v; want the code able to catch it", result.Items, err)
-	}
-}
-
 // A single built-in call runs to completion whatever the clock or the
 // watchdog say, so the ones that allocate or loop as far as a number tells
 // them refuse a huge number up front. Each of these took seconds and

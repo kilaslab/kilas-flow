@@ -1,7 +1,7 @@
 ---
 id: FEAT-x9gq0s
 title: 'JS Code runtime P5: this.helpers (httpRequest, binary) and $getWorkflowStaticData'
-status: todo
+status: doing
 priority: medium
 labels:
     - code-node
@@ -31,6 +31,40 @@ Child of EPIC-tjnr1z. The full design, including the code shapes, file layout an
 See EPIC-tjnr1z, *Plan → Phase 5*.
 
 # Notes
+
+## Plan (2026-09-24, backend half — Task 1 of the EPIC-tjnr1z remaining-work plan)
+
+The editor Console tab is a separate task (Task 2); this is the backend.
+
+1. **Analyser** (`internal/jsrun/analyze.go`): drop the blanket refusal of
+   `this.helpers` and `$getWorkflowStaticData`; refuse a *named*
+   `this.helpers.X` other than `httpRequest`, `getBinaryDataBuffer` and
+   `prepareBinaryData`.
+2. **Runtime** (`internal/jsrun`): one asynchronous host call, `Host.Call`,
+   that every helper goes through. The VM hands each call to a goroutine and
+   settles its promise through the job loop, so the VM keeps running timers
+   and other promises, and `Promise.all` has several calls in flight. The
+   clock pauses while the VM is idle waiting *only* on host calls. Every call
+   counts against `MaxHostCalls`. A JavaScript module (`helpers.js`) turns
+   n8n's options into a plain request and the answer back into n8n's shapes.
+   `$getWorkflowStaticData` is a synchronous call (as `$('Node')` is); what
+   the code handed out is written back as JSON after a successful run, under
+   a 256 KiB cap. Files a run stores are recorded beside the job, so the
+   decoder accepts them and nothing else.
+3. **Worker protocol** (`internal/jsworker`): every call carries an id; a
+   reader goroutine in the worker routes replies, so a reply can arrive while
+   the job loop runs; the server answers asynchronous calls on goroutines and
+   pauses the job's kill deadline while any is in flight. Out-of-turn,
+   oversized or unknown frames retire the worker.
+4. **Engine**: `engine.StaticData`, a per-execution handle loaded lazily
+   through a `StaticDataStore`, saved by the service only after a successful
+   execution whose trigger is not `manual`, and only when it changed.
+5. **Repository**: migration 000024 (`workflow_static_data`, sqlite and
+   postgres), a GORM store, deleted with its workflow and by the tenant purge.
+6. **Nodes**: the Code (JavaScript) executor's server half: HTTP through
+   `internal/safehttp` with the deployment's egress policy, files through
+   `request.Binaries`, static data through the execution's handle.
+
 
 ## Console tab (editor)
 

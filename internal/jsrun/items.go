@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"path"
 	"strings"
 
 	"github.com/kilaslab/kilas-flow/internal/workflow"
@@ -45,10 +44,7 @@ func encodeItems(items []workflow.Item) (string, error) {
 		if len(item.Binary) > 0 {
 			wire[index].Binary = make(map[string]wireBinary, len(item.Binary))
 			for property, ref := range item.Binary {
-				wire[index].Binary[property] = wireBinary{
-					ID: ref.ID, FileName: ref.FileName, MimeType: ref.MediaType,
-					FileExtension: strings.TrimPrefix(path.Ext(ref.FileName), "."), FileSize: ref.Size,
-				}
+				wire[index].Binary[property] = fileOfRef(ref)
 			}
 		}
 	}
@@ -93,7 +89,8 @@ func (d *decoder) decode(text string, eachItem bool) ([]workflow.Item, error) {
 	return items, nil
 }
 
-// checkFiles refuses a result that passes on a file the node was not given.
+// checkFiles refuses a result that passes on a file the node was not given,
+// or one it did not store itself.
 // It runs where the code ran, after each call, so a per-item run stops (or,
 // continuing on failure, fails) at the item that returned it; decoding in the
 // server checks again. Most results carry no file at all, which the text
@@ -124,10 +121,10 @@ func checkFiles(text string, known map[string]bool, eachItem bool) error {
 func fileOf(raw json.RawMessage, known map[string]bool, where, property string) (wireBinary, error) {
 	var file wireBinary
 	if json.Unmarshal(raw, &file) != nil || file.ID == "" {
-		return file, named(ErrInvalidReturn, fmt.Sprintf("%s has a binary %q that is not a file reference; binary entries can only pass on files the node was given", where, property))
+		return file, named(ErrInvalidReturn, fmt.Sprintf("%s has a binary %q that is not a file reference; binary entries can only pass on files the node was given or stored with prepareBinaryData", where, property))
 	}
 	if !known[file.ID] {
-		return file, named(ErrInvalidReturn, fmt.Sprintf("%s has a binary %q naming a file this node was not given", where, property))
+		return file, named(ErrInvalidReturn, fmt.Sprintf("%s has a binary %q naming a file this node was not given and did not store", where, property))
 	}
 	return file, nil
 }

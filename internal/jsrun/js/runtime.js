@@ -1450,7 +1450,6 @@
     [
       ['$jmespath', 'uses $jmespath'],
       ['$evaluateExpression', 'uses $evaluateExpression'],
-      ['$getWorkflowStaticData', 'uses $getWorkflowStaticData'],
     ].forEach(function (entry) {
       define(entry[0], function () { throw new Error(refusal(entry[1], snapshot.advice)); });
     });
@@ -1515,13 +1514,19 @@
     console.table = function (value) { console.log(value); };
     define('console', console);
 
-    // this.helpers is n8n's host API for code. Until it is supported, each
-    // helper refuses by name rather than being missing.
+    // this.helpers is n8n's host API for code. The helpers module fills in
+    // the ones that run; any other the code reaches refuses by name rather
+    // than reading as missing. then and toJSON stay plain, since await and
+    // JSON.stringify probe for them.
     var helpers = {};
-    ['httpRequest', 'httpRequestWithAuthentication', 'request', 'getBinaryDataBuffer', 'prepareBinaryData'].forEach(function (name) {
-      helpers[name] = function () { throw new Error(refusal('uses this.helpers.' + name, snapshot.advice)); };
-    });
-    var self = { helpers: helpers };
+    var self = {
+      helpers: new ProxyType(helpers, {
+        get: function (target, name) {
+          if (typeof name !== 'string' || name in target || name === 'then' || name === 'toJSON') return target[name];
+          return function () { throw new ErrorType(refusal('uses this.helpers.' + name, snapshot.advice)); };
+        },
+      }),
+    };
 
     // The runtime's own modules run now, before any user code, each seeing
     // the globals the ones before it defined.
@@ -1542,6 +1547,9 @@
       caps: snapshot.caps,
       library: library,
       timers: { start: host.timerStart, cancel: host.timerCancel },
+      hostCall: host.call,
+      staticData: host.staticData,
+      helpers: helpers,
       snapshot: snapshot,
       global: global,
     };
@@ -1566,6 +1574,7 @@
     snapshot.preload.forEach(library);
 
     return {
+      staticData: shipped.helpers.staticData,
       run: function (body, itemIndex) {
         current = itemIndex;
         codeBody = body;

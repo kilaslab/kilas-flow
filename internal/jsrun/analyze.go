@@ -388,9 +388,17 @@ func (in *inspector) visit(node ast.Node, bodyThis bool) bool {
 		if bodyThis && isThis(node.Left) {
 			in.thisMember(string(node.Identifier.Name), node.Idx0())
 		}
+		if bodyThis && isThisHelpers(node.Left) {
+			in.helper(string(node.Identifier.Name), node.Idx0())
+		}
 	case *ast.BracketExpression:
-		if literal, ok := node.Member.(*ast.StringLiteral); ok && bodyThis && isThis(node.Left) {
-			in.thisMember(string(literal.Value), node.Idx0())
+		if literal, ok := node.Member.(*ast.StringLiteral); ok && bodyThis {
+			if isThis(node.Left) {
+				in.thisMember(string(literal.Value), node.Idx0())
+			}
+			if isThisHelpers(node.Left) {
+				in.helper(string(literal.Value), node.Idx0())
+			}
 		}
 	case *ast.Identifier:
 		if luxonNames[string(node.Name)] {
@@ -504,6 +512,18 @@ func isThis(expression ast.Expression) bool {
 	return ok
 }
 
+// isThisHelpers reports `this.helpers` or `this['helpers']`.
+func isThisHelpers(expression ast.Expression) bool {
+	switch member := expression.(type) {
+	case *ast.DotExpression:
+		return isThis(member.Left) && member.Identifier.Name == "helpers"
+	case *ast.BracketExpression:
+		literal, ok := member.Member.(*ast.StringLiteral)
+		return ok && isThis(member.Left) && literal.Value == "helpers"
+	}
+	return false
+}
+
 func (in *inspector) call(callee ast.Expression, arguments []ast.Expression, at file.Idx) {
 	identifier, ok := callee.(*ast.Identifier)
 	if !ok {
@@ -514,8 +534,6 @@ func (in *inspector) call(callee ast.Expression, arguments []ast.Expression, at 
 		in.require(arguments, at)
 	case "RegExp":
 		in.regexpConstructor(arguments, at)
-	case "$getWorkflowStaticData":
-		in.refuse("uses $getWorkflowStaticData", at)
 	}
 }
 
@@ -541,12 +559,24 @@ func (in *inspector) require(arguments []ast.Expression, at file.Idx) {
 // thisMember checks `this.<name>` on the body's own `this`. Credentials are
 // never reachable from a Code node, as in n8n.
 func (in *inspector) thisMember(name string, at file.Idx) {
-	switch name {
-	case "getCredentials":
+	if name == "getCredentials" {
 		in.refuse("calls this.getCredentials", at)
-	case "helpers":
-		in.refuse("uses this.helpers", at)
 	}
+}
+
+// supportedHelpers are the members of this.helpers a body may use. n8n's
+// helpers object has many more; each of those is refused by name here when
+// the code names it, and when it is reached if the name is computed.
+var supportedHelpers = []string{"httpRequest", "getBinaryDataBuffer", "prepareBinaryData"}
+
+// helper checks `this.helpers.<name>`.
+func (in *inspector) helper(name string, at file.Idx) {
+	for _, supported := range supportedHelpers {
+		if name == supported {
+			return
+		}
+	}
+	in.refuse("uses this.helpers."+name, at)
 }
 
 func (in *inspector) regexpConstructor(arguments []ast.Expression, at file.Idx) {
