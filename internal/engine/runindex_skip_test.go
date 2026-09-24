@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/expression"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
@@ -64,6 +65,54 @@ func TestASkippedDeliveryDoesNotCountAsARun(t *testing.T) {
 	}
 }
 
+// A read that names a run numbers a node's runs as $runIndex does, real runs
+// only: the tail was delivered nothing once (an empty run recorded for it)
+// and then ran, so its latest run is run 0, and reading it as run 0, or as
+// the reader's own $runIndex in step with it, is not an earlier run.
+func TestAReadOfANamedRunCountsOnlyRealRuns(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.step", "Step"))
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion, ID: "wf_skip_read", Name: "Read after a skip",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "empty", Name: "Empty", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 200, Y: 0}},
+			{ID: "full", Name: "Full", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 200, Y: 300}},
+			{ID: "tail", Name: "Tail", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 400, Y: 150}},
+			{ID: "reader", Name: "Reader", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 600, Y: 150}},
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "start", "main", "empty"), mainEdge("c2", "start", "main", "full"),
+			mainEdge("c3", "empty", "main", "tail"), mainEdge("c4", "full", "main", "tail"), mainEdge("c5", "tail", "main", "reader"),
+		},
+		Settings: map[string]any{},
+	})
+	var read []string
+	var tail expression.NodeItem
+	executors := threeItemStart(t, "test.step", func(_ context.Context, node workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+		switch node.ID {
+		case "empty":
+			return workflow.NodeOutput{{}}, nil
+		case "reader":
+			tail = request.NodeItems["Tail"]
+			context := request.ExpressionContext(input["main"][0], input, 0)
+			for _, template := range []string{"{{ $items('Tail', 0, 0).length }}", "{{ $items('Tail', 0, $runIndex).length }}"} {
+				value, err := expression.Evaluate(template, context)
+				read = append(read, fmt.Sprint(value, err))
+			}
+		}
+		return workflow.NodeOutput{input["main"]}, nil
+	})
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if tail.RunIndex != 1 || tail.LatestRun() != 0 {
+		t.Fatalf("tail recorded as run %d, latest real run %d; want the skipped delivery counted only in the first", tail.RunIndex, tail.LatestRun())
+	}
+	if got := strings.Join(read, " "); got != "3 <nil> 3 <nil>" {
+		t.Fatalf("reads = %s, want the tail's three items both ways", got)
+	}
+}
+
 // A resumed run counts on from the checkpoint's executed runs. A checkpoint
 // written before they were counted has only the runs, skipped deliveries
 // included, which is what the count was read from then.
@@ -107,6 +156,62 @@ func TestAResumedRunCountsOnFromTheCheckpoint(t *testing.T) {
 		if got := fmt.Sprint(seen); got != want {
 			t.Errorf("executions %v: the resumed node ran with run index %s, want %s", executions, got, want)
 		}
+	}
+}
+
+// A checkpoint written before a node's items were recorded by output still
+// reads one output: the lengths are rebuilt from its named ports, in the
+// order its definition gives its outputs.
+func TestAnOlderCheckpointStillReadsOneOutput(t *testing.T) {
+	gate := stepType("test.gate", "Gate")
+	gate.Outputs = []workflow.Port{{Name: "true", Kind: workflow.ConnectionMain}, {Name: "false", Kind: workflow.ConnectionMain}}
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.step", "Step"), gate)
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion, ID: "wf_old_gate", Name: "Old gate",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "gate", Name: "Gate", Type: "test.gate", TypeVersion: workflow.V(1), Position: workflow.Position{X: 200}},
+			{ID: "wait", Name: "Wait", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 400}},
+			{ID: "reader", Name: "Reader", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 600}},
+		},
+		Connections: []workflow.Connection{mainEdge("c1", "start", "main", "gate"), mainEdge("c2", "gate", "true", "wait"), mainEdge("c3", "wait", "main", "reader")},
+		Settings:    map[string]any{},
+	})
+	item := workflow.Item{JSON: map[string]any{}}
+	ran := workflow.NodeOutput{{item}}
+	var read []string
+	executors := threeItemStart(t, "test.step", func(_ context.Context, node workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+		if node.ID != "reader" {
+			return workflow.NodeOutput{input["main"]}, nil
+		}
+		context := request.ExpressionContext(input["main"][0], input, 0)
+		for _, template := range []string{"{{ $items('Gate').map(i => i.json.v) }}", "{{ $items('Gate', 1).map(i => i.json.v) }}"} {
+			value, err := expression.Evaluate(template, context)
+			read = append(read, fmt.Sprint(value, err))
+		}
+		return workflow.NodeOutput{input["main"]}, nil
+	})
+	gated := workflow.NodeOutput{{item, item}, {item}}
+	if err := executors.Register("test.gate", engine.ExecutorFunc(func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+		return gated, nil
+	})); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	checkpoint := engine.Checkpoint{
+		SuspendNode: "wait", SuspendAttempt: 1,
+		Input:     workflow.NodeInput{"main": {item}},
+		Completed: map[string]workflow.NodeOutput{"start": ran, "gate": gated},
+		Runs:      map[string][]workflow.NodeOutput{"start": {ran}, "gate": {gated}},
+		NodeItems: map[string]expression.NodeItem{"Gate": {
+			NodeID: "gate", Items: []map[string]any{{"v": "t1"}, {"v": "t2"}, {"v": "f1"}},
+			PortOffsets: map[string]int{"true": 0, "false": 2}, PortLengths: map[string]int{"true": 2, "false": 1},
+		}},
+	}
+	if _, err := engine.NewRunner(executors).Resume(context.Background(), ir, engine.Request{}, checkpoint, ran); err != nil {
+		t.Fatalf("Resume() error = %v", err)
+	}
+	if got := strings.Join(read, " "); got != "[t1 t2] <nil> [f1] <nil>" {
+		t.Fatalf("reads = %s, want each output on its own", got)
 	}
 }
 

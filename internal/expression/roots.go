@@ -52,8 +52,15 @@ type NodeItem struct {
 	// OutputLengths is how many of Items each output produced, in output
 	// order, so a read of one output (`$items('X', 1)`) takes only its
 	// items. Nil in a checkpoint written before it existed, which reads as
-	// one output holding every item.
+	// one output holding every item, unless the runner could rebuild it from
+	// PortLengths.
 	OutputLengths []int
+	// Executions is how many times the node had really run when Items were
+	// recorded, the count `$runIndex` reads. RunIndex also counts the empty
+	// runs a skipped delivery records, which n8n does not number, so a read
+	// that names a run (`$items('X', 0, run)`) is checked against this. Zero
+	// in a checkpoint written before it existed; see LatestRun.
+	Executions int
 	// Paired is the item on this node that the current item descends from,
 	// backing `.item` and the `.json` read. Nil when lineage could not be
 	// established.
@@ -64,6 +71,17 @@ type NodeItem struct {
 	// Parameters is the node's own resolved configuration, backing
 	// `$('X').params`. Nil when the runtime did not supply it.
 	Parameters map[string]any
+}
+
+// LatestRun is the number of the run Items came from, as n8n and `$runIndex`
+// number runs: real runs only, from 0. A node recorded before Executions was
+// falls back to RunIndex, which is the same unless a delivery to it was
+// skipped.
+func (item NodeItem) LatestRun() int {
+	if item.Executions > 0 {
+		return item.Executions - 1
+	}
+	return item.RunIndex
 }
 
 // OriginKey is the canonical name of one produced item: which node, which port,
@@ -379,7 +397,7 @@ func legacyItems(ctx Context, args []any) (any, error) {
 		output = index
 	}
 	if len(args) > 2 && !IsUndefined(args[2]) {
-		if message := runMessage(name, args[2], item.RunIndex); message != "" {
+		if message := runMessage(name, args[2], item.LatestRun()); message != "" {
 			return nil, fmt.Errorf("$items() %s", message)
 		}
 	}
