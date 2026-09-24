@@ -15,24 +15,24 @@
     "stubbed": 330,
     "parsed": 329,
     "accepted": 328,
-    "ran": 224,
+    "ran": 237,
     "parseRate": 99.7,
     "acceptRate": 99.4,
-    "runtimeErrorRate": 31.7
+    "runtimeErrorRate": 27.7
   },
   "timing": {
     "runs": 328,
-    "medianMillis": 0.54,
-    "p95Millis": 1.64
+    "medianMillis": 0.56,
+    "p95Millis": 1.44
   },
   "blockers": {
     "invalid-return": 3,
     "refused: requires the module \"youtube-transcript\"": 1,
     "syntax error": 1,
     "threw: Error": 8,
-    "threw: ReferenceError": 22,
+    "threw: ReferenceError": 8,
     "threw: SyntaxError": 5,
-    "threw: TypeError": 62,
+    "threw: TypeError": 63,
     "threw: date locale en-CA": 1,
     "threw: date locale id-ID": 1,
     "threw: this.helpers.httpRequest (not wired in the instrument)": 1,
@@ -1112,9 +1112,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "2749/21",
@@ -1122,9 +1121,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "2772/1",
@@ -1394,9 +1392,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "2790/6",
@@ -1535,9 +1532,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "2883/6",
@@ -1555,9 +1551,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "2896/14",
@@ -1592,9 +1587,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "2925/3",
@@ -1927,9 +1921,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "3192/12",
@@ -2784,9 +2777,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "3900/20",
@@ -2994,7 +2986,7 @@
       "accepted": true,
       "ran": false,
       "outcome": "threw",
-      "reason": "ReferenceError"
+      "reason": "TypeError"
     },
     {
       "key": "4506/12",
@@ -3113,9 +3105,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "4966/1",
@@ -3132,9 +3123,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "5110/0",
@@ -3279,9 +3269,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "5230/80",
@@ -3448,9 +3437,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "5941/3",
@@ -3468,9 +3456,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "ReferenceError"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "5941/9",

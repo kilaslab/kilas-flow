@@ -54,6 +54,7 @@ func TestUserCodeMayRedeclareEveryRoot(t *testing.T) {
 		"let $workflow = 'mine'",
 		"var $env = 2",
 		"const $ = (name) => name",
+		"const $json = 'first', $binary = {}, $itemIndex = 'index', $position = 'position'",
 		"return items.map(item => ({ json: { n: item.json.n, workflow: $workflow, node: $('x') } }))",
 	}, "\n"), Items: numbered(2)})
 	if len(result.Items) != 2 || result.Items[1].JSON["workflow"] != "mine" || result.Items[1].JSON["node"] != "x" {
@@ -89,21 +90,55 @@ func TestMutatingItemsInPlaceAndReturningThemKeepsTheChange(t *testing.T) {
 	}
 }
 
-func TestJsonIsOnlyAvailablePerItem(t *testing.T) {
-	_, err := runTask(t, jsrun.Task{Source: "return [{ json: { value: $json.n } }]", Items: numbered(1)})
-	if err == nil || !strings.Contains(err.Error(), "$json is only available when the code runs once for each item") {
-		t.Fatalf("Run() error = %v, want $json refused by name in all-items mode", err)
+// In all-items mode the per-item roots read the first input item, as n8n's
+// do: n8n builds them for item 0 and hands them to all-items code too.
+// $json is that item's own json, $binary a copy of its files' metadata.
+func TestAllItemsCodeReadsTheFirstItemThroughThePerItemRoots(t *testing.T) {
+	input := numbered(2)
+	input[0].Binary = map[string]workflow.BinaryRef{"file": {ID: "bin-1", FileName: "report.pdf", MediaType: "application/pdf", Size: 1234}}
+	result := mustRun(t, newRunner(), jsrun.Task{Items: input, Source: strings.Join([]string{
+		"const copy = $binary.file === items[0].binary.file",
+		"$binary.file.fileName = 'changed.pdf'",
+		"$json.touched = true",
+		"return [{ json: { n: $json.n, index: $itemIndex, position: $position, same: $json === items[0].json,",
+		"  touched: items[0].json.touched, name: items[0].binary.file.fileName, copy, type: $binary.file.mimeType, keys: Object.keys($binary.file) } }]",
+	}, "\n")})
+	got := result.Items[0].JSON
+	if got["n"] != float64(0) || got["index"] != float64(0) || got["position"] != float64(0) || got["same"] != true || got["touched"] != true {
+		t.Fatalf("roots = %#v, want the first item's json, index 0 and the same object as items[0].json", got)
 	}
-	_, err = runTask(t, jsrun.Task{Source: "return { json: { count: items.length } }", Mode: jsrun.ModeEachItem, Items: numbered(1)})
+	if got["copy"] != false || got["name"] != "report.pdf" || got["type"] != "application/pdf" || fmt.Sprint(got["keys"]) != "[id fileName mimeType fileExtension fileSize]" {
+		t.Fatalf("$binary = %#v, want a copy of the first item's file metadata", got)
+	}
+
+	// An item with no files has an empty $binary; no items leave both
+	// undefined rather than failing.
+	plain := mustRun(t, newRunner(), jsrun.Task{Items: numbered(1),
+		Source: "return [{ json: { binary: JSON.stringify($binary) } }]"})
+	empty := mustRun(t, newRunner(), jsrun.Task{Items: []workflow.Item{},
+		Source: "return [{ json: { json: typeof $json, binary: typeof $binary, index: $itemIndex } }]"})
+	if plain.Items[0].JSON["binary"] != "{}" || fmt.Sprint(empty.Items[0].JSON) != "map[binary:undefined index:0 json:undefined]" {
+		t.Fatalf("items = %#v and %#v", plain.Items, empty.Items)
+	}
+}
+
+func TestPerItemCodeReadsItsOwnItemThroughTheRoots(t *testing.T) {
+	input := numbered(3)
+	input[2].Binary = map[string]workflow.BinaryRef{"file": {ID: "bin-2", FileName: "b.txt", MediaType: "text/plain", Size: 2}}
+	result := mustRun(t, newRunner(), jsrun.Task{
+		Source: "return { json: { value: $json.n, index: $itemIndex, position: $position, same: $json === $input.item.json, file: ($binary.file || {}).fileName } }",
+		Mode:   jsrun.ModeEachItem, Items: input,
+	})
+	got := result.Items[2].JSON
+	if got["value"] != float64(2) || got["index"] != float64(2) || got["position"] != float64(2) || got["same"] != true || got["file"] != "b.txt" {
+		t.Fatalf("items = %#v", result.Items)
+	}
+	if _, has := result.Items[0].JSON["file"]; has {
+		t.Fatalf("item 0 = %#v, want no file: its $binary is its own", result.Items[0].JSON)
+	}
+	_, err := runTask(t, jsrun.Task{Source: "return { json: { count: items.length } }", Mode: jsrun.ModeEachItem, Items: numbered(1)})
 	if err == nil || !strings.Contains(err.Error(), "items is only available when the code runs once for all items") {
 		t.Fatalf("Run() error = %v, want items refused by name in per-item mode", err)
-	}
-	result := mustRun(t, newRunner(), jsrun.Task{
-		Source: "return { json: { value: $json.n, index: $itemIndex, same: $json === $input.item.json } }",
-		Mode:   jsrun.ModeEachItem, Items: numbered(3),
-	})
-	if result.Items[2].JSON["value"] != float64(2) || result.Items[2].JSON["index"] != float64(2) || result.Items[2].JSON["same"] != true {
-		t.Fatalf("items = %#v", result.Items)
 	}
 }
 
@@ -170,15 +205,15 @@ func TestTheSandboxExposesExactlyTheseGlobals(t *testing.T) {
 	}
 }
 
-// A root that belongs to the other mode is undefined, as in n8n, so code
-// written for both modes can ask `typeof`; using one uncaught says what to
-// use instead.
+// items, the one root per-item code does not have, is undefined there, as in
+// n8n, so code written for both modes can ask `typeof`; using it uncaught
+// says what to use instead. All-items code has every per-item root.
 func TestTheOtherModesRootsAreUndefinedAndSayWhatToUseInstead(t *testing.T) {
 	each := mustRun(t, newRunner(), jsrun.Task{Mode: jsrun.ModeEachItem, Items: numbered(1),
 		Source: "return { json: { items: typeof items, json: typeof $json } }"})
 	all := mustRun(t, newRunner(), jsrun.Task{Items: numbered(1),
 		Source: "return [{ json: { json: typeof $json, index: typeof $itemIndex, items: typeof items } }]"})
-	if got := fmt.Sprint(each.Items[0].JSON, all.Items[0].JSON); got != "map[items:undefined json:object] map[index:undefined items:object json:undefined]" {
+	if got := fmt.Sprint(each.Items[0].JSON, all.Items[0].JSON); got != "map[items:undefined json:object] map[index:number items:object json:object]" {
 		t.Fatalf("typeof = %s", got)
 	}
 	_, err := runTask(t, jsrun.Task{Mode: jsrun.ModeEachItem, Items: numbered(1), Source: "return { json: { n: items.length } }"})

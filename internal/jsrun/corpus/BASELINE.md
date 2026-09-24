@@ -11,12 +11,12 @@ The JavaScript Code nodes and Sort code comparators of the 500 most-viewed n8n t
 | Measured | 330 | |
 | Parse | 329 | 99.7% |
 | Parse and pass analysis | 328 | 99.4% |
-| Run without an error on synthesised input | 224 | 68.3% of accepted |
-| Runtime-error rate | 104 | 31.7% of accepted |
+| Run without an error on synthesised input | 237 | 72.3% of accepted |
+| Runtime-error rate | 91 | 27.7% of accepted |
 
 Of the measured bodies, 51 run once for each item and 0 are Sort comparators. 330 had no pinned data upstream and ran on a stand-in item shaped from the fields the body reads, so a failure among them may be the stand-in's, not the runtime's.
 
-Run time (wall clock of `Runner.Run`, including compiling the body once, on the machine that wrote this file): median **0.54 ms**, p95 **1.64 ms** over 328 runs.
+Run time (wall clock of `Runner.Run`, including compiling the body once, on the machine that wrote this file): median **0.56 ms**, p95 **1.44 ms** over 328 runs.
 
 ## What stops the rest
 
@@ -24,9 +24,9 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 
 | Blocker | Bodies |
 |---|---:|
-| threw: TypeError | 62 |
-| threw: ReferenceError | 22 |
+| threw: TypeError | 63 |
 | threw: Error | 8 |
+| threw: ReferenceError | 8 |
 | threw: SyntaxError | 5 |
 | invalid-return | 3 |
 | refused: requires the module "youtube-transcript" | 1 |
@@ -155,8 +155,8 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 2681/2 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2681/13 | runOnceForEachItem | stand-in | ✓ | ✓ | ✓ | ok |
 | 2749/17 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
-| 2749/20 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
-| 2749/21 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 2749/20 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
+| 2749/21 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2772/1 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2772/2 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2772/3 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
@@ -185,7 +185,7 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 2785/6 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2786/6 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
 | 2790/3 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
-| 2790/5 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 2790/5 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2790/6 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2790/8 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2799/21 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
@@ -200,13 +200,13 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 2856/23 | runOnceForAllItems | stand-in | · | · | · | no-source |
 | 2871/9 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2878/67 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
-| 2883/3 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 2883/3 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2883/6 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
-| 2896/13 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 2896/13 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2896/14 | runOnceForEachItem | stand-in | ✓ | ✓ | ✓ | ok |
 | 2896/17 | runOnceForEachItem | stand-in | ✓ | ✓ | ✓ | ok |
 | 2896/18 | runOnceForEachItem | stand-in | ✓ | ✓ | ✓ | ok |
-| 2896/19 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 2896/19 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2925/3 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2950/11 | runOnceForAllItems | stand-in | · | · | · | no-source |
 | 2956/0 | runOnceForAllItems | stand-in | ✓ | · | · | refused: requires the module "youtube-transcript" |
@@ -242,7 +242,7 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 3169/10 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
 | 3169/24 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3188/15 | runOnceForEachItem | stand-in | ✓ | ✓ | ✓ | ok |
-| 3192/6 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 3192/6 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3192/12 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3202/15 | runOnceForAllItems | stand-in | · | · | · | no-source |
 | 3314/8 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
@@ -336,7 +336,7 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 3798/25 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3798/28 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3859/4 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
-| 3859/6 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 3859/6 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3900/20 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3900/23 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3900/31 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
@@ -358,7 +358,7 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 4365/10 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 4365/18 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 4366/14 | runOnceForEachItem | stand-in | ✓ | ✓ | · | threw: TypeError |
-| 4400/15 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 4400/15 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
 | 4506/12 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 4551/22 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
 | 4557/17 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
@@ -371,9 +371,9 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 4721/9 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 4827/21 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 4849/12 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
-| 4849/13 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 4849/13 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 4966/1 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
-| 4966/2 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 4966/2 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 5110/0 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: Error |
 | 5110/4 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 5139/10 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
@@ -389,7 +389,7 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 5230/66 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 5230/76 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 5230/77 | runOnceForEachItem | stand-in | ✓ | ✓ | ✓ | ok |
-| 5230/78 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 5230/78 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 5230/80 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 5338/12 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: Error |
 | 5338/18 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
@@ -407,7 +407,7 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 5589/16 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 5607/3 | runOnceForAllItems | stand-in | · | · | · | no-source |
 | 5657/12 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
-| 5657/15 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 5657/15 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 5941/3 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
-| 5941/8 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: ReferenceError |
+| 5941/8 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 5941/9 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |

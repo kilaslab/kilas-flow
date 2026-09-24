@@ -1345,6 +1345,28 @@
     return match !== null && apply(hasOwnProperty, otherMode, [match[1]]) ? otherMode[match[1]] : message;
   }
 
+  // binaryOf is $binary for an item: a copy of each of its files' metadata,
+  // so changing it changes nothing the item holds, as in n8n. An item with no
+  // files has an empty one, and no item has none at all.
+  function binaryOf(item) {
+    if (item === undefined) return undefined;
+    var copy = {};
+    var files = item.binary;
+    if (!isObject(files)) return copy;
+    var names = ownKeys(files);
+    for (var index = 0; index < names.length; index++) {
+      var file = files[names[index]];
+      if (!isObject(file)) continue;
+      var entry = {};
+      var fields = ownKeys(file);
+      for (var field = 0; field < fields.length; field++) {
+        if (fields[field] !== 'data') entry[fields[field]] = file[fields[field]];
+      }
+      copy[names[index]] = entry;
+    }
+    return copy;
+  }
+
   // install builds the Code node's roots over this execution's input, and
   // returns the one function the runner calls the user's code through.
   function install(snapshot, input, eachItem, host, factories) {
@@ -1494,9 +1516,6 @@
 
     if (eachItem) {
       unavailable('items', 'items is only available when the code runs once for all items; use $input.item or $json');
-    } else {
-      unavailable('$json', '$json is only available when the code runs once for each item; use $input.all() or $input.first()');
-      unavailable('$itemIndex', '$itemIndex is only available when the code runs once for each item');
     }
 
     boundAllocations(snapshot.caps, snapshot.advice);
@@ -1575,10 +1594,17 @@
 
     return {
       staticData: shipped.helpers.staticData,
+      // run calls the code through its wrapper, whose parameters are the
+      // mode's roots in wrapper.go's order. All-items code reads the per-item
+      // roots at the first item, as n8n's does.
       run: function (body, itemIndex) {
         current = itemIndex;
         codeBody = body;
-        var args = eachItem ? [input[itemIndex].json, itemIndex, inputRoot] : [input, inputRoot];
+        var item = input[itemIndex];
+        var json = item === undefined ? undefined : item.json;
+        var args = eachItem ?
+          [json, binaryOf(item), itemIndex, itemIndex, inputRoot] :
+          [input, inputRoot, json, binaryOf(item), itemIndex, itemIndex];
         return apply(body, self, args);
       },
       // sort runs a Sort node's comparator: the wrapper hands it back, and
