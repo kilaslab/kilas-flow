@@ -1,7 +1,7 @@
 ---
 id: BUG-14gp8r
 title: $('X').item answers by position after a node that reorders items downstream of a fan-out
-status: todo
+status: testing
 priority: high
 parent: EPIC-tjnr1z
 created: "2026-09-23T06:41:41Z"
@@ -51,14 +51,14 @@ fixed).
 `origin` is Split Out's item at the same position: o1, o2, o4.
 
 # Acceptance Criteria
-- [ ] After a fan-out, a node that reorders or filters keeps each item paired with
+- [x] After a fan-out, a node that reorders or filters keeps each item paired with
       the item of the fan-out it came from, for expressions and for the Code
       node's `$('X').item` alike (one algorithm, `engine.PairedIndex`).
-- [ ] The Code node's explicit `pairedItem` and identity lineage survive a
+- [x] The Code node's explicit `pairedItem` and identity lineage survive a
       fan-out upstream.
-- [ ] Remove the `test.fail` marker from the js-code.spec.ts lineage case; it
+- [x] Remove the `test.fail` marker from the js-code.spec.ts lineage case; it
       must pass.
-- [ ] An engine test covers Split Out → Sort → expression.
+- [x] An engine test covers Split Out → Sort → expression.
 
 # Related Files
 - internal/engine/runner.go (`stampProvenance`, `pairIndex`, `originKeyOf`)
@@ -79,5 +79,97 @@ items inherit their input's origin, so all four share one, and `pairIndex`
 falls through to the `matches > 1` positional fallback that this ticket is
 about. The fix is still to walk the lineage node by node, or to record each
 item's position in the node that delivered it.
+
+## Plan 2026-09-24
+
+- RED first: engine tests for Split Out → Sort → Set (o2, o4, o1), a Filter
+  in the chain, two fan-outs in series with a global reorder read at every
+  level, and a Split Out whose split items would otherwise collide with a
+  split item's own stamp; a Code node test for `$('X').item` in code and for
+  the Code node's `pairedItem` and identity lineage after an upstream fan-out.
+- Fix in the runner, not in any executor: when a node's finished output holds
+  several items that share one origin (a fan-out), each of those items is
+  re-stamped as its own origin — this node, run, port, position — which
+  remembers the origin it shared as its parent. Everything downstream
+  inherits that stamp, so a reorder or a filter carries it along.
+- `pairIndex` walks the current item's stamp and then its parents, and the
+  first level that names exactly one item of X is the answer. When no level
+  does, the answer is exactly what it was before this ticket.
+- Remove `test.fail` from the js-code.spec.ts lineage case and run the spec.
+
+## Progress 2026-09-24 (the fix)
+
+**What n8n does, in my words.** n8n stores on every output item only the
+position of the input item it came from (and which input), and each node's
+run records which node, output and run fed it. `$('X').item` starts at the
+current item and follows those one-step links back through the run data, node
+by node, until it reaches X. A reorder cannot confuse it, because the link
+travels with the item rather than being implied by position.
+
+**Design chosen: a fan-out's items become origins of their own.** Two designs
+were on the table: walk node by node as n8n does, or keep KilasFlow's
+flattened origins and record more where they stop being enough. Walking node
+by node would replace the root-origin model that every lineage test (BUG-zf4pnj
+and friends) is written against, and it needs every intermediate node's run
+at hand when pairing, which `request.NodeItems` does not keep (only each
+node's latest run), so a loop would break it. The flattened origin is only
+ambiguous in one place: after a fan-out, where several items share it. So:
+
+- `anchorFanOuts` (internal/engine/runner.go), called from `runState.complete`
+  (the one place every finished invocation passes, whoever stamped it), finds
+  items of the node's output — across ports — that share a non-lost origin
+  and re-stamps each as this node, run, port and position, with the shared
+  origin as its new `PairedItem.Parent`. Unique and lost origins are left as
+  they were, so one-to-one chains and every lost/pointer stamp BUG-zf4pnj
+  relies on are unchanged.
+- The stamp travels with the item: the runner's `cloneItem`, Sort's
+  `cloneItems`, Filter's `routedItem`, the Code node's `decoder.inherit` all
+  copy it. No executor changes, and any Go-side reorder (including Sort's
+  `code` comparator, being added in parallel) keeps lineage without Sort-
+  specific code.
+- `pairIndex` (one algorithm for expressions and the Code node's
+  `engine.PairedIndex`) compares the current item's origin with X's items,
+  and while nothing matches, steps to each `Parent` in turn (also trying the
+  BUG-zf4pnj exact pointer at each level). If no level names exactly one item,
+  the fallbacks run on the last level, which is the root the item carried
+  before this ticket, so every answer this change does not improve is the
+  answer it was before.
+- An anchor's key carries a marker (`originKeyOf`): Split Out's own stamp for
+  an item whose input had no origin names Split Out with an input position,
+  which can hold the same numbers as an anchor's output position.
+  `TestDollarItemTellsASplitItemFromOneThatKeptItsSplitStamp` fails without it.
+- Memory: a PairedItem is never changed once written, so copies of an item
+  share its parents in memory. Depth grows by one per fan-out only up to
+  `maxLineageDepth` (16); `boundedLineage` then drops the middle levels and
+  keeps the item's own origin, the nearest fan-outs and the root, so a loop
+  that fans out on every pass cannot grow a stamp without bound.
+
+**Why `decoder.paired` did not need to change.** The worry was that the
+decoder could only inherit its input item's root origin. After this change an
+input item that came out of a fan-out carries its own origin, so inheriting it
+is pointing at that input item, and a Code node that fans out itself (several
+items with one `pairedItem`) is anchored by the runner like any other node.
+`TestTheCodeNodesLineageSurvivesAFanOutUpstream` and
+`TestACodeNodeThatFansOutPairsEachItemItMade` cover both.
+
+Tests:
+- internal/engine/fanout_lineage_test.go: Split Out → Sort → Set (o2, o4, o1),
+  the ticket's case; Split Out → Filter → Sort; two fan-outs in series with a
+  global sort, read above, between and after them; the Split Out stamp
+  collision.
+- internal/engine/lineage_internal_test.go: the depth bound, and unique and
+  lost origins left alone.
+- nodes/jscode_lineage_test.go: the e2e Rank node in Go; `$('Split Out').item`
+  in code after a Sort; a Code node that is the fan-out.
+- e2e/tests/js-code.spec.ts: `test.fail` removed from the lineage case.
+
+RED: `o2/o1, o4/o2, o1/o4` for the ticket's case, the Code node case read
+`o1, o2, o3` exactly as in the e2e, two fan-outs refused with `node "Orders"
+produced several items paired with this one`. GREEN: all of the above, the
+full `go test ./...`, `-race` on engine, workflow and nodes, and
+`e2e/tests/js-code.spec.ts` 11/11 (the lineage case through worker
+processes). `node-coverage` and `n8n-compare` pass except three tests that
+expect a 422 at run time and get 202; they fail identically on e7b0603
+without this change.
 
 # Attachments

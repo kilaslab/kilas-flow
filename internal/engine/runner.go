@@ -762,6 +762,9 @@ func (state *runState) configReady(graph preparedGraph, nodeID string) bool {
 // complete records one finished invocation: its trace row, the expression view
 // of the node, and the branches it feeds.
 func (state *runState) complete(graph preparedGraph, node workflow.IRNode, input workflow.NodeInput, output workflow.NodeOutput, run NodeRun, request *Request) {
+	// Every path a finished invocation takes comes through here, whoever
+	// stamped its lineage, so a fan-out is recognised once, for all of them.
+	anchorFanOuts(node, output, len(state.runs[node.ID]))
 	state.completed[node.ID] = output
 	state.runs[node.ID] = append(state.runs[node.ID], cloneOutput(output))
 	state.executions[node.ID]++
@@ -2112,6 +2115,85 @@ func (state *runState) lineageOf(node workflow.IRNode, sources []workflow.IREdge
 	return &workflow.PairedItem{SourceNodeID: node.ID, RunIndex: runIndex, ItemIndex: index, Lost: true}
 }
 
+// maxLineageDepth bounds how many origins one item's lineage holds: its own
+// and those of the fan-outs it came through. Each fan-out adds one level, so
+// without a bound a loop that splits items on every pass would grow every
+// item's stamp with every pass.
+const maxLineageDepth = 16
+
+// anchorFanOuts gives each item of a fan-out an origin of its own.
+//
+// A fan-out is several items of one node's finished output that share one
+// origin: Split Out splitting one item's list, a Code node returning several
+// items for one input, a query returning several rows for one item. Left with
+// that shared origin, the items are told apart only by their position, and
+// the first node that reorders or filters them (Sort, Filter, a Code node that
+// sorts) makes the position a confident wrong answer. So each of them becomes
+// its own origin — this node, run, port and position — with the origin they
+// shared as its Parent. Whatever copies the item further down, the runner or
+// an executor, copies that stamp with it, so no node that reorders has to do
+// anything for its items to keep their pairing.
+//
+// It runs on the whole output, across ports: a node that sends one item to two
+// ports (a Switch sending to every matching output) has made two items of it
+// as surely as Split Out has. Items whose origin is unique are left as they
+// are, so a one-to-one chain keeps the flat origins it always had, and so do
+// lost ones, which have no origin to share.
+func anchorFanOuts(node workflow.IRNode, output workflow.NodeOutput, runIndex int) {
+	keys := make([][]string, len(output))
+	shared := map[string]int{}
+	for portIndex, port := range output {
+		keys[portIndex] = make([]string, len(port))
+		for itemIndex, item := range port {
+			key := originKeyOf(item.Paired)
+			keys[portIndex][itemIndex] = key
+			if key != "" {
+				shared[key]++
+			}
+		}
+	}
+	for portIndex, port := range output {
+		var portName string
+		if portIndex < len(node.Definition.Outputs) {
+			portName = node.Definition.Outputs[portIndex].Name
+		}
+		for itemIndex := range port {
+			if key := keys[portIndex][itemIndex]; key == "" || shared[key] < 2 {
+				continue
+			}
+			port[itemIndex].Paired = &workflow.PairedItem{
+				SourceNodeID: node.ID, SourcePort: portName, RunIndex: runIndex, ItemIndex: itemIndex,
+				Parent: boundedLineage(port[itemIndex].Paired, maxLineageDepth-1),
+			}
+		}
+	}
+}
+
+// boundedLineage is origin with at most limit levels, itself included.
+//
+// A longer lineage keeps its nearest levels and its root and drops the levels
+// between them. The nearest are the fan-outs a read most likely names; the root
+// is what the item carried before fan-outs had origins of their own, so a read
+// the kept levels cannot answer is answered exactly as it was before. The
+// levels are copied rather than cut in place, because other items share them.
+func boundedLineage(origin *workflow.PairedItem, limit int) *workflow.PairedItem {
+	var levels []*workflow.PairedItem
+	for level := origin; level != nil; level = level.Parent {
+		levels = append(levels, level)
+	}
+	if len(levels) <= limit {
+		return origin
+	}
+	kept := append(levels[:limit-1:limit-1], levels[len(levels)-1])
+	var bounded *workflow.PairedItem
+	for index := len(kept) - 1; index >= 0; index-- {
+		level := *kept[index]
+		level.Parent = bounded
+		bounded = &level
+	}
+	return bounded
+}
+
 // pointerInto names the item of the delivering node X that an incoming item
 // is, or returns nil.
 //
@@ -2224,13 +2306,19 @@ func nodeItemFor(node workflow.IRNode, output workflow.NodeOutput, runIndex int)
 //     have no origin, so comparing origins could never find one of them.
 //  2. A unique item of X descends from the same origin as this one. That is the
 //     answer, and it covers a one-to-one chain where each item carries its own
-//     origin (A -> Set -> B over three items).
+//     origin (A -> Set -> B over three items). After a fan-out each item is an
+//     origin of its own that remembers the one it was made from
+//     (anchorFanOuts), so the comparison is made at the item's own origin and
+//     then at each of those parents in turn: X after the fan-out shares the
+//     first, X before it the second. That is what keeps the pairing right
+//     through a Sort or a Filter after Split Out, where the position is not.
 //  3. A node that produced exactly one item is unambiguous whatever the
 //     lineage says: every single-item reference has always resolved to it.
-//  4. The origin is shared by several of X's items — a fan-out, as after Split
-//     Out — and the current item sits at position N of its own run, so X's item
-//     at position N is the one it descends from. This is the positional
-//     correspondence n8n relies on for a same-order chain.
+//  4. The origin is shared by several of X's items, and the current item sits
+//     at position N of its own run, so X's item at position N is taken as the
+//     one it descends from. Fan-outs no longer produce this — their items are
+//     origins of their own — so it is left for items recorded before they
+//     were, and for lineage no fan-out stamped.
 //  5. Otherwise the correspondence is genuinely unknown and saying so beats
 //     guessing: a confident wrong item is the failure mode this exists to
 //     prevent.
@@ -2289,19 +2377,20 @@ func pairIndex(name string, item expression.NodeItem, key string, origin *workfl
 		return -1, "the item being processed did not record where it came from"
 	}
 
-	match, matches := -1, 0
-	unknown := 0
-	for index, candidate := range item.ItemOrigins {
-		if candidate == "" {
-			unknown++
-			continue
+	// The current item's own origin first, then each fan-out's parent in
+	// turn, nearest first: X after the last fan-out shares the item's own
+	// origin, X before it shares the parent, and so on up. A level X knows
+	// nothing of says only that X lies further up; a level several of X's
+	// items share is a fan-out no parent can tell apart, and the fallbacks
+	// below decide it as they always have.
+	match, matches, unknown := findOrigin(item, key)
+	for level := origin; matches == 0 && level.Parent != nil; {
+		level = level.Parent
+		if position, named := namedItemPosition(item, level); named {
+			return position, ""
 		}
-		if candidate != key {
-			continue
-		}
-		matches++
-		if match < 0 {
-			match = index
+		if parentKey := originKeyOf(level); parentKey != "" {
+			match, matches, unknown = findOrigin(item, parentKey)
 		}
 	}
 	switch {
@@ -2322,6 +2411,26 @@ func pairIndex(name string, item expression.NodeItem, key string, origin *workfl
 	default:
 		return -1, fmt.Sprintf("node %q changed the item correspondence, so there is no single item to pair with", name)
 	}
+}
+
+// findOrigin looks for key among X's items: the first that carries it, how
+// many do, and how many carry no origin at all.
+func findOrigin(item expression.NodeItem, key string) (match, matches, unknown int) {
+	match = -1
+	for index, candidate := range item.ItemOrigins {
+		if candidate == "" {
+			unknown++
+			continue
+		}
+		if candidate != key {
+			continue
+		}
+		matches++
+		if match < 0 {
+			match = index
+		}
+	}
+	return match, matches, unknown
 }
 
 // namedItemPosition finds the item of X that an origin names directly: the
@@ -2364,7 +2473,15 @@ func originKeyOf(origin *workflow.PairedItem) string {
 	if origin == nil || origin.Lost {
 		return ""
 	}
-	return expression.OriginKey(origin.SourceNodeID, origin.SourcePort, origin.RunIndex, origin.ItemIndex)
+	key := expression.OriginKey(origin.SourceNodeID, origin.SourcePort, origin.RunIndex, origin.ItemIndex)
+	if origin.Parent != nil {
+		// A fan-out's item names its own position in that node's output. Split
+		// Out's stamp for an item whose input carried no origin names the same
+		// node with the position of the item it split, in its input, and the
+		// two can hold the same numbers; they must never compare equal.
+		key += "\x00fan-out"
+	}
+	return key
 }
 
 // workflowContextFor exposes the compiled workflow to `$workflow`.
