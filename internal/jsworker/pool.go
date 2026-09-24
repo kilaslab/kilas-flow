@@ -574,7 +574,7 @@ func (pool *Pool) run(ctx context.Context, w *worker, job jsrun.Job, host jsrun.
 				w.healthy = false
 			}
 			runErr := m.Error.Decode()
-			result, err := job.Finish(executed, runErr)
+			result, err := job.Finish(ctx, executed, runErr)
 			// A heap that hit its ceiling, an engine that faulted or a result
 			// that did not add up starts the next job in a fresh process.
 			if errors.Is(err, jsrun.ErrMemoryLimit) || errors.Is(err, jsrun.ErrEngineFault) {

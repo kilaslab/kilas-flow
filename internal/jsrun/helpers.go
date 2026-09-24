@@ -212,21 +212,38 @@ func (l *ledger) call(helpers Helpers) func(context.Context, HostRequest) HostAn
 			}
 			return HostAnswer{Data: data}
 		case HelperWriteFile:
-			if size := int64(len(request.Data)); size > MaxFileBytes {
-				return failed(FileLimitError("a file", size))
-			}
-			// The node's WriteFile checks ctx again right before it stores,
-			// so a run that ends meanwhile leaves no file behind.
-			stored, err := helpers.WriteFile(ctx, request.Data, request.FileName, request.MimeType)
+			stored, err := l.writeFile(ctx, helpers, request.Data, request.FileName, request.MimeType)
 			if err != nil {
 				return failed(err)
 			}
-			l.stored(stored)
 			file := fileOfRef(stored)
 			return HostAnswer{File: &file}
 		}
 		return HostAnswer{Failure: fmt.Sprintf("there is no helper %q", request.Method)}
 	}
+}
+
+// writeFile stores data as a file of the execution, as prepareBinaryData
+// asks, and records it as one the code may return. Files a result gives
+// inline are stored here too, so both are bounded and stored alike.
+func (l *ledger) writeFile(ctx context.Context, helpers Helpers, data []byte, fileName, mimeType string) (workflow.BinaryRef, error) {
+	if helpers == nil {
+		return workflow.BinaryRef{}, errors.New("this.helpers." + HelperWriteFile + " is not available here")
+	}
+	if ctx.Err() != nil {
+		return workflow.BinaryRef{}, errors.New("the run this call belongs to is over")
+	}
+	if size := int64(len(data)); size > MaxFileBytes {
+		return workflow.BinaryRef{}, FileLimitError("a file", size)
+	}
+	// The node's WriteFile checks ctx again right before it stores, so a run
+	// that ends meanwhile leaves no file behind.
+	stored, err := helpers.WriteFile(ctx, data, fileName, mimeType)
+	if err != nil {
+		return workflow.BinaryRef{}, err
+	}
+	l.stored(stored)
+	return stored, nil
 }
 
 // staticData answers $getWorkflowStaticData from the node's helpers,

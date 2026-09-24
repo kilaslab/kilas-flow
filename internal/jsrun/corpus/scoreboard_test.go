@@ -157,6 +157,12 @@ func classify(err error) (outcome, reason string) {
 			return named.outcome, ""
 		}
 	}
+	// A file the code returned inline is stored after the run, through the
+	// same helper, so an instrument without one fails there rather than in
+	// the code.
+	if missing := helperMissing.FindStringSubmatch(err.Error()); missing != nil {
+		return "error", "this.helpers." + missing[1] + " (not wired in the instrument)"
+	}
 	return "error", ""
 }
 

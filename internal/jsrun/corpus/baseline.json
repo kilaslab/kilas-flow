@@ -22,11 +22,12 @@
   },
   "timing": {
     "runs": 328,
-    "medianMillis": 0.55,
+    "medianMillis": 0.57,
     "p95Millis": 1.49
   },
   "blockers": {
-    "invalid-return": 3,
+    "error: this.helpers.prepareBinaryData (not wired in the instrument)": 1,
+    "invalid-return": 2,
     "refused: requires the module \"youtube-transcript\"": 1,
     "syntax error": 1,
     "threw: Error": 8,
@@ -699,7 +700,8 @@
       "parsed": true,
       "accepted": true,
       "ran": false,
-      "outcome": "invalid-return"
+      "outcome": "error",
+      "reason": "this.helpers.prepareBinaryData (not wired in the instrument)"
     },
     {
       "key": "2358/3",

@@ -189,11 +189,11 @@ func TestAnOrderThatIsNotAPermutationOfTheInputIsRefused(t *testing.T) {
 		t.Fatalf("Prepare() error = %v", err)
 	}
 	for _, output := range []string{`[0,1,2,3]`, `[0,1,2,3,3]`, `[0,1,2,3,5]`, `[0,1,2,3,-1]`, `{"0":1}`, `[0,1,2,3,4.5]`} {
-		if _, err := job.Finish(jsrun.Executed{Outputs: []string{output}}, nil); !errors.Is(err, jsrun.ErrEngineFault) {
+		if _, err := job.Finish(context.Background(), jsrun.Executed{Outputs: []string{output}}, nil); !errors.Is(err, jsrun.ErrEngineFault) {
 			t.Errorf("%s: Finish() error = %v, want an engine fault", output, err)
 		}
 	}
-	result, err := job.Finish(jsrun.Executed{Outputs: []string{`[4,3,2,1,0]`}}, nil)
+	result, err := job.Finish(context.Background(), jsrun.Executed{Outputs: []string{`[4,3,2,1,0]`}}, nil)
 	if err != nil || !slices.Equal(result.Order, []int{4, 3, 2, 1, 0}) {
 		t.Fatalf("Finish() = %v, %v; want the order", result.Order, err)
 	}

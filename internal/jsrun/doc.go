@@ -38,6 +38,9 @@
 // large) stops the code. The static data the code was handed is written back
 // as JSON after a successful run, within MaxStaticDataBytes, and the files it
 // stored are the only files beyond its input that a returned item may name.
+// A file a returned item gives inline, as base64 text in its binary entry's
+// data, is stored the same way once the run has succeeded, by the process
+// that prepared the job, and counts as one host call.
 //
 // # Time
 //

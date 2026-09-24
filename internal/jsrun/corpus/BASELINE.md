@@ -16,7 +16,7 @@ The JavaScript Code nodes and Sort code comparators of the 500 most-viewed n8n t
 
 Of the measured bodies, 51 run once for each item and 0 are Sort comparators. 330 had no pinned data upstream and ran on a stand-in item shaped from the fields the body reads, so a failure among them may be the stand-in's, not the runtime's.
 
-Run time (wall clock of `Runner.Run`, including compiling the body once, on the machine that wrote this file): median **0.55 ms**, p95 **1.49 ms** over 328 runs.
+Run time (wall clock of `Runner.Run`, including compiling the body once, on the machine that wrote this file): median **0.57 ms**, p95 **1.49 ms** over 328 runs.
 
 ## What stops the rest
 
@@ -27,8 +27,9 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | threw: TypeError | 63 |
 | threw: Error | 8 |
 | threw: SyntaxError | 5 |
-| invalid-return | 3 |
 | threw: ReferenceError | 3 |
+| invalid-return | 2 |
+| error: this.helpers.prepareBinaryData (not wired in the instrument) | 1 |
 | refused: requires the module "youtube-transcript" | 1 |
 | syntax error | 1 |
 | threw: date locale en-CA | 1 |
@@ -110,7 +111,7 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 2273/8 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2307/6 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: SyntaxError |
 | 2307/20 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
-| 2314/4 | runOnceForAllItems | stand-in | ✓ | ✓ | · | invalid-return |
+| 2314/4 | runOnceForAllItems | stand-in | ✓ | ✓ | · | error: this.helpers.prepareBinaryData (not wired in the instrument) |
 | 2358/3 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 2377/31 | runOnceForEachItem | stand-in | ✓ | ✓ | · | threw: TypeError |
 | 2389/3 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: SyntaxError |

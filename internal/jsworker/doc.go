@@ -45,9 +45,10 @@
 // references never leave the server: a worker returns the code's results as
 // the JSON the code returned, and the server decodes them against the input,
 // checking the output and console caps, every file a result names (one of
-// its input's, or one it stored), and the static data it hands back. A
-// worker that breaks any of this fails its job with an engine fault and is
-// never used again.
+// its input's, or one it stored), every file it gives inline as base64 and
+// how many, and the static data it hands back; the server, never the worker,
+// then stores the inline files. A worker that breaks any of this fails its
+// job with an engine fault and is never used again.
 //
 // On Linux a worker is also a privilege boundary, as far as the kernel
 // grants one. The server starts it in user, PID, network and IPC namespaces
