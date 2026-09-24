@@ -33,6 +33,10 @@
   var StringType = String;
   var SymbolType = Symbol;
   var getPrototypeOf = Object.getPrototypeOf;
+  // The sort a comparator runs through, captured before any user code. goja's
+  // is stable, as V8's is, so items a comparator calls equal keep the order
+  // they arrived in.
+  var arraySort = Array.prototype.sort;
 
   // constructing tells a `new` call from a plain one, for a stand-in that
   // behaves differently in each. new.target alone cannot: goja passes a
@@ -1567,6 +1571,25 @@
         codeBody = body;
         var args = eachItem ? [input[itemIndex].json, itemIndex, inputRoot] : [input, inputRoot];
         return apply(body, self, args);
+      },
+      // sort runs a Sort node's comparator: the wrapper hands it back, and
+      // the input's indexes are sorted by what it says of the items at them.
+      // The result is that order as JSON; the items stay where they are.
+      sort: function (wrapper) {
+        codeBody = wrapper;
+        var compare = apply(wrapper, self, [input, inputRoot]);
+        var order = [];
+        for (var index = 0; index < input.length; index++) order.push(index);
+        apply(arraySort, order, [function (left, right) {
+          var answer = apply(compare, self, [input[left], input[right]]);
+          if (typeof answer !== 'number' || answer !== answer) {
+            throw new InvalidReturn('the comparator returned ' + (answer !== answer ? 'NaN' : kindOf(answer)) +
+              ' comparing item ' + left + ' with item ' + right + '; it must return a number: less than 0 when a goes first, ' +
+              'more than 0 when b does, and 0 when they tie');
+          }
+          return answer;
+        }]);
+        return stringifyJSON(order);
       },
     };
   }

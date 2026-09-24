@@ -16,12 +16,19 @@ const (
 	ModeAllItems Mode = "runOnceForAllItems"
 	// ModeEachItem runs the body once per item.
 	ModeEachItem Mode = "runOnceForEachItem"
+	// ModeComparator runs a Sort node's comparator: the body of a function
+	// of two items, a and b, that answers with a number, as in n8n's Sort
+	// node. The runtime sorts the items with it, and the result is the order
+	// they go in (Result.Order), never items. It is not a Code-node mode; no
+	// n8n Code node names it.
+	ModeComparator Mode = "sortComparator"
 )
 
 // orDefault treats an empty mode as n8n does, as the all-items mode.
 func (mode Mode) orDefault() Mode {
-	if mode == ModeEachItem {
-		return ModeEachItem
+	switch mode {
+	case ModeEachItem, ModeComparator:
+		return mode
 	}
 	return ModeAllItems
 }
@@ -174,6 +181,11 @@ type Result struct {
 	// to continue past failed items in "Run once for each item" mode. Items
 	// then holds only what the items that succeeded returned.
 	Outcomes []ItemOutcome `json:",omitempty"`
+	// Order is what a comparator made of the input, in ModeComparator: the
+	// index of the input item that goes first, then second, and so on. It
+	// names every input item exactly once. Items is nil then; the node that
+	// asked reorders its own items, which keeps their files and lineage.
+	Order []int `json:",omitempty"`
 }
 
 // ItemOutcome is one input item's result in "Run once for each item" mode.

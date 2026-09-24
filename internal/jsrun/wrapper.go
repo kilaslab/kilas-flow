@@ -21,9 +21,13 @@ const sourceName = "Code"
 // They are plain positional parameters. A destructuring parameter list makes
 // goja panic on a direct eval() inside the body, which is a goja bug the
 // wrapper steps around.
+//
+// A comparator sees the all-items roots: n8n hands its comparator the whole
+// list as `items`.
 var modeRoots = map[Mode][]string{
-	ModeAllItems: {"items", "$input"},
-	ModeEachItem: {"$json", "$itemIndex", "$input"},
+	ModeAllItems:   {"items", "$input"},
+	ModeEachItem:   {"$json", "$itemIndex", "$input"},
+	ModeComparator: {"items", "$input"},
 }
 
 // wrapped is a body inside the function that runs it.
@@ -33,8 +37,14 @@ var modeRoots = map[Mode][]string{
 // wrapper's `this`, which is how `this.helpers` reaches it. The prelude is
 // exactly one line and the trailer starts a new one, so the user's line N is
 // line N+1 of the wrapped text and columns are unchanged.
+//
+// A comparator's wrapper returns the comparator itself, a plain function of
+// a and b: n8n calls it from a synchronous sort, so `await` in it is a syntax
+// error there too. The line rule is the same.
 type wrapped struct {
 	text string
+	// comparator says the body is a Sort comparator's, in its own wrapper.
+	comparator bool
 	// open and close are the byte offsets of the braces that delimit the
 	// body. The analyser proves the parsed body spans exactly these, which is
 	// what stops code from closing its wrapper and running outside it.
@@ -47,11 +57,16 @@ type wrapped struct {
 }
 
 func wrap(source string, mode Mode) wrapped {
-	prelude := "(function (" + strings.Join(modeRoots[mode.orDefault()], ", ") + ") { return (async function () {\n"
-	const trailer = "\n}).call(this); })"
+	mode = mode.orDefault()
+	parameters := strings.Join(modeRoots[mode], ", ")
+	prelude, trailer := "(function ("+parameters+") { return (async function () {\n", "\n}).call(this); })"
+	if mode == ModeComparator {
+		prelude, trailer = "(function ("+parameters+") { return function (a, b) {\n", "\n}; })"
+	}
 	text := prelude + source + trailer
 	return wrapped{
 		text:       text,
+		comparator: mode == ModeComparator,
 		open:       len(prelude) - 2,
 		close:      len(prelude) + len(source) + 1,
 		outerClose: len(text) - 2,

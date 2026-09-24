@@ -182,6 +182,8 @@ func TestAWorkerFailsExactlyAsTheRuntimeDoesInProcess(t *testing.T) {
 		{Source: "throw 'plain'"},
 		{Mode: jsrun.ModeEachItem, Source: "if ($itemIndex === 1) null.x\nreturn { json: {} }"},
 		{Source: "return $('Nowhere').first()"},
+		{Mode: jsrun.ModeComparator, Source: "return a.json.name > b.json.name"},
+		{Mode: jsrun.ModeComparator, Source: "const x = 1\nthrow new TypeError('bad ' + x)"},
 	} {
 		task.Items = items("a", "b")
 		task.Roots = webhookRoots()
@@ -207,6 +209,25 @@ func TestAWorkerFailsExactlyAsTheRuntimeDoesInProcess(t *testing.T) {
 	}
 	if starts := pool.starts.Load(); starts > 3 {
 		t.Errorf("%d workers started for failures the runtime stops itself; they should be reused", starts)
+	}
+}
+
+// A Sort node's comparator runs in a worker like any other job, and the order
+// it puts the items in comes back to the server, which reorders its own items.
+func TestAComparatorRunsInAWorker(t *testing.T) {
+	pool := newTestPool(t, Options{})
+	result, err := pool.Run(context.Background(), jsrun.Task{
+		Mode: jsrun.ModeComparator, Items: items("pear", "apple", "fig", "apple"),
+		Source: "console.log('compared')\nreturn a.json.name < b.json.name ? -1 : a.json.name > b.json.name ? 1 : 0",
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if want := []int{1, 3, 2, 0}; !slices.Equal(result.Order, want) || result.Items != nil {
+		t.Fatalf("order = %v, items = %#v; want %v and no items", result.Order, result.Items, want)
+	}
+	if len(result.Console) == 0 || result.Console[0].Text != "compared" {
+		t.Fatalf("console = %#v, want what the comparator printed", result.Console)
 	}
 }
 

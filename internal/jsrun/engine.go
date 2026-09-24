@@ -152,9 +152,11 @@ type vm struct {
 	stringify goja.Callable
 	describe  goja.Callable
 	// installRoots builds the roots; run is what it returns, the one
-	// function the user's code is called through.
+	// function the user's code is called through, and sortWith the one a
+	// comparator sorts through.
 	installRoots goja.Callable
 	run          goja.Callable
+	sortWith     goja.Callable
 	// errorTypes are the error constructors, captured before any user code,
 	// that natives throw through.
 	errorTypes map[string]goja.Value
@@ -363,7 +365,11 @@ func (v *vm) install(state string, input value, mode Mode, h host) error {
 		if err != nil {
 			return v.fail(err)
 		}
-		v.run, err = callable(api.ToObject(v.rt).Get("run"))
+		exported := api.ToObject(v.rt)
+		if v.run, err = callable(exported.Get("run")); err != nil {
+			return err
+		}
+		v.sortWith, err = callable(exported.Get("sort"))
 		return err
 	})
 }
@@ -488,6 +494,21 @@ func (v *vm) invoke(ctx context.Context, function value, mode Mode, index, count
 			return v.fail(err)
 		}
 		text = encoded.String()
+		return nil
+	})
+	return text, err
+}
+
+// sortOrder is a comparator's one charged call: the runtime sorts the input
+// with it and returns the order, as JSON. A comparator is a plain function,
+// so there is no promise to wait for.
+func (v *vm) sortOrder(function value) (text string, err error) {
+	err = guard(func() error {
+		order, err := v.sortWith(goja.Undefined(), function.v)
+		if err != nil {
+			return v.fail(err)
+		}
+		text = order.String()
 		return nil
 	})
 	return text, err
