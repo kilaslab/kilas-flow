@@ -145,3 +145,48 @@ func TestACodeNodeThatFansOutPairsEachItemItMade(t *testing.T) {
 		t.Errorf("own/fan/order =\n  %s\nwant\n  %s", got, want)
 	}
 }
+
+// The runner records how many items each of a node's outputs produced, so a
+// Code node after an IF reads one branch with $items or .all(branch): three
+// of the four orders were paid (the true branch), one was not.
+func TestACodeNodeReadsOneBranchOfAnIF(t *testing.T) {
+	catalog := node.NewRegistry()
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	link := func(id, source, port, target string) workflow.Connection {
+		return workflow.Connection{ID: id, Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: source, Port: port}, Target: workflow.Endpoint{NodeID: target, Port: "main"}}
+	}
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion, ID: "wf_js_branches", Name: "Code node reads one branch", Settings: map[string]any{},
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "split", Name: "Split Out", Type: nodes.SplitOutNodeType, TypeVersion: workflow.V(1), Parameters: map[string]any{"fieldToSplitOut": "orders"}},
+			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: workflow.V(1), Parameters: map[string]any{"conditions": []any{
+				map[string]any{"field": "status", "operator": "equals", "value": "paid"},
+			}}},
+			{ID: "code", Name: "Code", Type: nodes.JSCodeNodeType, TypeVersion: workflow.V(1), Parameters: map[string]any{"jsCode": strings.Join([]string{
+				"const ids = (list) => list.map((order) => order.json.id).join()",
+				"return [{ json: { paid: ids($items('IF')), unpaid: ids($items('IF', 1, -1)), branch: ids($('IF').all(1)), every: $('IF').all().length } }]",
+			}, "\n")}},
+		},
+		Connections: []workflow.Connection{link("c1", "manual", "main", "split"), link("c2", "split", "main", "if"), link("c3", "if", "true", "code")},
+	}
+	ir, err := workflow.Compile(document, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	result, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{Input: lineageOrders()})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got := result.Output["code"][0][0].JSON
+	if got["paid"] != "o1,o2,o4" || got["unpaid"] != "o3" || got["branch"] != "o3" || got["every"] != float64(4) {
+		t.Fatalf("code read %#v, want each branch on its own", got)
+	}
+}

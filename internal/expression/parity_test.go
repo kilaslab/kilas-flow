@@ -372,25 +372,50 @@ func TestNodeJsonFollowsTheCurrentItem(t *testing.T) {
 	}
 }
 
-// TestLegacyItemsReadsTheFirstOutputAndRunOnly: $items(name, output, run)
-// agrees with the Code node's: another output or run is a named error, never
-// silently the first one.
-func TestLegacyItemsReadsTheFirstOutputAndRunOnly(t *testing.T) {
+// TestLegacyItemsReadsOneOutputOfTheLatestRun: $items(name, output, run)
+// reads output 0 unless told otherwise, as n8n does, and only the node's
+// latest run, the one kept: named by its number, or as n8n's -1, it is read,
+// which is what a loop reading `$items('X', 0, $runIndex)` in lockstep needs;
+// an earlier run is an error, never the latest passed off as it.
+func TestLegacyItemsReadsOneOutputOfTheLatestRun(t *testing.T) {
 	t.Parallel()
 
 	ctx := parityContext()
+	ctx.RunIndex = 2
 	ctx.NodeItems = map[string]expression.NodeItem{
-		"Split Out": {JSON: map[string]any{"v": "a"}, Items: []map[string]any{{"v": "a"}, {"v": "b"}}},
+		// An IF node: two items went out on true, one on false.
+		"IF": {JSON: map[string]any{"v": "t1"}, Items: []map[string]any{{"v": "t1"}, {"v": "t2"}, {"v": "f1"}}, OutputLengths: []int{2, 1}, RunIndex: 2},
+		// A Switch whose first output got nothing.
+		"Switch": {Items: []map[string]any{{"v": "b"}}, OutputLengths: []int{0, 1}},
+		// Recorded before output lengths were: one output.
+		"Old": {JSON: map[string]any{"v": "a"}, Items: []map[string]any{{"v": "a"}, {"v": "b"}}},
 	}
-	for _, template := range []string{"{{ $items('Split Out')[1].json.v }}", "{{ $items('Split Out', 0, 0)[1].json.v }}", "{{ $items('Split Out', null)[1].json.v }}"} {
-		if got := evaluateOne(t, template, ctx); got != "b" {
-			t.Errorf("Evaluate(%s) = %#v, want the node's second item", template, got)
+	for template, want := range map[string]any{
+		"{{ $items('IF').map(i => i.json.v) }}":       []any{"t1", "t2"},
+		"{{ $items('IF', 0).map(i => i.json.v) }}":    []any{"t1", "t2"},
+		"{{ $items('IF', null).length }}":             float64(2),
+		"{{ $items('IF', 1).map(i => i.json.v) }}":    []any{"f1"},
+		"{{ $items('IF', 1, 2).map(i => i.json.v) }}": []any{"f1"},
+		"{{ $items('IF', 0, $runIndex).length }}":     float64(2),
+		"{{ $items('IF', 1, -1).length }}":            float64(1),
+		"{{ $items('Switch').length }}":               float64(0),
+		"{{ $items('Switch', 1)[0].json.v }}":         "b",
+		"{{ $items('Old', 0).map(i => i.json.v) }}":   []any{"a", "b"},
+	} {
+		if got := evaluateOne(t, template, ctx); !sameValue(got, want) {
+			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
 		}
 	}
-	for _, template := range []string{"{{ $items('Split Out', 1) }}", "{{ $items('Split Out', 0, 2) }}"} {
+	for template, want := range map[string]string{
+		"{{ $items('IF', 2) }}":       `$items() names output 2 of node "IF", which has no such output`,
+		"{{ $items('Old', 1) }}":      `$items() names output 1 of node "Old", which has no such output`,
+		"{{ $items('IF', 0, 0) }}":    `$items() reads run 0 of node "IF", but only its latest run, 2, is kept`,
+		"{{ $items('IF', 0, 3) }}":    `$items() names run 3 of node "IF", which has no such run`,
+		"{{ $items('IF', 0, null) }}": `$items() names run null of node "IF", which has no such run`,
+	} {
 		_, err := expression.Evaluate(template, ctx)
-		if err == nil || !strings.Contains(err.Error(), "an output or run other than the first") {
-			t.Errorf("Evaluate(%s) error = %v, want the output or run refused by name", template, err)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Evaluate(%s) error = %v, want %q", template, err, want)
 		}
 	}
 }

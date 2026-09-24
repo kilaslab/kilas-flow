@@ -109,6 +109,19 @@ function context(testCase, lines) {
 	const lodash = inContext(lodashSource + '\n;_.noConflict()');
 
 	let current = 0;
+	// read is one output of a node's latest run, as the runtime reads it. A
+	// case's nodes have one output and one run, run 0.
+	const read = (name, label, output, run) => {
+		name = String(name);
+		if (!views[name]) throw new Error(`node "${name}" has not run in this execution, or there is no node by that name`);
+		if (output !== undefined && output !== 0) {
+			throw new Error(`${label} names output ${String(output)} of node "${name}", which has no such output`);
+		}
+		if (run !== undefined && run !== -1 && run !== 0) {
+			throw new Error(`${label} names run ${String(run)} of node "${name}", which has no such run`);
+		}
+		return views[name];
+	};
 	const nodeView = (name) => {
 		name = String(name);
 		const items = views[name];
@@ -121,13 +134,7 @@ function context(testCase, lines) {
 			return items[Math.min(index, items.length - 1)];
 		};
 		const view = {
-			all: (branch, run) => {
-				if ((branch !== undefined && branch !== 0) || (run !== undefined && run !== 0)) {
-					throw new Error(refusal(`reads $("${name}").all() with a branch or run other than the first`));
-				}
-				executed();
-				return items;
-			},
+			all: (branch, run) => read(name, `$("${name}").all()`, branch ?? undefined, run),
 			first: () => (executed(), items[0]),
 			last: () => (executed(), items[items.length - 1]),
 			itemMatching: (index) => paired(index),
@@ -144,13 +151,7 @@ function context(testCase, lines) {
 	const printed = (level) => (...args) => lines.push(`${level}: ${util.format(...args)}`);
 	const globals = {
 		$: nodeView,
-		$items: (name, output, run) => {
-			if (name === undefined || name === null) return input;
-			if ((output !== undefined && output !== null && output !== 0) || (run !== undefined && run !== 0)) {
-				throw new Error(refusal(`reads $items("${String(name)}") with an output or run other than the first`));
-			}
-			return nodeView(name).all();
-		},
+		$items: (name, output, run) => (name === undefined || name === null ? input : read(name, '$items()', output || 0, run)),
 		$node: new Proxy({}, {
 			get: (_, name) => {
 				if (typeof name !== 'string' || !views[name]) return undefined;

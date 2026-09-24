@@ -404,6 +404,9 @@ func TestConsoleIsKeptWhenTheCodeFails(t *testing.T) {
 func nodeRoots() jsrun.Roots {
 	nodes := map[string]jsrun.NodeView{
 		"Webhook": {Items: []map[string]any{{"v": "a"}, {"v": "b"}, {"v": "c"}}, Params: map[string]any{"path": "hook"}},
+		// An IF node on its third run: two items went out on true, one on
+		// false.
+		"IF": {Items: []map[string]any{{"v": "t1"}, {"v": "t2"}, {"v": "f1"}}, Outputs: []int{2, 1}, RunIndex: 2},
 	}
 	return jsrun.Roots{
 		Workflow:  jsrun.WorkflowInfo{ID: "wf-1", Name: "Orders", Active: true},
@@ -473,20 +476,52 @@ func TestItemMatchingPairsTheNamedInputItem(t *testing.T) {
 	}
 }
 
-func TestAllWithABranchOrRunIsANamedError(t *testing.T) {
-	_, err := runTask(t, jsrun.Task{Source: "return $('Webhook').all(1)", Roots: nodeRoots()})
-	if err == nil || !strings.Contains(err.Error(), "which this server does not run") {
-		t.Fatalf("Run() error = %v, want the branch refused", err)
+// .all(branch, run) and $items(name, output, run) read one output of the
+// node's latest run, the only run kept, as n8n reads them: named by its
+// number or as n8n's -1, the latest run is read; an earlier one is refused
+// rather than answered with the latest, and a run or output the node does
+// not have is an error. $items reads output 0 by default; .all() with no
+// branch reads every output, since the runtime cannot tell which one feeds
+// this node.
+func TestAllAndItemsReadOneOutputOfTheLatestRun(t *testing.T) {
+	roots := nodeRoots()
+	roots.RunIndex = 2
+	result := mustRun(t, newRunner(), jsrun.Task{Roots: roots, Source: strings.Join([]string{
+		"const values = (list) => list.map((item) => item.json.v).join(',')",
+		"return [{ json: {",
+		"  items: values($items('IF')), second: values($items('IF', 1)), lockstep: values($items('IF', 1, $runIndex)), last: values($items('IF', null, -1)),",
+		"  all: values($('IF').all()), branch: values($('IF').all(1)), latest: values($('IF').all(0, 2)), same: $items('IF', 1) === $('IF').all(1, -1),",
+		"} }]",
+	}, "\n")})
+	got := result.Items[0].JSON
+	for key, want := range map[string]any{
+		"items": "t1,t2", "second": "f1", "lockstep": "f1", "last": "t1,t2", "all": "t1,t2,f1", "branch": "f1", "latest": "t1,t2", "same": true,
+	} {
+		if got[key] != want {
+			t.Errorf("%s = %#v, want %#v", key, got[key], want)
+		}
 	}
-	_, err = runTask(t, jsrun.Task{Source: "return $('Nope').first()", Roots: nodeRoots()})
-	if err == nil || !strings.Contains(err.Error(), `node "Nope" has not run in this execution`) {
-		t.Fatalf("Run() error = %v, want the missing node named", err)
+
+	for source, want := range map[string]string{
+		"return $items('IF', 0, 0)":      `this node's code reads run 0 of node "IF", but only its latest run, 2, is kept, which this server does not run`,
+		"return $('IF').all(0, 1)":       `this node's code reads run 1 of node "IF", but only its latest run, 2, is kept, which this server does not run`,
+		"return $items('IF', 0, 3)":      `$items() names run 3 of node "IF", which has no such run`,
+		"return $items('IF', 0, null)":   `$items() names run null of node "IF", which has no such run`,
+		"return $items('IF', 2)":         `$items() names output 2 of node "IF", which has no such output`,
+		"return $('IF').all(2)":          `$("IF").all() names output 2 of node "IF", which has no such output`,
+		"return $('Webhook').all(1)":     `$("Webhook").all() names output 1 of node "Webhook", which has no such output`,
+		"return $items('Webhook', 0, 1)": `$items() names run 1 of node "Webhook", which has no such run`,
+		"return $('Nope').first()":       `node "Nope" has not run in this execution`,
+	} {
+		_, err := runTask(t, jsrun.Task{Source: source, Roots: roots})
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: Run() error = %v, want %q", source, err, want)
+		}
 	}
 }
 
 // $items is n8n's older spelling of the same reads: with no name the node's
-// own input, with one that node's items, as $('Name').all() gives them. Like
-// .all(), it reads only the first output and run.
+// own input, with one that node's items, as $('Name').all() gives them.
 func TestTheLegacyItemsRootReadsTheInputOrANamedNode(t *testing.T) {
 	result := mustRun(t, newRunner(), jsrun.Task{Source: strings.Join([]string{
 		"const hook = $items('Webhook')",
@@ -503,15 +538,6 @@ func TestTheLegacyItemsRootReadsTheInputOrANamedNode(t *testing.T) {
 		t.Fatalf("items = %#v", perItem.Items)
 	}
 
-	for source, subject := range map[string]string{
-		"return $items('Webhook', 1)":    `reads $items("Webhook") with an output or run other than the first`,
-		"return $items('Webhook', 0, 1)": `reads $items("Webhook") with an output or run other than the first`,
-	} {
-		_, err := runTask(t, jsrun.Task{Source: source, Roots: nodeRoots()})
-		if err == nil || !strings.Contains(err.Error(), "this node's code "+subject+", which this server does not run") {
-			t.Errorf("%q: Run() error = %v, want it refused because it %s", source, err, subject)
-		}
-	}
 	_, err := runTask(t, jsrun.Task{Source: "return $items('Nope')", Roots: nodeRoots()})
 	if err == nil || !strings.Contains(err.Error(), `node "Nope" has not run in this execution`) {
 		t.Fatalf("Run() error = %v, want the missing node named", err)

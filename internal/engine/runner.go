@@ -2272,6 +2272,7 @@ func nodeItemFor(node workflow.IRNode, output workflow.NodeOutput, runIndex int)
 		RunIndex:   runIndex,
 	}
 	for portIndex, port := range output {
+		item.OutputLengths = append(item.OutputLengths, len(port))
 		// A port is named by the definition, and an origin names the port
 		// rather than its position, because that is what an edge carries.
 		if portIndex < len(node.Definition.Outputs) {
