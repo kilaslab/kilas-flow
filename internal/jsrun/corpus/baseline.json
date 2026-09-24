@@ -13,22 +13,21 @@
     "eachItem": 51,
     "comparators": 0,
     "stubbed": 330,
-    "parsed": 329,
-    "accepted": 328,
-    "ran": 224,
-    "parseRate": 99.7,
-    "acceptRate": 99.4,
-    "runtimeErrorRate": 31.7
+    "parsed": 330,
+    "accepted": 329,
+    "ran": 225,
+    "parseRate": 100,
+    "acceptRate": 99.7,
+    "runtimeErrorRate": 31.6
   },
   "timing": {
-    "runs": 328,
-    "medianMillis": 0.54,
-    "p95Millis": 1.64
+    "runs": 329,
+    "medianMillis": 0.55,
+    "p95Millis": 1.46
   },
   "blockers": {
     "invalid-return": 3,
     "refused: requires the module \"youtube-transcript\"": 1,
-    "syntax error": 1,
     "threw: Error": 8,
     "threw: ReferenceError": 22,
     "threw: SyntaxError": 5,
@@ -1971,10 +1970,10 @@
       "key": "3314/18",
       "mode": "runOnceForAllItems",
       "stubbed": true,
-      "parsed": false,
-      "accepted": false,
-      "ran": false,
-      "outcome": "syntax"
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "3328/8",

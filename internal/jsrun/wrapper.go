@@ -74,6 +74,12 @@ func wrap(source string, mode Mode) wrapped {
 	}
 }
 
+// bodyStart is the offset of the user's code in the wrapped text.
+func (w wrapped) bodyStart() int { return w.open + 2 }
+
+// body is the user's code as the wrapper holds it.
+func (w wrapped) body() string { return w.text[w.bodyStart() : w.close-1] }
+
 // userLine turns a line of the wrapped text into the user's line. A position
 // on the trailer is reported at the code's last line, and one on the prelude
 // as unknown.

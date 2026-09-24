@@ -9,14 +9,14 @@ The JavaScript Code nodes and Sort code comparators of the 500 most-viewed n8n t
 | JavaScript bodies | 371 | |
 | … with no code in the template (an empty body, which fails in n8n too; not measured) | 41 | |
 | Measured | 330 | |
-| Parse | 329 | 99.7% |
-| Parse and pass analysis | 328 | 99.4% |
-| Run without an error on synthesised input | 224 | 68.3% of accepted |
-| Runtime-error rate | 104 | 31.7% of accepted |
+| Parse | 330 | 100.0% |
+| Parse and pass analysis | 329 | 99.7% |
+| Run without an error on synthesised input | 225 | 68.4% of accepted |
+| Runtime-error rate | 104 | 31.6% of accepted |
 
 Of the measured bodies, 51 run once for each item and 0 are Sort comparators. 330 had no pinned data upstream and ran on a stand-in item shaped from the fields the body reads, so a failure among them may be the stand-in's, not the runtime's.
 
-Run time (wall clock of `Runner.Run`, including compiling the body once, on the machine that wrote this file): median **0.54 ms**, p95 **1.64 ms** over 328 runs.
+Run time (wall clock of `Runner.Run`, including compiling the body once, on the machine that wrote this file): median **0.55 ms**, p95 **1.46 ms** over 329 runs.
 
 ## What stops the rest
 
@@ -30,7 +30,6 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | threw: SyntaxError | 5 |
 | invalid-return | 3 |
 | refused: requires the module "youtube-transcript" | 1 |
-| syntax error | 1 |
 | threw: date locale en-CA | 1 |
 | threw: date locale id-ID | 1 |
 | threw: this.helpers.httpRequest (not wired in the instrument) | 1 |
@@ -247,7 +246,7 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 3202/15 | runOnceForAllItems | stand-in | · | · | · | no-source |
 | 3314/8 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3314/17 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
-| 3314/18 | runOnceForAllItems | stand-in | · | · | · | syntax |
+| 3314/18 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3328/8 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3328/14 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3342/0 | runOnceForAllItems | stand-in | · | · | · | no-source |
