@@ -17,8 +17,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/kilaslab/kilas-flow/internal/jsrun"
@@ -361,4 +363,83 @@ func TestAConfiguredUserRunsTheWorkers(t *testing.T) {
 	}
 	profile, _ := pool.profile()
 	t.Logf("confinement: %v; %s", profile.gives.Active, pool.refusal)
+}
+
+// A start that fails whatever the profile, such as a binary the worker may
+// not run, says nothing about what the kernel grants: the stronger profile is
+// kept, and is what the next worker starts with once the binary is fixed.
+func TestAStartThatFailsWithEveryProfileKeepsTheStrongest(t *testing.T) {
+	var logs lockedBuffer
+	pool := newTestPool(t, Options{Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	strongest := spawnProfile{
+		asks:      "nothing more",
+		apply:     func(*exec.Cmd) {},
+		gives:     confinement{Active: []string{layerNetwork}},
+		stepsDown: true,
+	}
+	pool.profiles = []spawnProfile{strongest, pool.profiles[len(pool.profiles)-1]}
+	shared := t.TempDir()
+	binary, err := os.ReadFile(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.binary = filepath.Join(shared, "jsworker.test")
+	if err := os.WriteFile(pool.binary, binary, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Run(context.Background(), jsrun.Task{Source: "return items"}); !errors.Is(err, jsrun.ErrEngineFault) {
+		t.Fatalf("Run() with a binary nobody may run = %v, want it to fail", err)
+	}
+	if err := os.Chmod(pool.binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Run(context.Background(), jsrun.Task{Source: "return items"}); err != nil {
+		t.Fatalf("Run() once the binary may run = %v", err)
+	}
+	if _, index := pool.profile(); index != 0 {
+		t.Errorf("the pool starts workers with profile %d, want the strongest kept", index)
+	}
+	if lines := confinementLines(logs.String()); len(lines) != 1 || !strings.Contains(lines[0], "level=INFO") {
+		t.Errorf("confinement logged as %q, want once, fully confined", lines)
+	}
+}
+
+// A refusal can pass, as when the kernel's count of user namespaces was
+// exhausted for a while: the pool asks for the stronger profile again after
+// a while, and says so when it is granted.
+func TestARefusedProfileIsAskedForAgainLater(t *testing.T) {
+	var logs lockedBuffer
+	pool := newTestPool(t, Options{MaxRuns: 1, Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	var refuse atomic.Bool
+	refuse.Store(true)
+	strongest := spawnProfile{
+		asks: "a thread for a process",
+		apply: func(cmd *exec.Cmd) {
+			if refuse.Load() {
+				cmd.SysProcAttr.Cloneflags |= syscall.CLONE_THREAD
+			}
+		},
+		gives:     confinement{Active: []string{layerNetwork}},
+		stepsDown: true,
+	}
+	pool.profiles = []spawnProfile{strongest, pool.profiles[len(pool.profiles)-1]}
+	pool.reprobeAfter = time.Millisecond
+	if _, err := pool.Run(context.Background(), jsrun.Task{Source: "return items"}); err != nil {
+		t.Fatalf("Run() while refused = %v", err)
+	}
+	if _, index := pool.profile(); index != 1 {
+		t.Fatalf("profile %d after a refusal, want the next", index)
+	}
+	refuse.Store(false)
+	time.Sleep(5 * time.Millisecond)
+	if _, err := pool.Run(context.Background(), jsrun.Task{Source: "return items"}); err != nil {
+		t.Fatalf("Run() once granted = %v", err)
+	}
+	if _, index := pool.profile(); index != 0 {
+		t.Fatalf("profile %d once the kernel grants the strongest again, want 0", index)
+	}
+	lines := confinementLines(logs.String())
+	if len(lines) != 2 || !strings.Contains(lines[0], "level=WARN") || !strings.Contains(lines[1], "level=INFO") || strings.Contains(lines[1], "why=") {
+		t.Fatalf("confinement logged as %q, want the refusal, then the recovery", lines)
+	}
 }

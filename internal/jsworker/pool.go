@@ -87,13 +87,16 @@ type Pool struct {
 	closed bool
 
 	// profiles are the ways to start a worker, strongest first; profileAt
-	// is the one the kernel has not refused, and refusal why the one before
-	// it was. confinementLogged is what was last logged about them, and
-	// workerConfinement what the last worker to start said of itself.
+	// is the one the kernel has not refused, refusal why the one before it
+	// was, and refusedAt when, so that it is asked for again every
+	// reprobeAfter. confinementLogged is what was last logged about them,
+	// and workerConfinement what the last worker to start said of itself.
 	confineMu         sync.Mutex
 	profiles          []spawnProfile
 	profileAt         int
 	refusal           string
+	refusedAt         time.Time
+	reprobeAfter      time.Duration
 	confinementLogged string
 	workerConfinement confinement
 }
@@ -110,6 +113,10 @@ func New(options Options) *Pool {
 		maxRuns:     options.MaxRuns,
 		logger:      options.Logger,
 		profiles:    spawnProfiles(options.UID, options.GID),
+		// A kernel that refused a namespace is asked again this often:
+		// rarely enough that a refusal costs almost nothing, often enough
+		// that a passing one does not last until a restart.
+		reprobeAfter: 10 * time.Minute,
 	}
 	if pool.heapCeiling == 0 {
 		pool.heapCeiling = jsrun.DefaultHeapCeiling
@@ -255,17 +262,19 @@ type worker struct {
 }
 
 func (pool *Pool) start() (*worker, error) {
-	profile, index := pool.profile()
+	profile, index := pool.nextProfile()
+	var refused error
 	for {
 		w, err := pool.spawn(profile)
 		if err != nil {
-			next, nextIndex, ok := pool.stepDown(index, err)
+			next, nextIndex, ok := pool.fallback(index, err)
 			if !ok {
 				return nil, err
 			}
-			profile, index = next, nextIndex
+			profile, index, refused = next, nextIndex, err
 			continue
 		}
+		pool.settle(index, refused)
 		limits := pool.limits
 		hello := message{Type: typeHello, Limits: &limits, HeapCeiling: pool.heapCeiling, AddressSpace: addressSpace(pool.heapCeiling)}
 		if err := writeFrame(w.in, hello, ""); err != nil {

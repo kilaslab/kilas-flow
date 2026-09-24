@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // The layers that confine a worker, as the operator's log names them. The
@@ -50,34 +51,63 @@ type spawnProfile struct {
 // of layers.
 const maxConfinementReport = 16 << 10
 
-// profile is the strongest profile not yet refused, and its place in the
-// list.
+// profile is the profile workers start with now, and its place in the list:
+// the strongest the kernel has not refused.
 func (pool *Pool) profile() (spawnProfile, int) {
 	pool.confineMu.Lock()
 	defer pool.confineMu.Unlock()
 	return pool.profiles[pool.profileAt], pool.profileAt
 }
 
-// stepDown gives up the profile at index for the next one when the kernel
-// refused to start a process with it, and reports whether there is one to
-// try. It is settled once: every later worker starts with what was granted.
-func (pool *Pool) stepDown(index int, err error) (spawnProfile, int, bool) {
+// nextProfile is the profile the next worker is started with: the one
+// workers start with now, or, once reprobeAfter has passed since the kernel
+// refused a stronger one, the strongest again, since a refusal can pass.
+// One start in each interval asks.
+func (pool *Pool) nextProfile() (spawnProfile, int) {
 	pool.confineMu.Lock()
 	defer pool.confineMu.Unlock()
-	refused := pool.profiles[index]
-	if !refused.stepsDown || index+1 >= len(pool.profiles) || !refusedByKernel(err) {
+	index := pool.profileAt
+	if index > 0 && time.Since(pool.refusedAt) >= pool.reprobeAfter {
+		pool.refusedAt = time.Now()
+		index = 0
+	}
+	return pool.profiles[index], index
+}
+
+// fallback is the profile after the one at index, when the kernel refused to
+// start a process with that one and it may be given up for the next. It
+// settles nothing: a start that fails whatever the profile, such as a binary
+// the worker may not run, says nothing about what the kernel grants.
+func (pool *Pool) fallback(index int, err error) (spawnProfile, int, bool) {
+	pool.confineMu.Lock()
+	defer pool.confineMu.Unlock()
+	if !pool.profiles[index].stepsDown || index+1 >= len(pool.profiles) || !refusedByKernel(err) {
 		return spawnProfile{}, 0, false
 	}
-	if pool.profileAt == index {
-		pool.profileAt = index + 1
-		reason := err.Error()
-		var errno syscall.Errno
-		if errors.As(err, &errno) {
-			reason = errno.Error()
+	return pool.profiles[index+1], index + 1, true
+}
+
+// settle keeps to the profile at index once a worker has started with it:
+// what the kernel refused on the way there, refused, is why the stronger
+// ones are missing. A worker started with a stronger profile than before,
+// after a refusal passed, takes the pool back up.
+func (pool *Pool) settle(index int, refused error) {
+	pool.confineMu.Lock()
+	defer pool.confineMu.Unlock()
+	if refused == nil {
+		if index < pool.profileAt {
+			pool.profileAt, pool.refusal = index, ""
 		}
-		pool.refusal = fmt.Sprintf("the kernel refused %s: %s", refused.asks, reason)
+		return
 	}
-	return pool.profiles[pool.profileAt], pool.profileAt, true
+	reason := refused.Error()
+	var errno syscall.Errno
+	if errors.As(refused, &errno) {
+		reason = errno.Error()
+	}
+	pool.profileAt = index
+	pool.refusal = fmt.Sprintf("the kernel refused %s: %s", pool.profiles[index-1].asks, reason)
+	pool.refusedAt = time.Now()
 }
 
 // refusedByKernel tells a kernel that will not grant what a profile asks for,
