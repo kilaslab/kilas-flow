@@ -279,6 +279,32 @@ console output kept with each node run. Beyond the plan:
 
 P5–P8 follow.
 
+# Progress (2026-09-24, stopped for the usage limit)
+
+Done and merged on main this session: P5 (FEAT-x9gq0s), P6 (FEAT-mammrz), P7
+(FEAT-afkx3k), worker confinement (FEAT-21h6xp), BUG-548bk9, BUG-14gp8r,
+BUG-k99658, BUG-h6tj4e (found by the P8 security review), and the corpus
+parity bugs BUG-pdsydm, BUG-kvpx6x, BUG-djp647, BUG-9hx5xm, BUG-jwhj6y,
+BUG-3mem9s. Each went through task review and fix rounds; the last fix rounds
+of BUG-jwhj6y/BUG-3mem9s and of the $items run-numbering fix were checked by
+the controller (diff and tests) without a separate re-review.
+
+Open, where to resume:
+- FEAT-9we7kw (en-CA/en-GB): branch `epic/feat-9we7kw`; its last commit is a
+  WIP of review fix round 3 (the -u-hc- extension width rule, a new
+  en-GB-u-hc-h24 regression, toLocale* hourCycle h11/h24, narrowing the
+  offset refusal). The reviewer's Node probe harness notes are in the ticket.
+- BUG-46g75c (Buffer UTF-8 as WHATWG): branch `epic/buffer-utf8`, WIP commit,
+  unreviewed.
+- BUG-a9d2hb (Europe/Dublin on Debian tzdata): not started; after FEAT-9we7kw.
+- FEAT-vjjs8t (P8): merged, status testing; needs a docs touch-up for en-CA/
+  en-GB once that merges, and the review's minor items (symbol-keyed globals
+  in the surface walk, async-function constructor test, comparator surface).
+- Low: BUG-2vcwjf, BUG-c19kyx, BUG-qe71kf.
+Detached (not epic children): FEAT-0ynje5 (seccomp profile by a person),
+FEAT-f40kg4 (per-tenant workers), BUG-5fhcx7 (batch nodes under
+continue-on-fail).
+
 # Plan
 
 Each phase below is a child ticket of this epic.
