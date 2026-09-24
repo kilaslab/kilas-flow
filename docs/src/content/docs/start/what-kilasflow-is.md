@@ -45,7 +45,7 @@ the list of record; count it there rather than trusting this sentence.
 
 Imported n8n JavaScript Code nodes run as written, on a JavaScript engine
 linked into the binary rather than on Node.js, and a new one can be added from
-the palette. Python Code nodes are kept, shown and exported back, but do not
+the palette; see [Code (JavaScript)](/guides/code-javascript/). Python Code nodes are kept, shown and exported back, but do not
 run. The other Code node runs Go, compiled to WebAssembly.
 
 Execution is asynchronous. `POST /api/v1/workflows/{id}/run` writes a queued

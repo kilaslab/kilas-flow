@@ -207,7 +207,9 @@ server, each idling at a few tens of MiB and allowed a live heap up to
 `code.javascript_heap_ceiling_mb` (1 GiB by default) while it runs. On Linux a
 worker tells the kernel to kill it first when memory runs out, so an undersized
 container loses a script rather than the server. See
-[safety boundaries](/concepts/safety-boundaries/#worker-processes).
+[safety boundaries](/concepts/safety-boundaries/#worker-processes), and
+[Code (JavaScript)](/guides/code-javascript/#limits-and-configuration) for every
+key that bounds the workers.
 
 On Linux each worker is also confined — user, PID, network and IPC namespaces of
 its own, and landlock — as far as the kernel grants it, and the server logs once

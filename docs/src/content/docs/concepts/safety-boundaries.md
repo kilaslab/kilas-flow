@@ -251,10 +251,15 @@ involved and nothing is installed beside the server.
 **What the code can reach is what the Go behind its globals can reach, and that
 is nothing outside its own run.** The engine has no host API of its own: every
 global a script sees — `$input`, `$('Name')`, `console`, `require()` and the
-modules it returns — is a function KilasFlow wrote, and `internal/jsrun`, the
-package they live in, may not import anything that opens a file, a socket or a
-process. A test in `internal/guardrails` enforces that on every run, rather than
-a review having to notice. `require()` answers from a fixed list — `lodash`,
+modules it returns — is a function KilasFlow wrote or a vendored library's
+(Luxon, lodash, and the `Buffer` and `URL` of goja's companion `goja_nodejs`),
+and `internal/jsrun`, the package they live in, may not import anything that
+opens a file, a socket or a process. A test in `internal/guardrails` enforces
+that on every run, rather than a review having to notice. Another enumerates
+everything a script can reach, from its globals, its arguments and an instance
+of everything it can construct, against a reviewed list, and fails on anything
+new, and on any Go value whose fields or methods a script could read or call.
+`require()` answers from a fixed list — `lodash`,
 `luxon`, `crypto`, `util`, `buffer`, `url` — and there is no npm. `$env` holds
 the same `KILASFLOW_WORKFLOW_ENV_` allowlist an expression sees, and a file on an
 item crosses as its metadata, never its bytes.
@@ -262,26 +267,19 @@ item crosses as its metadata, never its bytes.
 **Code is read before it runs.** Constructs the engine would run differently
 from V8, and bodies too large or too deeply nested to parse safely, are refused
 by name when the workflow is saved or imported, so a workflow that uses one
-never activates. The [migration guide](/guides/n8n-migration/#the-code-node)
-lists them.
+never activates. The [Code (JavaScript)](/guides/code-javascript/#what-is-refused-and-when)
+page lists them.
 
-| Bound | Default | Key |
-| --- | --- | --- |
-| The program's own running time | 10 s | `code.javascript_timeout` (at most 5 m) |
-| Input, as JSON | 32 MiB | `code.javascript_max_input_bytes` |
-| Returned items, as JSON | 16 MiB | `code.javascript_max_output_bytes` |
-| Console output kept | 64 KiB | `code.javascript_max_console_bytes` |
-| Helper calls (`this.helpers`), per run or, in per-item mode, per item | 100 | `code.javascript_max_host_calls` |
-| Live heap, per worker | 1 GiB | `code.javascript_heap_ceiling_mb` |
-| Scripts running at once | one per CPU | `code.javascript_max_concurrent` |
-
-A node may **tighten** the time limit through its own **Time limit** parameter
-and can never raise it. The time limit charges the user's program only —
-starting the engine, loading a library and handling the input and output are not
-counted — so a limit reported for work that plainly does not take that long
-means something has crept inside that clock. `code.javascript_enabled: false`
-turns the node off: it is greyed out in the editor and every run is refused,
-naming the key.
+Every bound on a script — its own running time, its input, its returned items
+and its console output, its helper calls, its worker's heap and how many
+scripts run at once — has a default and a key, listed with the bounds that are
+fixed on the [Code (JavaScript)](/guides/code-javascript/#limits-and-configuration)
+page. A node may **tighten** the time limit and can never raise it. The time
+limit charges the user's program only — starting the engine, loading a library
+and handling the input and output are not counted — so a limit reported for
+work that plainly does not take that long means something has crept inside
+that clock. `code.javascript_enabled: false` turns the node off: it is greyed
+out in the editor and every run is refused, naming the key.
 
 ### Worker processes
 
