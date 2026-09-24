@@ -165,6 +165,8 @@ type vm struct {
 	// goroutine, which is the only one allowed to settle a promise.
 	jobs    chan func() error
 	pending int
+	// rejected tracks the promises rejected with nothing to handle them.
+	rejected rejections
 
 	hostCalls int
 	hostCtx   context.Context
@@ -202,6 +204,7 @@ func newVM(limits Limits) (*vm, error) {
 		jobs: make(chan func() error, 64), hostCtx: hostCtx, stopHost: stopHost,
 		done: make(chan struct{}), wake: make(chan struct{}),
 	}
+	v.trackRejections()
 	// Captured before any other code runs, so a script that replaces
 	// JSON.parse or an error constructor cannot reach the runner's own.
 	v.errorTypes = map[string]goja.Value{}
@@ -504,7 +507,14 @@ func (v *vm) await(ctx context.Context, returned goja.Value) (goja.Value, error)
 		case goja.PromiseStateFulfilled:
 			return promise.Result(), nil
 		case goja.PromiseStateRejected:
+			v.consumed(promise)
 			return nil, v.thrown(promise.Result())
+		}
+		// Every VM entry drains goja's job queue before it returns, so this
+		// is where Node would find an uncaught error with the code still
+		// running.
+		if err := v.uncaught(); err != nil {
+			return nil, err
 		}
 		if v.pending == 0 && len(v.jobs) == 0 {
 			return nil, named(ErrNeverSettles, "the code waits for a promise that nothing can ever settle")
@@ -539,6 +549,7 @@ func (v *vm) bindAsync(name string, fn func(context.Context, []any) (any, error)
 			arguments[index] = argument.Export()
 		}
 		promise, resolve, reject := v.rt.NewPromise()
+		v.ownPromise(promise)
 		v.pending++
 		go func() {
 			result, err := hostCall(v.hostCtx, fn, arguments)

@@ -24,9 +24,6 @@
 //   - PBKDF2 and scrypt refuse a cost one call could not finish promptly
 //     (MaxPBKDF2Rounds, MaxScryptCost), and scrypt more memory than one call
 //     may use;
-//   - an exception thrown by a callback given to randomBytes, randomInt,
-//     pbkdf2 or scrypt does not fail the run, as an uncaught one would in
-//     Node;
 //   - the rest of Node's crypto, and crypto.subtle, refuse by name.
 (function (kit) {
   'use strict';
