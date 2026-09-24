@@ -1,14 +1,14 @@
 ---
 id: BUG-jwhj6y
 title: 'Code node: errors thrown by built-ins are worded as goja and Go word them, not as V8 does'
-status: testing
+status: done
 priority: low
 labels:
     - code-node
     - javascript
 parent: EPIC-tjnr1z
 created: "2026-09-24T14:07:22Z"
-updated: "2026-09-24T14:07:22Z"
+updated: "2026-09-24T15:30:55Z"
 ---
 
 # Description
@@ -78,3 +78,45 @@ Found while measuring, not in scope: corpus bodies 1534/8, 2307/6, 2652/7 now fa
   None of those is reworded. callSites now records every `new` and `super(…)`, and error-constructor calls. Pinned by 11 more recorded probes (goja's and Node 14's words through `new`, a plain call, `globalThis.`, Reflect.construct, a helper function, and a subclass with and without its own constructor, caught and uncaught), a per-item test, and unit cases.
 - One case remains that the frame cannot tell: an alias or subclass of an error constructor, called with `new` and given one of goja's *not a function* messages (`const E = TypeError; throw new E('Value is not a constructor')` reads "E is not a constructor"). A read-of-undefined message through such a `new` is safe.
 - BUG-2vcwjf is filed for promise rejection handlers.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-24.
+
+- Base: `ae1ea141` (last commit at or before ticket created 2026-09-24)
+- Commits (4):
+  - `04182b11` — merge: BUG-jwhj6y and BUG-3mem9s engine errors worded as V8 words them, and HTML-like comments read as V8 reads them
+  - `a240a7dd` — BUG-jwhj6y: an error the code builds itself keeps its words, even goja's or Node 14's; only errors the engine made are reworded
+  - `b0e4cd4c` — BUG-jwhj6y: the JavaScript Code node guide says which errors read as V8's, and when an HTML-like comment is refused
+  - `b641f2d0` — BUG-jwhj6y: the errors a Code node's JavaScript reads from JSON.parse, a property of undefined and a call of what is not a function are worded as Node 24 words them
+- Files changed (the ticket's own commits, 6fe03df6edb18fe0d9365b6390122c43513cd6d1..04182b11fa57d1c0a3c7dd7e5d98a3629b38339b):
+
+```
+ .pine/tickets/BUG-2vcwjf.md                       |  35 +++
+ .pine/tickets/BUG-3mem9s.md                       |  33 ++-
+ .pine/tickets/BUG-46g75c.md                       |  34 +++
+ .pine/tickets/BUG-jwhj6y.md                       |  52 +++-
+ docs/src/content/docs/guides/code-javascript.md   |  14 +-
+ internal/jsrun/analyze.go                         |  32 ++-
+ internal/jsrun/analyze_errors.go                  | 187 ++++++++++++++
+ internal/jsrun/analyze_html.go                    | 575 ++++++++++++++++++++++++++++++++++++++++++
+ internal/jsrun/analyze_html_test.go               |  63 +++++
+ internal/jsrun/console_test.go                    |   2 +-
+ internal/jsrun/corpus/BASELINE.md                 |  13 +-
+ internal/jsrun/corpus/baseline.json               |  27 +-
+ internal/jsrun/corpus/jsdiff_test.go              |  13 +-
+ internal/jsrun/engine.go                          |   7 +
+ internal/jsrun/htmlcomments_test.go               | 120 +++++++++
+ internal/jsrun/js/modules/errors.js               | 279 ++++++++++++++++++++
+ internal/jsrun/js/runtime.js                      |  12 +-
+ internal/jsrun/modules.go                         |   2 +-
+ internal/jsrun/programs.go                        |   4 +
+ internal/jsrun/testdata/parity/errors.json        | 293 +++++++++++++++++++++
+ internal/jsrun/testdata/parity/html-comments.json |  37 +++
+ internal/jsrun/wording.go                         | 149 +++++++++++
+ internal/jsrun/wording_internal_test.go           |  48 ++++
+ internal/jsrun/wording_test.go                    | 268 ++++++++++++++++++++
+ internal/jsrun/wrapper.go                         |  12 +-
+ scripts/js-parity/record-engine.mjs               | 322 +++++++++++++++++++++++
+ 26 files changed, 2595 insertions(+), 38 deletions(-)
+```
