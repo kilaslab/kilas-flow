@@ -1,7 +1,7 @@
 ---
 id: FEAT-mammrz
 title: 'JS Code runtime P6: Sort node code comparator on the JS runtime'
-status: testing
+status: done
 priority: low
 labels:
     - code-node
@@ -11,7 +11,7 @@ deps:
 parent: EPIC-tjnr1z
 phase: p6
 created: "2026-09-23T01:33:22Z"
-updated: "2026-09-23T01:33:22Z"
+updated: "2026-09-24T13:20:22Z"
 ---
 
 # Description
@@ -72,3 +72,36 @@ Done on epic/p6-sort; status testing for review. `go build ./...`, `go vet ./...
 # Related Files
 
 # Attachments
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-24.
+
+- Base: `018af94f` (last commit at or before ticket created 2026-09-23)
+- Commits (5):
+  - `831ac250` — merge: FEAT-mammrz the Sort node's code comparator runs on the JavaScript runtime
+  - `7df998c1` — FEAT-mammrz: a comparator that falls off its end is not located, a Sort without a comparator runs n8n's default, and the order cannot be spoilt by the comparator
+  - `7a684da5` — FEAT-mammrz: the ticket moves to testing with its evidence
+  - `d5aa5d1e` — FEAT-mammrz: the Sort node's code comparator runs on the JavaScript runtime instead of being refused
+  - `e58dbbd9` — FEAT-mammrz: the JavaScript runtime sorts with a Sort comparator and returns the order
+- Files changed (the ticket's own commits, dc1366b3e9f2a569bf881eccfd4e3716dbc68cf0..831ac25078ac15d42bccea68a5f12abe8d8d5256):
+
+```
+ .pine/tickets/FEAT-mammrz.md                  |  45 +++++++++-
+ docs/src/content/docs/guides/n8n-migration.md |  31 +++++++
+ internal/interop/n8n/n8n_test.go              | 137 ++++++++++++++++++++++++----
+ internal/interop/n8n/parameters.go            |  62 ++++++++-----
+ internal/jsrun/analyze.go                     |  77 +++++++++++++---
+ internal/jsrun/comparator_test.go             | 221 ++++++++++++++++++++++++++++++++++++++++++++++
+ internal/jsrun/engine.go                      |  26 +++++-
+ internal/jsrun/js/runtime.js                  |  39 ++++++++
+ internal/jsrun/jsrun.go                       |  16 +++-
+ internal/jsrun/run.go                         |  57 ++++++++++++
+ internal/jsrun/wrapper.go                     |  23 ++++-
+ internal/jsworker/jsworker_test.go            |  21 +++++
+ nodes/executors.go                            |   2 +-
+ nodes/jscode.go                               |   6 ++
+ nodes/sort_code_test.go                       | 206 ++++++++++++++++++++++++++++++++++++++++++
+ nodes/transform.go                            | 109 ++++++++++++++++++++++-
+ 16 files changed, 1018 insertions(+), 60 deletions(-)
+```
