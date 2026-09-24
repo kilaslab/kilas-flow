@@ -1,7 +1,7 @@
 ---
 id: BUG-548bk9
 title: 'Code-node JavaScript: an unhandled promise rejection from a callback is lost instead of failing the run as in Node'
-status: doing
+status: testing
 priority: low
 parent: EPIC-tjnr1z
 created: "2026-09-23T07:09:43Z"
@@ -35,9 +35,9 @@ fail the node with "lost", or only log it).
 The node succeeds, and "lost" appears nowhere.
 
 # Acceptance Criteria
-- [ ] n8n's behaviour for an unhandled rejection and a throwing async callback
+- [x] n8n's behaviour for an unhandled rejection and a throwing async callback
       in a Code node is recorded.
-- [ ] Code-node JavaScript does the same, using goja's promise rejection
+- [x] Code-node JavaScript does the same, using goja's promise rejection
       tracker, without counting the runtime's own promises or the body's
       result, which the runner consumes.
 
@@ -119,3 +119,23 @@ the container log read back.
 - **Scope.** It is not item-scoped, so it ends the run even with
   continue-on-fail in per-item mode, as n8n's process crash does. No item
   index is stamped on it, because the rejection may come from an earlier item.
+
+## Progress (2026-09-24)
+
+- `internal/jsrun/engine_rejections.go` holds the tracker and the check. The
+  other changes are small:
+  - `engine.go`: one field, one call in `newVM`, `ownPromise` in `bindAsync`,
+    and the check plus `consumed` in `await`;
+  - `run.go`: `itemScoped` and `forItem` leave an uncaught error to the run;
+  - `ScriptError.Uncaught`, which renders as the `Uncaught ` prefix.
+- `crypto.js` no longer lists a throwing callback as a difference from Node.
+- The tests are in `internal/jsrun/rejections_test.go`. They cover every
+  failing and succeeding case observed above, the body's own failure and
+  per-item continue-on-fail, host-call promises, and the flag crossing the
+  wire.
+- **For the host-call reply work in the job loop (Task 1).** Any new promise
+  the runtime makes for a host call must be passed to `v.ownPromise`. Any new
+  place that runs a job must go back through `await`'s loop, so that the check
+  runs after it.
+- **No changelog entry.** The JavaScript Code node itself has no entry under
+  `[Unreleased]` yet, and this fix belongs in that entry when the epic adds it.
