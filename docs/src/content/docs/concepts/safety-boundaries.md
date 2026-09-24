@@ -329,12 +329,59 @@ fresh engine.
   undumpable, so its environment cannot be read through `/proc` by another
   process of its user, a worker included, and it leaves no core dump.
 
-What the workers are not is a privilege boundary. They run as the same user as
-the server, with the same filesystem and network view; what keeps a script from
-reading a file is that the engine exposes nothing that opens one, and what the
-process boundary adds is that exhausting memory or a core costs a worker rather
-than every workflow on the server. Code that escaped the engine itself would not
-be contained by the process around it.
+### What confines a worker
+
+On Linux a worker is also a privilege boundary, as far as the kernel grants one.
+What keeps a script from reading a file is first that the engine exposes nothing
+that opens one; the layers below are for code that escaped the engine itself.
+
+| Layer | What it takes away | Where it comes from |
+| --- | --- | --- |
+| User namespace | The worker is `nobody` (65534) in a user namespace of its own, with no capability, even over its own namespaces | the server, when it starts the worker |
+| Own user | With `code.javascript_worker_uid` and `code.javascript_worker_gid` set, the worker runs as that user and group, with none of the server's groups, so the server's files are closed to it by their permissions too | the server; needs `CAP_SETUID` and `CAP_SETGID` |
+| PID namespace | The server and every other process have no number the worker could signal, trace, or change the limits of | the server |
+| Network namespace | Only a loopback interface, and that down: no connection leaves the worker | the server |
+| IPC namespace | No System V or POSIX queue or shared memory is shared with anything outside | the server |
+| Own session | A signal to its own process group reaches only the worker | the server |
+| Landlock | No file may be opened, created, removed, renamed or run, except reading the time zone database, so `Intl` and luxon zones still resolve; on kernels that know them, no TCP connection or bind, and no signal to a process outside the worker | the worker itself, before it reads its first job |
+| Undumpable | No other process of the same user can trace it or read its memory through `/proc` | the worker itself |
+
+The worker's pipes to the server are open before any of this, so jobs, the
+questions a script asks and the helpers the server carries out for it
+(`this.helpers.httpRequest` is made by the server, never by the worker) are
+unaffected. A worker's cold start is about 8 ms with every layer in place, a
+quarter of a millisecond more than without the namespaces, and a worker is
+reused for up to a thousand jobs.
+
+**What the kernel will not grant costs that layer and nothing else.** The server
+asks for the strongest start first, falls back once when the kernel refuses it —
+Docker's default seccomp profile refuses user namespaces, for one — and keeps to
+what it got. A worker whose kernel has no landlock (before Linux 5.13, or with
+the LSM not enabled) runs without it. The server logs once, when its first worker
+starts, which layers are in place and which are missing and why:
+
+```text
+level=INFO msg="JavaScript workers are confined" active="user namespace, PID namespace, network namespace, IPC namespace, undumpable, landlock (files, TCP, signals)"
+level=WARN msg="JavaScript workers are only partly confined" active="undumpable, landlock (files, TCP, signals)" missing="own user; PID namespace; network namespace; IPC namespace" why="the kernel refused a worker's own user, PID, network and IPC namespaces: operation not permitted"
+```
+
+A configured worker user is never given up: a server that cannot start a worker
+as that user fails the run instead of running the script as itself. Outside Linux
+none of these layers exist, and the log says so once.
+
+What the layers do not cover, so that nobody reads more into them:
+
+- In a user namespace the worker is still the server's user to the host's
+  filesystem. Landlock is what closes the server's files to it; where the kernel
+  has no landlock, only a configured worker user does.
+- Landlock does not govern connecting to a Unix socket by its path, such as a
+  local database's. The network namespace does not either; a configured worker
+  user whose permissions exclude the socket does.
+- Where the kernel grants no PID namespace, landlock still keeps the worker's
+  signals and tracing to itself, but not a change to another process's resource
+  limits.
+- There is deliberately no seccomp filter. A system-call profile is left to a
+  change written and reviewed by a person.
 
 ## Expressions
 
