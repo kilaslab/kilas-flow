@@ -1,7 +1,7 @@
 ---
 id: FEAT-x9gq0s
 title: 'JS Code runtime P5: this.helpers (httpRequest, binary) and $getWorkflowStaticData'
-status: testing
+status: done
 priority: medium
 labels:
     - code-node
@@ -11,7 +11,7 @@ deps:
 parent: EPIC-tjnr1z
 phase: p5
 created: "2026-09-23T01:33:22Z"
-updated: "2026-09-24T12:00:00Z"
+updated: "2026-09-24T13:45:41Z"
 ---
 
 # Description
@@ -210,3 +210,111 @@ the original's (n8n shows `retry`); the API operation's description says so.
 # Related Files
 
 # Attachments
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-24.
+
+- Base: `018af94f` (last commit at or before ticket created 2026-09-23)
+- Commits (15):
+  - `e670c569` — merge: FEAT-x9gq0s this.helpers and $getWorkflowStaticData in Code-node JavaScript
+  - `5ae97fe4` — FEAT-x9gq0s: a retried sub-workflow run is queued as a manual run, never as an orphan sub-workflow run
+  - `b7366db5` — FEAT-x9gq0s: static data is saved as n8n saves it, after any non-manual run that changed it and at a Wait, never after a cancel, and a retry keeps its original's trigger
+  - `cbf1b783` — FEAT-x9gq0s: each item has the whole helper-call budget in per-item mode, and code.javascript_max_host_calls sets it
+  - `e42eed0c` — FEAT-x9gq0s: the ticket records n8n's behaviour, the decisions and the backend half as ready for testing
+  - `28778afd` — FEAT-x9gq0s: a helper call whose run is over does no work
+  - `478cce7c` — FEAT-x9gq0s: a helper call the code left behind is never sent after its job ends, and its late reply is dropped
+  - `fe178da2` — FEAT-x9gq0s: migration 000024 keeps each workflow's static data, deleted with the workflow and by the tenant purge
+  - `66004536` — FEAT-x9gq0s: the Code node's helpers run on the server, and an execution saves its static data only after a successful run that is not manual
+  - `1ca97b78` — FEAT-x9gq0s: helper calls cross the worker protocol by ID, answered by the server while the code runs on
+  - `2d129a2c` — merge: FEAT-x9gq0s the Code-node e2e reads the console from the Console tab
+  - `d021bf04` — FEAT-x9gq0s: the Code-node e2e reads the console from the inspector's Console tab
+  - `d2484b87` — merge: FEAT-x9gq0s the execution inspector's Console tab for Code nodes
+  - `70ab365b` — FEAT-x9gq0s: Code-node JavaScript reaches this.helpers and $getWorkflowStaticData through one asynchronous host call the server answers
+  - `737556d8` — FEAT-x9gq0s: the execution inspector gets a Console tab for Code nodes
+- Files changed (the ticket's own commits, d2484b8^1..d2484b8, 62d15d2cb89e40dde3ac01e8c6ace98795a8a942..e670c569e3427763e5d5c17ecf8ed4e943767b65):
+
+```
+ .pine/tickets/FEAT-x9gq0s.md                                |  47 ++++++-
+ web/messages/en/executions.json                             |   1 +
+ web/messages/id/executions.json                             |   1 +
+ web/src/lib/components/workflow-editor/node-console.svelte  |  27 ++++
+ web/src/lib/components/workflow-editor/node-console.test.ts |  70 ++++++++++
+ web/src/lib/workflow-editor/event-stream.svelte.ts          |  26 ++++
+ web/src/lib/workflow-editor/event-stream.test.ts            |  27 +++-
+ web/src/lib/workflow-editor/execution.test.ts               |  51 +++++++
+ web/src/lib/workflow-editor/execution.ts                    |  52 +++++++
+ web/src/routes/(dashboard)/executions/[id]/+page.svelte     | 236 ++++++++++++++++----------------
+ 10 files changed, 421 insertions(+), 117 deletions(-)
+ .pine/memory/code-node.md                                |   1 +
+ .pine/tickets/FEAT-x9gq0s.md                             | 140 ++++++++++-
+ cmd/kilasflow/main.go                                    |   4 +
+ config.example.yaml                                      |   7 +
+ docs/src/content/docs/concepts/safety-boundaries.md      |   1 +
+ docs/src/content/docs/guides/n8n-migration.md            |  70 +++++-
+ docs/src/content/docs/operate/configuration-reference.md |  13 +
+ docs/src/content/docs/operate/tenant-deletion.md         |   3 +-
+ docs/src/content/docs/reference/api/executions.md        |   2 +-
+ internal/api/debug_ops_test.go                           |  30 +++
+ internal/api/handlers/execution_retry.go                 |   9 +-
+ internal/api/handlers/executions.go                      |   4 +-
+ internal/config/config.go                                |  10 +
+ internal/config/config_test.go                           |   6 +
+ internal/database/migrate_test.go                        |   1 +
+ internal/engine/runner.go                                |  23 +-
+ internal/engine/service.go                               |  57 +++++
+ internal/engine/static_data.go                           | 136 +++++++++++
+ internal/engine/static_data_service_test.go              | 268 +++++++++++++++++++++
+ internal/engine/static_data_test.go                      |  69 ++++++
+ internal/engine/wait_service.go                          |   5 +-
+ internal/guardrails/compile_scope_test.go                |   7 +-
+ internal/interop/n8n/n8n.go                              |   2 +-
+ internal/jsrun/analyze.go                                |  46 +++-
+ internal/jsrun/analyze_test.go                           |  24 +-
+ internal/jsrun/clock.go                                  |  17 +-
+ internal/jsrun/doc.go                                    |  35 ++-
+ internal/jsrun/engine.go                                 | 107 ++++-----
+ internal/jsrun/engine_host.go                            | 174 ++++++++++++++
+ internal/jsrun/errors.go                                 |  24 ++
+ internal/jsrun/export_test.go                            |   7 -
+ internal/jsrun/guards_test.go                            |  17 --
+ internal/jsrun/helpers.go                                | 281 ++++++++++++++++++++++
+ internal/jsrun/helpers_test.go                           | 450 +++++++++++++++++++++++++++++++++++
+ internal/jsrun/items.go                                  |  13 +-
+ internal/jsrun/js/modules/helpers.js                     | 331 ++++++++++++++++++++++++++
+ internal/jsrun/js/runtime.js                             |  23 +-
+ internal/jsrun/jsrun.go                                  |   5 +-
+ internal/jsrun/jsrun_test.go                             |  44 ----
+ internal/jsrun/modules.go                                |   2 +-
+ internal/jsrun/rejections_test.go                        |  22 +-
+ internal/jsrun/roots.go                                  |  16 ++
+ internal/jsrun/roots_test.go                             |  16 +-
+ internal/jsrun/run.go                                    |  62 +++--
+ internal/jsrun/wire.go                                   |   7 +
+ internal/jsworker/doc.go                                 |  26 +-
+ internal/jsworker/helpers_test.go                        | 252 ++++++++++++++++++++
+ internal/jsworker/jsworker_test.go                       |  34 ++-
+ internal/jsworker/pool.go                                | 197 ++++++++++++++-
+ internal/jsworker/protocol.go                            |  38 ++-
+ internal/jsworker/worker.go                              | 276 +++++++++++++++++----
+ internal/repository/executions.go                        |  32 ++-
+ internal/repository/static_data.go                       |  81 +++++++
+ internal/repository/static_data_test.go                  |  50 ++++
+ internal/repository/table_names_test.go                  |  11 +
+ internal/repository/tenant_rows.go                       |   5 +-
+ internal/repository/workflows.go                         |   8 +-
+ internal/tenantpurge/harness_test.go                     |   5 +
+ internal/tenantpurge/purge.go                            |   2 +-
+ internal/tenantpurge/purge_test.go                       |   2 +-
+ migrations/postgres/000024_workflow_static_data.down.sql |   4 +
+ migrations/postgres/000024_workflow_static_data.up.sql   |  25 ++
+ migrations/sqlite/000024_workflow_static_data.down.sql   |   4 +
+ migrations/sqlite/000024_workflow_static_data.up.sql     |  25 ++
+ nodes/executors.go                                       |   9 +-
+ nodes/jscode.go                                          |  14 +-
+ nodes/jscode_helpers.go                                  | 272 +++++++++++++++++++++
+ nodes/jscode_helpers_test.go                             | 248 +++++++++++++++++++
+ sdk/src/generated/models.ts                              |   2 +-
+ web/src/lib/api/generated/executions/executions.ts       |   2 +-
+ 70 files changed, 3884 insertions(+), 331 deletions(-)
+```
