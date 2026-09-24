@@ -10,9 +10,22 @@ import (
 // Outside Linux a worker has no address-space limit, OOM preference,
 // no_new_privs or parent-death signal, and the server is not made
 // undumpable; a worker still exits when the server closes its stdin, and the
-// pool still kills it past its deadline. Production runs on Linux.
+// pool still kills it past its deadline. Nor is a worker confined: it runs
+// as the server's user, with its files and network. Production runs on
+// Linux.
 
-func limitSelf(uint64) {}
+func limitSelf(uint64) confinement { return confinement{} }
+
+// spawnProfiles has one way to start a worker outside Linux: as the server
+// does, with nothing taken away.
+func spawnProfiles(int, int) []spawnProfile {
+	return []spawnProfile{{
+		asks:  "nothing",
+		apply: func(*exec.Cmd) {},
+		gives: confinement{Missing: []string{layerOwnUser, layerPID, layerNetwork, layerIPC, layerLandlock, layerUndumpable}},
+		why:   "workers are confined on Linux only",
+	}}
+}
 
 func protectServer() {}
 

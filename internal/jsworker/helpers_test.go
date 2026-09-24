@@ -184,11 +184,16 @@ func TestAWorkerRefusesARepliesItDidNotAskFor(t *testing.T) {
 			exit := make(chan int, 1)
 			// The worker says why it stopped on stderr, which the pool logs;
 			// here it would only clutter the test's output.
-			go func() { exit <- serve(toWorker, toServer, io.Discard); toServer.Close() }()
+			// Nor is the test's own process confined as a worker's is.
+			unconfined := func(uint64) confinement { return confinement{} }
+			go func() { exit <- serve(toWorker, toServer, io.Discard, unconfined); toServer.Close() }()
 			server, worker := bufio.NewWriter(fromServer), bufio.NewReader(fromWorker)
 			limits := jsrun.DefaultLimits()
 			if err := writeFrame(server, message{Type: typeHello, Limits: &limits}, ""); err != nil {
 				t.Fatal(err)
+			}
+			if said, _, err := readFrame(worker, 1<<20, 0); err != nil || said.Type != typeReady {
+				t.Fatalf("readFrame() = %#v, %v; want the worker ready", said, err)
 			}
 			job, _, err := jsrun.NewRunner(jsrun.Options{}).Prepare(jsrun.Task{Source: "return [{ json: { page: await this.helpers.httpRequest({ url: 'https://example.com' }) } }]"})
 			if err != nil {
@@ -232,7 +237,7 @@ func TestARequestTheCodeDidNotWaitForEndsQuietly(t *testing.T) {
 			t.Fatalf("attempt %d: Run() error = %v", attempt, err)
 		}
 	}
-	if starts := pool.starts.Load(); starts != 1 {
+	if starts := pool.started(); starts != 1 {
 		t.Fatalf("%d workers started, want one", starts)
 	}
 }
@@ -246,7 +251,7 @@ func TestAPerItemRunMayMakeABudgetOfCallsPerItem(t *testing.T) {
 		Roots:  jsrun.Roots{Helpers: &serverHelpers{}},
 		Source: "await this.helpers.httpRequest({ url: 'https://example.com' })\nawait this.helpers.httpRequest({ url: 'https://example.com' })\nreturn $input.item",
 	})
-	if err != nil || len(result.Items) != 4 || pool.starts.Load() != 1 {
-		t.Fatalf("Run() = %d items, %v, %d workers; want every item through on one worker", len(result.Items), err, pool.starts.Load())
+	if err != nil || len(result.Items) != 4 || pool.started() != 1 {
+		t.Fatalf("Run() = %d items, %v, %d workers; want every item through on one worker", len(result.Items), err, pool.started())
 	}
 }

@@ -18,9 +18,10 @@ import (
 // a job's input, a node's items or the code's results, so it is never escaped
 // into a JSON string.
 //
-// The server writes hello once, then one run per job. While the job runs the
-// worker may write call, which the server answers with reply, and it ends the
-// job with done. Every frame of a job carries the job's nonce, so a frame
+// The server writes hello once, which the worker answers with ready once it
+// has confined itself; then the server writes one run per job. While the job
+// runs the worker may write call, which the server answers with reply, and it
+// ends the job with done. Every frame of a job carries the job's nonce, so a frame
 // left over from another job is refused rather than taken for this one's.
 //
 // A call carries an ID, which its reply repeats. Calls about other nodes and
@@ -39,6 +40,10 @@ type message struct {
 	Limits       *jsrun.Limits `json:"limits,omitempty"`
 	HeapCeiling  uint64        `json:"heapCeiling,omitempty"`
 	AddressSpace uint64        `json:"addressSpace,omitempty"`
+
+	// ready: what the worker took from itself before its first job. It is
+	// only ever logged: a worker's word is not what confines it.
+	Confinement *confinement `json:"confinement,omitempty"`
 
 	// run: the job, whose input is the blob.
 	Job *jsrun.Job `json:"job,omitempty"`
@@ -67,6 +72,7 @@ type message struct {
 
 const (
 	typeHello = "hello"
+	typeReady = "ready"
 	typeRun   = "run"
 	typeCall  = "call"
 	typeReply = "reply"
