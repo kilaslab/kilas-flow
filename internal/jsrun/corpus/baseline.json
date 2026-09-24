@@ -1,0 +1,3488 @@
+{
+  "comment": "Baseline for the Code-node compatibility corpus. Bodies are named \u003ctemplate id\u003e/\u003cnode position\u003e; parsed, accepted and ran are defined in scoreboard_test.go. Regenerate with make js-corpus-baseline, and say in the commit which bodies moved and why.",
+  "corpus": {
+    "rankedAt": "2026-09-24",
+    "ranked": 500,
+    "templates": 151,
+    "pythonCodeNodes": 7
+  },
+  "totals": {
+    "bodies": 371,
+    "noSource": 41,
+    "measured": 330,
+    "eachItem": 51,
+    "comparators": 0,
+    "stubbed": 330,
+    "parsed": 329,
+    "accepted": 328,
+    "ran": 221,
+    "parseRate": 99.7,
+    "acceptRate": 99.4,
+    "runtimeErrorRate": 32.6
+  },
+  "timing": {
+    "runs": 328,
+    "medianMillis": 1.25,
+    "p95Millis": 3.46
+  },
+  "blockers": {
+    "invalid-return": 3,
+    "refused: requires the module \"youtube-transcript\"": 1,
+    "syntax error": 1,
+    "threw: Error": 8,
+    "threw: ReferenceError": 21,
+    "threw: SyntaxError": 5,
+    "threw: TypeError": 66,
+    "threw: date locale en-CA": 1,
+    "threw: date locale id-ID": 1,
+    "threw: this.helpers.httpRequest (not wired in the instrument)": 1,
+    "threw: this.helpers.prepareBinaryData (not wired in the instrument)": 1
+  },
+  "bodies": [
+    {
+      "key": "687/2",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1534/8",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "SyntaxError"
+    },
+    {
+      "key": "1747/10",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1747/11",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1747/13",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1747/14",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1747/15",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1747/16",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1814/4",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1862/5",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1862/7",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "SyntaxError"
+    },
+    {
+      "key": "1897/8",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "1898/8",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1898/15",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "1898/19",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1898/20",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1898/26",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1898/29",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1898/30",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1898/32",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1900/6",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1900/7",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1930/7",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1956/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1956/16",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "1971/2",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "1971/18",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2025/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2025/12",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2026/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2043/5",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2045/2",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2045/29",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2063/1",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2063/2",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2063/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2083/12",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2085/19",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2095/13",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2095/14",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2110/6",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2137/3",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "2137/7",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2137/19",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2137/20",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2137/21",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2157/24",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2157/32",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2157/33",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "Error"
+    },
+    {
+      "key": "2161/34",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2161/35",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2161/37",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2165/16",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2167/8",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2167/12",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2170/1",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2170/5",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2170/6",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2170/7",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2170/27",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2180/7",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2187/31",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2198/12",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2209/12",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "2269/1",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2269/4",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2269/29",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2273/8",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2307/6",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "SyntaxError"
+    },
+    {
+      "key": "2307/20",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2314/4",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "invalid-return"
+    },
+    {
+      "key": "2358/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2377/31",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2389/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "SyntaxError"
+    },
+    {
+      "key": "2392/12",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2415/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2415/11",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2418/5",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2421/7",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2431/12",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2433/6",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2457/1",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "2469/10",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2469/30",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2475/4",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2525/19",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2533/8",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2536/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2536/5",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2549/8",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2549/11",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "Error"
+    },
+    {
+      "key": "2549/12",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "Error"
+    },
+    {
+      "key": "2549/13",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2549/14",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2549/15",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2549/16",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2549/18",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2549/19",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2567/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2567/8",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2605/11",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2605/16",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2605/22",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2605/28",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2606/10",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2606/11",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "invalid-return"
+    },
+    {
+      "key": "2652/7",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "SyntaxError"
+    },
+    {
+      "key": "2658/42",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "invalid-return"
+    },
+    {
+      "key": "2658/58",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2669/31",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2673/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2679/6",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2681/2",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2681/13",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2749/17",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2749/20",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "2749/21",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "2772/1",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2772/2",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2772/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2772/8",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2772/9",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2772/15",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2772/16",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2772/29",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2772/31",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2772/32",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2772/33",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2772/34",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2772/56",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2772/85",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2772/104",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2772/142",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2772/227",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2783/19",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2783/20",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2783/21",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2783/26",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2783/35",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2783/37",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2783/40",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2783/41",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2785/6",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2786/6",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2790/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2790/5",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "2790/6",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2790/8",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2799/21",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "2800/10",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2803/11",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2803/35",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2808/4",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "2823/4",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "2823/5",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "2856/6",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "2856/16",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "2856/23",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "2871/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2878/67",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2883/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "2883/6",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "2896/13",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "2896/14",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2896/17",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2896/18",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2896/19",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "2925/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2950/11",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "2956/0",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": false,
+      "ran": false,
+      "outcome": "refused",
+      "refused": [
+        "requires the module \"youtube-transcript\""
+      ]
+    },
+    {
+      "key": "2956/11",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2957/12",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "2981/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3018/1",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3050/4",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "Error"
+    },
+    {
+      "key": "3055/2",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3055/4",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3055/5",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3055/6",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3055/7",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3055/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3066/56",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "3068/5",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3079/0",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3079/1",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3079/20",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3101/2",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "3121/4",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3121/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3121/13",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3121/28",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "3132/8",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "3135/46",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3135/47",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3146/2",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "Error"
+    },
+    {
+      "key": "3150/5",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3151/8",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3151/17",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3151/18",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3169/10",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "3169/24",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3188/15",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3192/6",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "3192/12",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3202/15",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3314/8",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3314/17",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3314/18",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "syntax"
+    },
+    {
+      "key": "3328/8",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3328/14",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3342/0",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3342/10",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3342/13",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3342/15",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3342/19",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3342/23",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3344/10",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "3350/12",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3363/13",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3363/14",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3363/16",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3363/18",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "date locale en-CA"
+    },
+    {
+      "key": "3363/21",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3379/7",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "3379/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3427/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "3427/4",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3427/5",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "3427/9",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "3427/11",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3427/52",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3427/56",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3442/4",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3442/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3442/13",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3442/28",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "3473/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3473/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3473/10",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3473/11",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3477/3",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3501/6",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3560/9",
+      "mode": "runOnceForAllItems",
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/16",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/18",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/19",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/22",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/24",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/27",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/30",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/31",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/32",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/33",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/34",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/35",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/36",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/37",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/41",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/55",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3560/57",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "3580/10",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3583/0",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3583/4",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3583/6",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3586/12",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3617/5",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3617/10",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3617/12",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "3617/14",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3617/15",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3617/17",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3617/19",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3654/16",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3654/32",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "Error"
+    },
+    {
+      "key": "3655/2",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "3751/13",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3751/14",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3790/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3790/12",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3790/15",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "3790/23",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3790/24",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3790/28",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3791/24",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3791/28",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3791/49",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3791/50",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3791/55",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3791/56",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3791/59",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3791/62",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3798/20",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3798/22",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3798/25",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3798/28",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3859/4",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3859/6",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "3900/20",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3900/23",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3900/31",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "3901/7",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4028/0",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4028/10",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "4028/14",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "4028/18",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "4028/22",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "4028/26",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "4110/23",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4110/26",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "4110/28",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4110/29",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4247/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4247/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "4295/2",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4352/8",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "4365/10",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4365/18",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4366/14",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "4400/15",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "4506/12",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4551/22",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "4557/17",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "4573/13",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4635/10",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4635/14",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "4635/23",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4635/31",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "4635/34",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4721/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4827/21",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4849/12",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4849/13",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "4966/1",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "4966/2",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "5110/0",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "Error"
+    },
+    {
+      "key": "5110/4",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5139/10",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5139/14",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5230/35",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5230/36",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "5230/40",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "5230/45",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5230/46",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5230/50",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5230/61",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5230/65",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5230/66",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5230/76",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5230/77",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5230/78",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "5230/80",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5338/12",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "Error"
+    },
+    {
+      "key": "5338/18",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5396/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "5407/2",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5407/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "5407/4",
+      "mode": "runOnceForEachItem",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "this.helpers.httpRequest (not wired in the instrument)"
+    },
+    {
+      "key": "5407/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "this.helpers.prepareBinaryData (not wired in the instrument)"
+    },
+    {
+      "key": "5449/15",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "date locale id-ID"
+    },
+    {
+      "key": "5449/28",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5449/29",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5589/6",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5589/8",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5589/15",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5589/16",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5607/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": false,
+      "accepted": false,
+      "ran": false,
+      "outcome": "no-source"
+    },
+    {
+      "key": "5657/12",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    },
+    {
+      "key": "5657/15",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "5941/3",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "TypeError"
+    },
+    {
+      "key": "5941/8",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": false,
+      "outcome": "threw",
+      "reason": "ReferenceError"
+    },
+    {
+      "key": "5941/9",
+      "mode": "runOnceForAllItems",
+      "stubbed": true,
+      "parsed": true,
+      "accepted": true,
+      "ran": true,
+      "outcome": "ok"
+    }
+  ]
+}

@@ -198,6 +198,26 @@ jobs:
       - name: n8n corpus (control fixtures only; baseline not verifiable in CI)
         run: make corpus-check
 
+      # The Code-node corpus is different in the one way that matters: its
+      # source is the public template API, not a reference checkout, so CI can
+      # fetch it and hold the runtime to internal/jsrun/corpus/BASELINE.md on
+      # every change. The bodies land in the gitignored fixtures directory of
+      # this runner and are never committed. A template edited or withdrawn
+      # upstream fails the sync loudly (re-pin with
+      # `scripts/code-corpus-sync.sh --update` and say why); an API that cannot
+      # be reached is not the change's fault, so it warns and the check falls
+      # back to the committed control bodies and prints its skip line.
+      - name: Code-node corpus (fetched from api.n8n.io, held to its baseline)
+        run: |
+          status=0
+          scripts/code-corpus-sync.sh || status=$?
+          case "$status" in
+            0) ;;
+            3) echo "::warning::api.n8n.io could not be reached; the Code-node corpus baseline was not verified" ;;
+            *) exit "$status" ;;
+          esac
+          make js-corpus-check
+
   drift:
     name: Generated client drift
     runs-on: ubuntu-latest

@@ -455,6 +455,30 @@ corpus-baseline: ## Rescore the corpus and rewrite BASELINE.md and baseline.json
 corpus-check: ## Verify BASELINE.md, or say the corpus is not materialised
 	$(GO) test ./internal/interop/n8n/corpus -count=1 -v
 
+# The Code-node compatibility corpus (EPIC-tjnr1z P7): the JavaScript of the
+# most-viewed public n8n templates, fetched into the gitignored
+# internal/jsrun/corpus/fixtures/ and pinned by MANIFEST.json. js-corpus-check
+# is verbose for the same reason corpus-check is: it prints the comparison or
+# the skip line, never a silent pass.
+.PHONY: js-corpus
+js-corpus: ## Fetch the Code-node corpus from api.n8n.io and verify it against MANIFEST.json
+	scripts/code-corpus-sync.sh
+
+.PHONY: js-corpus-baseline
+js-corpus-baseline: ## Rescore the Code-node corpus and rewrite its BASELINE.md and baseline.json
+	$(GO) test ./internal/jsrun/corpus -run TestCodeCorpusScoreboard -update-baseline -count=1 -v
+
+.PHONY: js-corpus-check
+js-corpus-check: ## Verify the Code-node corpus baseline, or say the corpus is not materialised
+	$(GO) test ./internal/jsrun/corpus -count=1 -v
+
+# Dev-only: needs node 24 on PATH. Runs every corpus body under jsrun and under
+# Node through a KilasFlow-authored roots harness (scripts/js-diff/harness.mjs)
+# and prints the diff summary. Run it before a goja bump. Never part of CI.
+.PHONY: js-diff
+js-diff: ## Diff jsrun against Node.js over the Code-node corpus (dev-only; needs node 24)
+	$(GO) test ./internal/jsrun/corpus -run TestJSDiff -js-diff -count=1 -v
+
 .PHONY: smoke-sqlite
 smoke-sqlite: ## Prove the embedded binary against a fresh SQLite database
 	sh scripts/smoke-sqlite.sh

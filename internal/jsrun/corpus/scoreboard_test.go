@@ -113,7 +113,10 @@ func measure(t *testing.T, runner *jsrun.Runner, current body) measured {
 
 var (
 	dateLocale = regexp.MustCompile(`date formatting in locale (\S+) is not supported`)
-	refusalOf  = regexp.MustCompile(`this node's code (.+?), which this server does not run`)
+	// helperMissing is a helper the instrument does not wire: it makes no
+	// network call and keeps no files.
+	helperMissing = regexp.MustCompile(`this\.helpers\.(\w+) is not available here`)
+	refusalOf     = regexp.MustCompile(`this node's code (.+?), which this server does not run`)
 )
 
 // classify names a run's failure by what went wrong, in the runtime's terms.
@@ -123,6 +126,8 @@ func classify(err error) (outcome, reason string) {
 		switch {
 		case dateLocale.MatchString(script.Message):
 			return "threw", "date locale " + dateLocale.FindStringSubmatch(script.Message)[1]
+		case helperMissing.MatchString(script.Message):
+			return "threw", "this.helpers." + helperMissing.FindStringSubmatch(script.Message)[1] + " (not wired in the instrument)"
 		case refusalOf.MatchString(script.Message):
 			return "threw", "refused at run: " + refusalOf.FindStringSubmatch(script.Message)[1]
 		case script.Name != "":
@@ -432,7 +437,7 @@ func renderScoreboard(board scoreboard) string {
 
 	out.WriteString("| Measure | Bodies | Rate |\n|---|---:|---:|\n")
 	fmt.Fprintf(&out, "| JavaScript bodies | %d | |\n", total.Bodies)
-	fmt.Fprintf(&out, "| … exported with no code (n8n's default body; not measured) | %d | |\n", total.NoSource)
+	fmt.Fprintf(&out, "| … with no code in the template (an empty body, which fails in n8n too; not measured) | %d | |\n", total.NoSource)
 	fmt.Fprintf(&out, "| Measured | %d | |\n", total.Measured)
 	fmt.Fprintf(&out, "| Parse | %d | %.1f%% |\n", total.Parsed, total.ParseRate)
 	fmt.Fprintf(&out, "| Parse and pass analysis | %d | %.1f%% |\n", total.Accepted, total.AcceptRate)

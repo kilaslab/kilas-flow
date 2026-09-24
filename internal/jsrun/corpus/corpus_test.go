@@ -60,14 +60,17 @@ type nodeLink struct {
 type body struct {
 	// Key names the body in the baseline: "<template>/<node index>".
 	Key string
-	// HasSource is false for a Code node exported with no code at all, which
-	// n8n leaves out when it is the default. There is nothing of the author's
-	// to measure then.
+	// HasSource is false for a Code node the template carries with no code
+	// at all. n8n's default is an empty body, which fails there as it does
+	// here, so there is nothing of the author's to measure.
 	HasSource bool
 	// Stubbed says the input was shaped from the body rather than taken from
 	// the template's pinned data.
 	Stubbed bool
 	Task    jsrun.Task
+	// Views are the other nodes' items the roots answer $('Name') with,
+	// kept so the differential run hands Node the same ones.
+	Views map[string][]map[string]any
 }
 
 // loadFixtures reads every fixture in dir, sorted by template id. A missing
@@ -143,6 +146,7 @@ func (current fixture) body(node codeNode, key string) body {
 		Key:       key,
 		HasSource: present,
 		Stubbed:   !pinned,
+		Views:     views,
 		Task: jsrun.Task{
 			Source: source,
 			Mode:   mode,
