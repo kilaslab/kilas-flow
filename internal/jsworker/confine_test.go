@@ -3,7 +3,9 @@ package jsworker
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -140,5 +142,50 @@ func BenchmarkAJobOnAWarmWorker(b *testing.B) {
 		if _, err := pool.Run(context.Background(), jsrun.Task{Source: "return items"}); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// A worker user that could not take anything away is refused before any
+// worker starts, and every run after: the server's own user, or a number the
+// kernel would not read as the one configured (past 32 bits it would wrap,
+// to root).
+func TestAWorkerUserThatTakesNothingAwayIsRefused(t *testing.T) {
+	// Built at run time, so a 32-bit build compiles the test at all.
+	wide := int64(1) << 32
+	cases := map[string]Options{
+		"past 32 bits":     {UID: int(wide + 4242), GID: 4343},
+		"the invalid user": {UID: int(wide - 1), GID: 4343},
+	}
+	if os.Geteuid() != 0 {
+		cases["the server's own"] = Options{UID: os.Geteuid(), GID: 4343}
+	}
+	for name, options := range cases {
+		pool := New(options)
+		t.Cleanup(pool.Close)
+		err := pool.Start()
+		if err == nil {
+			t.Errorf("%s: Start() = nil, want the user refused", name)
+			continue
+		}
+		if runtime.GOOS == "linux" && !strings.Contains(err.Error(), "worker user") {
+			t.Errorf("%s: Start() = %v, want it to name the worker user", name, err)
+		}
+		if _, runErr := pool.Run(context.Background(), jsrun.Task{Source: "return items"}); !errors.Is(runErr, jsrun.ErrEngineFault) {
+			t.Errorf("%s: Run() = %v, want every run refused as well", name, runErr)
+		}
+	}
+}
+
+// Start starts a worker at once, and keeps it for the first job.
+func TestStartStartsAWorkerForTheFirstJob(t *testing.T) {
+	pool := newTestPool(t, Options{})
+	if err := pool.Start(); err != nil {
+		t.Fatalf("Start() = %v", err)
+	}
+	if _, err := pool.Run(context.Background(), jsrun.Task{Source: "return items"}); err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	if started := pool.started(); started != 1 {
+		t.Fatalf("%d workers started, want the one Start started reused", started)
 	}
 }

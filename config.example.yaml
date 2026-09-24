@@ -565,10 +565,12 @@ code:
   # JavaScriptWorkerUID is the user every JavaScript worker process runs
   # as, on Linux, set together with javascript_worker_gid: a user of its
   # own, with none of the server's groups, so the server's files are out
-  # of its reach by their permissions as well. Starting a worker as
-  # another user needs CAP_SETUID and CAP_SETGID, which a server running
-  # as root has; a worker that cannot be started as the configured user
-  # fails its run rather than running as the server. Unset, each worker
+  # of its reach by their permissions as well, as long as they are not
+  # world-readable. It must not be the server's own user. Starting a
+  # worker as another user needs CAP_SETUID and CAP_SETGID, which a server
+  # running as root has, and the kilasflow binary executable by that user;
+  # the server starts one worker at boot and refuses to boot when it
+  # cannot, rather than run a script as itself. Unset, each worker
   # runs in user, PID, network and IPC namespaces of its own where the
   # kernel allows them, and as the server's user where it does not; the
   # server logs once which it got. Zero means unset.

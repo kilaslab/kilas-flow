@@ -974,6 +974,9 @@ func TestJavaScriptSettingsAreReachableFromTheEnvironment(t *testing.T) {
 	}
 }
 
+// wideID is 1<<32, built at run time so a 32-bit build compiles the tests.
+var wideID = int64(1) << 32
+
 func TestJavaScriptLimitsMustBePositive(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -992,6 +995,9 @@ func TestJavaScriptLimitsMustBePositive(t *testing.T) {
 		{"negative worker group", func(c *Code) { c.JavaScriptWorkerUID, c.JavaScriptWorkerGID = 1000, -1 }, "code.javascript_worker_gid"},
 		{"a worker user with no group", func(c *Code) { c.JavaScriptWorkerUID = 1000 }, "code.javascript_worker_gid"},
 		{"a worker group with no user", func(c *Code) { c.JavaScriptWorkerGID = 1000 }, "code.javascript_worker_uid"},
+		// Past 32 bits the ID would wrap, to root; all 32 set is no ID.
+		{"a worker user past 32 bits", func(c *Code) { c.JavaScriptWorkerUID, c.JavaScriptWorkerGID = int(wideID+4242), 1000 }, "code.javascript_worker_uid"},
+		{"a worker group of no ID", func(c *Code) { c.JavaScriptWorkerUID, c.JavaScriptWorkerGID = 1000, int(wideID-1) }, "code.javascript_worker_gid"},
 	}
 	for _, tc := range cases {
 		cfg := Default()

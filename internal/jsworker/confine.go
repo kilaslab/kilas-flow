@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -45,6 +46,30 @@ type spawnProfile struct {
 	// the next one instead. A user the operator configured is never given up
 	// for the server's own.
 	stepsDown bool
+}
+
+// maxWorkerID is the highest user or group ID a worker may be given: an ID
+// is 32 bits, and all of them set is the kernel's "no ID".
+const maxWorkerID = 1<<32 - 2
+
+// checkWorkerUser refuses a worker user that could take nothing away: half
+// of one, one past what an ID can hold (which would wrap, to root), or the
+// server's own. Every platform but Linux refuses one at all.
+func checkWorkerUser(uid, gid int) error {
+	if uid == 0 && gid == 0 {
+		return nil
+	}
+	switch {
+	case !workerUsersSupported:
+		return errors.New("a worker user is supported on Linux only")
+	case uid <= 0 || gid <= 0:
+		return fmt.Errorf("the worker user %d, group %d, needs both, and neither may be root", uid, gid)
+	case int64(uid) > maxWorkerID || int64(gid) > maxWorkerID:
+		return fmt.Errorf("the worker user %d, group %d, is past the highest ID, %d", uid, gid, int64(maxWorkerID))
+	case uid == os.Geteuid():
+		return fmt.Errorf("the worker user %d is the server's own, so a worker would run as the server", uid)
+	}
+	return nil
 }
 
 // maxConfinementReport bounds a ready frame. A worker describes a handful

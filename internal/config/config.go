@@ -850,10 +850,12 @@ type Code struct {
 	// JavaScriptWorkerUID is the user every JavaScript worker process runs
 	// as, on Linux, set together with javascript_worker_gid: a user of its
 	// own, with none of the server's groups, so the server's files are out
-	// of its reach by their permissions as well. Starting a worker as
-	// another user needs CAP_SETUID and CAP_SETGID, which a server running
-	// as root has; a worker that cannot be started as the configured user
-	// fails its run rather than running as the server. Unset, each worker
+	// of its reach by their permissions as well, as long as they are not
+	// world-readable. It must not be the server's own user. Starting a
+	// worker as another user needs CAP_SETUID and CAP_SETGID, which a server
+	// running as root has, and the kilasflow binary executable by that user;
+	// the server starts one worker at boot and refuses to boot when it
+	// cannot, rather than run a script as itself. Unset, each worker
 	// runs in user, PID, network and IPC namespaces of its own where the
 	// kernel allows them, and as the server's user where it does not; the
 	// server logs once which it got. Zero means unset.
@@ -1476,6 +1478,10 @@ var sidecarPackageName = regexp.MustCompile(`^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9
 // included.
 const npmPackageNameMax = 214
 
+// maxWorkerID is the highest user or group ID a JavaScript worker may be
+// given.
+const maxWorkerID = 1<<32 - 2
+
 // validateJavaScriptWorkerUser refuses half a worker user: a user with the
 // server's group, or a group with the server's user, would leave the worker
 // sharing what the key was set to take away. Zero is unset, since running a
@@ -1491,6 +1497,12 @@ func validateJavaScriptWorkerUser(code Code) error {
 		return fmt.Errorf("code.javascript_worker_gid is required when code.javascript_worker_uid is set")
 	case gid > 0 && uid == 0:
 		return fmt.Errorf("code.javascript_worker_uid is required when code.javascript_worker_gid is set")
+	// An ID is 32 bits: past them it would wrap, to root, and all of them
+	// set is the kernel's "no ID".
+	case int64(uid) > maxWorkerID:
+		return fmt.Errorf("code.javascript_worker_uid %d must be at most %d", uid, int64(maxWorkerID))
+	case int64(gid) > maxWorkerID:
+		return fmt.Errorf("code.javascript_worker_gid %d must be at most %d", gid, int64(maxWorkerID))
 	case uid > 0 && runtime.GOOS != "linux":
 		return fmt.Errorf("code.javascript_worker_uid is not supported on %s: a JavaScript worker runs as a user of its own on Linux only", runtime.GOOS)
 	}

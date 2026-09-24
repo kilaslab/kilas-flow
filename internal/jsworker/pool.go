@@ -91,6 +91,11 @@ type Pool struct {
 	// was, and refusedAt when, so that it is asked for again every
 	// reprobeAfter. confinementLogged is what was last logged about them,
 	// and workerConfinement what the last worker to start said of itself.
+	// uid and gid are the configured worker user, if any, and userErr why
+	// it cannot be used, which fails every start.
+	uid, gid int
+	userErr  error
+
 	confineMu         sync.Mutex
 	profiles          []spawnProfile
 	profileAt         int
@@ -112,11 +117,19 @@ func New(options Options) *Pool {
 		idleTimeout: options.IdleTimeout,
 		maxRuns:     options.MaxRuns,
 		logger:      options.Logger,
-		profiles:    spawnProfiles(options.UID, options.GID),
+		uid:         options.UID,
+		gid:         options.GID,
+		userErr:     checkWorkerUser(options.UID, options.GID),
 		// A kernel that refused a namespace is asked again this often:
 		// rarely enough that a refusal costs almost nothing, often enough
 		// that a passing one does not last until a restart.
 		reprobeAfter: 10 * time.Minute,
+	}
+	if pool.userErr == nil {
+		pool.profiles = spawnProfiles(options.UID, options.GID)
+	} else {
+		// Never used: every start fails with userErr.
+		pool.profiles = spawnProfiles(0, 0)
 	}
 	if pool.heapCeiling == 0 {
 		pool.heapCeiling = jsrun.DefaultHeapCeiling
@@ -147,6 +160,19 @@ func New(options Options) *Pool {
 	pool.preparer = jsrun.NewRunner(jsrun.Options{Limits: options.Limits, MaxConcurrent: 1, HeapCeiling: pool.heapCeiling})
 	pool.limits = pool.preparer.Limits()
 	return pool
+}
+
+// Start starts one worker now, rather than for the first job, and keeps it
+// for that job. It says why a worker could not start: the server calls it
+// at boot when a worker user is configured, so a user it cannot start
+// workers as stops the boot instead of failing every JavaScript run.
+func (pool *Pool) Start() error {
+	w, err := pool.take()
+	if err != nil {
+		return err
+	}
+	pool.put(w)
+	return nil
 }
 
 // Limits reports the pool's ceiling, after defaults.
@@ -262,12 +288,18 @@ type worker struct {
 }
 
 func (pool *Pool) start() (*worker, error) {
+	if pool.userErr != nil {
+		return nil, pool.userErr
+	}
 	profile, index := pool.nextProfile()
 	var refused error
 	for {
 		w, err := pool.spawn(profile)
 		if err != nil {
 			next, nextIndex, ok := pool.fallback(index, err)
+			if !ok && pool.uid > 0 {
+				return nil, fmt.Errorf("a worker could not start as the worker user %d, group %d, which needs CAP_SETUID and CAP_SETGID in the server and the binary executable by that user: %w", pool.uid, pool.gid, err)
+			}
 			if !ok {
 				return nil, err
 			}

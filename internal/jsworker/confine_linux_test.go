@@ -323,6 +323,10 @@ func TestAConfiguredUserIsNeverGivenUp(t *testing.T) {
 		t.Skip("root may start a worker as any user")
 	}
 	pool := newTestPool(t, Options{UID: os.Getuid() + 1, GID: os.Getgid() + 1})
+	// The server says so when it starts, not at the first run.
+	if err := pool.Start(); err == nil || !strings.Contains(err.Error(), "CAP_SETUID") || !strings.Contains(err.Error(), "executable by") {
+		t.Fatalf("Start() = %v, want it to say what the server needs", err)
+	}
 	_, err := pool.Run(context.Background(), jsrun.Task{Source: "return items", Items: items("a")})
 	if !errors.Is(err, jsrun.ErrEngineFault) || !strings.Contains(err.Error(), "could not start") {
 		t.Fatalf("Run() error = %v, want the worker refused", err)

@@ -14,6 +14,9 @@ import (
 // as the server's user, with its files and network. Production runs on
 // Linux.
 
+// workerUsersSupported says whether a worker may run as a user of its own.
+const workerUsersSupported = false
+
 func limitSelf(uint64) confinement { return confinement{} }
 
 // spawnProfiles has one way to start a worker outside Linux: as the server

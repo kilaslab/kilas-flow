@@ -15,6 +15,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// workerUsersSupported says whether a worker may run as a user of its own.
+const workerUsersSupported = true
+
 // namespaces are what a worker is given of its own, besides its user: a PID
 // namespace, in which the server and every other process has no number it
 // could signal, trace or limit; a network namespace, which has only a
