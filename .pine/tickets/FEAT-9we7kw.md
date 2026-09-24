@@ -245,17 +245,27 @@ findings and fixes:
    every zone (not just the named ones the review listed), from a
    `zonesCA`/`zonesGB` golden holding only the differing entries.
 2. **[Important] The `Hmsv`/`h24` gaps were a class, not 19 combinations,
-   and applied to en-US and en-CA too, not just en-GB.** Two distinct
+   and (this bullet corrected in fix round 3 — see its notes below: the
+   claim that the h24 tie-break reaches en-US/en-CA was itself wrong,
+   discovered only once fix round 2's blanket refusal was found to have
+   regressed en-US/en-CA's already-correct output) were believed at the
+   time to apply to en-US and en-CA too, not just en-GB.** Two distinct
    root causes, each now either fixed or refused by name (never silently
    different from Node):
-   - `hourCycle: 'h24'` ("k")'s append-item tie-break (which field becomes
-     primary when a request needs one gap-filled) is the *opposite* of
-     every other hour cycle's, for a request with an hour and a second but
-     no minute — this is a property of the shared, locale-agnostic matcher
-     (`bestAppending` in intl.go), so it affects en-US and en-CA exactly as
-     much as en-GB; round 0's allowlist only covered en-GB and so was
-     silently wrong for the other two. `nativeDateTimeFormat` now refuses
-     this shape by name for every locale.
+   - ~~`hourCycle: 'h24'` ("k")'s append-item tie-break (which field
+     becomes primary when a request needs one gap-filled) is the
+     *opposite* of every other hour cycle's, for a request with an hour
+     and a second but no minute — this is a property of the shared,
+     locale-agnostic matcher (`bestAppending` in intl.go), so it affects
+     en-US and en-CA exactly as much as en-GB; round 0's allowlist only
+     covered en-GB and so was silently wrong for the other two.
+     `nativeDateTimeFormat` now refuses this shape by name for every
+     locale.~~ **Wrong, corrected in fix round 3**: en-US and en-CA were
+     already correct here (a width-mismatch side effect against the
+     fallback 'H'/'h' anchor those two locales use, absent en-GB's own
+     exact 'k'-lettered anchors, happens to break the tie the way Node
+     does); only en-GB's tie genuinely ties and needs the refusal. See
+     fix round 2 and fix round 3's notes for the corrected scope.
    - A *second*, previously-undiscovered en-GB-specific padding gap: an
      hour+minute(2-digit)+second('numeric', not '2-digit') combination,
      with `hourCycle: 'h24'`, still padded the hour when it should not
