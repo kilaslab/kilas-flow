@@ -1183,7 +1183,7 @@ JavaScriptHeapCeilingMB is one worker process's live heap, in MiB, at
 which its JavaScript Code node is stopped with a memory-limit error.
 Scripts run in workers apart from the server, so a runaway script costs
 a worker, never the server; on Linux a worker that outgrows this in one
-step is stopped by an address-space limit of four times it plus 1 GiB,
+step is stopped by an address-space limit of four times it plus 3 GiB,
 or by the kernel, which is asked to choose workers first. Budget up to
 javascript_max_concurrent workers of this size. Zero means 1024.
 

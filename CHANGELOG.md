@@ -23,6 +23,24 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- Code (JavaScript) (`kilasflow.jsCode`): n8n JavaScript Code nodes run, on
+  goja, an ECMAScript engine linked into the binary, with no Node.js process
+  involved. An imported Code node keeps its source byte for byte and runs, and
+  one imported earlier as the placeholder runs without importing again; a new
+  one can be added from the palette. The code gets both of n8n's modes and its
+  roots (`$input`, `items`, `$json`, `$('Node')`, `$node`, `$workflow`,
+  `$execution`, `$now` and the rest), Luxon, lodash, Node's `crypto`, `Buffer`,
+  `URL` and `util`, `Intl`, timers and `console` (kept with the run, in the
+  execution page's Console tab and the `code.console` event);
+  `this.helpers.httpRequest`, `getBinaryDataBuffer` and `prepareBinaryData`,
+  each carried out by the server under the egress policy; and
+  `$getWorkflowStaticData`, saved as n8n saves it. The Sort node's Code
+  comparator runs on the same runtime. What the engine would run differently
+  from V8 is refused by name at import and save. Every script runs on a fresh
+  engine, in a worker process apart from the server, confined on Linux by
+  namespaces and landlock as far as the kernel allows, under the
+  `code.javascript_*` limits. Python Code nodes still do not run. See the [Code
+  (JavaScript)](/guides/code-javascript/) page.
 - The canvas Chat panel renders replies as markdown (lists, emphasis, code,
   links), streams the reply while the model writes it, shows each tool call as
   a collapsible step, and links every reply to its execution. Markup in a reply

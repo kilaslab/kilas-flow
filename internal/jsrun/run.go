@@ -100,6 +100,9 @@ func (runner *Runner) Execute(ctx context.Context, job Job, answers Host) (execu
 		return Executed{}, err
 	}
 	defer v.close()
+	if runner.inspect != nil {
+		defer runner.inspect(v)
+	}
 	v.onInterrupt = runner.onInterrupt
 	defer heapWatchdog.enter(runner.heapCeiling, v.interrupt)()
 	defer context.AfterFunc(ctx, func() { v.interrupt(ctx.Err()) })()

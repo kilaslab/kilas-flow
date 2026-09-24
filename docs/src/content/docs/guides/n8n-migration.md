@@ -213,15 +213,15 @@ does: a `.reduce(` gets pointed at Aggregate or Summarize, a `.sort(` at Sort, a
 
 Your ways forward are the native nodes — Filter, Switch, Set, Sort, Aggregate,
 Split Out, Summarize, Remove Duplicates — or the body rewritten for one of the
-Code nodes that run: Code (JavaScript), described [below](#the-code-node), or
+Code nodes that run: [Code (JavaScript)](/guides/code-javascript/), or
 KilasFlow's Go Code node (`kilasflow.code`), which compiles Go to WebAssembly
 and runs it under a time and memory limit.
 
 A JavaScript Code node can block an import too, when its body uses something
 the JavaScript runtime cannot run faithfully. That is the same sentence with a
 different subject — *this node's code uses an async generator (line 12), which
-this server does not run* — and [the Code node](#the-code-node) section lists
-every such construct.
+this server does not run* — and [the Code (JavaScript) page](/guides/code-javascript/#what-is-refused-and-when)
+lists every such construct.
 
 ### Document-level elements
 
@@ -233,7 +233,7 @@ in part — each reported as a **dropped** diagnostic:
 | `settings` | Everything except the timezone, the workflow's own `executionTimeout` and `errorWorkflow`. Execution order and the other globals have no KilasFlow equivalent yet. All three carried keys matter: a scheduled workflow whose zone was dropped runs at the wrong hour every day, the timeout is the workflow's run budget, and an error workflow is started from its own error trigger when a run of this one fails. A zone this server cannot resolve is reported as lossy rather than silently falling back to UTC; so are n8n's `-1` "no timeout" (this server always applies the instance's budget) and an `errorWorkflow` id, because n8n's ids survive the trip only if that workflow was imported too. |
 | `pinData` | Pinned test data is an n8n editor feature. It is dropped rather than parked under a reserved key, because carrying data nothing reads would create a second silent-drop problem a release later. The nodes that had data pinned will run for real. |
 | `meta` | n8n instance metadata describing where the workflow came from. It has no meaning in another installation. |
-| `staticData` | n8n's per-workflow scratch space that its nodes persist between runs. KilasFlow keeps its own for each workflow (see [Helpers and static data](#helpers-and-static-data)), but the values n8n had are not carried: the imported workflow starts from empty static data. |
+| `staticData` | n8n's per-workflow scratch space that its nodes persist between runs. KilasFlow keeps its own for each workflow (see [Helpers and static data](/guides/code-javascript/#helpers-and-static-data)), but the values n8n had are not carried: the imported workflow starts from empty static data. |
 
 ### Node-level elements
 
@@ -504,191 +504,29 @@ is an answer that is correct only when every node processed exactly one item.
 
 An n8n Code node written in JavaScript imports as **Code (JavaScript)**
 (`kilasflow.jsCode`) and runs. It is not translated and no Node.js is involved:
-the body runs as written on [goja](https://github.com/dop251/goja), an
-ECMAScript engine written in Go and linked into the KilasFlow binary, in a
-worker process the server starts from its own executable. The node can also be
-added from the palette, so new JavaScript is written the same way.
+the body runs as written on an ECMAScript engine linked into the KilasFlow
+binary, in a worker process the server starts from its own executable. What the
+code sees, the helpers and static data it has, what is refused, how it differs
+from n8n and the limits that bound it are on the
+[Code (JavaScript)](/guides/code-javascript/) page. Three things are specific to
+importing one.
 
 **The source crosses byte for byte.** `mode` and `jsCode` are copied as n8n
 wrote them — line endings, tabs, trailing spaces and non-ASCII included — and a
 `{{ }}` inside the code is code, never an expression. Exporting the node gives
-the same source back. Workflows imported before JavaScript ran kept their Code
-nodes as the `kilasflow.foreignCode` placeholder; a JavaScript body there now
-runs exactly as a Code (JavaScript) node does, without importing again.
+the same source back.
 
-### What the code sees
+**What the runtime cannot run faithfully blocks the import.** A body that uses
+an async generator, `import`, an unsupported regular-expression flag, a module
+the runtime does not ship or `this.getCredentials` imports with a **blocking**
+diagnostic naming the construct and its line, in the sentence a Python Code
+node gets. The full list is under
+[what is refused, and when](/guides/code-javascript/#what-is-refused-and-when).
 
-The node keeps n8n's two modes and n8n's names for them. The body is the body
-of an async function, so `await` works, and what it returns becomes the node's
-items.
-
-| Mode | The code gets | It returns |
-| --- | --- | --- |
-| Run once for all items (`runOnceForAllItems`, the default) | `items`, `$input.all()`, `$input.first()`, `$input.last()` | a list of items; a single object is taken as one item |
-| Run once for each item (`runOnceForEachItem`) | `$json`, `$itemIndex`, `$input.item`, called once per item | one item, or `null` to drop it; a list is refused |
-
-An item is `{ json: { … } }`, and a plain object returned where an item belongs
-becomes that item's `json`. A root the mode does not have — `$json` in the
-all-items mode, `items` in the per-item one — is undefined, as in n8n, so
-`typeof items` is safe; using one anyway fails with a message saying what to
-use instead.
-
-The rest of n8n's Code-node globals are there, reading the same data an
-[expression](#expressions) reads:
-
-- `$('Name')` and `$node['Name']` read a node that ran earlier: `.first()`,
-  `.last()`, `.all()`, `.item`, `.itemMatching(index)` and `.params`. `.item`
-  follows the paired-item lineage and fails with the reason when it cannot be
-  established, as it does in an expression.
-- `$workflow`, `$execution` (`id`, `mode`, `resumeUrl`), `$runIndex`,
-  `$nodeVersion`, and `$env`, which holds only the variables an expression's
-  `$env` holds. `$vars` is an empty object: KilasFlow has no variables for it
-  to read.
-- `$now` and `$today`, and Luxon's `DateTime`, `Duration` and `Interval`,
-  default to the workflow's time zone.
-- `console.log`, `info`, `warn`, `error` and `debug`. What the code prints is
-  kept with the node's run — shown under **Console** on the execution page, and
-  streamed live as the `code.console` event — including when the code then
-  fails, which is usually when you need it.
-- `Buffer`, `URL`, `URLSearchParams`, `TextEncoder`, `TextDecoder`, `atob`,
-  `btoa`, `structuredClone`, `queueMicrotask`, and timers that end with the run.
-- `require()` returns the modules the runtime ships: `lodash`, `luxon`,
-  `crypto`, `util`, `buffer` and `url`. There is no npm and no way to add a
-  package, and no module reaches a file, the network or a process.
-
-A returned item keeps its lineage the way n8n decides it: an explicit
-`pairedItem` wins; an item the code was given and returned, in whatever order,
-keeps its own; anything else is paired by position.
-
-### Helpers and static data
-
-Three of n8n's `this.helpers` run, and each is carried out by the server, never
-by the code's worker process: the code asks, the server does the work, and the
-promise the code holds settles with the answer. While it waits the code runs
-on — its timers fire and other promises settle — and requests started together
-with `Promise.all` are in flight together.
-
-- `this.helpers.httpRequest(options)` sends a request under the deployment's
-  egress policy, exactly the one an HTTP Request node uses (`outbound.*`), so
-  an internal address is refused unless the operator granted it. It takes
-  n8n's options `url`, `baseURL`, `method`, `headers`, `qs` (with
-  `arrayFormat`), `body`, `json`, `auth`, `timeout` (which can shorten the
-  policy's, never lengthen it), `disableFollowRedirect`, `maxRedirects`,
-  `returnFullResponse` (for `{ body, headers, statusCode, statusMessage }`),
-  `encoding` (`arraybuffer` for a `Buffer`, `text` or `json`) and
-  `ignoreHttpStatusErrors`. A status outside 2xx rejects with an error whose
-  `status` and `response` say what came back. `proxy`,
-  `skipSslCertificateValidation` and the rest of the options that would change
-  what the request does are refused by name rather than ignored. No
-  credential is ever reachable, as in n8n.
-- `this.helpers.getBinaryDataBuffer(itemIndex, propertyName)` returns a
-  `Buffer` of a file of the node's own input: the one item `itemIndex` holds
-  under `propertyName`. No other file is readable.
-- `this.helpers.prepareBinaryData(buffer, fileName?, mimeType?)` stores the
-  bytes as a file of the execution and returns its reference, which the code
-  can return in an item's `binary`. The type, when not given, is the one the
-  name says, else what the bytes look like, else `text/plain`.
-
-Every helper call counts against a budget of 100 host calls
-(`code.javascript_max_host_calls`): per run in *Run once for all items* mode,
-and per item in *Run once for each item* mode, so a per-item node may call an
-API for every item. A file or request body moves at most 32 MiB in one call,
-and a response larger than the policy's `outbound.max_response_bytes` (or
-32 MiB) stops the node. Each is a named error. Time spent waiting for the
-server is not counted against the node's time limit; the execution's own
-timeout still bounds it. Any other helper, such as `this.helpers.request`, is
-refused.
-
-`$getWorkflowStaticData('global')` returns the workflow's static data, an
-object the code can change, and `$getWorkflowStaticData('node')` the node's
-own. Every Code node run in an execution sees what the ones before it left.
-What it holds is saved, when a run changed it, as n8n saves it: when the
-execution ends, whether it succeeded or failed, and when it parks at a Wait,
-so the half that resumes reads what the half before changed. A **manual run**
-saves nothing: a test run reads and changes it for itself, as n8n documents.
-A cancelled run saves nothing either, and nor does a Code node run that
-throws: what it changed before throwing is dropped. A retry runs under the
-trigger its original ran under, so a retried webhook run saves and a retried
-manual one does not; a retried sub-workflow run has no caller, so it runs,
-and counts, as a manual one. A run started through the API is queued as a manual run,
-as a run from the editor is, so it saves nothing. The data is capped at
-256 KiB as JSON (a named error, on the node run that grew it past the cap),
-and it is deleted with its workflow.
-
-### What is refused, and when
-
-Some JavaScript the engine would run differently from V8 — or not at all — and
-running it anyway would mean a workflow that succeeds with the wrong answer. So
-each such construct is refused by name, in the same sentence a Python node
-gets:
-
-> this node's code uses the regular-expression flag "v" (line 3), which this
-> server does not run. Rewrite that part of the code, or do the same work with
-> native nodes.
-
-Most are found by reading the code — at import, as a blocking diagnostic, and
-again when the workflow is saved — so a workflow that uses one never activates:
-
-- an async generator, `for await`, and `import` or `export` (use `require()`);
-- the regular-expression flags `v` and `d`, and `\p{…}` property escapes under
-  the `u` flag, which the engine accepts and then matches nothing with — a
-  pattern built at run time is checked when it is built;
-- `this.getCredentials`, and any `this.helpers` function other than the
-  three [above](#helpers-and-static-data): use an HTTP Request node before or
-  after the Code node;
-- `require()` of any module not in the list above.
-
-The rest fail by name the moment the code reaches them: `$jmespath`,
-`$evaluateExpression`, `$prevNode`, `$input.params`, `$input.context`,
-`$secrets`, `$execution.customData`, and `$('Name').all()` for a branch or a
-run other than the first.
-
-A body longer than 128 KiB, nested more than a thousand levels deep, or holding
-a constant expression that would take the engine seconds to fold, or a BigInt
-constant of more than a million bits, is refused the same way, because reading
-it safely matters more than running it.
-
-Reading the code is not compiling it, so the few mistakes only a compiler sees
-— a `let` declared twice in one scope, a `break` outside a loop — are reported
-when the node runs, as a `SyntaxError` with its line, not when it is saved.
-
-### Differences from n8n worth knowing
-
-- **It is an interpreter.** goja has no JIT, so a tight loop over many items
-  runs many times slower than on V8. Workflows that shape data run at ordinary
-  speed; a body that is mostly arithmetic in a loop is better done by native
-  nodes or the Go Code node.
-- **Dates format in English.** Luxon and `Intl` format dates with English
-  names only, and asking for another locale's date format is a named error
-  rather than English passed off as that locale. Numbers format in the locale
-  you ask for.
-- **Binary data is metadata.** An item's `binary` entries carry `id`,
-  `fileName`, `mimeType`, `fileExtension` and `fileSize`, never the bytes, so
-  code that reads `binary.data.data` fails instead of reading nothing; read
-  the bytes with `this.helpers.getBinaryDataBuffer`. An item keeps a file only
-  when the code returns it, as in n8n, and the code can pass on or rename a
-  file it was given or stored with `prepareBinaryData`, but not name any other.
-- **The time limit counts the code's own running time.** Starting the engine,
-  loading a library and handling the input and output are not counted. The
-  deployment sets the ceiling (`code.javascript_timeout`, 10 seconds by
-  default), and the node's **Time limit** can lower it, never raise it.
-- **Memory is bounded per worker.** A script whose heap passes the worker's
-  ceiling (`code.javascript_heap_ceiling_mb`, 1 GiB by default) is stopped with
-  a memory-limit error. The input, the returned items and the console output
-  have their own caps, and each is a named error rather than a truncation.
-- **Runaway recursion cannot be caught.** V8 throws a `RangeError` the code can
-  catch; here, calling deeper than the limit ends the run with a named error.
-- **Continuing on failure works as n8n's does, without splitting the
-  batch.** Other nodes that continue on failure are run once per item so one
-  bad item fails alone. The Code node always sees its whole batch, so an
-  all-items body that sums its items sums all of them, and a throw there fails
-  the batch, as in n8n. In **Run Once for Each Item** mode the node goes on
-  past an item whose code threw or returned something that is not an item:
-  that item goes to the error output (or on as an error item in its place,
-  under *Continue*), and the other items pass through.
-- **A promise that can never settle is an error, not a hang.** Code that
-  awaits something nothing will ever resolve fails at once with a message
-  saying so, rather than waiting out the time limit.
+**Earlier imports run without importing again.** Workflows imported before
+JavaScript ran kept their Code nodes as the `kilasflow.foreignCode`
+placeholder; a JavaScript body there now runs exactly as a Code (JavaScript)
+node does.
 
 ### The Sort node's comparator
 
@@ -696,7 +534,7 @@ n8n's Sort node has a third type, **Code**, whose `code` is the body of a
 comparator. It imports as the Sort node with that type and runs on the same
 runtime as the Code node, in the same workers and under the same limits; the
 source crosses byte for byte, and what the runtime cannot run is refused at
-import in the sentence above. The body sees `a` and `b`, two whole items, and
+import as it is in a Code node. The body sees `a` and `b`, two whole items, and
 `items`, the whole list; like n8n's, it is a plain function, so `await` is a
 syntax error. Items the comparator calls equal keep the order they arrived in.
 
@@ -925,8 +763,8 @@ enforces that on every run rather than trusting anyone to remember it.
 ## Current limits worth planning around
 
 - **A Python Code node does not run**, and a JavaScript one runs on an
-  interpreter rather than V8, with the differences listed under
-  [the Code node](#the-code-node).
+  interpreter rather than V8, with the differences listed on
+  [the Code (JavaScript) page](/guides/code-javascript/#differences-from-n8n).
 - **The node subset is 67 n8n node types**, mapped onto 57 KilasFlow node types
   — `internal/interop/n8n/n8n.go` is the list of record, and the tables above
   name the ones you are most likely to meet. Anything outside it imports as a

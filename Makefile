@@ -479,6 +479,17 @@ js-corpus-check: ## Verify the Code-node corpus baseline, or say the corpus is n
 js-diff: ## Diff jsrun against Node.js over the Code-node corpus (dev-only; needs node 24)
 	$(GO) test ./internal/jsrun/corpus -run TestJSDiff -js-diff -count=1 -v
 
+# The Code node's load test (FEAT-vjjs8t): Code-node executions at several
+# concurrency levels through the real worker pool, a trivial body and a
+# 1000-item transform, reporting p50/p95/p99 latency and executions per second.
+# The machine's load average is printed before and after, because the numbers
+# mean little without it.
+.PHONY: js-load
+js-load: ## Measure Code-node latency percentiles and throughput under concurrent load
+	@uptime
+	$(GO) test ./internal/jsworker -run '^$$' -bench BenchmarkCodeNodeUnderLoad -benchtime 400x -count 1
+	@uptime
+
 .PHONY: smoke-sqlite
 smoke-sqlite: ## Prove the embedded binary against a fresh SQLite database
 	sh scripts/smoke-sqlite.sh
