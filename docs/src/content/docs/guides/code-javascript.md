@@ -42,7 +42,14 @@ The rest of n8n's Code-node globals are there, reading the same data an
 - `$('Name')` and `$node['Name']` read a node that ran earlier: `.first()`,
   `.last()`, `.all()`, `.item`, `.itemMatching(index)` and `.params`. `.item`
   follows the paired-item lineage and fails with the reason when it cannot be
-  established, as it does in an expression.
+  established, as it does in an expression. `.all(branch, run)` reads one
+  output of a node with several, such as an IF's `false` branch as `.all(1)`;
+  with no branch it reads every output. n8n's older
+  `$items('Name', output, run)` reads output 0 unless told otherwise, and
+  `$items()` the node's own input, as in an expression. Only a node's latest
+  run is kept, numbered as `$runIndex` numbers runs: a run argument may name
+  it by its number (so `$items('Name', 0, $runIndex)` in a loop that runs in
+  step works) or as `-1`, and naming an earlier run is refused.
 - `$workflow`, `$execution` (`id`, `mode`, `resumeUrl`), `$runIndex`,
   `$nodeVersion`, and `$env`, which holds only the variables an expression's
   `$env` holds. `$vars` is an empty object: KilasFlow has no variables for it
@@ -150,8 +157,8 @@ again when the workflow is saved — so a workflow that uses one never activates
 
 The rest fail by name the moment the code reaches them: `$jmespath`,
 `$evaluateExpression`, `$prevNode`, `$input.params`, `$input.context`,
-`$secrets`, `$execution.customData`, and `$('Name').all()` for a branch or a
-run other than the first. So does a date formatted in a locale the runtime has
+`$secrets`, `$execution.customData`, and `$('Name').all()` or
+`$items('Name')` for a run earlier than the node's latest. So does a date formatted in a locale the runtime has
 no data for (see [below](#differences-from-n8n)), and a `Proxy` handed to a
 built-in that reads its length, which would run the proxy's traps once per
 element inside one call that nothing can interrupt.
