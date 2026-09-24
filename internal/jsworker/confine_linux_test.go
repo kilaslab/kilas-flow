@@ -260,6 +260,14 @@ func testConfinement(t *testing.T, mode string) {
 	refused := func(attempts ...string) {
 		t.Helper()
 		for _, attempt := range attempts {
+			if attempt == "signalServerGroup" && syscall.Getpgrp() <= 1 {
+				// A server that is a container's first process has a group
+				// that cannot be named: 0, from outside its PID namespace,
+				// makes kill(-0) the worker's own group, and 1 makes
+				// kill(-1) every process the worker may signal, which
+				// signalServer covers.
+				continue
+			}
 			if got[attempt] == "ok" || got[attempt] == "" {
 				// "itself" is a number that named the worker's own thread.
 				t.Errorf("%s: %q, want it refused", attempt, got[attempt])
