@@ -715,6 +715,8 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 							value={entry[field.key] ?? field.default}
 							{contextKey}
 							{ownerKey}
+							{upstreamNodeNames}
+							{upstreamFieldPaths}
 							onChange={(next: unknown) => updateGroupEntry(index, field.key, next)}
 							{loadOptions}
 						/>
@@ -752,6 +754,8 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 						siblings={{ ...siblings, ...collectionValue(value) }}
 						{contextKey}
 						{ownerKey}
+						{upstreamNodeNames}
+						{upstreamFieldPaths}
 						onChange={(next: unknown) => onChange(setOption(value, field.key, next))}
 						{loadOptions}
 					/>

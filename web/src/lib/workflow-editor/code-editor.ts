@@ -31,6 +31,8 @@ import { tags } from '@lezer/highlight';
 
 import type { TypeOptionsEditorLanguage } from '$lib/api/generated/models';
 
+import { nodeReference } from './expression-assist';
+
 /**
  * The source editor a code parameter renders as (`typeOptions.editor: "code"`).
  *
@@ -96,7 +98,7 @@ export const CODE_NODE_GLOBALS: readonly Completion[] = [
 /** `$('Name')` for each node the code can read, the form n8n's own examples use. */
 export function nodeReferenceCompletions(names: readonly string[]): Completion[] {
 	return names.map((name) => ({
-		label: `$('${name.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}')`,
+		label: nodeReference(name),
 		type: 'function',
 		detail: 'node output',
 		boost: 1

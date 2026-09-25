@@ -16,6 +16,16 @@ export interface CompletionCandidate {
 }
 
 /**
+ * `$('Name')` for one node, with the name escaped as a single-quoted string.
+ *
+ * Node names are free text: a quote or a backslash in one, spliced in as it
+ * is, writes an expression that no longer parses.
+ */
+export function nodeReference(name: string): string {
+	return `$('${name.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}')`;
+}
+
+/**
  * Completion candidates for a template prefix: served roots first, then
  * upstream node names as `$('Name')`, then `$json` field paths. Matching
  * is a case-insensitive substring on the insert text; an empty prefix
@@ -36,7 +46,7 @@ export function expressionCompletions(
 		.filter((root) => root !== '$(')
 		.map((root) => ({ insert: root, detail: 'expression root' }));
 	const nodeCandidates = (options.nodeNames ?? []).map((name) => ({
-		insert: ` $('${name}') `,
+		insert: ` ${nodeReference(name)} `,
 		detail: 'upstream node'
 	}));
 	const fieldCandidates = (options.fieldPaths ?? []).map((path) => ({

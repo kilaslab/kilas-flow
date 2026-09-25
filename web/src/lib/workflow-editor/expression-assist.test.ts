@@ -21,6 +21,13 @@ describe('expression completions', () => {
 		expect(completions.map((candidate) => candidate.insert)).toContain(' $json.orderId ');
 		expect(completions.map((candidate) => candidate.insert)).not.toContain(" $('Billing') ");
 	});
+
+	it("escapes a quote or a backslash in a node's name, so the inserted expression still parses", () => {
+		setExpressionGrammar({ roots: ['$json'], functions: [] });
+		const inserts = expressionCompletions('', { nodeNames: ["Bob's API", 'a\\b'] }).map((candidate) => candidate.insert);
+		expect(inserts).toContain(" $('Bob\\'s API') ");
+		expect(inserts).toContain(" $('a\\\\b') ");
+	});
 });
 
 describe('reading field paths from a value', () => {
