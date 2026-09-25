@@ -108,9 +108,12 @@ A configured value of `0` means "keep the default", not "unbounded". An
 over-limit response body is truncated at the limit and reported as truncated,
 rather than read into memory.
 
-Note that `http.ProxyFromEnvironment` is honoured, so a proxy set in the
-process environment is used. That is normally what an operator wants, and it is
-worth knowing it is there.
+Tenant-authored egress never goes through a proxy, even when `HTTP_PROXY` or
+`HTTPS_PROXY` is set in the process environment. A proxy would receive the
+dial with only its own address checked, and the real target would never be
+resolved or checked against the private-address guard. An operator who needs
+egress through a proxy terminates it outside this client, where the proxy
+enforces its own policy.
 
 Both of the call sites that used to differ here are now constructed with the
 configured policy: the edit-time option loader and the webhook lifecycle
