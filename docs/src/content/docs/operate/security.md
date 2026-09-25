@@ -83,7 +83,25 @@ AES-256-GCM. The key is read from the environment and never from the
 configuration file; without it, credential storage is disabled rather than
 silently falling back to something weaker. Workflow `$env` expressions can
 never reach it either: only `KILASFLOW_WORKFLOW_ENV_*` is exposed to
-workflows, so a workflow can never read the DSN or the master key.
+workflows, so a workflow can never read the DSN or the master key. An update
+that leaves a credential's `allowedDomains` out keeps the stored scope, so a
+client that only renames a credential cannot widen where its secret may go;
+only an explicit empty list makes it unrestricted.
+
+**Google Connect is bound to the browser that started it.** Starting Connect
+sets an HttpOnly, SameSite=Lax nonce cookie, and the signed state carries only
+the nonce's hash. The callback completes only in a browser holding the nonce,
+only once (the used state is recorded in the database, so a replay is refused
+on every replica), and only with the PKCE verifier derived from that nonce. An
+authorize URL sent to someone else cannot put their Google account into the
+sender's credential. See [Google Connect](/concepts/credentials/#google-connect).
+
+**Testing an edit never moves a stored secret.** The unsaved-credential test
+fills a redaction placeholder from storage only while the edit keeps the stored
+host, port and base URL. It holds the probe to the stored scope, which the
+request can narrow but never widen, and checks the named credential against the
+caller's tenant before using it. No more than four credential tests run at once
+per tenant, so the test endpoint cannot be fanned out into a scanner.
 
 **The master key can come from a manager, and credential fields can point at
 one.** A stored credential field may hold an `ext://<binding>/<key>`

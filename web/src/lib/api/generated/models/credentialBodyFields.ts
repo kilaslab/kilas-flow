@@ -7,6 +7,6 @@
  */
 
 /**
- * Field values for the credential type. Send the redaction placeholder to keep a stored secret.
+ * Field values for the credential type. On create, every value is stored as sent and the redaction placeholder is refused. On update, a field left out, or sent as the redaction placeholder, keeps its stored value; send an empty string to clear one.
  */
 export type CredentialBodyFields = {[key: string]: string};

@@ -5,14 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/kilaslab/kilas-flow/internal/credentials"
 	"github.com/kilaslab/kilas-flow/internal/embed"
+	"github.com/kilaslab/kilas-flow/internal/idempotency"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
@@ -21,6 +25,59 @@ import (
 // an API key. Google blocks OAuth inside iframes; the editor opens this in
 // window.open and the callback posts a message to the opener.
 const OAuthCallbackPath = "/oauth/callback"
+
+// oauthNonceCookiePrefix names the cookie that binds one Connect popup to the
+// browser that started it. The rest of the name comes from the state, so two
+// popups open in one browser each keep their own cookie instead of the second
+// silently breaking the first.
+const oauthNonceCookiePrefix = "kilasflow_oauth_"
+
+// oauthStateOperation is the one-time-key purpose a used Connect state is
+// recorded under.
+const oauthStateOperation = "oauth-state"
+
+// OAuthStateLedger records which Connect states have been used, so each one is
+// good for a single callback.
+//
+// It has to be shared by every process that can serve the callback: behind a
+// load balancer the replay can land on a different replica from the first
+// callback, and a ledger in one process's memory would admit it there.
+type OAuthStateLedger interface {
+	// ConsumeOnce marks key used until until and reports whether this call was
+	// the first to use it.
+	ConsumeOnce(ctx context.Context, tenantID, key string, until time.Time) (bool, error)
+}
+
+// memoryOAuthLedger is the ledger used when the composition root supplies
+// none: correct for one process, and only for one process. The server binary
+// always supplies the database-backed one.
+type memoryOAuthLedger struct {
+	mu   sync.Mutex
+	used map[string]time.Time
+}
+
+func (ledger *memoryOAuthLedger) ConsumeOnce(_ context.Context, tenantID, key string, until time.Time) (bool, error) {
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	now := time.Now()
+	if !until.After(now) {
+		return false, nil
+	}
+	if ledger.used == nil {
+		ledger.used = map[string]time.Time{}
+	}
+	for entry, expiry := range ledger.used {
+		if !expiry.After(now) {
+			delete(ledger.used, entry)
+		}
+	}
+	entry := tenantID + "\x00" + key
+	if _, seen := ledger.used[entry]; seen {
+		return false, nil
+	}
+	ledger.used[entry] = until
+	return true, nil
+}
 
 type oauthStartInput struct {
 	ID      string `path:"id" minLength:"1" doc:"Credential identifier"`
@@ -31,7 +88,10 @@ type oauthStartInput struct {
 }
 
 type oauthStartOutput struct {
-	Body oauthStartResource
+	// SetCookie carries the nonce that binds this Connect to the browser that
+	// asked for it.
+	SetCookie http.Cookie `header:"Set-Cookie"`
+	Body      oauthStartResource
 }
 
 type oauthStartResource struct {
@@ -41,13 +101,23 @@ type oauthStartResource struct {
 func (handler *Credentials) registerOAuth(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "start-credential-oauth", Method: http.MethodPost, Path: "/credentials/{id}/oauth/start",
-		Summary:     "Start Google OAuth",
-		Description: "Returns the Google authorization URL for this credential. Open it in a popup (window.open), not an iframe: Google blocks OAuth inside frames.",
-		Tags:        []string{"Credentials"},
+		Summary: "Start Google OAuth",
+		Description: "Returns the Google authorization URL for this credential. Open it in a popup (window.open), not an iframe: Google blocks OAuth inside frames. " +
+			"The response also sets an HttpOnly cookie that binds the sign-in to this browser: the callback completes only in the browser that made this request, and only once. " +
+			"The authorization request uses PKCE (S256).",
+		Tags: []string{"Credentials"},
 	}, handler.StartOAuth)
 }
 
 // StartOAuth mints a CSRF state and returns the Google authorize URL.
+//
+// The state is bound to the browser that asked: a fresh nonce is set as an
+// HttpOnly, SameSite=Lax cookie on this response and its hash is signed into
+// the state, and the callback accepts the state only alongside that cookie.
+// Lax is the strictest mode that still works — the callback is a top-level
+// GET navigation arriving from Google, which Lax sends the cookie on and
+// Strict does not. The same nonce derives the PKCE verifier, so nothing needs
+// storing between here and the callback.
 func (handler *Credentials) StartOAuth(ctx context.Context, input *oauthStartInput) (*oauthStartOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("credential storage unavailable")
@@ -81,15 +151,56 @@ func (handler *Credentials) StartOAuth(ctx context.Context, input *oauthStartInp
 	if origin == "" {
 		origin = originOf(input.Referer)
 	}
+	nonce, err := credentials.NewOAuthNonce()
+	if err != nil {
+		return nil, serverProblem(ctx, "could not start Google sign-in", err)
+	}
+	nonceHash := credentials.OAuthNonceHash(nonce)
 	state, err := credentials.SignOAuthState(handler.oauthSigningKey, credentials.OAuthState{
-		TenantID: tenant.ID, CredentialID: record.ID, Origin: origin,
+		TenantID: tenant.ID, CredentialID: record.ID, Origin: origin, NonceHash: nonceHash,
 	})
 	if err != nil {
 		return nil, huma.Error503ServiceUnavailable(err.Error())
 	}
-	return &oauthStartOutput{Body: oauthStartResource{
-		AuthorizeURL: credentials.GoogleAuthorizeURL(clientID, redirect, scope, state),
-	}}, nil
+	challenge := credentials.PKCEChallenge(credentials.PKCEVerifier(handler.oauthSigningKey, nonce))
+	return &oauthStartOutput{
+		SetCookie: oauthNonceCookie(redirect, nonceHash, nonce, int(credentials.OAuthStateTTL.Seconds())),
+		Body: oauthStartResource{
+			AuthorizeURL: credentials.GoogleAuthorizeURL(clientID, redirect, scope, state, challenge),
+		},
+	}, nil
+}
+
+// oauthNonceCookie is the cookie for one Connect popup. It is scoped to the
+// callback's own path, so no other request carries it; Secure whenever the
+// callback is served over https, which is where the browser will send it back;
+// and it lives no longer than the state. A maxAge below zero deletes it.
+func oauthNonceCookie(redirect, nonceHash, value string, maxAge int) http.Cookie {
+	cookie := http.Cookie{
+		Name:     oauthNonceCookieName(nonceHash),
+		Value:    value,
+		Path:     OAuthCallbackPath,
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	}
+	if parsed, err := url.Parse(redirect); err == nil {
+		if parsed.Path != "" {
+			cookie.Path = parsed.Path
+		}
+		cookie.Secure = parsed.Scheme == "https"
+	}
+	return cookie
+}
+
+// oauthNonceCookieName is the cookie a state's nonce travels in. It is made
+// from the nonce's hash, which the state already carries in the clear, so the
+// name reveals nothing the URL does not.
+func oauthNonceCookieName(nonceHash string) string {
+	if len(nonceHash) > 16 {
+		nonceHash = nonceHash[:16]
+	}
+	return oauthNonceCookiePrefix + nonceHash
 }
 
 func (handler *Credentials) googleClient(typeID string, fields map[string]string) (clientID, clientSecret string, err error) {
@@ -145,6 +256,40 @@ func (handler *Credentials) OAuthCallback() http.Handler {
 			writeOAuthResult(w, false, err.Error(), "")
 			return
 		}
+		redirect := handler.oauthRedirectURL(r.Header.Get("X-Forwarded-Proto"), r.Host, r.TLS != nil)
+
+		// The state is only good in the browser that started it. A state
+		// arriving without its nonce is somebody else's authorize URL, opened
+		// by a person who never pressed Connect — exactly the link an attacker
+		// sends to have the victim's Google account stored in the attacker's
+		// credential.
+		cookieName := oauthNonceCookieName(state.NonceHash)
+		nonce := ""
+		if cookie, err := r.Cookie(cookieName); err == nil {
+			nonce = cookie.Value
+		}
+		if !state.MatchesNonce(nonce) {
+			writeOAuthResult(w, false, "this sign-in was not started in this browser: press Connect again from the credential", state.Origin)
+			return
+		}
+		expired := oauthNonceCookie(redirect, state.NonceHash, "", -1)
+		http.SetCookie(w, &expired)
+
+		// Single use, recorded where every replica can see it. Checked before
+		// the code is exchanged, so a replayed callback URL never reaches
+		// Google, let alone overwrites the credential.
+		first, err := handler.oauthLedger().ConsumeOnce(r.Context(), state.TenantID,
+			idempotency.OneTimeKey(oauthStateOperation, state.NonceHash), time.Unix(state.Expiry, 0))
+		if err != nil {
+			slog.ErrorContext(r.Context(), "recording a used Google sign-in state", slog.Any("error", err))
+			writeOAuthResult(w, false, "could not record this sign-in: press Connect again", state.Origin)
+			return
+		}
+		if !first {
+			writeOAuthResult(w, false, "this sign-in was already used: press Connect again", state.Origin)
+			return
+		}
+
 		code := strings.TrimSpace(query.Get("code"))
 		if code == "" {
 			writeOAuthResult(w, false, "google did not return an authorization code", state.Origin)
@@ -161,8 +306,8 @@ func (handler *Credentials) OAuthCallback() http.Handler {
 			writeOAuthResult(w, false, err.Error(), state.Origin)
 			return
 		}
-		redirect := handler.oauthRedirectURL(r.Header.Get("X-Forwarded-Proto"), r.Host, r.TLS != nil)
-		token, err := credentials.ExchangeGoogleCode(handler.oauthHTTP, handler.oauthTokenURL, clientID, clientSecret, redirect, code)
+		verifier := credentials.PKCEVerifier(handler.oauthSigningKey, nonce)
+		token, err := credentials.ExchangeGoogleCode(handler.oauthHTTP, handler.oauthTokenURL, clientID, clientSecret, redirect, code, verifier)
 		if err != nil {
 			writeOAuthResult(w, false, err.Error(), state.Origin)
 			return
@@ -215,4 +360,21 @@ func jsonString(value string) string {
 		return `""`
 	}
 	return string(encoded)
+}
+
+// WithOAuthStateLedger sets where used Connect states are recorded. The server
+// binary passes the database-backed one, because any replica may serve a
+// callback; without one, states are remembered in this process only.
+func (handler *Credentials) WithOAuthStateLedger(ledger OAuthStateLedger) *Credentials {
+	handler.oauthStates = ledger
+	return handler
+}
+
+func (handler *Credentials) oauthLedger() OAuthStateLedger {
+	handler.oauthStatesOnce.Do(func() {
+		if handler.oauthStates == nil {
+			handler.oauthStates = &memoryOAuthLedger{}
+		}
+	})
+	return handler.oauthStates
 }

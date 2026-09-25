@@ -33,14 +33,30 @@ disable authentication.
 The consequence for the API is a hard boundary that is easy to state:
 
 - `List` and `Get` return the **public half only**. They deliberately cannot
-  return plaintext, and the secret fields come back as a non-empty redaction
-  placeholder so an editor can tell "configured" from "empty".
+  return plaintext. A secret field that holds a value comes back as a non-empty
+  redaction placeholder, so an editor can tell "configured" from "empty"; one
+  that was never set comes back empty. Which secrets are set is recorded beside
+  the public half when the credential is written, so answering does not
+  decrypt the payload. A row written before that record existed shows the
+  placeholder for every secret until it is next saved.
 - `Resolve` is the single path by which a plaintext secret leaves storage, and
   only the runtime calls it.
 
-Editing a credential merges: a secret field left at the redaction placeholder
-keeps its stored value, so changing a name never silently blanks a password the
-client was never given.
+Editing a credential merges. A field the update leaves out keeps its stored
+value, and so does a field sent as the redaction placeholder: the client was
+never given the secret, so its silence about one is not a request to erase it.
+Changing a name therefore never blanks a password, a JWT private key, or the
+refresh token Connect stored. To clear a field, send it as an empty string.
+
+The scope follows the same rule. An update that leaves `allowedDomains` out
+keeps the stored scope; only an explicit empty list makes the credential
+unrestricted (a Google credential then gets the Google hosts, as it does at
+create). Reading an omitted scope as "unrestricted" would let any rename widen
+where the secret may be sent.
+
+Creating a credential refuses the redaction placeholder as a value. There is no
+stored value for it to stand for, so storing it would make eight bullet
+characters the secret.
 
 ## Encryption
 
@@ -151,6 +167,31 @@ which the answer counts as success (default `GET` and 400). The response body is
 drained and discarded, because returning it would turn a pass/fail probe into a
 general-purpose fetch.
 
+An edit can be tested before it is saved. The form sends the redaction
+placeholder for a secret it was never shown, together with `credentialId`, and
+the server fills the placeholder from the stored credential. Three rules keep
+that from becoming a way to read a stored secret:
+
+- **The target must not move.** A placeholder is filled only while the edit's
+  `host`, `port`, `baseUrl` and `url` match the stored values. An edit that
+  changes one is refused with a 422 until the secret is typed again or the
+  credential is saved: otherwise the stored password would go to whatever host
+  the caller just typed.
+- **The stored scope applies.** Once a stored secret is in the payload, the
+  probe runs under the intersection of the stored `allowedDomains` and the
+  scope the request sends, so the request can narrow the scope but never widen
+  it. Two scopes that share no host are refused rather than read as
+  unrestricted. A payload with nothing taken from storage is the caller's own
+  and runs under the scope it sends.
+- **The credential is checked first.** `credentialId` must name a credential of
+  the same type in the caller's tenant before anything uses it. It is also the
+  key for the one-test-at-a-time slot, and an unchecked id let a random name
+  per request buy a fresh slot per request.
+
+Tests are also capped per tenant: at most four run at once across every
+credential and type, and one more is answered `429`. The per-credential slot
+answers `409` as before.
+
 The tests that exist are chosen carefully. OpenRouter is probed at `/key` rather
 than `/models`, because OpenRouter serves its model catalogue unauthenticated —
 so `/models` answers 200 for a key that is expired or revoked, and the test would
@@ -253,6 +294,39 @@ credentials, and `POST /api/v1/credentials/{id}/test` tests a stored one.
 for the Connect popup (`window.open`, never an iframe). The browser lands on
 `/oauth/callback`, which stores the tokens and posts a message to the opener.
 See the [HTTP API reference](/reference/api/).
+
+## Google Connect
+
+The popup's `state` is signed, but a signature only proves the server minted
+it, not who is holding it. On its own, a state works for anyone who has the
+link. Someone could start Connect on their own credential and send the
+authorize URL to a victim, and the victim's consent would store the victim's
+Google tokens in the sender's credential. Three things close that:
+
+- **The state is bound to the browser that started it.** The start response
+  sets a fresh random nonce as a cookie named `kilasflow_oauth_…`. The cookie is
+  `HttpOnly`, `SameSite=Lax`, scoped to the callback path, `Secure` when the
+  callback is served over https, and lives as long as the state (ten minutes).
+  The state carries the nonce's hash, never the nonce, because the state
+  travels in URLs. The callback completes only when the browser presents the
+  matching nonce. `Lax` is the strictest mode that works here: the callback is
+  a top-level navigation arriving from Google, which `Lax` sends the cookie on
+  and `Strict` does not.
+- **A state is used once.** The callback records the state before it exchanges
+  the code, and a second callback with the same state is refused. The record is
+  kept in the database, in the table that already backs `Idempotency-Key`,
+  under a key that no request header can spell. A replay that reaches another
+  replica is refused there too, and the record expires with the state.
+- **The code needs PKCE.** The authorize URL carries an S256
+  `code_challenge`, and the exchange sends the matching `code_verifier`. The
+  verifier is derived from the browser's nonce under the server key, so nothing
+  is stored between start and callback, and a code lifted from a redirect
+  cannot be exchanged without the cookie.
+
+The start request and the callback have to reach the same host, or the browser
+will not send the cookie back. Behind a proxy that rewrites `Host` (the web dev
+server's proxy does this), set `server.public_url` to the address the browser
+uses.
 
 An [embed session](/concepts/tenancy-and-embedding/) may read the credential
 list — an editor has to offer a picker — and may do nothing else with

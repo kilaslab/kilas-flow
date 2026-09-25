@@ -458,6 +458,42 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   it, and the number of stuck opens is capped. The credential test endpoint also
   answers by its deadline whatever its probe does, and releases its claim.
 
+- Google Connect is bound to the browser that started it, is single-use, and
+  uses PKCE. The state used to be a bearer token for ten minutes: someone could
+  send their authorize URL to a victim, and the victim's consent stored the
+  victim's Google tokens in the sender's credential. Starting Connect now sets
+  an HttpOnly, SameSite=Lax nonce cookie whose hash is signed into the state,
+  and the callback refuses a browser without it. A used state is recorded in
+  the database, so a replayed callback is refused on every replica. The code is
+  exchanged with an S256 PKCE verifier derived from the nonce. A Connect popup
+  opened before the upgrade has to be started again. The start request must now
+  come from the browser that will open the popup, as the dashboard's does: a
+  backend that calls it with an API key and hands the URL to a browser is the
+  shape of the attack, and its callback is refused. Behind a proxy that
+  rewrites `Host`, set `server.public_url` so the callback reaches the host
+  that set the cookie.
+
+- Testing an unsaved edit of a credential can no longer send its stored
+  secret to a host of the caller's choosing. A redaction placeholder is filled
+  from storage only while the edit keeps the stored host, port, base URL and
+  URL; otherwise the test is refused with a 422. A test that uses a stored
+  secret runs under the stored `allowedDomains`, narrowed by any scope the
+  request sends, instead of under the request's scope alone. `credentialId` is
+  checked against the caller's tenant before it is used. A tenant can run at
+  most four credential tests at once (a fifth is answered `429`), so random
+  credential ids no longer buy unlimited parallel probes. The dashboard now
+  sends the form's scope with a test.
+
+- Updating a credential keeps every field and the scope the request leaves
+  out. An update used to clear any field it did not send, so a rename silently
+  dropped a JWT private key or the refresh token Connect stored. It also read a
+  missing `allowedDomains` as "unrestricted", so a rename let the secret go to
+  any host. Now a field is cleared by sending it empty, and the scope only by
+  sending an empty list. Creating a credential refuses the redaction
+  placeholder as a value instead of storing the bullets as the secret, and a
+  listing masks only the secrets that are set: an optional one that was never
+  written reads as empty.
+
 - A JavaScript worker process runs one tenant's Code-node and Sort-comparator
   scripts and never another's, so code that escaped the engine and stayed in a
   worker cannot see a later tenant's jobs. A script whose tenant has no idle
