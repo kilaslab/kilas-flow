@@ -377,6 +377,15 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   fail with "suspended node already completed"; a resume that is refused now
   marks the Wait failed instead of leaving every node green.
 
+- A node that continues on failure and waits on one of its items (an approval,
+  or a Wait with a per-item duration) now hands on what the items before that
+  one produced when it resumes, tolerated error items included, ahead of the
+  resumed item and on the same output they were routed to. They used to be
+  dropped, and downstream saw only the resumed item. The node's items are one
+  run however many of them wait: one trace row, one run of the nodes after it,
+  one return to an enclosing loop per batch, and the execution's output holds
+  every item rather than only those after the last wait.
+
 - `$('Node').item` resolves through a node that changed the item count and on
   both branches of an error output or a continue-on-fail failure. Behind an IF,
   Set, Merge or a loop that follows such a node, where the pairing is not
@@ -440,6 +449,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   trigger payload and shown in the execution view, because read-side redaction
   recognises common header names only. The verified header is now stored as
   `[redacted]` under the name its credential gives.
+
+- A page a workflow returns from a webhook — a Respond to Webhook body or a
+  trigger's `responseData` acknowledgement — no longer runs as the instance.
+  Every webhook answer carries `Content-Security-Policy: sandbox …` without
+  `allow-same-origin`, plus `X-Content-Type-Options: nosniff`, forced over any
+  such header the workflow set, so the page's script runs in an opaque origin
+  and cannot use the dashboard's session or read its API. The page still runs
+  its script, submits its forms and opens its links; `localStorage` is no
+  longer available to it. Hosted form pages carry a stricter policy with no
+  script at all.
 
 - A JavaScript worker process runs one tenant's Code-node and Sort-comparator
   scripts and never another's, so code that escaped the engine and stayed in a

@@ -123,6 +123,14 @@ turn that posture into a required-credential one: it refuses any delivery to a
 trigger that does not authenticate its callers with a `403` naming the workflow
 and the fix, and the boot log states which posture is running.
 
+**A page a workflow returns cannot act as the instance.** Webhook answers
+share the dashboard's origin, and a Respond to Webhook node writes whatever
+body and headers it likes. Every webhook answer therefore carries a
+`Content-Security-Policy` sandbox without `allow-same-origin`, forced over any
+policy the workflow set, so a returned page's script runs in an opaque origin:
+it cannot read the instance's cookies or call its API as the signed-in user.
+See [responses render sandboxed](/concepts/webhooks/#responses-render-sandboxed).
+
 **The bundled API reference makes no external requests.** The `/docs` page is
 served with a strict Content-Security-Policy and its JavaScript is vendored
 into the binary, so it works air-gapped and an embedding customer's traffic

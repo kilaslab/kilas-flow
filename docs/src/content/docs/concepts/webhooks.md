@@ -112,7 +112,8 @@ answering with the code it was configured for. `options.responseHeaders` adds
 headers, in n8n's `{entries: [{name, value}]}` shape or as a plain map.
 `options.responseData` sends that text instead of the JSON body, as
 `text/html; charset=utf-8` — which is what n8n's own HTTP layer does with a
-string. `options.noResponseBody` sends the status with no body at all. This is
+string — and, like every webhook answer, it renders
+[sandboxed](#responses-render-sandboxed). `options.noResponseBody` sends the status with no body at all. This is
 the right mode for anything that will take longer than the sender's own timeout.
 
 **Last node** waits for the run and returns the last node's data as the body —
@@ -136,7 +137,9 @@ with nothing reporting it.
 **Respond node** answers when the Respond to Webhook node runs. Its `statusCode`,
 `headers` and `body` are the answer, and if it set no `Content-Type` the handler
 picks `application/json` when the body parses as JSON and
-`text/html; charset=utf-8` otherwise. The answer travels as an event the node
+`text/html; charset=utf-8` otherwise. Two headers are not the node's to set:
+`Content-Security-Policy` and `X-Content-Type-Options` are replaced by the
+[sandbox](#responses-render-sandboxed) whatever the node wrote. The answer travels as an event the node
 publishes, so the caller is answered at that moment and **the rest of the
 workflow keeps going** — a Slack or WhatsApp webhook has about three seconds to
 acknowledge, and a workflow that acknowledged before doing slow work used to time
@@ -151,6 +154,56 @@ certain event types answers `200 {"filtered": true, …}` for an update it was
 restricted away from. Filtering is not verification and the answer is different
 on purpose: the delivery was received correctly and deliberately not acted on, so
 the sender is told `200` and stops retrying.
+
+## Responses render sandboxed
+
+A webhook answer is served from the instance's own origin — the same one as the
+dashboard, the API and every embedded editor — and a workflow writes it: a
+Respond to Webhook node chooses the body, the headers and the `Content-Type`,
+and a trigger's `responseData` goes out as `text/html`. Left alone, a script in
+that page would run *as the instance*, with its cookies and a same-origin view
+of its API.
+
+So every response under `/webhook/` carries
+
+```
+Content-Security-Policy: sandbox allow-downloads allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-scripts
+X-Content-Type-Options: nosniff
+```
+
+The sandbox deliberately omits `allow-same-origin`, so the browser gives the
+page an opaque origin (`null`): to the instance it is a page from some other
+site. A returned page keeps working — its script runs, it can load scripts,
+styles and images from anywhere, its forms submit and its links open, and a
+popup leaves the sandbox so a "continue to payment" link opens the real site.
+What it loses is everything tied to an origin: it cannot read the instance's
+cookies, its requests to the instance are cross-site (so no `SameSite` session
+cookie travels and the embed boundary refuses them), `localStorage` and
+`sessionStorage` throw, and a call to another webhook on the same instance is a
+cross-origin request from `null`, answered under that trigger's
+`allowedOrigins`.
+
+The headers are forced at the moment the response is written, after the
+workflow's own headers, so a workflow cannot weaken them: a
+`Content-Security-Policy` it sets — `allow-same-origin` or otherwise — is
+replaced, not combined. Every other header it sets is still its own.
+
+They go on every answer, JSON and the platform's own refusals included, not
+only on the ones that look like HTML. The workflow picks the `Content-Type`, and
+SVG and XML run script as readily as HTML does, so "is this a page" is not a
+question the handler can answer for it; a policy on a response the browser does
+not render as a document is ignored, so an API caller sees no difference. The
+one visible cost is that a browser will not render a PDF inline under a sandbox,
+and Respond to Webhook has no binary response to send one with.
+
+A form trigger's hosted page — and the refusal and thank-you pages that answer
+its submission — is KilasFlow's own markup around labels the workflow wrote.
+Those labels are escaped, and the page carries a stricter policy on top:
+`default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; sandbox
+allow-forms`. It needs no script, so it gets none; it loads nothing but its
+inline stylesheet; and the one thing the sandbox grants is the form submission
+the page exists for, which arrives with `Origin: null` like any other post from
+a sandboxed page.
 
 ## Authentication on the way in
 
@@ -341,7 +394,7 @@ workflow's triggers. See the [HTTP API reference](/reference/api/).
 ## Source
 
 `internal/webhook/webhook.go` (the handler, the uniform 404, the response
-modes), `internal/webhook/shape.go` (item shapes and HMAC verification),
+modes), `internal/webhook/sandbox.go` (the response sandbox), `internal/webhook/shape.go` (item shapes and HMAC verification),
 `internal/webhook/lifecycle.go` (self-registration),
 `internal/repository/webhooks.go` (`mintWebhookRoute`, binding resolution,
 deduplication), `internal/api/routes.go` (where the prefix is reserved),

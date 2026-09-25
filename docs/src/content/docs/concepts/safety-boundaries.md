@@ -444,7 +444,11 @@ it fails with a message saying so rather than silently dropping an attachment.
 The [webhook surface](/concepts/webhooks/) bounds the request body at 1 MiB
 (`webhook.max_body_bytes`) and the synchronous response wait at 30 seconds
 (`webhook.response_timeout`). Route identifiers carry 128 bits of entropy from
-`crypto/rand`, and every kind of miss returns an identical `404`.
+`crypto/rand`, and every kind of miss returns an identical `404`. Every answer
+the surface sends carries a `Content-Security-Policy` sandbox without
+`allow-same-origin`, so a page a workflow returns runs in an opaque origin rather
+than as the instance, and a workflow-set policy cannot loosen it — see
+[responses render sandboxed](/concepts/webhooks/#responses-render-sandboxed).
 
 ## What is *not* defended
 

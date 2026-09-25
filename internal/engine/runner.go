@@ -997,13 +997,15 @@ func snapshotCheckpoint(nodeID, mode string, input workflow.NodeInput, attempt i
 
 // suspendWithCheckpoint attaches the checkpoint a suspended run continues from.
 //
-// The caller takes the checkpoint rather than invoke, because the stack it
-// carries is the caller's: runPerItem schedules the items a suspending node had
-// not reached yet, and a checkpoint marshalled before that scheduling would
-// resume without them — the items after the wait would vanish from the run
-// silently, which is exactly what a checkpoint that predates the schedule does.
-func suspendWithCheckpoint(suspended *SuspendError, nodeID string, input workflow.NodeInput, attempt int, state *runState, request *Request) (*SuspendError, error) {
-	raw, err := marshalCheckpoint(snapshotCheckpoint(nodeID, suspended.Mode, input, attempt, state, request))
+// The caller takes the checkpoint rather than invoke, because only the caller
+// knows the run the suspension interrupted. A node resolved one item at a time
+// still owes the items after the one that waited and holds what the items
+// before it produced; partial carries both, and without it they would vanish
+// from the run silently. Nil for a node that runs its items as one invocation.
+func suspendWithCheckpoint(suspended *SuspendError, nodeID string, input workflow.NodeInput, attempt int, state *runState, request *Request, partial *PartialOutput) (*SuspendError, error) {
+	checkpoint := snapshotCheckpoint(nodeID, suspended.Mode, input, attempt, state, request)
+	checkpoint.Partial = partial
+	raw, err := marshalCheckpoint(checkpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -1097,16 +1099,32 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 	}
 	// The suspending node completes here, mirroring a normal completion:
 	// provenance, expression state, the trace row, and the branch it feeds all
-	// behave as if the node had just run.
+	// behave as if the node had just run. A per-item run completes once its
+	// remaining items are resolved too.
 	output := withErrorPort(node, cloneOutput(resumeOutput))
-	state.stampProvenance(node, graph.incoming[checkpoint.SuspendNode], checkpoint.Input, output)
 	attempt := checkpoint.SuspendAttempt
 	if attempt < 1 {
 		attempt = 1
 	}
-	state.complete(graph, node, checkpoint.Input, output, NodeRun{
-		NodeID: node.ID, Input: cloneInput(checkpoint.Input), Attempt: attempt,
-	}, &request)
+	if partial := checkpoint.Partial; partial != nil {
+		// A per-item run: the resumed item takes its place among the items
+		// before it, and the run goes on to the items after it. The node
+		// completes once, when its last item is resolved — here, on a later
+		// resume, or not at all if an item after this one fails the run.
+		suspended, err := runner.resolveItems(ctx, graph, &request, state, node, partial.Input,
+			retryPolicy(node.Settings), resumedProgress(state, graph, node, checkpoint, partial, output))
+		if err != nil {
+			return *state.result, err
+		}
+		if suspended != nil {
+			return *state.result, suspended
+		}
+	} else {
+		state.stampProvenance(node, graph.incoming[checkpoint.SuspendNode], checkpoint.Input, output)
+		state.complete(graph, node, checkpoint.Input, output, NodeRun{
+			NodeID: node.ID, Input: cloneInput(checkpoint.Input), Attempt: attempt,
+		}, &request)
+	}
 	suspended, err := runner.runLoop(ctx, graph, &request, state)
 	if err != nil {
 		return *state.result, err
@@ -1115,6 +1133,41 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 		return *state.result, suspended
 	}
 	return *state.result, nil
+}
+
+// resumedProgress is where a per-item run stands once its suspended item is
+// resumed: the items before it, then the resumed item's output, port by port
+// and in the order the items were given, and the next item after it to
+// resolve.
+//
+// The resumed item is stamped where it lands, as resolveItems stamps each item
+// it appends: its lineage names its position after the items before it, not
+// position 0 of an output of its own.
+func resumedProgress(state *runState, graph preparedGraph, node workflow.IRNode, checkpoint Checkpoint, partial *PartialOutput, resumed workflow.NodeOutput) perItemProgress {
+	progress := perItemProgress{next: partial.Position + 1, failed: partial.Failed, capture: &responseCapture{response: partial.Response}}
+	if partial.Error != "" {
+		progress.firstCause = errors.New(partial.Error)
+	}
+	// What the items before the suspension printed stays on the run's row.
+	if len(partial.Console) > 0 && json.Unmarshal(partial.Console, &progress.capture.console) == nil {
+		progress.capture.printed = true
+	}
+	assembled := withErrorPort(node, cloneOutput(partial.Output))
+	for len(assembled) < len(resumed) {
+		assembled = append(assembled, []workflow.Item{})
+	}
+	before := make([]int, len(assembled))
+	for index, port := range assembled {
+		before[index] = len(port)
+	}
+	mergeOutput(assembled, resumed)
+	var item workflow.Item
+	if items := checkpoint.Input[mainPortName]; len(items) > 0 {
+		item = items[0]
+	}
+	state.stampPerItem(node, lineageSources(graph.incoming[node.ID], checkpoint.Input), item, assembled, before)
+	progress.assembled = assembled
+	return progress
 }
 
 // failedResume is the result of a resume refused at the node it was to
@@ -1217,7 +1270,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 		return nil, err
 	}
 	if suspended != nil {
-		return suspendWithCheckpoint(suspended, node.ID, input, attempt, state, request)
+		return suspendWithCheckpoint(suspended, node.ID, input, attempt, state, request, nil)
 	}
 	if cause != nil {
 		// A whole-batch node that ran its items one at a time and says which
@@ -1373,20 +1426,46 @@ func (runner *Runner) invoke(ctx context.Context, graph preparedGraph, node work
 // runPerItem runs a node once per input item, so a tolerated failure costs the
 // failing item and nothing else.
 func (runner *Runner) runPerItem(ctx context.Context, graph preparedGraph, request *Request, state *runState, node workflow.IRNode, input workflow.NodeInput, policy retry) (*SuspendError, error) {
-	items := input[mainPortName]
 	assembled := make(workflow.NodeOutput, len(node.Definition.Outputs))
 	for index := range assembled {
 		assembled[index] = []workflow.Item{}
 	}
-	errorPort := errorPortIndex(node)
-	sources := lineageSources(graph.incoming[node.ID], input)
-	var firstCause error
-	failed := 0
-	// One capture for the whole node, so a Respond node resolved item by item
+	return runner.resolveItems(ctx, graph, request, state, node, input, policy, perItemProgress{assembled: assembled, capture: &responseCapture{}})
+}
+
+// perItemProgress is how far one per-item run has got: the next item to
+// resolve, and what the items before it produced. A run that suspends on an
+// item carries it across the suspension, so the resume continues the same run
+// rather than starting another.
+type perItemProgress struct {
+	next       int
+	assembled  workflow.NodeOutput
+	failed     int
+	firstCause error
+	// One capture for the whole run, so a Respond node resolved item by item
 	// answers the caller from the first item — the same item the boundary
 	// answers from.
-	capture := &responseCapture{}
-	for position, item := range items {
+	capture *responseCapture
+}
+
+// resolveItems resolves a per-item run's items from progress.next on, and
+// completes the node once, with every item's outcome, when the last is done.
+//
+// An item that suspends ends the pass, and the run goes into the checkpoint
+// whole — the invocation's input, the position that waited, and what the items
+// before it produced — rather than as a finished piece plus a fresh invocation
+// for the rest. Completing each piece on its own made one run into several: the
+// node's trace row, `$runIndex`, the branch below it and the execution's
+// output all saw pieces, the output keeping only the last, and a loop body got
+// one return per piece instead of one per batch.
+func (runner *Runner) resolveItems(ctx context.Context, graph preparedGraph, request *Request, state *runState, node workflow.IRNode, input workflow.NodeInput, policy retry, progress perItemProgress) (*SuspendError, error) {
+	items := input[mainPortName]
+	assembled := progress.assembled
+	errorPort := errorPortIndex(node)
+	sources := lineageSources(graph.incoming[node.ID], input)
+	firstCause, failed, capture := progress.firstCause, progress.failed, progress.capture
+	for position := progress.next; position < len(items); position++ {
+		item := items[position]
 		// Where this item's output will start on each port, so what it adds
 		// is stamped against this item alone.
 		before := make([]int, len(assembled))
@@ -1400,16 +1479,23 @@ func (runner *Runner) runPerItem(ctx context.Context, graph preparedGraph, reque
 			return nil, err
 		}
 		if suspended != nil {
-			// The items this node has not reached yet are scheduled before the
-			// checkpoint is taken — the checkpoint is the only thing a resumed
-			// run reads its work from, so scheduling after it would drop every
-			// item after the one that suspended.
-			if remaining := items[position+1:]; len(remaining) > 0 {
-				state.pending = append(state.pending, pendingInvocation{
-					nodeID: node.ID, input: singleItemInput(input, remaining...),
-				})
+			// The checkpoint is the only thing a resumed run reads its work
+			// from, and the items before this one exist only here: they are
+			// finished, so nothing schedules them. A suspension on the only
+			// item has nothing to carry and writes the checkpoint it always
+			// did.
+			var partial *PartialOutput
+			if len(items) > 1 {
+				partial = &PartialOutput{
+					Output: cloneOutput(assembled), Failed: failed,
+					Input: cloneInput(input), Position: position,
+					Response: capture.response, Console: capture.consoleOutput(),
+				}
+				if firstCause != nil {
+					partial.Error = firstCause.Error()
+				}
 			}
-			return suspendWithCheckpoint(suspended, node.ID, itemInput, attempt, state, request)
+			return suspendWithCheckpoint(suspended, node.ID, itemInput, attempt, state, request, partial)
 		}
 		if cause != nil {
 			failed++
