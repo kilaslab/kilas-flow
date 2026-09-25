@@ -1,13 +1,13 @@
 ---
 id: BUG-w18vn3
 title: n8n import rejects a whole file when a node's typeVersion is a string
-status: testing
+status: done
 priority: medium
 labels:
     - import
     - n8n
 created: "2026-09-25T09:56:46Z"
-updated: "2026-09-25T12:00:00Z"
+updated: "2026-09-25T10:19:47Z"
 ---
 
 # Description
@@ -42,3 +42,21 @@ Done, awaiting review.
 - Tests: `internal/interop/n8n/loose_json_test.go` covers a string typeVersion on Set (`"3.4"`) and Code (`"2"`, the repro's shape), a non-numeric typeVersion, numeric strings in maxTries/waitBetweenTries/position/index, a non-numeric maxTries, non-boolean flags, and three plain-word refusals. RED showed the Go decode error for every case. They are GREEN now. The repro `14-string-typeVersion.json` imports and compiles.
 - Docs: the node-level elements section of the migration guide. CHANGELOG: Fixed.
 
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-25.
+
+- Base: `4ee3d1a9` (last commit at or before ticket created 2026-09-25)
+- Commits (1):
+  - `4d769994` — BUG-w18vn3: n8n import reads a numeric field written as a string the way n8n does, and names any field it still cannot read
+- Files changed (the ticket's own commits, d9a7d62..4d76999):
+
+```
+ .pine/tickets/BUG-w18vn3.md                   |  34 ++++++-
+ CHANGELOG.md                                  |   8 ++
+ docs/src/content/docs/guides/n8n-migration.md |  14 +++
+ internal/interop/n8n/loose.go                 | 252 ++++++++++++++++++++++++++++++++++++++++++++++
+ internal/interop/n8n/loose_json_test.go       | 239 +++++++++++++++++++++++++++++++++++++++++++
+ internal/interop/n8n/n8n.go                   |  11 +-
+ 6 files changed, 552 insertions(+), 6 deletions(-)
+```

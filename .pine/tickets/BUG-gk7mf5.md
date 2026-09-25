@@ -1,13 +1,13 @@
 ---
 id: BUG-gk7mf5
 title: n8n import reports no blocking issue for a cycle that run and activate refuse
-status: testing
+status: done
 priority: medium
 labels:
     - import
     - n8n
 created: "2026-09-25T09:56:46Z"
-updated: "2026-09-25T12:30:00Z"
+updated: "2026-09-25T10:19:47Z"
 ---
 
 # Description
@@ -47,3 +47,23 @@ Done, awaiting review.
 - On the real repros: 2536 reports its one loop. 3655 reports six, three image polls and three video polls.
 - Docs: migration guide, "Loops that do not go through Loop Over Items" and the blocking row. CHANGELOG: Fixed.
 
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-25.
+
+- Base: `4ee3d1a9` (last commit at or before ticket created 2026-09-25)
+- Commits (1):
+  - `cb44dc73` — BUG-gk7mf5: n8n import reports each loop that run and activate refuse as blocking, using the compiler's own cycle rule
+- Files changed (the ticket's own commits, 4d76999..cb44dc7):
+
+```
+ .pine/tickets/BUG-gk7mf5.md                   |  34 +++++++-
+ CHANGELOG.md                                  |   7 ++
+ docs/src/content/docs/guides/n8n-migration.md |  26 ++++++-
+ internal/interop/n8n/cycle_import_test.go     | 178 ++++++++++++++++++++++++++++++++++++++++++
+ internal/interop/n8n/n8n.go                   |  67 ++++++++++++++--
+ internal/workflow/compiler.go                 | 156 +++++++++++++++++++------------------
+ internal/workflow/cycle.go                    | 192 ++++++++++++++++++++++++++++++++++++++++++++++
+ internal/workflow/cycle_test.go               | 161 ++++++++++++++++++++++++++++++++++++++
+ 8 files changed, 735 insertions(+), 86 deletions(-)
+```
