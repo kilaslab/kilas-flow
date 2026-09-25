@@ -1,10 +1,10 @@
 ---
 id: FEAT-f40kg4
 title: Code-node JavaScript workers kept per tenant, so a worker never runs two tenants' jobs
-status: testing
+status: done
 priority: low
 created: "2026-09-24T13:51:58Z"
-updated: "2026-09-24T13:51:58Z"
+updated: "2026-09-25T10:07:55Z"
 ---
 
 # Description
@@ -112,3 +112,31 @@ worker matches on the first comparison, as it was popped before.
 # Related Files
 - internal/jsworker/pool.go
 - internal/jsworker/confine_test.go
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-25.
+
+- Base: `1c516014` (last commit at or before ticket created 2026-09-24)
+- Commits (3):
+  - `4ee3d1a9` — FEAT-f40kg4: the ticket records the plan, the decisions and the cost of a tenant switch
+  - `d934d015` — FEAT-f40kg4: the safety page, the Code guide and the changelog say workers are kept per tenant
+  - `3f86d7a9` — FEAT-f40kg4: a JavaScript worker runs one tenant's jobs, and at the cap the longest idle worker of another tenant makes way
+- Files changed (the ticket's own commits, e494b26..worktree-agent-ac5456655b7226941):
+
+```
+ .pine/tickets/FEAT-f40kg4.md                        |  82 ++++++++++++++++-
+ CHANGELOG.md                                        |   7 ++
+ docs/src/content/docs/concepts/safety-boundaries.md |   9 +-
+ docs/src/content/docs/guides/code-javascript.md     |   7 +-
+ internal/jsrun/jsrun.go                             |   6 ++
+ internal/jsworker/confine_test.go                   |  20 ++++-
+ internal/jsworker/doc.go                            |   5 +-
+ internal/jsworker/pool.go                           | 111 ++++++++++++++++-------
+ internal/jsworker/security_test.go                  |  13 +--
+ internal/jsworker/tenants_test.go                   | 194 ++++++++++++++++++++++++++++++++++++++++
+ nodes/jscode.go                                     |   2 +
+ nodes/jscode_run_test.go                            |  27 ++++++
+ nodes/transform.go                                  |   1 +
+ 13 files changed, 436 insertions(+), 48 deletions(-)
+```
