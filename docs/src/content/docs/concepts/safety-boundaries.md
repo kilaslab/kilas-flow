@@ -255,10 +255,12 @@ modules it returns — is a function KilasFlow wrote or a vendored library's
 (Luxon, lodash, and the `Buffer` and `URL` of goja's companion `goja_nodejs`),
 and `internal/jsrun`, the package they live in, may not import anything that
 opens a file, a socket or a process. A test in `internal/guardrails` enforces
-that on every run, rather than a review having to notice. Another enumerates
-everything a script can reach, from its globals, its arguments and an instance
-of everything it can construct, against a reviewed list, and fails on anything
-new, and on any Go value whose fields or methods a script could read or call.
+that on every run, rather than a review having to notice. Another walks each
+global, including a symbol-keyed one, and the own properties of each sampled
+instance, against a reviewed list. It does not call a getter or a function, so
+a value that exists only as a call's result is listed only when a sample builds
+it. It fails on anything new, and on any Go value whose fields or methods a
+script could read or call.
 `require()` answers from a fixed list — `lodash`,
 `luxon`, `crypto`, `util`, `buffer`, `url` — and there is no npm. `$env` holds
 the same `KILASFLOW_WORKFLOW_ENV_` allowlist an expression sees, and a file on an

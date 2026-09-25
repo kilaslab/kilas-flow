@@ -36,7 +36,8 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   each carried out by the server under the egress policy; and
   `$getWorkflowStaticData`, saved as n8n saves it. The Sort node's Code
   comparator runs on the same runtime. What the engine would run differently
-  from V8 is refused by name at import and save. Every script runs on a fresh
+  from V8 is refused by name at import and at validate, and a use that cannot
+  be seen until the code runs fails by name then. Every script runs on a fresh
   engine, in a worker process apart from the server, confined on Linux by
   namespaces and landlock as far as the kernel allows, under the
   `code.javascript_*` limits. Python Code nodes still do not run. See the [Code

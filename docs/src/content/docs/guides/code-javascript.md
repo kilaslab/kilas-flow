@@ -161,15 +161,15 @@ again when the workflow is saved — so a workflow that uses one never activates
 The rest fail by name the moment the code reaches them: `$jmespath`,
 `$evaluateExpression`, `$prevNode`, `$input.params`, `$input.context`,
 `$secrets`, `$execution.customData`, and `$('Name').all()` or
-`$items('Name')` for a run earlier than the node's latest. So does a date formatted in a locale the runtime has
-no data for (see [below](#differences-from-n8n)), and a `Proxy` handed to a
+`$items('Name')` for a run earlier than the node's latest. So does a date formatted in a locale other than `en`, `en-US`, `en-CA` or `en-GB` (see [below](#differences-from-n8n)), and a `Proxy` handed to a
 built-in that reads its length, which would run the proxy's traps once per
 element inside one call that nothing can interrupt.
 
-A body longer than 128 KiB, nested more than a thousand levels deep, or holding
-a constant expression that would take the engine seconds to fold, or a BigInt
-constant of more than a million bits, is refused the same way, because reading
-it safely matters more than running it.
+A body longer than 128 KiB, nested more than a thousand levels deep, holding
+more than a thousand arrow functions, or holding a constant expression that
+would take the engine seconds to fold, or a BigInt constant of more than a
+million bits, is refused the same way, because reading it safely matters more
+than running it.
 
 Reading the code is not compiling it, so the few mistakes only a compiler sees
 — a `let` declared twice in one scope, a `break` outside a loop — are reported
@@ -189,11 +189,14 @@ when the node runs, as a `SyntaxError` with its line, not when it is saved.
   the fixed list above, and there is no module directory to add a package to.
   `moment` is not shipped; Luxon is. A module that is not on the list is
   refused when the workflow is imported or saved, not when it runs.
-- **Dates format in English only.** Luxon and `Intl` format dates in `en` and
-  `en-US`; asking for another locale's date format is a named error rather
-  than English passed off as that locale. Numbers format in the locale you
-  ask for, in any locale CLDR knows. `Intl.RelativeTimeFormat` refuses every
-  locale; Luxon's `toRelative()` gives English relative times by itself.
+- **Dates format in four English locales.** Luxon and `Intl` format dates in
+  `en`, `en-US`, `en-CA` and `en-GB`. Asking for any other date locale is a
+  named error, never English passed off as that locale. Numbers format in the
+  locale you ask for, in any locale CLDR knows. `Intl.RelativeTimeFormat`
+  refuses every locale; Luxon's `toRelative()` gives English relative times
+  by itself. Zone short and long names follow the higher offset of a zone
+  that keeps two, so `Europe/Dublin` matches Node whichever form of the time
+  zone database the host has.
 - **Memory is bounded per worker, not per run.** goja keeps a script's objects
   on the Go heap and cannot account for one script's share of it. So memory
   is bounded in layers: the input, the returned items and the console output
@@ -303,6 +306,7 @@ These bounds are fixed:
 | --- | --- |
 | A body's length | 128 KiB |
 | How deeply a body nests | 1,000 levels |
+| Arrow functions in a body | 1,000 |
 | How deeply functions call each other | 10,000 calls |
 | What one built-in call may walk or build | 8,388,608 array elements; 33,554,432 characters from `repeat` and padding; 64 MiB of typed array or `ArrayBuffer` |
 | Timers armed at once | 10,000 |
@@ -323,12 +327,15 @@ so it is reviewed as hostile code. What holds, each backed by a test:
 - **A script reaches only what the runtime installs.** The engine has no host
   API of its own, and `internal/jsrun`, where every global is written, may not
   import anything that opens a file, a socket or a process; a test in
-  `internal/guardrails` enforces that. Everything a script can reach — every
-  global, every property of every object the runtime or a module hands it,
-  and an instance of everything it can construct — is enumerated by a test
-  against a reviewed list, so a new global or property fails the build until
-  someone has looked at it. No Go value is reachable with a field or method a
-  script could read or call.
+  `internal/guardrails` enforces that. A test walks what a script can reach
+  and checks it against a reviewed list: each global, including a
+  symbol-keyed one, and the own properties of each sampled instance. The
+  walk does not call a getter or a function, so a value that exists only as
+  a call's result is on the list only when a sample builds it; array indexes
+  are one entry; a function's length, name and untouched prototype are left
+  out; a vendored library is listed by its root. A new global or property
+  fails the build until someone has looked at it. No Go value is reachable
+  with a field or method a script could read or call.
 - **`eval` and `new Function` stay enabled**, as in n8n, because they reach
   nothing the body cannot: the same global object, the same `require()`, and
   no `process`, `module` or other Node handle, whichever constructor chain
