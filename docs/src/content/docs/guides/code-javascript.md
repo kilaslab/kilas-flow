@@ -351,9 +351,10 @@ so it is reviewed as hostile code. What holds, each backed by a test:
   the code climbs to get a compiler.
 - **Pollution stays in its run.** A script may change every built-in it can
   see, and its own result with them, but nothing it changes reaches another
-  run, including the next one in the same worker for another tenant; and the
-  server checks the result it gets back itself, so no change to a built-in can
-  make a result name a file the node was never given.
+  run, not even the next one in the same worker, and a worker never runs
+  another tenant's code at all. The server checks the result it gets back
+  itself, so no change to a built-in can make a result name a file the node
+  was never given.
 - **A worker is treated as hostile.** Every message it sends is checked
   against what its job's code could have produced; one that breaks the
   protocol fails its run and is never used again. See
