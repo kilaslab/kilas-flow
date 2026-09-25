@@ -1,14 +1,14 @@
 ---
 id: BUG-46g75c
 title: 'Code node: Buffer decodes invalid UTF-8 to fewer replacement characters than Node'
-status: testing
+status: done
 priority: low
 labels:
     - code-node
     - javascript
 parent: EPIC-tjnr1z
 created: "2026-09-24T15:14:38Z"
-updated: "2026-09-24T15:14:38Z"
+updated: "2026-09-25T02:10:31Z"
 ---
 
 # Description
@@ -122,3 +122,98 @@ Verified: `go build ./...`, `go vet ./...`, `go test ./...` all clean;
 `go test -race -count=1 ./internal/jsrun/...` ok; `node
 scripts/js-parity/record.mjs --check` reports no drift against Node v24.16.0.
 Rebased onto local `main`.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-25.
+
+- Base: `e61945bc` (last commit at or before ticket created 2026-09-24)
+- Commits (4):
+  - `bce984f0` — BUG-46g75c: bytes become a string the way Node's WHATWG UTF-8 decoder does, one replacement character per bad byte
+  - `0ab3350d` — WIP BUG-46g75c: WHATWG UTF-8 decoding in progress (unreviewed, stopped for the usage limit)
+  - `5eea0002` — BUG-46g75c: ticket travels with the fix, plan noted
+  - `b641f2d0` — BUG-jwhj6y: the errors a Code node's JavaScript reads from JSON.parse, a property of undefined and a call of what is not a function are worded as Node 24 words them
+- Files changed (base → working tree):
+
+```
+ .pine/tickets/BUG-2vcwjf.md                        |   35 +
+ .pine/tickets/BUG-3mem9s.md                        |   76 +-
+ .pine/tickets/BUG-46g75c.md                        |  124 +
+ .pine/tickets/BUG-9hx5xm.md                        |   85 +
+ .pine/tickets/BUG-c19kyx.md                        |   22 +
+ .pine/tickets/BUG-djp647.md                        |   98 +-
+ .pine/tickets/BUG-h6tj4e.md                        |   38 +-
+ .pine/tickets/BUG-jwhj6y.md                        |   96 +-
+ .pine/tickets/BUG-kvpx6x.md                        |  116 +-
+ .pine/tickets/BUG-pdsydm.md                        |   96 +-
+ .pine/tickets/BUG-qe71kf.md                        |   22 +
+ .pine/tickets/EPIC-tjnr1z.md                       |   26 +
+ .pine/tickets/FEAT-9we7kw.md                       |  977 +++-
+ .../src/content/docs/concepts/safety-boundaries.md |    6 +-
+ docs/src/content/docs/guides/code-javascript.md    |   52 +-
+ .../content/docs/reference/expression-grammar.md   |    2 +-
+ internal/engine/runindex_skip_test.go              |  105 +
+ internal/engine/runner.go                          |   30 +-
+ internal/expression/globals.go                     |    5 +-
+ internal/expression/parity_test.go                 |   48 +
+ internal/expression/roots.go                       |  116 +-
+ internal/jsrun/analyze.go                          |   32 +-
+ internal/jsrun/analyze_errors.go                   |  187 +
+ internal/jsrun/analyze_html.go                     |  575 +++
+ internal/jsrun/analyze_html_test.go                |   63 +
+ internal/jsrun/buffer_test.go                      |   37 +
+ internal/jsrun/codec.go                            |   79 +-
+ internal/jsrun/codec_internal_test.go              |   48 +
+ internal/jsrun/comparator_test.go                  |    4 +-
+ internal/jsrun/console_test.go                     |    2 +-
+ internal/jsrun/corpus/BASELINE.md                  |   67 +-
+ internal/jsrun/corpus/baseline.json                |  145 +-
+ internal/jsrun/corpus/jsdiff_test.go               |   13 +-
+ internal/jsrun/corpus/scoreboard_test.go           |    6 +
+ internal/jsrun/doc.go                              |    3 +
+ internal/jsrun/engine.go                           |   17 +-
+ internal/jsrun/export_test.go                      |    8 +
+ internal/jsrun/helpers.go                          |   31 +-
+ internal/jsrun/helpers_test.go                     |  112 +
+ internal/jsrun/htmlcomments_test.go                |  120 +
+ internal/jsrun/inline.go                           |  149 +
+ internal/jsrun/intl.go                             |  823 ++-
+ internal/jsrun/intl_internal_test.go               |   44 +
+ internal/jsrun/intl_test.go                        |  314 +-
+ internal/jsrun/items.go                            |   94 +-
+ internal/jsrun/js/modules/errors.js                |  279 +
+ internal/jsrun/js/modules/intl.js                  |   14 +-
+ internal/jsrun/js/runtime.js                       |  104 +-
+ internal/jsrun/modules.go                          |    2 +-
+ internal/jsrun/programs.go                         |    4 +
+ internal/jsrun/roots.go                            |    7 +
+ internal/jsrun/roots_test.go                       |  154 +-
+ internal/jsrun/run.go                              |   36 +-
+ internal/jsrun/testdata/parity/date-options.json   | 5382 +++++++++++++-------
+ internal/jsrun/testdata/parity/dates.json          |   13 +-
+ internal/jsrun/testdata/parity/errors.json         |  293 ++
+ internal/jsrun/testdata/parity/html-comments.json  |   37 +
+ internal/jsrun/testdata/parity/luxon.json          |    7 +
+ internal/jsrun/testdata/parity/utf8.json           | 2598 ++++++++++
+ internal/jsrun/testdata/parity/zones.json          |  228 +
+ internal/jsrun/testdata/surface.txt                |    1 +
+ internal/jsrun/web_test.go                         |    6 +
+ internal/jsrun/wire.go                             |    6 +
+ internal/jsrun/wording.go                          |  149 +
+ internal/jsrun/wording_internal_test.go            |   48 +
+ internal/jsrun/wording_test.go                     |  268 +
+ internal/jsrun/wrapper.go                          |   25 +-
+ internal/jsworker/doc.go                           |    7 +-
+ internal/jsworker/helpers_test.go                  |   18 +
+ internal/jsworker/jsworker_test.go                 |   44 +-
+ internal/jsworker/pool.go                          |    4 +-
+ nodes/jscode_helpers_test.go                       |   22 +
+ nodes/jscode_lineage_test.go                       |   45 +
+ nodes/jscode_roots.go                              |    2 +-
+ nodes/jscode_roots_test.go                         |   54 +
+ scripts/js-diff/harness.mjs                        |   38 +-
+ scripts/js-parity/record-engine.mjs                |  322 ++
+ scripts/js-parity/record.mjs                       |  346 +-
+ .../references/EXPRESSION_ROOTS.md                 |    2 +-
+ 79 files changed, 13478 insertions(+), 2235 deletions(-)
+```
