@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -269,12 +270,16 @@ func TestIntrospectionRefusesWhatItCannotAnswerRatherThanStalling(t *testing.T) 
 	t.Parallel()
 
 	resolver := loadoptions.NewResolver(safehttp.DefaultPolicy(), time.Nanosecond)
-	if err := loadoptions.RegisterSQL(resolver, sqlnode.Guard{}); err != nil {
+	// Confined, as a default install is: the file is opened in the lookup's
+	// tenant directory, which is only reachable if the loader passes the
+	// tenant through to the guard.
+	root := t.TempDir()
+	if err := loadoptions.RegisterSQL(resolver, sqlnode.Guard{SQLite: sqlnode.SQLiteFiles{Root: root}}); err != nil {
 		t.Fatalf("RegisterSQL() error = %v", err)
 	}
 	sqlite := &loadoptions.ResolvedCredential{
 		Record: credentials.Record{ID: "cred-db", Name: "Local file", Type: "sqlite"},
-		Fields: map[string]string{"path": t.TempDir() + "/workflow.db"},
+		Fields: map[string]string{"path": "workflow.db"},
 	}
 
 	// SQLite publishes no information schema. Said plainly rather than
@@ -285,6 +290,9 @@ func TestIntrospectionRefusesWhatItCannotAnswerRatherThanStalling(t *testing.T) 
 		loadoptions.Scope{TenantID: "tenant-a"}, sqlite.Record.ID, fixedCredential{sqlite})
 	if err == nil || !strings.Contains(err.Error(), "information schema") {
 		t.Fatalf("error = %v, want SQLite's own limitation named", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "tenant-a", "workflow.db")); err != nil {
+		t.Fatalf("the loader did not open the file in the lookup's tenant directory: %v", err)
 	}
 
 	// A loader that needs a credential and is given none says which type is

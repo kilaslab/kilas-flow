@@ -60,6 +60,9 @@ type Credentials struct {
 	// inFlight holds the tests currently running, keyed by tenant and subject,
 	// so a client cannot fan a loop of concurrent probes out of one instance.
 	inFlight sync.Map
+	// probeFunc replaces probe; nil runs probe. It exists so a test can stand
+	// in for a probe that never returns.
+	probeFunc func(ctx context.Context, tenant repository.TenantScope, record credentials.Record, fields map[string]string, fromStorage []string) *testCredentialOutput
 	// oauthSigningKey HMAC-signs the Connect popup's state. Empty disables start.
 	oauthSigningKey    []byte
 	oauthPublicURL     string
@@ -445,7 +448,7 @@ func (handler *Credentials) Test(ctx context.Context, input *testCredentialInput
 
 	ctx, cancel := handler.bounded(ctx)
 	defer cancel()
-	return handler.probe(ctx, record, fields, nil), nil
+	return handler.runProbe(ctx, tenant, record, fields, nil), nil
 }
 
 // TestPayload probes a credential that has not been saved.
@@ -485,7 +488,7 @@ func (handler *Credentials) TestPayload(ctx context.Context, input *testPayloadI
 		ID: input.Body.CredentialID, Type: input.Type,
 		Fields: fields, AllowedDomains: input.Body.AllowedDomains,
 	}
-	return handler.probe(ctx, record, fields, fromStorage), nil
+	return handler.runProbe(ctx, tenant, record, fields, fromStorage), nil
 }
 
 // CredentialIDOrType names what a payload test is a test of, for the in-flight
@@ -555,7 +558,7 @@ func (handler *Credentials) mergeStoredSecrets(ctx context.Context, tenant repos
 }
 
 // probe runs whichever kind of test the credential type declares.
-func (handler *Credentials) probe(ctx context.Context, record credentials.Record, fields map[string]string, fromStorage []string) *testCredentialOutput {
+func (handler *Credentials) probe(ctx context.Context, tenant repository.TenantScope, record credentials.Record, fields map[string]string, fromStorage []string) *testCredentialOutput {
 	answer := func(resource TestCredentialResource) *testCredentialOutput {
 		resource.ResolvedFromStorage = fromStorage
 		return &testCredentialOutput{Body: resource}
@@ -573,10 +576,11 @@ func (handler *Credentials) probe(ctx context.Context, record credentials.Record
 	// there is no URL to fetch, and the driver's own handshake is what a node
 	// would do. sqlnode owns the mapping so this package never assembles a DSN.
 	if driver, isDatabase := sqlnode.DriverForCredential(record.Type); isDatabase {
-		// The same guard the executors receive, narrowed to this credential's
-		// own scope: a probe held to a laxer guard would report reachable
-		// for a target a node then refuses.
-		guard := handler.guard
+		// The same guard the executors receive, narrowed to this tenant (whose
+		// directory a SQLite path is read under) and to this credential's own
+		// scope: a probe held to a laxer guard would report reachable for a
+		// target a node then refuses.
+		guard := handler.guard.ForTenant(tenant.ID)
 		guard.AllowedDomains = record.AllowedDomains
 		if err := sqlnode.Test(ctx, driver, fields, guard); err != nil {
 			return answer(TestCredentialResource{Detail: err.Error()})
@@ -598,6 +602,49 @@ func (handler *Credentials) probe(ctx context.Context, record credentials.Record
 	return answer(TestCredentialResource{OK: true, Detail: detail})
 }
 
+// runProbe runs the probe and answers by the test's deadline whether or not
+// the probe has returned.
+//
+// The probe's own drivers are meant to honour the deadline, and the database
+// ones now do. This is the backstop for one that does not: live, a SQLite
+// driver blocked in its open and the probe never returned, so the claim below
+// was never released and every later test of that credential answered 409 for
+// the life of the process. Whatever the probe does, the handler returns, and
+// its deferred release runs.
+func (handler *Credentials) runProbe(ctx context.Context, tenant repository.TenantScope, record credentials.Record, fields map[string]string, fromStorage []string) *testCredentialOutput {
+	probe := handler.probeFunc
+	if probe == nil {
+		probe = handler.probe
+	}
+	answer := make(chan *testCredentialOutput, 1)
+	go func() {
+		// A panic in this goroutine is out of reach of the server's recovery
+		// middleware and would take the whole process down with it.
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				answer <- &testCredentialOutput{Body: TestCredentialResource{
+					Detail: "the test failed unexpectedly", ResolvedFromStorage: fromStorage,
+				}}
+			}
+		}()
+		answer <- probe(ctx, tenant, record, fields, fromStorage)
+	}()
+	select {
+	case output := <-answer:
+		return output
+	case <-ctx.Done():
+		select {
+		case output := <-answer:
+			// It finished as the deadline fired; its answer is the true one.
+			return output
+		default:
+		}
+		return &testCredentialOutput{Body: TestCredentialResource{
+			Detail: "the test did not finish before its deadline", ResolvedFromStorage: fromStorage,
+		}}
+	}
+}
+
 // bounded gives one test its own deadline.
 //
 // The server's window is far longer, and a target that accepts a connection and
@@ -617,12 +664,20 @@ func (handler *Credentials) bounded(ctx context.Context) (context.Context, conte
 // What this stops is fan-out — without it, anyone who can reach the API can aim
 // a few hundred concurrent probes at a network from a single stored credential
 // and read the results off the timing.
+//
+// The release is safe to call more than once and only ever removes its own
+// claim: each claim stores a token of its own, so a late or repeated release
+// can never delete a newer test's claim and let a second one run beside it.
 func (handler *Credentials) claim(tenant repository.TenantScope, subject string) (func(), error) {
 	key := tenant.ID + "\x00" + subject
-	if _, running := handler.inFlight.LoadOrStore(key, struct{}{}); running {
+	token := new(byte)
+	if _, running := handler.inFlight.LoadOrStore(key, token); running {
 		return nil, huma.Error409Conflict("a test of this credential is already running")
 	}
-	return func() { handler.inFlight.Delete(key) }, nil
+	var once sync.Once
+	return func() {
+		once.Do(func() { handler.inFlight.CompareAndDelete(key, token) })
+	}, nil
 }
 
 // defaultCredentialTestTimeout bounds a test when nothing is configured.

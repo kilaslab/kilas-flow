@@ -388,8 +388,9 @@ test('http, sqlite, code, calculator, date-time and wait run against the stub', 
 	expect(enveloped).toMatchObject({ statusCode: 200, statusMessage: 'OK', body: { ok: true, method: 'POST', path: '/echo' } });
 	expect(enveloped.headers['content-type']).toContain('application/json');
 
+	// Relative to the tenant's directory under sql.sqlite_root.
 	const sqliteCredential = await createCredential(server.baseURL, 'Compare SQLite', 'sqlite', {
-		path: `${server.dataDir}/n8n-compare.db`
+		path: 'n8n-compare.db'
 	});
 	const sqliteId = await createWorkflow(
 		server.baseURL,

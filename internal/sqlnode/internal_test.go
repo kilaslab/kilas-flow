@@ -245,6 +245,7 @@ func TestSQLiteGuardStandsBesideTheNetworkGuard(t *testing.T) {
 	}
 	guard := internalLoopbackGuard(t, sqlnode.DriverPostgres)
 	guard.InternalPaths = []string{internal}
+	guard.SQLite.Unconfined = true
 
 	_, err := sqlnode.OpenForTest(sqlnode.DriverSQLite, map[string]string{"path": internal}, guard)
 	assertForbidden(t, err, "KilasFlow's own database")

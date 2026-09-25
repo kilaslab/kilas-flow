@@ -151,6 +151,13 @@ type Guard struct {
 	// so a hostname resolving to 127.0.0.1 is refused without needing DNS or
 	// a live server.
 	LookupIPAddr func(ctx context.Context, host string) ([]net.IP, error)
+	// SQLite confines SQLite credential files to one directory per tenant, or
+	// disables them. The zero value disables them; see SQLiteFiles.
+	SQLite SQLiteFiles
+	// Tenant is the tenant the credential being opened belongs to, set per
+	// call with ForTenant. A confined SQLite path is relative to this
+	// tenant's directory, and without one there is no directory to confine to.
+	Tenant string
 }
 
 // InternalTarget is the installation's own network database, normalised once
@@ -338,6 +345,19 @@ func (connection *Connection) Close() error {
 
 // Open builds a connection from credential fields.
 func Open(ctx context.Context, driver Driver, fields map[string]string, guard Guard) (*Connection, error) {
+	if driver == DriverSQLite {
+		// Opened and pinged together under a deadline the driver cannot
+		// ignore: see openSQLite.
+		path, err := sqlitePath(fields, guard)
+		if err != nil {
+			return nil, err
+		}
+		db, err := openSQLite(ctx, path)
+		if err != nil {
+			return nil, fmt.Errorf("connect to %s database: %w", driver, err)
+		}
+		return &Connection{db: db, driver: driver, dialect: guardDialect(driver)}, nil
+	}
 	db, err := openDatabase(ctx, driver, fields, guard)
 	if err != nil {
 		return nil, err
@@ -357,23 +377,17 @@ func Open(ctx context.Context, driver Driver, fields map[string]string, guard Gu
 	return connection, nil
 }
 
-// openDatabase turns credential fields into a live handle. Network drivers go
+// openDatabase turns network credential fields into a live handle. They go
 // through the guard before anything dials, and then dial through a function
 // that re-checks every resolved address: sql.Open is lazy and the pool
 // reconnects on its own, so a check that runs once before the dial is not the
-// control, only the clearer message.
+// control, only the clearer message. SQLite is opened by Open itself.
 func openDatabase(ctx context.Context, driver Driver, fields map[string]string, guard Guard) (*sql.DB, error) {
 	switch driver {
 	case DriverPostgres:
 		return openPostgres(ctx, fields, guard)
 	case DriverMySQL:
 		return openMySQL(ctx, fields, guard)
-	case DriverSQLite:
-		path, err := sqlitePath(fields, guard)
-		if err != nil {
-			return nil, err
-		}
-		return sql.Open("sqlite", path)
 	default:
 		return nil, fmt.Errorf("database driver %q is not supported", driver)
 	}
@@ -693,9 +707,10 @@ func splitHostPort(fields map[string]string, fallbackPort string) (string, strin
 // sqlitePath resolves and guards a SQLite credential's file.
 //
 // A SQLite credential names a file on the server's own disk, so it is the one
-// driver where a mistake reaches KilasFlow's own data. The path must be given
-// explicitly, must be absolute after resolution, and must not be an internal
-// database file.
+// driver where a mistake reaches KilasFlow's own data or another tenant's.
+// The path must be given explicitly, is confined to the tenant's directory
+// under the SQLite root (see SQLiteFiles), must name a regular file or one
+// not yet created, and must not be an internal database file.
 func sqlitePath(fields map[string]string, guard Guard) (string, error) {
 	if len(guard.AllowedDomains) > 0 {
 		// A file path has no host for a scope to match, so a scope carried
@@ -703,6 +718,9 @@ func sqlitePath(fields map[string]string, guard Guard) (string, error) {
 		// exists to remove. Refused here; save-time rejection belongs to the
 		// credential endpoint that accepts the scope.
 		return "", fmt.Errorf("%w: a SQLite credential names a file, not a host, so an allowed-domains scope cannot apply to it", ErrForbiddenTarget)
+	}
+	if !guard.SQLite.Enabled() {
+		return "", fmt.Errorf("%w: SQLite credentials are disabled on this server (sql.sqlite_root is empty)", ErrForbiddenTarget)
 	}
 	raw := strings.TrimSpace(fields["path"])
 	if raw == "" {
@@ -717,12 +735,27 @@ func sqlitePath(fields map[string]string, guard Guard) (string, error) {
 		return "", fmt.Errorf("%w: an in-memory SQLite database is not a durable target", ErrForbiddenTarget)
 	}
 
-	resolved, err := filepath.Abs(raw)
-	if err != nil {
-		return "", fmt.Errorf("%w: SQLite path could not be resolved", ErrForbiddenTarget)
+	var resolved string
+	if guard.SQLite.Unconfined {
+		absolute, err := filepath.Abs(raw)
+		if err != nil {
+			return "", fmt.Errorf("%w: SQLite path could not be resolved", ErrForbiddenTarget)
+		}
+		resolved = canonical(absolute)
+		if err := requireRegularFile(resolved); err != nil {
+			return "", err
+		}
+	} else {
+		confined, err := confinedSQLitePath(raw, guard)
+		if err != nil {
+			return "", err
+		}
+		resolved = confined
 	}
-	resolved = canonical(resolved)
 
+	// Checked in both modes. Confinement keeps a tenant inside its own
+	// directory, but an operator can still set the root so that directory
+	// holds KilasFlow's own file.
 	for _, internal := range guard.InternalPaths {
 		if internal == "" {
 			continue

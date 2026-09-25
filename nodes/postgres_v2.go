@@ -281,7 +281,7 @@ func (executor *SQLOperationExecutor) Execute(ctx context.Context, ir workflow.I
 		return nil, fmt.Errorf("node %q: credential %q is a %s credential, not %s",
 			ir.Name, resolved.Name, resolved.Type, executor.credentialType)
 	}
-	guard := executor.guard
+	guard := executor.guard.ForTenant(request.Execution.TenantID)
 	guard.AllowedDomains = resolved.AllowedDomains
 	// Same pre-flight gate as the version 1 database executor: a credential
 	// scoped to one host must not open another. sqlnode.Open re-checks every

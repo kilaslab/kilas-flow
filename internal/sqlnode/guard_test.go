@@ -43,7 +43,7 @@ func TestTheGuardRefusesTheInternalDatabaseHoweverItsDSNIsSpelled(t *testing.T) 
 			if err != nil {
 				t.Fatalf("the resolver could not read a DSN this server accepts: %v", err)
 			}
-			guard := sqlnode.Guard{InternalPaths: []string{resolved}}
+			guard := sqlnode.Guard{InternalPaths: []string{resolved}, SQLite: sqlnode.SQLiteFiles{Unconfined: true}}
 
 			// The credential names the same file plainly, which is how an
 			// attacker would name it.

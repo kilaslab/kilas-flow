@@ -35,7 +35,7 @@ func TestTheStatementsThatOnceReadAnotherDatabaseAreRefused(t *testing.T) {
 
 	own := filepath.Join(dir, "workflow.db")
 	resolver := sqliteCredential(own)
-	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{}, sqlnode.DefaultCeiling())
+	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", unconfinedSQLite(), sqlnode.DefaultCeiling())
 	createTable(t, executor, resolver, `CREATE TABLE t (name TEXT)`)
 
 	for name, row := range map[string]struct {
@@ -111,7 +111,7 @@ func TestATransactionElementCannotCarryASecondStatement(t *testing.T) {
 
 	own := filepath.Join(dir, "workflow.db")
 	resolver := sqliteCredential(own)
-	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{}, sqlnode.DefaultCeiling())
+	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", unconfinedSQLite(), sqlnode.DefaultCeiling())
 	createTable(t, executor, resolver, `CREATE TABLE t (name TEXT)`)
 
 	ir := databaseNode(t, nodes.SQLiteNodeType, "sqlite", "cred-db", map[string]any{

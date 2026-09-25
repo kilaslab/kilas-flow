@@ -375,7 +375,7 @@ func openCustomerPostgres(ctx context.Context, request engine.Request, credentia
 	if secret.Type != "postgres" {
 		return nil, fmt.Errorf("credential %q is a %s credential, not postgres", secret.Name, secret.Type)
 	}
-	scoped := guard
+	scoped := guard.ForTenant(request.Execution.TenantID)
 	scoped.AllowedDomains = secret.AllowedDomains
 	return sqlnode.Open(ctx, sqlnode.DriverPostgres, secret.Fields, scoped)
 }
