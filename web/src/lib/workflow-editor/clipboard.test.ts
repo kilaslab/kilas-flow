@@ -1,51 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Definition, Document } from '$lib/api/generated/models';
+import type { Document, ImportIssue } from '$lib/api/generated/models';
 
-import { FRAGMENT_KIND, copySelection, pasteInto, readClipboard } from './clipboard';
-
-const set: Definition = {
-	type: 'kilasflow.set',
-	version: 1,
-	displayName: 'Set',
-	category: 'Core',
-	group: ['transform'],
-	source: 'builtin',
-	inputs: [{ name: 'main', kind: 'main' }],
-	outputs: [{ name: 'main', kind: 'main' }],
-	parameters: [],
-	sharedSettings: []
-};
-
-const telegram: Definition = {
-	...set,
-	type: 'pack.telegram',
-	version: 2,
-	displayName: 'Telegram',
-	inputs: [{ name: 'main', kind: 'main' }],
-	outputs: [{ name: 'main', kind: 'main' }]
-};
-
-const agent: Definition = {
-	...set,
-	type: 'kilasflow.agent',
-	displayName: 'AI Agent',
-	inputs: [
-		{ name: 'main', kind: 'main' },
-		{ name: 'model', kind: 'ai_languageModel' }
-	],
-	outputs: [{ name: 'main', kind: 'main' }]
-};
-
-const unsupported: Definition[] = [1, 2, 4, 8].map((arity) => ({
-	...set,
-	type: 'kilasflow.unsupported',
-	version: arity,
-	displayName: 'Unsupported node',
-	category: 'Imported'
-}));
-
-const definitions = [set, telegram, agent, ...unsupported];
+import { FRAGMENT_KIND, convertN8n, copySelection, pasteInto, readClipboard, type PastePayload } from './clipboard';
 
 function document(): Document {
 	return {
@@ -83,112 +40,77 @@ describe('copySelection', () => {
 
 describe('readClipboard', () => {
 	it('declines text that is not workflow JSON', () => {
-		expect(readClipboard('hello world', definitions)).toBeNull();
-		expect(readClipboard('{"nodes": "nope"}', definitions)).toBeNull();
-		expect(readClipboard('{"connections": {}}', definitions)).toBeNull();
+		expect(readClipboard('hello world')).toBeNull();
+		expect(readClipboard('{"nodes": "nope"}')).toBeNull();
+		expect(readClipboard('{"connections": {}}')).toBeNull();
 	});
 
 	it('reads back its own fragment without touching names or types', () => {
-		const payload = readClipboard(copySelection(document(), ['set-1'])!, definitions);
+		const content = readClipboard(copySelection(document(), ['set-1'])!);
 
+		expect(content?.kind).toBe('fragment');
+		const payload = content?.kind === 'fragment' ? content.payload : null;
 		expect(payload?.nodes).toHaveLength(1);
 		expect(payload?.nodes[0].name).toBe('Set');
-		expect(payload?.unsupported).toEqual([]);
+		expect(payload?.issues).toEqual([]);
 	});
 
-	it('maps an n8n node type onto the registered node that shares its name', () => {
-		const payload = readClipboard(
-			JSON.stringify({
-				nodes: [{ name: 'Telegram', type: 'n8n-nodes-base.telegram', typeVersion: 1, position: [64, 128], parameters: { chatId: '-100' } }],
-				connections: {}
-			}),
-			definitions
-		);
+	it('reads a whole KilasFlow document as this editor\'s own shape, not as n8n', () => {
+		const content = readClipboard(JSON.stringify(document()));
 
-		expect(payload?.nodes[0]).toEqual({
-			id: expect.any(String),
-			name: 'Telegram',
-			type: 'pack.telegram',
-			typeVersion: 2,
-			position: { x: 64, y: 128 },
-			parameters: { chatId: '-100' }
-		});
+		expect(content?.kind).toBe('fragment');
+		expect(content?.kind === 'fragment' ? content.payload.connections : []).toHaveLength(2);
 	});
 
-	it('keeps an n8n node it has no equivalent for as a placeholder covering its own edges', () => {
-		// The regression this exists for: a pasted snippet whose types are
-		// unknown vanished silently, or arrived as a placeholder with too few
-		// ports to hold the edges it came with.
-		const payload = readClipboard(
-			JSON.stringify({
-				nodes: [{ name: 'Spreadsheet', type: 'n8n-nodes-base.googleSheets', typeVersion: 4.5, position: [0, 0] }],
-				connections: {
-					Spreadsheet: { main: [[{ node: 'Target', type: 'main', index: 0 }], [{ node: 'Target', type: 'main', index: 0 }]] },
-					Target: { main: [] }
-				}
-			}),
-			definitions
-		);
+	it('hands an n8n payload over untranslated, for the importer to convert', () => {
+		// BUG-txafja: types were matched here by their last segment, so a
+		// JavaScript Code node became the Go one and "=" values stayed literal.
+		const n8n = {
+			nodes: [{ name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [0, 0], parameters: { jsCode: 'return items;' } }],
+			connections: {}
+		};
 
-		const placeholder = payload?.nodes.find((node) => node.name === 'Spreadsheet');
-		expect(placeholder?.type).toBe('kilasflow.unsupported');
-		expect(placeholder?.typeVersion).toBe(2);
-		expect(placeholder?.parameters).toMatchObject({ originalType: 'n8n-nodes-base.googleSheets', originalTypeVersion: 4.5 });
-		expect(payload?.unsupported).toEqual(['n8n-nodes-base.googleSheets']);
+		expect(readClipboard(JSON.stringify(n8n))).toEqual({ kind: 'n8n', workflow: n8n });
+	});
+});
+
+describe('convertN8n', () => {
+	it('asks the importer and answers its nodes, connections and report', async () => {
+		const asked: unknown[] = [];
+		const issue: ImportIssue = { severity: 'blocking', nodeId: 'b', nodeName: 'Mystery', reason: 'no equivalent' };
+		const convert = (async (body: unknown) => {
+			asked.push(body);
+			return {
+				status: 200,
+				headers: new Headers(),
+				data: { nodes: [{ id: 'b', name: 'Mystery', type: 'kilasflow.unsupported', typeVersion: 1, position: { x: 0, y: 0 } }], connections: null, unsupported: [issue] }
+			};
+		}) as unknown as Parameters<typeof convertN8n>[1];
+
+		const payload = await convertN8n({ nodes: [] }, convert);
+
+		expect(asked).toEqual([{ format: 'n8n', workflow: { nodes: [] } }]);
+		expect(payload.nodes.map((node) => node.type)).toEqual(['kilasflow.unsupported']);
+		expect(payload.connections).toEqual([]);
+		expect(payload.issues).toEqual([issue]);
 	});
 
-	it('rewires n8n connections through the ports the resolved definitions declare', () => {
-		const payload = readClipboard(
-			JSON.stringify({
-				nodes: [
-					{ name: 'Agent', type: 'kilasflow.agent', typeVersion: 1, position: [0, 0] },
-					{ name: 'Model', type: 'kilasflow.chatModel', typeVersion: 1, position: [0, 200] },
-					{ name: 'Set', type: 'kilasflow.set', typeVersion: 1, position: [400, 0] }
-				],
-				connections: {
-					Agent: { main: [[{ node: 'Set', type: 'main', index: 0 }]] },
-					Model: { ai_languageModel: [[{ node: 'Agent', type: 'ai_languageModel', index: 0 }]] }
-				}
-			}),
-			[...definitions, { ...set, type: 'kilasflow.chatModel', displayName: 'Chat Model', outputs: [{ name: 'model', kind: 'ai_languageModel' }] }]
-		);
+	it('lets the importer\'s refusal through, so the editor can name it', async () => {
+		const convert = (async () => {
+			throw new Error('two nodes are both named "A"');
+		}) as unknown as Parameters<typeof convertN8n>[1];
 
-		const byName = new Map(payload?.nodes.map((node) => [node.name, node.id]));
-		expect(payload?.connections).toEqual([
-			{ id: expect.any(String), kind: 'main', source: { nodeId: byName.get('Agent'), port: 'main' }, target: { nodeId: byName.get('Set'), port: 'main' } },
-			{
-				id: expect.any(String),
-				kind: 'ai_languageModel',
-				source: { nodeId: byName.get('Model'), port: 'model' },
-				target: { nodeId: byName.get('Agent'), port: 'model' }
-			}
-		]);
-		expect(payload?.dropped).toBe(0);
-	});
-
-	it('counts an edge it cannot place instead of inventing a port for it', () => {
-		const payload = readClipboard(
-			JSON.stringify({
-				nodes: [
-					{ name: 'Set', type: 'kilasflow.set', typeVersion: 1, position: [0, 0] },
-					{ name: 'Model', type: 'kilasflow.chatModel', typeVersion: 1, position: [0, 200] }
-				],
-				connections: { Model: { ai_languageModel: [[{ node: 'Set', type: 'ai_languageModel', index: 0 }]] } }
-			}),
-			[...definitions, { ...set, type: 'kilasflow.chatModel', displayName: 'Chat Model', outputs: [{ name: 'model', kind: 'ai_languageModel' }] }]
-		);
-
-		expect(payload?.connections).toEqual([]);
-		expect(payload?.dropped).toBe(1);
+		await expect(convertN8n({ nodes: [] }, convert)).rejects.toThrow('both named "A"');
 	});
 });
 
 describe('pasteInto', () => {
 	it('renames, offsets and re-ids what it inserts, leaving the source document alone', () => {
 		const original = document();
-		const payload = readClipboard(copySelection(original, ['set-1', 'set-2'])!, definitions)!;
+		const content = readClipboard(copySelection(original, ['set-1', 'set-2'])!);
+		if (content?.kind !== 'fragment') throw new Error('not a fragment');
 		let counter = 0;
-		const { document: pasted, nodeIDs } = pasteInto(original, payload, { x: 40, y: 40 }, () => `new-${(counter += 1)}`);
+		const { document: pasted, nodeIDs } = pasteInto(original, content.payload, { x: 40, y: 40 }, () => `new-${(counter += 1)}`);
 
 		expect(nodeIDs).toEqual(['new-1', 'new-2']);
 		expect(pasted.nodes?.map((node) => node.name)).toEqual(['Set', 'Set1', 'Telegram', 'Set2', 'Set3']);
@@ -199,5 +121,22 @@ describe('pasteInto', () => {
 		// draft for the returned one so undo can hand the original back.
 		expect(original.nodes).toHaveLength(3);
 		expect(original.connections).toHaveLength(2);
+	});
+
+	it('points the report at the nodes as they landed, renamed and re-ided', () => {
+		const payload: PastePayload = {
+			nodes: [{ id: 'n8n-a', name: 'Set', type: 'kilasflow.set', typeVersion: 1, position: { x: 0, y: 0 } }],
+			connections: [],
+			issues: [
+				{ severity: 'lossy', nodeId: 'n8n-a', nodeName: 'Set', field: 'notes', reason: 'not carried' },
+				{ severity: 'dropped', field: 'pinData', reason: 'not carried' }
+			]
+		};
+
+		const { issues } = pasteInto(document(), payload, { x: 0, y: 0 }, () => 'landed-1');
+
+		// "Set" is taken on this canvas, so the pasted node is "Set2".
+		expect(issues[0]).toMatchObject({ nodeId: 'landed-1', nodeName: 'Set2', field: 'notes' });
+		expect(issues[1]).toEqual(payload.issues[1]);
 	});
 });

@@ -48,6 +48,11 @@
 	"editor_clipboard_denied_write": "Peramban tidak memberikan papan klip kepada halaman ini.",
 	"editor_clipboard_empty": "Tidak ada apa pun di papan klip untuk ditempel.",
 	"editor_clipboard_denied_read": "Peramban tidak mengizinkan halaman ini membaca papan klip.",
+	"editor_pasting_n8n": "Mengonversi node n8n yang ditempel…",
+	"editor_paste_failed": "Node n8n tidak dapat ditempel: {reason}",
+	"editor_paste_report_open": "Lihat laporan tempel",
+	"editor_paste_report_title": "Laporan tempel",
+	"editor_paste_report_description": "Menjadi apa node n8n yang ditempel ke {name}, dibaca seperti laporan impor. Laporan ini hanya untuk tempelan terakhir.",
 	"editor_nodes_pasted": [
 		{
 			"declarations": [
@@ -60,36 +65,6 @@
 			"match": {
 				"countPlural=one": "{count} node ditempel",
 				"countPlural=other": "{count} node ditempel"
-			}
-		}
-	],
-	"editor_placeholders_to_replace": [
-		{
-			"declarations": [
-				"input count",
-				"local countPlural = count: plural"
-			],
-			"selectors": [
-				"countPlural"
-			],
-			"match": {
-				"countPlural=one": "{count} placeholder untuk diganti",
-				"countPlural=other": "{count} placeholder untuk diganti"
-			}
-		}
-	],
-	"editor_connections_not_placed": [
-		{
-			"declarations": [
-				"input count",
-				"local countPlural = count: plural"
-			],
-			"selectors": [
-				"countPlural"
-			],
-			"match": {
-				"countPlural=one": "{count} sambungan tidak ditempatkan",
-				"countPlural=other": "{count} sambungan tidak ditempatkan"
 			}
 		}
 	],

@@ -24,6 +24,8 @@ export * from './clearedDatastoreOutputBody';
 export * from './codeConsoleEvent';
 export * from './condition';
 export * from './connection';
+export * from './convertedFragmentResource';
+export * from './convertFragmentInputBody';
 export * from './createAPIKeyInputBody';
 export * from './createdAPIKeyResource';
 export * from './createDatastoreInputBody';

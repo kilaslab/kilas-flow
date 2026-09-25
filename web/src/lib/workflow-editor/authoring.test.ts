@@ -34,7 +34,6 @@ const set: Definition = {
 };
 
 const telegram: Definition = { ...set, type: 'pack.telegram', displayName: 'Telegram' };
-const definitions = [set, telegram];
 
 function document(): Document {
 	return {
@@ -73,9 +72,10 @@ describe('authoring pipeline', () => {
 
 	it('carries a selection to another workflow with new ids and names, then renames without breaking references', () => {
 		const source = document();
-		const fragment = readClipboard(copySelection(source, ['manual'])!, definitions)!;
+		const content = readClipboard(copySelection(source, ['manual'])!);
+		if (content?.kind !== 'fragment') throw new Error('not a fragment');
 		let counter = 0;
-		const pasted = pasteInto(source, fragment, { x: 200, y: 60 }, () => `copy-${(counter += 1)}`);
+		const pasted = pasteInto(source, content.payload, { x: 200, y: 60 }, () => `copy-${(counter += 1)}`);
 
 		expect(pasted.nodeIDs).toEqual(['copy-1']);
 		expect(pasted.document.nodes?.map((node) => node.name)).toEqual(['Set', 'Set1']);

@@ -191,6 +191,14 @@ func permits(subject subject, r *http.Request) (int, string) {
 		// single-workflow authority and outside a scoped key's list (§3.2).
 		return http.StatusForbidden, subject.Denial("cannot import workflows")
 
+	case path == "/workflows/convert":
+		// Translating pasted n8n JSON saves nothing and reads only the
+		// catalogue, like validate below; what the paste becomes is saved, if
+		// at all, through the draft write the subject's scopes already govern.
+		// Matched before the prefix arm, which would read "convert" as a
+		// workflow id and refuse a bound key for naming another workflow.
+		return refused(subject, subject.Allows(embed.ScopeRead), "cannot read")
+
 	case path == "/workflows/validate":
 		// A dry run: it compiles a document the caller supplies and saves
 		// nothing, so it is a read of the catalogue rather than a write of a

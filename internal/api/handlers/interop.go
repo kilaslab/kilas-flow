@@ -43,6 +43,18 @@ type WebhookRouteResource struct {
 	URL string `json:"url"`
 }
 
+// ConvertedFragmentResource is pasted n8n JSON as canonical nodes, plus what
+// the translation could not carry.
+//
+// Nothing is saved. The editor inserts the nodes into the draft on screen,
+// renaming and offsetting them as any paste is, and the ordinary save path
+// validates them.
+type ConvertedFragmentResource struct {
+	Nodes       []workflow.Node       `json:"nodes"`
+	Connections []workflow.Connection `json:"connections"`
+	Unsupported []n8n.ImportIssue     `json:"unsupported"`
+}
+
 // ExportedWorkflowResource is n8n-compatible JSON plus what it could not carry.
 type ExportedWorkflowResource struct {
 	Format   string            `json:"format"`
@@ -113,6 +125,19 @@ type importWorkflowInput struct {
 	}
 }
 
+type convertFragmentInput struct {
+	Body struct {
+		Format string `json:"format,omitempty" doc:"Only \"n8n\" is supported"`
+		// Workflow is what was pasted: n8n's clipboard copy of some nodes, or
+		// a whole exported workflow. It is never executed.
+		Workflow json.RawMessage `json:"workflow" doc:"n8n JSON copied from an n8n canvas, or an n8n workflow export"`
+	}
+}
+
+type convertFragmentOutput struct {
+	Body ConvertedFragmentResource
+}
+
 type importWorkflowOutput struct {
 	Status   int    `status:"201"`
 	Location string `header:"Location"`
@@ -149,6 +174,14 @@ func (handler *Interop) Register(api huma.API) {
 			"visible placeholders that block activation rather than being dropped or silently remapped.",
 		Tags: []string{"Interop"},
 	}, handler.Import)
+	huma.Register(api, huma.Operation{
+		OperationID: "convert-workflow-fragment", Method: http.MethodPost, Path: "/workflows/convert",
+		Summary: "Convert pasted n8n nodes",
+		Description: "Translates n8n JSON — nodes copied from an n8n canvas, or a whole export — into canonical nodes " +
+			"and connections with the same translator import uses, and answers them with the import report, " +
+			"saving nothing. It is what the editor calls when n8n nodes are pasted onto the canvas.",
+		Tags: []string{"Interop"},
+	}, handler.ConvertFragment)
 	huma.Register(api, huma.Operation{
 		OperationID: "export-workflow", Method: http.MethodGet, Path: "/workflows/{id}/export",
 		Summary:     "Export a workflow as n8n JSON",
@@ -236,6 +269,32 @@ func (handler *Interop) Import(ctx context.Context, input *importWorkflowInput) 
 			Workflow: workflowResource(stored), Unsupported: unsupported, Webhooks: webhooks,
 		},
 	}, nil
+}
+
+// ConvertFragment translates pasted n8n JSON without saving anything.
+func (handler *Interop) ConvertFragment(ctx context.Context, input *convertFragmentInput) (*convertFragmentOutput, error) {
+	if format := input.Body.Format; format != "" && format != "n8n" {
+		return nil, huma.Error422UnprocessableEntity("only the n8n format is supported")
+	}
+	// The tenant's own catalogue, as import reads it: a paste must not resolve
+	// a node type this tenant cannot use.
+	result, err := n8n.ImportFragment(input.Body.Workflow, workflow.CatalogFor(handler.catalog, handler.tenants.Resolve(ctx).ID))
+	if err != nil {
+		return nil, huma.Error422UnprocessableEntity(err.Error())
+	}
+	converted := ConvertedFragmentResource{
+		Nodes: result.Document.Nodes, Connections: result.Document.Connections, Unsupported: result.Unsupported,
+	}
+	if converted.Nodes == nil {
+		converted.Nodes = []workflow.Node{}
+	}
+	if converted.Connections == nil {
+		converted.Connections = []workflow.Connection{}
+	}
+	if converted.Unsupported == nil {
+		converted.Unsupported = []n8n.ImportIssue{}
+	}
+	return &convertFragmentOutput{Body: converted}, nil
 }
 
 // Export converts the latest revision into n8n JSON.

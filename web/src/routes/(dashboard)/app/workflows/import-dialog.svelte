@@ -11,7 +11,7 @@
 	import { Textarea } from '$lib/components/ui/textarea';
 	import * as m from '$lib/paraglide/messages.js';
 
-	import ImportReport from './import-report.svelte';
+	import ImportReport from '$lib/components/workflow-editor/import-report.svelte';
 
 	/**
 	 * n8n import beside workflow creation: a file upload and a paste box that

@@ -5,7 +5,7 @@
 	import * as Sheet from '$lib/components/ui/sheet';
 	import * as m from '$lib/paraglide/messages.js';
 
-	import ImportReport from './import-report.svelte';
+	import ImportReport from '$lib/components/workflow-editor/import-report.svelte';
 
 	/**
 	 * The import report, reopened from the workflow it created.

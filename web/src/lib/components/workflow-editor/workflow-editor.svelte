@@ -60,7 +60,7 @@
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import X from '@lucide/svelte/icons/x';
 
-	import type { CredentialResource, Definition, Document, ExecutionResource, Node as WorkflowNode, WorkflowDocumentInput } from '$lib/api/generated/models';
+	import type { CredentialResource, Definition, Document, ExecutionResource, ImportIssue, Node as WorkflowNode, WorkflowDocumentInput } from '$lib/api/generated/models';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { ActivationNoticeView } from '$lib/workflow-editor/activation';
 	import { setCanvasActions } from '$lib/workflow-editor/canvas-actions';
@@ -84,7 +84,10 @@
 		type EditorFlowNode,
 		type PropertyScope
 	} from '$lib/workflow-editor/document';
-	import { copySelection, pasteInto, readClipboard } from '$lib/workflow-editor/clipboard';
+	import { convertN8n, copySelection, pasteInto, readClipboard, type PastePayload } from '$lib/workflow-editor/clipboard';
+	import { diagnosticSummaryLabel } from '$lib/workflow-editor/import-diagnostics';
+	import { message as apiMessage } from '$lib/api/http';
+	import PasteReportSheet from './paste-report-sheet.svelte';
 	import { emptyHistory, record as recordHistory, redo as redoHistory, undo as undoHistory, type History as DocumentHistory } from '$lib/workflow-editor/history';
 	import { SHORTCUT_REFERENCE, CANVAS_DELETE_KEYS, canvasShortcut, controlOwnsKey, isTypingTarget } from '$lib/workflow-editor/shortcuts';
 	import { tidyDocument } from '$lib/workflow-editor/layout';
@@ -247,6 +250,15 @@
 	let shortcutsOpen = $state(false);
 	/** What the last clipboard action did, until the next action. */
 	let canvasMessage = $state<string | null>(null);
+	/** The last paste's import report, while its status line is showing. */
+	let pasteReport = $state<{ message: string; issues: ImportIssue[] } | null>(null);
+	let pasteReportOpen = $state(false);
+	/**
+	 * Which paste an answer from the server belongs to. A plain counter, not
+	 * state: nothing renders from it, and a second paste while the first is
+	 * converting must win, not be overwritten by the slower answer.
+	 */
+	let pasteSequence = 0;
 	let editorSection = $state<HTMLElement>();
 	let flow = $state<CanvasFlow | null>(null);
 
@@ -800,24 +812,46 @@
 	/**
 	 * Pastes workflow JSON, from this editor or from n8n.
 	 *
-	 * The two shapes are the same document with different connection tables, so
-	 * one reader handles both and the report says what could not be carried
-	 * across — a placeholder not replacing anything, or a wire no port here
-	 * accepts — rather than dropping it silently.
+	 * This editor's own fragments are inserted as they are. n8n's are converted
+	 * by the server's importer first, so a paste yields exactly what "Import
+	 * n8n" would — mapped types, `=` expressions, placeholders for what has no
+	 * equivalent — and the same report, rather than a second, weaker
+	 * translation here. Answers true when the text was workflow JSON, which is
+	 * when the browser's own paste must not also happen.
 	 */
 	function pasteText(text: string): boolean {
-		const payload = readClipboard(text, definitions);
-		if (!payload) return false;
-		const { document: next, nodeIDs } = pasteInto(draft, payload, pasteOffset(payload.nodes));
+		const content = readClipboard(text);
+		if (!content) return false;
+		const ticket = (pasteSequence += 1);
+		if (content.kind === 'fragment') {
+			applyPaste(content.payload);
+			return true;
+		}
+		pasteReport = null;
+		canvasMessage = m.editor_pasting_n8n();
+		convertN8n(content.workflow).then(
+			(payload) => {
+				if (ticket !== pasteSequence || locked) return;
+				applyPaste(payload);
+			},
+			(error: unknown) => {
+				if (ticket !== pasteSequence) return;
+				canvasMessage = m.editor_paste_failed({ reason: apiMessage(error) });
+			}
+		);
+		return true;
+	}
+
+	function applyPaste(payload: PastePayload) {
+		const { document: next, nodeIDs, issues } = pasteInto(draft, payload, pasteOffset(payload.nodes));
 		replaceDraft(next);
 		selectedNodeIDs = nodeIDs;
 		selectedNodeID = nodeIDs[0] ?? null;
 		selectedEdgeID = null;
 		const notes: string[] = [m.editor_nodes_pasted({ count: nodeIDs.length })];
-		if (payload.unsupported.length > 0) notes.push(m.editor_placeholders_to_replace({ count: payload.unsupported.length }));
-		if (payload.dropped > 0) notes.push(m.editor_connections_not_placed({ count: payload.dropped }));
+		if (issues.length > 0) notes.push(diagnosticSummaryLabel(issues));
 		canvasMessage = `${notes.join(' · ')}.`;
-		return true;
+		pasteReport = issues.length > 0 ? { message: canvasMessage, issues } : null;
 	}
 
 	/** Centres a pasted fragment on the visible canvas, as a paste of a snippet should land. */
@@ -1137,6 +1171,9 @@
 	{#if canvasMessage}
 		<p role="status" class="shrink-0 border-b border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
 			{canvasMessage}
+			{#if pasteReport && pasteReport.message === canvasMessage}
+				<button type="button" class="ml-2 font-medium text-foreground underline underline-offset-2" onclick={() => (pasteReportOpen = true)}>{m.editor_paste_report_open()}</button>
+			{/if}
 			<button type="button" class="ml-2 underline underline-offset-2" onclick={() => (canvasMessage = null)}>{m.editor_dismiss()}</button>
 		</p>
 	{/if}
@@ -1453,5 +1490,9 @@
 			onUnpublished={history.onUnpublished}
 			onIssues={(next) => (historyIssues = next)}
 		/>
+	{/if}
+
+	{#if pasteReport}
+		<PasteReportSheet bind:open={pasteReportOpen} workflowName={draft.name} issues={pasteReport.issues} />
 	{/if}
 </section>

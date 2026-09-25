@@ -741,6 +741,37 @@ func byKilasType(nodeType string) (mapping, bool) {
 	return mapping{}, false
 }
 
+// ImportFragment converts nodes pasted from an n8n canvas.
+//
+// It is Import, not a second translator: a paste has to produce exactly what
+// importing the same JSON would, and two translators would drift the day one
+// of them learned a node. What differs is the report. n8n's clipboard carries
+// its instance metadata, and a paste lands in a workflow that keeps its own
+// settings and static data, so the document-level entries saying those were
+// not carried describe nothing the user did. Pinned data stays reported: the
+// nodes it was pinned to will run for real.
+func ImportFragment(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
+	result, err := Import(payload, catalog)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	kept := make([]ImportIssue, 0, len(result.Unsupported))
+	for _, issue := range result.Unsupported {
+		if issue.NodeID == "" && issue.NodeName == "" && workflowOnlyField(issue.Field) {
+			continue
+		}
+		kept = append(kept, issue)
+	}
+	result.Unsupported = kept
+	return result, nil
+}
+
+// workflowOnlyField reports a document-level element a pasted fragment has no
+// use for, because the workflow it lands in keeps its own.
+func workflowOnlyField(field string) bool {
+	return field == "meta" || field == "settings" || field == "staticData" || strings.HasPrefix(field, "settings.")
+}
+
 // ImportResult is one converted workflow plus everything the adapter refused.
 type ImportResult struct {
 	Document    workflow.Document

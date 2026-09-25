@@ -339,6 +339,50 @@ export interface Condition {
   values?: unknown[] | null;
 }
 
+export interface ConvertFragmentInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** Only "n8n" is supported */
+  format?: string;
+  /** n8n JSON copied from an n8n canvas, or an n8n workflow export */
+  workflow: unknown;
+}
+
+/**
+ * blocking stops the workflow running; lossy was carried differently; dropped was not carried at all
+ */
+export type ImportIssueSeverity = typeof ImportIssueSeverity[keyof typeof ImportIssueSeverity];
+
+
+export const ImportIssueSeverity = {
+  blocking: 'blocking',
+  lossy: 'lossy',
+  dropped: 'dropped',
+} as const;
+
+export interface ImportIssue {
+  field?: string;
+  nodeId?: string;
+  nodeName?: string;
+  reason: string;
+  /** blocking stops the workflow running; lossy was carried differently; dropped was not carried at all */
+  severity: ImportIssueSeverity;
+  type?: string;
+  /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
+  typeVersion?: number;
+}
+
+export interface ConvertedFragmentResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  connections: Connection[] | null;
+  /** @nullable */
+  nodes: Node[] | null;
+  /** @nullable */
+  unsupported: ImportIssue[] | null;
+}
+
 export interface CreateAPIKeyInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1079,30 +1123,6 @@ export interface HealthOutputBody {
   status: string;
   /** KilasFlow version */
   version: string;
-}
-
-/**
- * blocking stops the workflow running; lossy was carried differently; dropped was not carried at all
- */
-export type ImportIssueSeverity = typeof ImportIssueSeverity[keyof typeof ImportIssueSeverity];
-
-
-export const ImportIssueSeverity = {
-  blocking: 'blocking',
-  lossy: 'lossy',
-  dropped: 'dropped',
-} as const;
-
-export interface ImportIssue {
-  field?: string;
-  nodeId?: string;
-  nodeName?: string;
-  reason: string;
-  /** blocking stops the workflow running; lossy was carried differently; dropped was not carried at all */
-  severity: ImportIssueSeverity;
-  type?: string;
-  /** Node type version. A decimal such as 1, 4.2, or a YYYYMM value such as 202502. Omit it to use the registered default. */
-  typeVersion?: number;
 }
 
 export interface ImportWorkflowInputBody {
@@ -5722,6 +5742,63 @@ const res = await fetch(getCreateWorkflowUrl(),
 
   const data: createWorkflowResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as createWorkflowResponse
+}
+
+
+
+export type convertWorkflowFragmentResponse200 = {
+  data: ConvertedFragmentResource
+  status: 200
+}
+
+export type convertWorkflowFragmentResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type convertWorkflowFragmentResponseSuccess = (convertWorkflowFragmentResponse200) & {
+  headers: Headers;
+};
+export type convertWorkflowFragmentResponseError = (convertWorkflowFragmentResponseDefault) & {
+  headers: Headers;
+};
+
+export type convertWorkflowFragmentResponse = (convertWorkflowFragmentResponseSuccess | convertWorkflowFragmentResponseError)
+
+export const getConvertWorkflowFragmentUrl = () => {
+
+
+
+
+  return `/api/v1/workflows/convert`
+}
+
+/**
+ * Translates n8n JSON — nodes copied from an n8n canvas, or a whole export — into canonical nodes and connections with the same translator import uses, and answers them with the import report, saving nothing. It is what the editor calls when n8n nodes are pasted onto the canvas.
+ * @summary Convert pasted n8n nodes
+ */
+export const convertWorkflowFragment = async (convertFragmentInputBody: NonReadonly<ConvertFragmentInputBody>, options?: RequestInit): Promise<convertWorkflowFragmentResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getConvertWorkflowFragmentUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(convertFragmentInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: convertWorkflowFragmentResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as convertWorkflowFragmentResponse
 }
 
 

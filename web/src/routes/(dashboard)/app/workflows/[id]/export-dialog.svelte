@@ -8,7 +8,7 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as m from '$lib/paraglide/messages.js';
 
-	import DiagnosticsSection from '../diagnostics-section.svelte';
+	import DiagnosticsSection from '$lib/components/workflow-editor/diagnostics-section.svelte';
 
 	/**
 	 * n8n export from the editor toolbar. The lossy list is shown *before*

@@ -34,6 +34,23 @@ Responses:
 
 Embed: Deny — importing creates a new workflow, outside any session’s single-workflow authority.
 
+## Convert pasted n8n nodes (`convert-workflow-fragment`)
+
+`POST /api/v1/workflows/convert`
+
+Translates n8n JSON — nodes copied from an n8n canvas, or a whole export — into canonical nodes and connections with the same translator import uses, and answers them with the import report, saving nothing. It is what the editor calls when n8n nodes are pasted onto the canvas.
+
+Request body: `application/json` — `ConvertFragmentInputBody` (required)
+
+Responses:
+
+| Status | Description | Body |
+| --- | --- | --- |
+| `200` | OK | `application/json` — `ConvertedFragmentResource` |
+| `default` | Error | `application/problem+json` |
+
+Embed: Allow with `workflow:write` — on the session’s workflow only.
+
 ## Export a workflow as n8n JSON (`export-workflow`)
 
 `GET /api/v1/workflows/{id}/export`

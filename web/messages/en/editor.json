@@ -43,6 +43,11 @@
 	"editor_clipboard_denied_write": "The browser would not give this page the clipboard.",
 	"editor_clipboard_empty": "Nothing on the clipboard to paste.",
 	"editor_clipboard_denied_read": "The browser would not let this page read the clipboard.",
+	"editor_pasting_n8n": "Converting the pasted n8n nodes…",
+	"editor_paste_failed": "Could not paste the n8n nodes: {reason}",
+	"editor_paste_report_open": "View paste report",
+	"editor_paste_report_title": "Paste report",
+	"editor_paste_report_description": "What the n8n nodes pasted into {name} became, read the way an import is. It describes the last paste only.",
 	"editor_nodes_pasted": [
 		{
 			"declarations": ["input count", "local countPlural = count: plural"],
@@ -50,26 +55,6 @@
 			"match": {
 				"countPlural=one": "Pasted 1 node",
 				"countPlural=other": "Pasted {count} nodes"
-			}
-		}
-	],
-	"editor_placeholders_to_replace": [
-		{
-			"declarations": ["input count", "local countPlural = count: plural"],
-			"selectors": ["countPlural"],
-			"match": {
-				"countPlural=one": "1 placeholder to replace",
-				"countPlural=other": "{count} placeholders to replace"
-			}
-		}
-	],
-	"editor_connections_not_placed": [
-		{
-			"declarations": ["input count", "local countPlural = count: plural"],
-			"selectors": ["countPlural"],
-			"match": {
-				"countPlural=one": "1 connection not placed",
-				"countPlural=other": "{count} connections not placed"
 			}
 		}
 	],

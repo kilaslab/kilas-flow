@@ -126,6 +126,8 @@ func TestAScopedKeyReachesWhatItsScopesName(t *testing.T) {
 		// caller supplies and saves nothing, so the verb that answers "would
 		// this run" must not need a write scope.
 		{"validates a document", http.MethodPost, "/api/v1/workflows/validate", reader, 0, ""},
+		// Converting pasted n8n JSON saves nothing either (BUG-txafja).
+		{"converts pasted n8n nodes", http.MethodPost, "/api/v1/workflows/convert", reader, 0, ""},
 		{"reads a revision", http.MethodGet, "/api/v1/workflows/wf_1/versions/ver_1", reader, 0, ""},
 		{"reads publish events", http.MethodGet, "/api/v1/workflows/wf_1/publish-events", reader, 0, ""},
 		{"exports a workflow", http.MethodGet, "/api/v1/workflows/wf_1/export", reader, 0, ""},
@@ -175,6 +177,7 @@ func TestAScopedKeyReachesWhatItsScopesName(t *testing.T) {
 		// A datastore scope reaches no workflow at all, which is how the
 		// dry run and the evaluator are still refusals rather than reads.
 		{"a datastore scope cannot validate", http.MethodPost, "/api/v1/workflows/validate", datastoreReader, http.StatusForbidden, "cannot read"},
+		{"a datastore scope cannot convert pasted nodes", http.MethodPost, "/api/v1/workflows/convert", datastoreReader, http.StatusForbidden, "cannot read"},
 		{"a datastore scope cannot evaluate", http.MethodPost, "/api/v1/executions/ex_1/eval", datastoreReader, http.StatusForbidden, "cannot read executions"},
 		{"a workflow scope reaches no datastore", http.MethodGet, "/api/v1/datastores/ds_1/rows", reader, http.StatusForbidden, "cannot read"},
 		{"a datastore scope reaches no workflow", http.MethodGet, "/api/v1/workflows/wf_1", datastoreReader, http.StatusForbidden, "cannot read"},

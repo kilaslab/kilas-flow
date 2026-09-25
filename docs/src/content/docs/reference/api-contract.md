@@ -38,7 +38,7 @@ Consequences:
 
 ## The operation surface
 
-The document a server serves holds 81 operations, all under `/api/v1`, in
+The document a server serves holds 82 operations, all under `/api/v1`, in
 eleven groups. The tables below are the workflow-facing core this contract was
 written around — the operations that existed when it was last revised. The
 always-current list is the [generated reference](/reference/api/), which is
@@ -129,11 +129,12 @@ is part of the contract, not an omission.
 | POST | `/node-types/{type}/load-schema` | `load-node-property-schema` |
 | GET | `/expression-grammar` | `get-expression-grammar` |
 
-### Interop (2)
+### Interop (3)
 
 | Method | Path | Operation id |
 | --- | --- | --- |
 | POST | `/workflows/import` | `import-workflow` |
+| POST | `/workflows/convert` | `convert-workflow-fragment` |
 | GET | `/workflows/{id}/export` | `export-workflow` |
 
 ### Embed (1)
@@ -332,6 +333,7 @@ default-deny boundary is part of the public contract:
 | `GET /executions?workflowId={session workflow}` | Allow with `workflow:read` — the query MUST name the session's workflow |
 | `/executions/{id}/**` | Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to |
 | `POST /workflows/import` | Deny — importing creates a new workflow, outside any session's single-workflow authority |
+| `POST /workflows/convert` | Allow with `workflow:read` — it translates pasted n8n JSON and saves nothing; the paste reaches the workflow only through a save the session's scopes govern |
 | `POST /workflows/{id}/activate`, `/deactivate` | Deny — activation publishes a deployment-wide endpoint; an owner action, not an embed one |
 | `DELETE /workflows/{id}` | Deny |
 | Any `/workflows/{other-id}/**` | Deny — scoped to a different workflow |

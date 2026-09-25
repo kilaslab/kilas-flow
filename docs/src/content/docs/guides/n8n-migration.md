@@ -383,6 +383,16 @@ The report is part of a **success** response, not an error. An import that
 carried most of a workflow and named the rest is far more useful than one that
 refused the whole file over a single node.
 
+**Pasting instead of importing.** Nodes copied on an n8n canvas can be pasted
+straight onto a KilasFlow canvas. The editor sends them to
+`POST /api/v1/workflows/convert`, which runs the importer described here and
+saves nothing, so a paste arrives exactly as an import would make it: mapped
+node types, `=` values as expressions, placeholders for what has no
+equivalent. The same report opens from the status line under "View paste
+report". It leaves out n8n's instance metadata, because the workflow you paste
+into keeps its own settings. The pasted nodes are part of your unsaved draft
+until you save.
+
 ### 3. Read the diagnostics
 
 Sort by severity and start at the top:

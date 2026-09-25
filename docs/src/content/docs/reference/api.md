@@ -17,7 +17,7 @@ When the two disagree, compare versions: every page here states the server versi
 
 ## Operations
 
-81 operations, all under `/api/v1`, in 11 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
+82 operations, all under `/api/v1`, in 11 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
 
 | Group | Operations | Contents |
 | --- | --- | --- |
@@ -29,7 +29,7 @@ When the two disagree, compare versions: every page here states the server versi
 | [Node types](/reference/api/nodes/) | 5 | The node catalogue, icons, load-options, load-schema, and the expression grammar. |
 | [Datastores](/reference/api/datastores/) | 18 | Tenant-owned row stores: tables, columns, rows, and CSV import and export. |
 | [Tenants and accounts](/reference/api/tenants/) | 10 | Operator surface: tenants, their users, and keys minted for another tenant. |
-| [Interop](/reference/api/interop/) | 2 | Import and export workflows across formats. |
+| [Interop](/reference/api/interop/) | 3 | Import and export workflows across formats. |
 | [Embed](/reference/api/embed/) | 1 | Mint a session that confines an embedded editor to one workflow. |
 | [System](/reference/api/system/) | 2 | Health and readiness. |
 

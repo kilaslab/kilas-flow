@@ -22,6 +22,8 @@ import type {
 } from '@tanstack/svelte-query';
 
 import type {
+  ConvertFragmentInputBody,
+  ConvertedFragmentResource,
   ErrorModel,
   ExportWorkflowParams,
   ExportedWorkflowResource,
@@ -73,7 +75,106 @@ type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 
 
-export type importWorkflowResponse201 = {
+export type convertWorkflowFragmentResponse200 = {
+  data: ConvertedFragmentResource
+  status: 200
+}
+
+export type convertWorkflowFragmentResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type convertWorkflowFragmentResponseSuccess = (convertWorkflowFragmentResponse200) & {
+  headers: Headers;
+};
+export type convertWorkflowFragmentResponseError = (convertWorkflowFragmentResponseDefault) & {
+  headers: Headers;
+};
+
+export type convertWorkflowFragmentResponse = (convertWorkflowFragmentResponseSuccess | convertWorkflowFragmentResponseError)
+
+export const getConvertWorkflowFragmentUrl = () => {
+
+
+
+
+  return `/api/v1/workflows/convert`
+}
+
+/**
+ * Translates n8n JSON — nodes copied from an n8n canvas, or a whole export — into canonical nodes and connections with the same translator import uses, and answers them with the import report, saving nothing. It is what the editor calls when n8n nodes are pasted onto the canvas.
+ * @summary Convert pasted n8n nodes
+ */
+export const convertWorkflowFragment = async (convertFragmentInputBody: NonReadonly<ConvertFragmentInputBody>, options?: Parameters<typeof apiFetch>[1]): Promise<convertWorkflowFragmentResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+return apiFetch<convertWorkflowFragmentResponse>(getConvertWorkflowFragmentUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(convertFragmentInputBody)
+  }
+);}
+
+
+
+
+
+export const getConvertWorkflowFragmentMutationKey = () => ['convertWorkflowFragment'] as const;
+
+export const getConvertWorkflowFragmentMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof convertWorkflowFragment>>, TError,ConvertWorkflowFragmentMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof convertWorkflowFragment>>, TError,ConvertWorkflowFragmentMutationVariables, TContext> => {
+
+const mutationKey = getConvertWorkflowFragmentMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof convertWorkflowFragment>>, ConvertWorkflowFragmentMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  convertWorkflowFragment(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConvertWorkflowFragmentMutationResult = NonNullable<Awaited<ReturnType<typeof convertWorkflowFragment>>>
+    export type ConvertWorkflowFragmentMutationBody = NonReadonly<ConvertFragmentInputBody>
+    export type ConvertWorkflowFragmentMutationError = ErrorType<ErrorModel>
+    export type ConvertWorkflowFragmentMutationVariables = {data: NonReadonly<ConvertFragmentInputBody>}
+
+    /**
+ * @summary Convert pasted n8n nodes
+ */
+export const createConvertWorkflowFragment = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof convertWorkflowFragment>>, TError,ConvertWorkflowFragmentMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof convertWorkflowFragment>>,
+        TError,
+        ConvertWorkflowFragmentMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getConvertWorkflowFragmentMutationOptions(options?.()) }), queryClient);
+    }
+    export type importWorkflowResponse201 = {
   data: ImportedWorkflowResource
   status: 201
 }
