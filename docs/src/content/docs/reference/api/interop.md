@@ -49,7 +49,7 @@ Responses:
 | `200` | OK | `application/json` — `ConvertedFragmentResource` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Allow with `workflow:write` — on the session’s workflow only.
+Embed: Allow with `workflow:read` — it translates pasted n8n JSON and saves nothing; the paste reaches the workflow only through a save the session’s scopes govern.
 
 ## Export a workflow as n8n JSON (`export-workflow`)
 

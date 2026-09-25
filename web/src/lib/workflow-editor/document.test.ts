@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { Definition, Document } from '$lib/api/generated/models';
 
 import {
+	upstreamNodeNames,
 	createWorkflowNode,
 	nextNodePosition,
 	positionAfter,
@@ -368,5 +369,34 @@ describe('canvas authoring helpers', () => {
 
 		expect(canvas.edges[0].ariaLabel).toBe('Manual Trigger main to Set main');
 		expect(canvas.toDocument(original)).toEqual(original);
+	});
+});
+
+describe('upstreamNodeNames', () => {
+	const node = (id: string, name: string) => ({ id, name, type: 'kilasflow.set', typeVersion: 1, position: { x: 0, y: 0 } });
+	const edge = (id: string, source: string, target: string, kind = 'main') => ({
+		id,
+		kind,
+		source: { nodeId: source, port: 'main' },
+		target: { nodeId: target, port: 'main' }
+	});
+	const graph: Document = {
+		id: 'w',
+		schemaVersion: 1,
+		name: 'Graph',
+		nodes: [node('a', 'Trigger'), node('b', 'Fetch'), node('c', 'Code'), node('d', 'After'), node('m', 'Model'), node('x', 'Unrelated')],
+		connections: [edge('1', 'a', 'b'), edge('2', 'b', 'c'), edge('3', 'c', 'd'), edge('4', 'm', 'c', 'ai_languageModel'), edge('5', 'd', 'b')],
+		settings: {}
+	};
+
+	it('names every node with an item path into the node, in document order', () => {
+		// d → b closes a loop, so d is upstream of c too; the walk still ends.
+		expect(upstreamNodeNames(graph, 'c')).toEqual(['Trigger', 'Fetch', 'After']);
+	});
+
+	it('leaves out attachments, nodes downstream, and nodes on no path', () => {
+		expect(upstreamNodeNames(graph, 'a')).toEqual([]);
+		expect(upstreamNodeNames(graph, 'c')).not.toContain('Model');
+		expect(upstreamNodeNames(graph, 'c')).not.toContain('Unrelated');
 	});
 });

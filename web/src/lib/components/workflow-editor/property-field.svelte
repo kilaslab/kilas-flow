@@ -84,6 +84,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		loadOptions,
 		loadSchema,
 		contextKey = '',
+		ownerKey = '',
 		upstreamNodeNames = [],
 		upstreamFieldPaths = [],
 		resolvedValues = []
@@ -102,6 +103,12 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		 * the whole node, or every keystroke elsewhere re-fires its loader.
 		 */
 		contextKey?: string;
+		/**
+		 * Which node this field edits. The panel reuses a field across node
+		 * selections when two nodes share a parameter key, so a control that keeps
+		 * its own state — a code editor's undo history — remounts on a change.
+		 */
+		ownerKey?: string;
 		/** Names of upstream nodes, for `$('Name')` completions. */
 		upstreamNodeNames?: string[];
 		/** Dotted `$json` paths from the last run, for field completions. */
@@ -707,6 +714,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 							property={field}
 							value={entry[field.key] ?? field.default}
 							{contextKey}
+							{ownerKey}
 							onChange={(next: unknown) => updateGroupEntry(index, field.key, next)}
 							{loadOptions}
 						/>
@@ -743,6 +751,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 						value={collectionValue(value)[field.key]}
 						siblings={{ ...siblings, ...collectionValue(value) }}
 						{contextKey}
+						{ownerKey}
 						onChange={(next: unknown) => onChange(setOption(value, field.key, next))}
 						{loadOptions}
 					/>
@@ -1023,7 +1032,9 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 			</button>
 		</div>
 {:else if codeEditor && typeOptions.editorLanguage}
-	<CodeEditor value={stringValue} language={typeOptions.editorLanguage} label={property.label} rows={typeOptions.rows ?? 12} nodeNames={upstreamNodeNames ?? []} onChange={(text) => onChange(text)} />
+	{#key `${ownerKey}\u0000${property.key}`}
+		<CodeEditor value={stringValue} language={typeOptions.editorLanguage} label={property.label} rows={typeOptions.rows ?? 12} nodeNames={upstreamNodeNames} onChange={(text) => onChange(text)} />
+	{/key}
 {:else if RENDERED.has(property.kind) && needsMultiline(value, typeOptions.rows)}
 	<!-- Multi-line is a different element, not an attribute: rows has no
 	     meaning on an input, and an input strips the newlines of a value

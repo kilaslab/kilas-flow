@@ -77,6 +77,7 @@
 		toWorkflowInput,
 		uniqueNodeName,
 		updateNodeCredential,
+		upstreamNodeNames,
 		updateNodeProperty,
 		updateNodeSize,
 		workflowDocumentEquals,
@@ -338,6 +339,7 @@
 		if (!showChat) chatOpen = false;
 	});
 	const selectedNode = $derived((displayed.nodes ?? []).find((node) => node.id === selectedNodeID) ?? null);
+	const selectedUpstreamNames = $derived(selectedNodeID ? upstreamNodeNames(displayed, selectedNodeID) : []);
 	const selectedDefinition = $derived(
 		selectedNode ? (resolveDefinition(selectedNode.type, selectedNode.typeVersion, definitions) ?? null) : null
 	);
@@ -1372,7 +1374,7 @@
 			<aside bind:this={inspectorRegion} tabindex="-1" class="hidden min-h-0 border-l border-border outline-none lg:block">
 				<div class="flex h-full min-h-0 flex-col">
 					<div class="min-h-0 flex-1">
-						<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} />
+						<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} upstreamNodeNames={selectedUpstreamNames} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} />
 					</div>
 					{#if selectedResolvedVersion !== null && selectedResolvedVersion !== selectedNode.typeVersion}
 						<p class="shrink-0 border-t border-border px-3 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">{m.editor_resolved_version({ stored: selectedNode.typeVersion, resolved: selectedResolvedVersion })}</p>
@@ -1407,7 +1409,7 @@
 		{#if narrow.current && propertyPanelOpen && selectedNode && selectedDefinition}
 			<div bind:this={propertyDialog} class="absolute inset-x-2 bottom-2 z-30 max-h-[min(28rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={m.editor_node_properties_aria({ name: selectedNode.name })} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
 				<div class="flex justify-end border-b border-border px-1.5 py-1"><button bind:this={propertyCloseButton} type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted" aria-label={m.editor_close_properties_aria()} onclick={closePropertyPanel}><X aria-hidden="true" class="size-3.5" /></button></div>
-				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} />
+				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} upstreamNodeNames={selectedUpstreamNames} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} />
 				{#if selectedResolvedVersion !== null && selectedResolvedVersion !== selectedNode.typeVersion}
 					<p class="border-t border-border px-3 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">{m.editor_resolved_version({ stored: selectedNode.typeVersion, resolved: selectedResolvedVersion })}</p>
 				{/if}

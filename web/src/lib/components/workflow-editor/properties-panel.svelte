@@ -20,6 +20,7 @@
 		definition,
 		credentials = [],
 		readOnly = false,
+		upstreamNodeNames = [],
 		onChange,
 		onRename,
 		onCredentialChange
@@ -28,6 +29,8 @@
 		definition: Definition;
 		credentials?: CredentialResource[];
 		readOnly?: boolean;
+		/** Names of the nodes that run before this one, for `$('Name')` completions. */
+		upstreamNodeNames?: string[];
 		onChange: (scope: PropertyScope, key: string, value: unknown) => void;
 		/** Renames the node and rewrites the expressions that address it. */
 		onRename?: (name: string) => void;
@@ -241,7 +244,7 @@
 			<p class="text-xs leading-5 text-muted-foreground">{activeTab === 'parameters' ? m.properties_no_parameters_to_configure() : m.properties_no_settings_to_configure()}</p>
 		{:else}
 			{#each visibleProperties as property (property.key)}
-				<PropertyField {property} value={values[property.key] ?? property.default} siblings={values} contextKey={loaderContext} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} loadSchema={activeTab === 'parameters' ? loadSchema : undefined} />
+				<PropertyField {property} value={values[property.key] ?? property.default} siblings={values} contextKey={loaderContext} ownerKey={node.id} {upstreamNodeNames} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} loadSchema={activeTab === 'parameters' ? loadSchema : undefined} />
 			{/each}
 		{/if}
 	</div>

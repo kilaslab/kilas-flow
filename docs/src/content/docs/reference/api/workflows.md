@@ -49,7 +49,7 @@ Responses:
 | `200` | OK | `application/json` — `ValidateWorkflowResource` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Allow with `workflow:write` — on the session’s workflow only.
+Embed: Allow with `workflow:read` — a dry run that compiles the supplied document and saves nothing.
 
 ## List workflows (`list-workflows`)
 
@@ -207,7 +207,7 @@ Responses:
 | `201` | Created | `application/json` — `WorkflowResource` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Allow with `workflow:write` — on the session’s workflow only.
+Embed: Deny — a copy is a new workflow, outside any session’s single-workflow authority.
 
 ## Activate latest workflow revision (`activate-workflow`)
 

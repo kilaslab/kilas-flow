@@ -106,3 +106,49 @@ test('workflow JSON pasted into a code editor is code, not nodes for the canvas'
 	await expect(code).toContainText('n8n-nodes-base.set');
 	await expect(nodes).toHaveCount(2);
 });
+
+test('moving between two nodes whose code fields share a key never carries one node\'s code or undo into the other', async ({ page, server }) => {
+	// The Go Code node and the Sort comparator both name their field "code",
+	// so the panel reuses the field across the two selections.
+	const comparator = 'return a.json.n - b.json.n;';
+	const workflow = await createWorkflow(server.baseURL, {
+		schemaVersion: 1,
+		name: 'Two Code Fields',
+		nodes: [
+			{ id: 'manual', name: 'Manual Trigger', type: 'kilasflow.manual', typeVersion: 1, position: { x: 0, y: 0 } },
+			{ id: 'go', name: 'Go', type: 'kilasflow.code', typeVersion: 1, position: { x: 240, y: 0 }, parameters: { code: 'return items, nil' } },
+			{ id: 'sort', name: 'Sorter', type: 'kilasflow.sort', typeVersion: 1, position: { x: 480, y: 0 }, parameters: { type: 'code', code: comparator } }
+		],
+		connections: [
+			{ id: 'c1', kind: 'main', source: { nodeId: 'manual', port: 'main' }, target: { nodeId: 'go', port: 'main' } },
+			{ id: 'c2', kind: 'main', source: { nodeId: 'go', port: 'main' }, target: { nodeId: 'sort', port: 'main' } }
+		],
+		settings: {}
+	});
+	await page.goto(`${server.baseURL}/app/workflows/${workflow.id}`);
+	await expect(page.locator('[data-testid="workflow-canvas"]')).toBeVisible();
+
+	const goPanel = await openParameters(page, 'Go');
+	const goCode = goPanel.getByRole('textbox', { name: 'Go code', exact: true });
+	await goCode.click();
+	await page.keyboard.press('ControlOrMeta+End');
+	await page.keyboard.type(' // edited');
+
+	const sortPanel = await openParameters(page, 'Sorter');
+	await expect(sortPanel.locator('[data-code-editor="javaScript"]')).toBeVisible();
+	const sortCode = sortPanel.getByRole('textbox', { name: 'Comparator', exact: true });
+	await expect(sortCode).toHaveText(comparator);
+	// An undo here has nothing of this node's to take back, and must not
+	// replay the Go node's history into the comparator.
+	await sortCode.click();
+	await page.keyboard.press('ControlOrMeta+Z');
+	await expect(sortCode).toHaveText(comparator);
+
+	const save = page.getByRole('button', { name: 'Save', exact: true });
+	await save.click();
+	await expect(save).toBeDisabled();
+	const stored = await (await fetch(`${server.baseURL}/api/v1/workflows/${workflow.id}`)).json();
+	const nodes = stored.latestVersion.document.nodes as Array<{ id: string; parameters?: { code?: string } }>;
+	expect(nodes.find((node) => node.id === 'sort')?.parameters?.code).toBe(comparator);
+	expect(nodes.find((node) => node.id === 'go')?.parameters?.code).toBe('return items, nil // edited');
+});

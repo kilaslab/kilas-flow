@@ -251,6 +251,31 @@ export function workflowDocumentEquals(left: Document, right: Document): boolean
  * in a number counts up from it, which is what makes duplicating a duplicate
  * read as one more copy rather than "Set11".
  */
+/**
+ * The names of the nodes that run before one node: every node with a path of
+ * item connections into it. They are what `$('Name')` can read there, and the
+ * order is the order they appear in the document, so a list built from them
+ * does not reshuffle while the user edits something unrelated.
+ */
+export function upstreamNodeNames(document: Document, nodeID: string): string[] {
+	const sourcesOf = new Map<string, string[]>();
+	for (const connection of document.connections ?? []) {
+		if (connection.kind !== 'main') continue;
+		const sources = sourcesOf.get(connection.target.nodeId) ?? [];
+		sources.push(connection.source.nodeId);
+		sourcesOf.set(connection.target.nodeId, sources);
+	}
+	const seen = new Set<string>();
+	const pending = [...(sourcesOf.get(nodeID) ?? [])];
+	while (pending.length > 0) {
+		const next = pending.pop()!;
+		if (next === nodeID || seen.has(next)) continue;
+		seen.add(next);
+		pending.push(...(sourcesOf.get(next) ?? []));
+	}
+	return (document.nodes ?? []).filter((node) => seen.has(node.id)).map((node) => node.name);
+}
+
 export function uniqueNodeName(desired: string, taken: Iterable<string>): string {
 	const used = taken instanceof Set ? taken : new Set(taken);
 	const base = desired.trim() === '' ? 'Node' : desired.trim();

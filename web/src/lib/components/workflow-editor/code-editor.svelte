@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Compartment, Transaction } from '@codemirror/state';
 	import { EditorView } from '@codemirror/view';
 	import { onMount } from 'svelte';
 
@@ -8,9 +9,14 @@
 	 * A source editor for one code parameter.
 	 *
 	 * The view owns the text while the user types, so the prop is written back
-	 * into it only when it differs from what the view holds — an undo, a paste
-	 * of the whole node, a switch to another node. Writing it on every change
-	 * would reset the cursor and the undo history on each keystroke.
+	 * into it only when it differs from what the view holds — an undo of the
+	 * whole canvas, a restored revision. Writing it on every change would reset
+	 * the cursor on each keystroke. That write is kept out of the editor's own
+	 * undo history: undoing it would hand the host a value the user never typed.
+	 *
+	 * The host remounts this component when the field starts editing another
+	 * node (see `ownerKey` on the property field), so one node's undo history
+	 * can never be replayed into another's parameter.
 	 */
 	let {
 		value,
@@ -35,21 +41,31 @@
 
 	let host: HTMLDivElement;
 	let view: EditorView | undefined;
+	const configuration = new Compartment();
+
+	function extensions() {
+		return codeEditorExtensions({ language, readOnly, label, id, nodeNames, onChange: (text) => onChange(text) });
+	}
+
+	/**
+	 * What the extensions are built from, as one comparable value. The host
+	 * hands a fresh array of node names on every edit anywhere on the canvas;
+	 * rebuilding on identity would close an open completion list mid-word.
+	 */
+	const configurationKey = $derived(JSON.stringify([language, readOnly, label, id ?? '', nodeNames]));
+	let appliedKey = '';
 
 	onMount(() => {
-		view = new EditorView({
-			doc: value,
-			parent: host,
-			extensions: codeEditorExtensions({
-				language,
-				readOnly,
-				label,
-				id,
-				nodeNames,
-				onChange: (text) => onChange(text)
-			})
-		});
+		appliedKey = configurationKey;
+		view = new EditorView({ doc: value, parent: host, extensions: configuration.of(extensions()) });
 		return () => view?.destroy();
+	});
+
+	$effect(() => {
+		const key = configurationKey;
+		if (!view || key === appliedKey) return;
+		appliedKey = key;
+		view.dispatch({ effects: configuration.reconfigure(extensions()) });
 	});
 
 	$effect(() => {
@@ -57,7 +73,10 @@
 		if (!view) return;
 		const current = view.state.doc.toString();
 		if (incoming !== current) {
-			view.dispatch({ changes: { from: 0, to: current.length, insert: incoming }, annotations: syncFromProp.of(true) });
+			view.dispatch({
+				changes: { from: 0, to: current.length, insert: incoming },
+				annotations: [syncFromProp.of(true), Transaction.addToHistory.of(false)]
+			});
 		}
 	});
 </script>
