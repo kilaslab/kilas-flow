@@ -342,11 +342,50 @@ func localeZoneNames(locale *dateLocale, zone *resolvedZone) zoneNames {
 	return zone.names
 }
 
+// onDaylightTime reports whether an instant is on its zone's daylight saving
+// time in the sense the names are written in: the daylight name belongs to
+// the higher of the two offsets the zone moves between.
+//
+// The flag Go reads out of the tz database cannot answer that on its own,
+// because the databases disagree about which of the two carries it. Debian
+// ships Europe/Dublin in the "vanguard" form, where Irish Standard Time is
+// the standard offset and winter is an hour subtracted from it; macOS and
+// Go's embedded data ship the "rearguard" form, GMT standard with an hour
+// added in summer. Both describe the same offsets, so comparing the
+// instant's offset against its neighbouring interval's — the nearer one the
+// database flags the other way — names it as Node does on either
+// (BUG-a9d2hb). A zone that never moves, and the instants either side of a
+// change of standard offset rather than of a saving, keep the database's own
+// answer: there is no pair to compare them with. An offset that runs on
+// with no further transition is the same kind of settled answer. Debian's
+// Africa/Windhoek has been two hours ahead since 2017, and the interval it
+// left is an hour lower and flagged the other way; treating that history as
+// the other half of a saving turned Central Africa Time into a GMT offset.
+func onDaylightTime(at time.Time) bool {
+	daylight := at.IsDST()
+	_, offset := at.Zone()
+	start, end := at.ZoneBounds()
+	if end.IsZero() {
+		return daylight
+	}
+	neighbours := make([]time.Time, 0, 2)
+	if !start.IsZero() {
+		neighbours = append(neighbours, start.Add(-time.Nanosecond))
+	}
+	neighbours = append(neighbours, end)
+	for _, neighbour := range neighbours {
+		_, other := neighbour.Zone()
+		if neighbour.IsDST() != daylight && other != offset {
+			return offset > other
+		}
+	}
+	return daylight
+}
+
 // zoneName is the zone's name at an instant, in locale, in one of the
 // timeZoneName styles.
 func zoneName(locale *dateLocale, at time.Time, zone *resolvedZone, style string) (string, error) {
 	_, offset := at.Zone()
-	daylight := at.IsDST()
 	switch style {
 	case "shortOffset":
 		return offsetName(offset, false), nil
@@ -355,7 +394,7 @@ func zoneName(locale *dateLocale, at time.Time, zone *resolvedZone, style string
 	case "short":
 		names := localeZoneNames(locale, zone)
 		name := names.shortStandard
-		if daylight {
+		if onDaylightTime(at) {
 			name = names.shortDaylight
 		}
 		if name == "" {
@@ -365,7 +404,7 @@ func zoneName(locale *dateLocale, at time.Time, zone *resolvedZone, style string
 	case "long":
 		names := localeZoneNames(locale, zone)
 		name := names.longStandard
-		if daylight {
+		if onDaylightTime(at) {
 			name = names.longDaylight
 		}
 		if name == "" {
