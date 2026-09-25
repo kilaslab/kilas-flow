@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -1881,6 +1882,14 @@ func defaultedHourCycle(cycle, extensionCycle string) string {
 	return "h12"
 }
 
+// liftedDateRefusals turns off the two en-GB refusals nativeDateTimeFormat
+// makes below, for the option sweep's own over-refusal check alone (see
+// LiftDateRefusalsForTest): a refusal earns its place only if the runtime
+// really cannot answer that shape like Node, so the sweep formats every
+// shape it saw refused a second time with these lifted and insists the
+// answer differs from Node's. Never set outside a test.
+var liftedDateRefusals atomic.Bool
+
 func nativeDateTimeFormat(args []any) (any, error) {
 	requested, err := canonicalLocales(argument(args, 0))
 	if err != nil {
@@ -1996,7 +2005,7 @@ func nativeDateTimeFormat(args []any) (any, error) {
 		//     fix round 2 refused those too).
 		h24Ties := requestedSkeleton.size[fieldHour] == 1 || requestedSkeleton.size[fieldSecond] == 2 ||
 			(!requestedSkeleton.has(fieldSecond) && requestedSkeleton.size[fieldFraction] >= 2)
-		if locale.tag == "en-GB" && requestedSkeleton.char[fieldHour] == 'k' && h24Ties &&
+		if !liftedDateRefusals.Load() && locale.tag == "en-GB" && requestedSkeleton.char[fieldHour] == 'k' && h24Ties &&
 			!requestedSkeleton.has(fieldMinute) && !requestedSkeleton.has(fieldZone) &&
 			(requestedSkeleton.has(fieldSecond) || requestedSkeleton.has(fieldFraction)) {
 			return nil, rangeError("date formatting in en-GB with hourCycle h24, an hour and a second but no minute is not supported")
@@ -2032,7 +2041,7 @@ func nativeDateTimeFormat(args []any) (any, error) {
 		// un-refused sweep against Node (p2, with the refusal disabled)
 		// showed actually differs, not a guessed superset.
 		hourChar := requestedSkeleton.char[fieldHour]
-		if locale.tag == "en-GB" && requestedSkeleton.has(fieldHour) && requestedSkeleton.size[fieldHour] == 1 &&
+		if !liftedDateRefusals.Load() && locale.tag == "en-GB" && requestedSkeleton.has(fieldHour) && requestedSkeleton.size[fieldHour] == 1 &&
 			requestedSkeleton.has(fieldMinute) && requestedSkeleton.char[fieldZone] == 'O' &&
 			(hourChar == 'H' || hourChar == 'k') {
 			effectiveSecond, effectiveSecondWidth := requestedSkeleton.has(fieldSecond), requestedSkeleton.size[fieldSecond]
@@ -2200,26 +2209,29 @@ func optionsSkeleton(options *dateTimeOptions, cycle, extensionCycle string) (sk
 //     cycle used to h24 ("8:07:03", not "08:07:03") — and, the mirror
 //     case, en-GB-u-hc-h23 stays width 2 even once hourCycle: 'h11'
 //     overrides the cycle to h11 ("08:07:03 am", not "8:07:03 am").
-//   - A locale whose own default cycle is 12-hour (en-US, en-CA): a
-//     24-hour-family extension (h23/h24) locks width 2 the same way, but
-//     absent that, width follows the actual resolved cycle's own family
-//     (width 2 for h23/h24, width 1 for h11/h12) — e.g. plain en-CA with
-//     an explicit hourCycle: 'h23' option (no extension at all) gives
-//     width 2 ("08:07:03"), unlike en-GB's equivalent (hourCycle option
-//     alone, no extension, never changes width for en-GB).
+//   - A locale whose own default cycle is 12-hour (en-US, en-CA): width 2
+//     as soon as EITHER the extension or the resolved cycle names a
+//     24-hour-family cycle, whichever of the two got there. So plain en-CA
+//     with an explicit hourCycle: 'h23' option and no extension at all
+//     gives width 2 ("08:07:03"), unlike en-GB's equivalent (an hourCycle
+//     option alone never changes en-GB's width); and en-US-u-hc-h11 with
+//     that same option gives width 2 as well ("05:45:30"), the
+//     extension's own 12-hour family notwithstanding.
 //
-// Both rules collapse to the same shape once phrased against the locale's
-// own default family: width 2 iff the extension (when present) is
-// 24-hour-family, OR — only for a 12-hour-family-default locale — the
-// resolved cycle itself is 24-hour-family.
+// bestPattern's own matching happens to re-pad several of the widths asked
+// for here, so today's strings come out right either way; the rule is
+// stated in full regardless, so a later change in adjust() cannot silently
+// drop a width Node keeps (fix round 4, finding 1 — the 12-hour-default
+// locales' second clause used to be missing, which was invisible in every
+// formatted string but wrong).
 func stylePatternPadsHour(locale *dateLocale, extensionCycle, cycle string) bool {
-	if extensionCycle != "" {
-		return family24(extensionCycle)
-	}
 	if family24(locale.defaultHourCycle) {
+		if extensionCycle != "" {
+			return family24(extensionCycle)
+		}
 		return true
 	}
-	return family24(cycle)
+	return family24(extensionCycle) || family24(cycle)
 }
 
 // stylePattern is the pattern for dateStyle and timeStyle. locale.timeStyles

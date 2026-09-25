@@ -582,6 +582,81 @@ accepted), runtime-error rate 84→83 (25.5%→25.2%); the `threw: date locale
 en-CA` row is gone from the blockers table and `threw: date locale id-ID`
 (out of scope) remains. So AC4's finding holds with main's current corpus.
 
+## Fix round 4 (2026-09-25)
+
+A fourth review found three Important issues in round 3's work. All three
+are about the *evidence*, not the output: the runtime's formatted strings
+were already right on every row the review named — re-measured here, 2,700
+Node-24-vs-runtime combinations of the three locales, all five `-u-hc-`
+extensions, every `hourCycle`×`hour12` pair and all four `timeStyle`s at
+three instants, **0 diffs before the change as well as after**. What was
+wrong was a rule stated one way and coded another, and two tests that
+could not have caught it.
+
+1. **[Important] `stylePatternPadsHour` did not implement its own
+   comment.** With a `-u-hc-` extension present it returned
+   `family24(extensionCycle)` and never looked at the resolved cycle, so
+   the 12-hour-default locales lost their second clause: `en-US-u-hc-h11`
+   or `en-CA-u-hc-h12` with `hourCycle: 'h23'`/`'h24'` (or
+   `hour12: false`) asked for hour width 1 where Node pads to 2. **The
+   formatted strings were right anyway** — `bestPattern`'s own candidate
+   matching re-pads that hour, which is exactly why round 3's 7,200-case
+   style probe reported no diff and why a string-level test alone could
+   never see this. Fixed to the rule Node actually follows, recorded over
+   the full 15-tag × 4-cycle grid at `timeStyle: 'medium'`:
+   - a 24-hour-default locale (en-GB): the tag's own extension alone
+     decides — width 1 iff it names h11/h12, width 2 with no extension or
+     a 24-family one, whatever `hourCycle`/`hour12` then resolves to;
+   - a 12-hour-default locale (en-US, en-CA): width 2 as soon as *either*
+     the extension or the resolved cycle is 24-family.
+   The comment now describes the code, and says in as many words that
+   `bestPattern` re-pads some of these today, so the width cannot be
+   dropped silently if `adjust` changes. The new
+   `TestTheStyleHourWidthRuleMatchesNode`
+   (`internal/jsrun/intl_internal_test.go`) pins the grid as 15 rows of
+   Node-recorded widths; it failed on exactly the 8 rows the review named
+   before the fix.
+
+2. **[Important] Nothing committed crossed an extension with
+   `dateStyle`/`timeStyle` or with `hour12`.** The round-3 evidence for
+   that cross-product lived only in the throwaway probe harness. Added a
+   `dateProbes` group to `scripts/js-parity/record.mjs` recording the whole
+   matrix from Node 24 — en-US/en-CA/en-GB × `''`/`-u-hc-h11`/`-u-hc-h12`/
+   `-u-hc-h23`/`-u-hc-h24` × 15 `hourCycle`×`hour12` pairs = 225 entries,
+   each holding six formatted *strings* per instant (`timeStyle` medium and
+   short, `dateStyle`+`timeStyle` short/medium and full/full,
+   `toLocaleTimeString` long, `toLocaleString` medium/medium) at 05:45:30
+   and at 00:45:30 — the first shows hour width in either family, the
+   second separates h11's "0" from h12's "12" and h23's "00" from h24's
+   "24". Teeth checked: with `stylePatternPadsHour` reduced to
+   `family24(cycle)`, 63 of the 225 entries fail, naming the locale, the
+   options and both strings.
+
+3. **[Important] The option sweep let an over-refusal stay green.** It
+   `continue`d on a refusal without ever comparing to the golden, and its
+   `dateSweepRefusal` mirror is hand-written to agree with the code — so
+   widening both together (round 2's offset refusal covered 377 shapes that
+   already matched Node) looked correct. `TestTheDateOptionSweepMatchesNode`
+   now records every shape it saw refused and formats them all a second
+   time with the refusals lifted (`LiftDateRefusalsForTest`, a
+   test-only switch on the two `nativeDateTimeFormat` conditions), and
+   fails if the unrefused answer equals Node's. RED evidence: widening
+   `h24Ties` to `true` in the code *and* in the test mirror — round 2's
+   exact mistake — now fails with 8 named shapes ("refused, but with the
+   refusal lifted it answers …, exactly as Node does"), where before it
+   passed.
+   `dateSweepRefusal` is kept deliberately rather than shared with the
+   code: asking the code which shapes it refuses would only assert that it
+   refuses what it refuses. The mirror catches drift in a refusal's shape
+   or wording (unchanged, exact wording), the lifted pass catches a refusal
+   wider than the difference it names; neither substitutes for the other.
+
+Verification: `go build ./...`, `go vet ./...`, `go test ./...` (all
+packages pass), `go test -race ./internal/jsrun/` (55s, pass), and
+`node scripts/js-parity/record.mjs --check` clean. `dates.json` gained the
+new probe only — no previously recorded value changed — and no formatted
+output changed anywhere, so the corpus scoreboard is untouched.
+
 # Related Files
 
 # Attachments

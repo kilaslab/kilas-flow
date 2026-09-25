@@ -268,6 +268,19 @@ func dateSweepRefusal(locale string, options map[string]any) string {
 // en-US) — or, for the narrow shapes dateSweepRefusal names, pins the
 // named RangeError the runtime refuses them with instead of silently
 // answering differently from Node.
+//
+// A refusal is only ever allowed to stand in for a real difference, so
+// every shape refused here is formatted a second time with the refusals
+// lifted, and its answer has to differ from Node's (fix round 4, finding
+// 3). Without that, an over-refusal stayed green: dateSweepRefusal is
+// written to mirror the code, so widening both together hid the fact that
+// nothing was wrong with those shapes in the first place — which is exactly
+// how fix round 2's offset refusal came to cover 377 shapes that already
+// matched Node. dateSweepRefusal stays a separate, hand-written statement
+// of the rule on purpose (asking the code itself which shapes it refuses
+// would only assert that it refuses what it refuses): it is what catches a
+// drift in the refusal's shape or its wording, while the lifted pass below
+// is what catches a refusal wider than the bug it names.
 func TestTheDateOptionSweepMatchesNode(t *testing.T) {
 	var golden struct {
 		Instants []float64 `json:"instants"`
@@ -281,19 +294,19 @@ func TestTheDateOptionSweepMatchesNode(t *testing.T) {
 	instants, _ := json.Marshal(golden.Instants)
 	locales := []string{"en-US", "en-CA", "en-GB"}
 	encodedLocales, _ := json.Marshal(locales)
-	const chunk = 400
-	for start := 0; start < len(golden.Cases); start += chunk {
-		cases := golden.Cases[start:min(start+chunk, len(golden.Cases))]
-		type entry struct {
-			Options map[string]any `json:"options"`
-			Zone    string         `json:"zone"`
-		}
-		entries := make([]entry, len(cases))
-		for index, c := range cases {
-			entries[index] = entry{Options: c.Options, Zone: c.Zone}
-		}
-		encoded, _ := json.Marshal(entries)
-		result := mustRun(t, newRunner(), jsrun.Task{Source: fmt.Sprintf(`const instants = %s
+	type entry struct {
+		Options map[string]any `json:"options"`
+		Zone    string         `json:"zone"`
+	}
+	// format runs every entry in all three locales at all three instants,
+	// in chunks, and reports each entry's strings by locale — or the single
+	// error text formatting it threw.
+	format := func(entries []entry) []map[string][]string {
+		out := make([]map[string][]string, 0, len(entries))
+		const chunk = 400
+		for start := 0; start < len(entries); start += chunk {
+			encoded, _ := json.Marshal(entries[start:min(start+chunk, len(entries))])
+			result := mustRun(t, newRunner(), jsrun.Task{Source: fmt.Sprintf(`const instants = %s
 const locales = %s
 return [{ json: { out: %s.map(function (entry) {
   const byLocale = {}
@@ -305,23 +318,61 @@ return [{ json: { out: %s.map(function (entry) {
   })
   return byLocale
 }) } }]`, instants, encodedLocales, encoded)})
-		for index, got := range result.Items[0].JSON["out"].([]any) {
-			byLocale := got.(map[string]any)
-			for _, locale := range locales {
-				var have []string
-				for _, text := range byLocale[locale].([]any) {
-					have = append(have, text.(string))
-				}
-				if refusal := dateSweepRefusal(locale, cases[index].Options); refusal != "" {
-					if len(have) != 1 || !strings.Contains(have[0], refusal) {
-						t.Errorf("%s %s options %v:\n got  %q\n want a RangeError containing %q", locale, cases[index].Zone, cases[index].Options, have, refusal)
+			for _, got := range result.Items[0].JSON["out"].([]any) {
+				byLocale := make(map[string][]string, len(locales))
+				for locale, texts := range got.(map[string]any) {
+					for _, text := range texts.([]any) {
+						byLocale[locale] = append(byLocale[locale], text.(string))
 					}
+				}
+				out = append(out, byLocale)
+			}
+		}
+		return out
+	}
+	entries := make([]entry, len(golden.Cases))
+	for index, c := range golden.Cases {
+		entries[index] = entry{Options: c.Options, Zone: c.Zone}
+	}
+	type refusal struct {
+		index  int
+		locale string
+	}
+	var refused []refusal
+	for index, byLocale := range format(entries) {
+		for _, locale := range locales {
+			have := byLocale[locale]
+			if want := dateSweepRefusal(locale, entries[index].Options); want != "" {
+				if len(have) != 1 || !strings.Contains(have[0], want) {
+					t.Errorf("%s %s options %v:\n got  %q\n want a RangeError containing %q", locale, entries[index].Zone, entries[index].Options, have, want)
 					continue
 				}
-				if want := cases[index].Want[locale]; !reflect.DeepEqual(have, want) {
-					t.Errorf("%s %s options %v:\n got  %q\n want %q", locale, cases[index].Zone, cases[index].Options, have, want)
-				}
+				refused = append(refused, refusal{index, locale})
+				continue
 			}
+			if want := golden.Cases[index].Want[locale]; !reflect.DeepEqual(have, want) {
+				t.Errorf("%s %s options %v:\n got  %q\n want %q", locale, entries[index].Zone, entries[index].Options, have, want)
+			}
+		}
+	}
+	if len(refused) == 0 {
+		return
+	}
+	at := make(map[int]int, len(refused))
+	var lifted []entry
+	for _, r := range refused {
+		if _, seen := at[r.index]; !seen {
+			at[r.index] = len(lifted)
+			lifted = append(lifted, entries[r.index])
+		}
+	}
+	restore := jsrun.LiftDateRefusalsForTest()
+	defer restore()
+	answers := format(lifted)
+	for _, r := range refused {
+		have := answers[at[r.index]][r.locale]
+		if want := golden.Cases[r.index].Want[r.locale]; reflect.DeepEqual(have, want) {
+			t.Errorf("%s %s options %v: refused, but with the refusal lifted it answers %q, exactly as Node does — this shape does not need refusing", r.locale, entries[r.index].Zone, entries[r.index].Options, have)
 		}
 	}
 }

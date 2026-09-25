@@ -51,6 +51,14 @@ func SetHeapReaderForTest(read func() uint64) (restore func()) {
 	}
 }
 
+// LiftDateRefusalsForTest turns off the two en-GB date refusals, so a test
+// can see the answer the runtime would otherwise have given and show that it
+// really does differ from Node's.
+func LiftDateRefusalsForTest() (restore func()) {
+	liftedDateRefusals.Store(true)
+	return func() { liftedDateRefusals.Store(false) }
+}
+
 // HeapObjectBytesForTest is the watchdog's real measurement.
 func HeapObjectBytesForTest() uint64 { return heapObjectBytes() }
 

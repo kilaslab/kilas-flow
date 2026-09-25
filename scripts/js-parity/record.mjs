@@ -286,6 +286,33 @@ const dateProbes = [
 	{ name: "Date#toLocale* letter the hour they default in the locale's own cycle, not the negotiated one", code: "const at = [Date.UTC(2026, 10, 12, 0, 45, 30), Date.UTC(2026, 0, 1, 12, 0, 0), Date.UTC(2026, 2, 1, 17, 5, 9)].map(ms => new Date(ms))\nreturn ['en', 'en-US', 'en-CA', 'en-GB', 'en-US-u-hc-h11', 'en-US-u-hc-h24', 'en-CA-u-hc-h11', 'en-CA-u-hc-h24', 'en-GB-u-hc-h11', 'en-GB-u-hc-h24'].flatMap(locale => [undefined, 'h11', 'h12', 'h23', 'h24'].flatMap(hourCycle => at.map(date => [date.toLocaleString(locale, { timeZone: 'UTC', hourCycle }), date.toLocaleTimeString(locale, { timeZone: 'UTC', hourCycle })].join(' | '))))" },
 	{ name: 'the same hour, asked for explicitly, uses the cycle that was asked for', code: "const at = new Date(Date.UTC(2026, 10, 12, 0, 45, 30))\nreturn ['en-US', 'en-CA', 'en-GB', 'en-US-u-hc-h11', 'en-GB-u-hc-h24'].flatMap(locale => [undefined, 'h11', 'h12', 'h23', 'h24'].map(hourCycle => [at.toLocaleTimeString(locale, { timeZone: 'UTC', hourCycle, hour: 'numeric', minute: 'numeric', second: 'numeric' }), new Intl.DateTimeFormat(locale, { timeZone: 'UTC', hourCycle, hour: 'numeric', minute: 'numeric', second: 'numeric' }).format(at)].join(' | ')))" },
 	{ name: 'toLocaleDateString refuses a timeStyle and toLocaleTimeString a dateStyle, even alongside its own style', code: "const at = new Date(Date.UTC(2026, 2, 1, 17, 5, 9))\nconst threw = (run) => { try { return run() } catch (error) { return String(error) } }\nreturn [\n  threw(() => at.toLocaleDateString('en-GB', { timeZone: 'UTC', timeStyle: 'short' })),\n  threw(() => at.toLocaleDateString('en-GB', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' })),\n  threw(() => at.toLocaleTimeString('en-CA', { timeZone: 'UTC', dateStyle: 'short' })),\n  threw(() => at.toLocaleTimeString('en-CA', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' })),\n  at.toLocaleString('en-CA', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' }),\n  new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'short' }).format(at),\n]" },
+	// FEAT-9we7kw fix round 4: the whole cross-product of a tag's own -u-hc-
+	// extension, an hourCycle or hour12 option, and the styles — where the
+	// hour's own width comes from the locale's default family and the
+	// extension rather than from the cycle in force (en-US-u-hc-h11 with
+	// hourCycle: 'h23' pads, "05:45:30", while en-GB-u-hc-h11 with the same
+	// option does not, "5:45:30"). 05:45:30 shows the width in either
+	// family; midnight shows h11's "0" against h12's "12" and h23's "00"
+	// against h24's "24".
+	{
+		name: "a tag's own -u-hc- extension crossed with hourCycle, hour12 and the styles",
+		code: `const at = [Date.UTC(2026, 2, 1, 5, 45, 30), Date.UTC(2026, 10, 12, 0, 45, 30)]
+const cycles = []
+for (const hourCycle of [undefined, 'h11', 'h12', 'h23', 'h24']) for (const hour12 of [undefined, true, false]) cycles.push({ hourCycle, hour12 })
+return ['en-US', 'en-CA', 'en-GB'].flatMap(base => ['', '-u-hc-h11', '-u-hc-h12', '-u-hc-h23', '-u-hc-h24'].flatMap(extension => cycles.map(cycle => {
+  const locale = base + extension
+  const styled = (extra) => new Intl.DateTimeFormat(locale, Object.assign({ timeZone: 'UTC' }, cycle, extra))
+  const label = locale + ' hourCycle=' + cycle.hourCycle + ' hour12=' + cycle.hour12
+  return [label].concat(at.flatMap(ms => [
+    styled({ timeStyle: 'medium' }).format(ms),
+    styled({ timeStyle: 'short' }).format(ms),
+    styled({ dateStyle: 'short', timeStyle: 'medium' }).format(ms),
+    styled({ dateStyle: 'full', timeStyle: 'full' }).format(ms),
+    new Date(ms).toLocaleTimeString(locale, Object.assign({ timeZone: 'UTC', timeStyle: 'long' }, cycle)),
+    new Date(ms).toLocaleString(locale, Object.assign({ timeZone: 'UTC', dateStyle: 'medium', timeStyle: 'medium' }, cycle)),
+  ])).join(' | ')
+})))`,
+	},
 ];
 
 // ---- Intl.NumberFormat and Number.prototype.toLocaleString -----------------
