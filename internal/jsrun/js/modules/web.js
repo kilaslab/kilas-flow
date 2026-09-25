@@ -91,9 +91,11 @@
       if (utf8 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) bytes = bytes.subarray(3);
       if (!utf8 && bytes[0] === 0xff && bytes[1] === 0xfe) bytes = bytes.subarray(2);
     }
-    var text = kit.native('codec.encode', bytes, utf8 ? 'utf8' : 'utf16le');
-    if (this._fatal && utf8 && text.indexOf('�') >= 0 && !kit.native('codec.validUTF8', bytes)) {
-      var error = new TypeError('The encoded data was not valid for encoding utf-8');
+    // UTF-16LE has its own native rather than Buffer's codec, which drops an
+    // odd trailing byte where TextDecoder reports one (BUG-0592hz).
+    var text = utf8 ? kit.native('codec.encode', bytes, 'utf8') : kit.native('codec.textUTF16LE', bytes);
+    if (this._fatal && text.indexOf('�') >= 0 && !kit.native(utf8 ? 'codec.validUTF8' : 'codec.validUTF16LE', bytes)) {
+      var error = new TypeError('The encoded data was not valid for encoding ' + this._encoding);
       error.code = 'ERR_ENCODING_INVALID_ENCODED_DATA';
       throw error;
     }

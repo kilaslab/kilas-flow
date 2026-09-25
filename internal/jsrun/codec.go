@@ -30,6 +30,25 @@ func init() {
 		}
 		return utf8.Valid(data), nil
 	})
+	// TextDecoder's UTF-16LE is not Buffer's: it reports an odd byte left at
+	// the end rather than dropping it, and fatal mode needs to know whether
+	// anything was replaced.
+	registerNative("codec.textUTF16LE", func(args []any) (any, error) {
+		data, err := argBytes(args, 0, "the bytes")
+		if err != nil {
+			return nil, err
+		}
+		text, _ := decodeUTF16LEWHATWG(data)
+		return text, nil
+	})
+	registerNative("codec.validUTF16LE", func(args []any) (any, error) {
+		data, err := argBytes(args, 0, "the bytes")
+		if err != nil {
+			return nil, err
+		}
+		_, valid := decodeUTF16LEWHATWG(data)
+		return valid, nil
+	})
 	registerNative("codec.encode", func(args []any) (any, error) {
 		data, err := argBytes(args, 0, "the bytes")
 		if err != nil {
@@ -257,4 +276,55 @@ func decodeUTF8WHATWG(data []byte) string {
 		out.WriteRune(utf8.RuneError) // a valid prefix truncated at the end of the buffer
 	}
 	return out.String()
+}
+
+// decodeUTF16LEWHATWG turns bytes into a string the way Node's
+// TextDecoder('utf-16le') does: the WHATWG Encoding Standard's shared UTF-16
+// decoder (https://encoding.spec.whatwg.org/#shared-utf-16-decoder), little
+// endian, written from the spec's algorithm. A surrogate that is not half of
+// a pair becomes U+FFFD, and so does an odd byte left at the end; but a lead
+// surrogate and an odd byte both left at the end are one U+FFFD, because the
+// spec reports one error for whatever is pending when the input runs out
+// (BUG-0592hz). The second result is false when anything was replaced, which
+// is what the decoder's fatal mode turns into an error.
+//
+// Buffer#toString('utf16le') does not come here: Node's Buffer drops an odd
+// trailing byte without a word, and encodeBytes keeps that.
+func decodeUTF16LEWHATWG(data []byte) (string, bool) {
+	var out strings.Builder
+	out.Grow(len(data))
+	valid := true
+	replace := func() {
+		out.WriteRune(utf8.RuneError)
+		valid = false
+	}
+
+	var lead rune // a lead surrogate waiting for its trail, or 0
+	for index := 0; index+1 < len(data); index += 2 {
+		unit := rune(data[index]) | rune(data[index+1])<<8
+		isTrail := unit >= 0xdc00 && unit <= 0xdfff
+		if lead != 0 {
+			if isTrail {
+				out.WriteRune(utf16.DecodeRune(lead, unit))
+				lead = 0
+				continue
+			}
+			// The lead has no trail: it becomes U+FFFD, and this unit is
+			// read afresh below.
+			lead = 0
+			replace()
+		}
+		switch {
+		case unit >= 0xd800 && unit <= 0xdbff:
+			lead = unit
+		case isTrail:
+			replace()
+		default:
+			out.WriteRune(unit)
+		}
+	}
+	if lead != 0 || len(data)%2 == 1 {
+		replace()
+	}
+	return out.String(), valid
 }

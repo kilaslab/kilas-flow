@@ -124,6 +124,50 @@ func TestTextEncoderAndDecoderFollowTheEncodingStandard(t *testing.T) {
 	})
 }
 
+// BUG-0592hz: TextDecoder's fatal mode refuses malformed UTF-16 as it does
+// malformed UTF-8, and its lenient mode puts U+FFFD where Node does. The
+// expected values are Node 24.16's, run by hand: a lone surrogate either way
+// round, a lead surrogate followed by something else, and an odd byte left at
+// the end are each an error, and a lead surrogate and an odd byte both left at
+// the end are one U+FFFD between them, not two.
+func TestTextDecoderFatalModeRefusesMalformedUTF16(t *testing.T) {
+	expectJSON(t, strings.Join([]string{
+		"const cases = { loneLead: [0x00, 0xd8], loneTrail: [0x00, 0xdc, 0x41, 0], leadThenA: [0x00, 0xd8, 0x41, 0], odd: [0x41, 0, 0x42], leadAndOdd: [0x00, 0xd8, 0x42] }",
+		"function strict(label, bytes) {",
+		"  try { return new TextDecoder(label, { fatal: true }).decode(new Uint8Array(bytes)) }",
+		"  catch (error) { return error.name + ' ' + error.code + ' ' + error.message }",
+		"}",
+		"function codes(text) { return Array.from(text, (char) => char.codePointAt(0).toString(16)).join(',') }",
+		"const out = {}",
+		"for (const [name, bytes] of Object.entries(cases)) {",
+		"  out[name] = strict('utf-16le', bytes)",
+		"  out[name + 'Alias'] = strict('utf-16', bytes)",
+		"  out[name + 'Lenient'] = codes(new TextDecoder('utf-16le').decode(new Uint8Array(bytes)))",
+		"}",
+		"out.pair = codes(strict('utf-16le', [0x3d, 0xd8, 0x00, 0xde]))",
+		"out.utf8 = strict('utf-8', [0xff])",
+		"return [{ json: out }]",
+	}, "\n"), map[string]any{
+		"loneLead":          "TypeError ERR_ENCODING_INVALID_ENCODED_DATA The encoded data was not valid for encoding utf-16le",
+		"loneTrail":         "TypeError ERR_ENCODING_INVALID_ENCODED_DATA The encoded data was not valid for encoding utf-16le",
+		"leadThenA":         "TypeError ERR_ENCODING_INVALID_ENCODED_DATA The encoded data was not valid for encoding utf-16le",
+		"odd":               "TypeError ERR_ENCODING_INVALID_ENCODED_DATA The encoded data was not valid for encoding utf-16le",
+		"leadAndOdd":        "TypeError ERR_ENCODING_INVALID_ENCODED_DATA The encoded data was not valid for encoding utf-16le",
+		"loneLeadAlias":     "TypeError ERR_ENCODING_INVALID_ENCODED_DATA The encoded data was not valid for encoding utf-16le",
+		"loneTrailAlias":    "TypeError ERR_ENCODING_INVALID_ENCODED_DATA The encoded data was not valid for encoding utf-16le",
+		"leadThenAAlias":    "TypeError ERR_ENCODING_INVALID_ENCODED_DATA The encoded data was not valid for encoding utf-16le",
+		"oddAlias":          "TypeError ERR_ENCODING_INVALID_ENCODED_DATA The encoded data was not valid for encoding utf-16le",
+		"leadAndOddAlias":   "TypeError ERR_ENCODING_INVALID_ENCODED_DATA The encoded data was not valid for encoding utf-16le",
+		"loneLeadLenient":   "fffd",
+		"loneTrailLenient":  "fffd,41",
+		"leadThenALenient":  "fffd,41",
+		"oddLenient":        "41,fffd",
+		"leadAndOddLenient": "fffd",
+		"pair":              "1f600",
+		"utf8":              "TypeError ERR_ENCODING_INVALID_ENCODED_DATA The encoded data was not valid for encoding utf-8",
+	})
+}
+
 func TestAtobAndBtoaFollowTheWebSpec(t *testing.T) {
 	expectJSON(t, strings.Join([]string{
 		"let wide = null",
