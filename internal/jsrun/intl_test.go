@@ -197,34 +197,65 @@ func TestDatesMatchTheRecordedNodeGoldens(t *testing.T) {
 //     a per-field width rule adjust() can express, and not a bug outside
 //     en-GB — en-US/en-CA already match Node here (fix round 2, finding 2)
 //     — so this is refused by name only for en-GB, and only without a zone
-//     (fix round 2, finding 3).
-//   - en-GB's hour+minute+seconds pads a 'numeric' (not '2-digit') hour
-//     once an offset zone (timeZoneName: 'shortOffset'/'longOffset') joins.
-//     'shortOffset' breaks only when the effective second is 'numeric'
-//     width (an explicit second: 'numeric', or fractionalSecondDigits
-//     implying one with no explicit second — see forMatching's auto-add).
-//     'longOffset' breaks at either second width, whenever a second is
-//     present at all. No anchor can express either width without also,
-//     and wrongly, padding a case that already matches Node (tried and
-//     reverted — see the comment on en-GB's "Hmm"/"Hmmss" entries) —
-//     refused by name instead.
+//     (fix round 2, finding 3). A '2-digit' hour ties only against a
+//     '2-digit' second, or against two or three fractional digits with no
+//     second of its own; the other widths already match Node.
+//   - en-GB's hour+minute+seconds pads the hour once an offset zone
+//     (timeZoneName: 'shortOffset'/'longOffset') joins. Which widths break
+//     depends on the offset style and on the hour cycle: 'shortOffset'
+//     breaks only under a 24-hour cycle that is not h24, with a 'numeric'
+//     minute and an effective second that is not '2-digit'; 'longOffset'
+//     under h24 breaks on those same widths, and under h23 also when only
+//     one of the two is asked for. No anchor can express any of those
+//     widths without also, and wrongly, padding a case that already
+//     matches Node (tried and reverted — see the comment on en-GB's
+//     "Hmm"/"Hmmss" entries) — refused by name instead.
+//
+// Neither refusal reaches a 12-hour cycle: that hour renders at the width
+// it asked for whichever candidate wins, so nothing can differ there (fix
+// round 3 — both conditions had over-refused, the offset one widely).
 func dateSweepRefusal(locale string, options map[string]any) string {
-	_, hour := options["hour"]
+	hour, hourGiven := options["hour"]
 	_, minute := options["minute"]
 	_, second := options["second"]
 	_, fraction := options["fractionalSecondDigits"]
 	_, zone := options["timeZoneName"]
-	if locale == "en-GB" && options["hourCycle"] == "h24" && hour && !minute && !zone && (second || fraction) {
+	if locale != "en-GB" || !hourGiven {
+		return ""
+	}
+	// The cycle the hour is lettered with. The sweep never combines
+	// hour12 with hourCycle and never carries a -u-hc- extension, so
+	// hour12 simply picks en-GB's 12-hour cycle or its default 24-hour
+	// one, and hourCycle speaks for itself.
+	cycle, _ := options["hourCycle"].(string)
+	if hour12, given := options["hour12"].(bool); given {
+		cycle = map[bool]string{true: "h12", false: "h23"}[hour12]
+	}
+	if cycle == "" {
+		cycle = "h23"
+	}
+	digits, _ := options["fractionalSecondDigits"].(float64)
+	ties := hour == "numeric" || options["second"] == "2-digit" || (!second && digits >= 2)
+	if cycle == "h24" && ties && !minute && !zone && (second || fraction) {
 		return "en-GB with hourCycle h24, an hour and a second but no minute is not supported"
 	}
-	if locale == "en-GB" && options["hour"] == "numeric" && minute && (second || fraction) {
-		effectiveSecondWidth1 := options["second"] == "numeric" || (!second && fraction)
-		switch options["timeZoneName"] {
-		case "shortOffset":
-			if effectiveSecondWidth1 {
-				return "en-GB with timeZoneName 'shortOffset', an hour, a minute and a second is not supported"
-			}
-		case "longOffset":
+	// The offset refusal is the 'numeric' hour's alone: a '2-digit' one
+	// already renders at width 2 whichever anchor wins.
+	if hour != "numeric" || !minute || !(second || fraction) || (cycle != "h23" && cycle != "h24") {
+		return ""
+	}
+	minuteIsNumeric, secondIs2Digit := options["minute"] == "numeric", options["second"] == "2-digit"
+	switch options["timeZoneName"] {
+	case "shortOffset":
+		if cycle == "h23" && minuteIsNumeric && !secondIs2Digit {
+			return "en-GB with timeZoneName 'shortOffset', an hour, a minute and a second is not supported"
+		}
+	case "longOffset":
+		breaks := minuteIsNumeric || !secondIs2Digit
+		if cycle == "h24" {
+			breaks = minuteIsNumeric && !secondIs2Digit
+		}
+		if breaks {
 			return "en-GB with timeZoneName 'longOffset', an hour, a minute and a second is not supported"
 		}
 	}

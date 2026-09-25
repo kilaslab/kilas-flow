@@ -450,7 +450,7 @@ bytes, +0.042%); cumulative from the pre-feature baseline: +85,152 bytes
 (+0.216%).
 
 **Corpus scoreboard (AC4), after rebasing onto main's merged Code-node
-corpus (FEAT-afkx3k)**: `make js-corpus` (151 templates verified against
+corpus (FEAT-afkx3k)** (fix round 2): `make js-corpus` (151 templates verified against
 MANIFEST.json) then `make js-corpus-baseline` (regenerated
 `internal/jsrun/corpus/baseline.json`/`BASELINE.md` from a fresh run, not
 hand-edited). Diff against the pre-existing (main) baseline: exactly one
@@ -459,6 +459,128 @@ matching the corpus task's own projection of 1 (en-CA) exactly. No en-GB
 blocker existed in the corpus to begin with, so en-GB unblocked 0. Overall:
 run-without-error 224→225 (68.3%→68.6% of accepted), runtime-error rate
 104→103 (31.7%→31.4%).
+
+## Fix round 3 (2026-09-25)
+
+A third review found fix round 2 had guessed two of its three answers.
+This round finished the WIP commit `ba3791e` left unreviewed, and then
+corrected what the WIP itself had guessed wrong. **Method, this time, is
+the finding**: instead of reasoning about which shapes "should" differ,
+every claim here is a recorded diff between Node 24 and this runtime over
+a generated cross-product, with the refusals *disabled* for one run so
+the set of shapes that genuinely cannot match is observed rather than
+predicted. 34,680 combinations (Intl.DateTimeFormat and `Date#toLocale*`,
+en / en-US / en-CA / en-GB, every `-u-hc-` extension, every
+`hourCycle`×`hour12` pair, every hour/minute/second/fractionalSecond
+width, four `timeZoneName` styles, three zones): **0 silent diffs, 335
+named refusals, and all 335 genuinely differ** (unrefusing the build
+leaves exactly those 335 differing and nothing else), so the refusals are
+now minimal as well as sound.
+
+One durable caveat discovered while building the harness, and the reason
+it records one shape per *fresh* process: **Node's own answer for these
+shapes depends on isolate warm-up order.** V8 caches the pattern it chose
+for a (locale, skeleton) pair, so whichever request shape touches that
+pair first in an isolate decides the answer for every later one —
+`Date#toLocaleTimeString('en-US', {hourCycle:'h11'})` alone is
+"12:45:30 AM", but "0:45:30 AM" if an `Intl.DateTimeFormat` with an
+explicit hour and the same cycle was constructed first in the same
+process. The probe therefore runs one `worker_threads` worker (one
+isolate) per case. Recording the same 34,680 cases both ways agreed
+exactly, so the committed goldens are not affected — but the per-shape
+answer is what "matches Node" has to mean, and a future spot-check that
+disagrees with a golden should suspect this before suspecting the golden.
+
+1. **[Important] The `-u-hc-` hour width was fine; the `-u-hc-` hour
+   *cycle* was not, and only on the defaulted-hour path.** Round 2's
+   `cycleFromExtension` boolean was replaced (in the WIP) by
+   `stylePatternPadsHour`, and the probe confirms that part is right:
+   7,200 dateStyle/timeStyle combinations and 1,200 `resolvedOptions()`
+   combinations match Node exactly, including `en-GB-u-hc-h11` against an
+   explicit `hourCycle: 'h24'` and every mirror of it. What was still
+   wrong was the *digit*: the hour `Date#toLocaleString` /
+   `toLocaleTimeString` add for the caller (never the
+   `Intl.DateTimeFormat` constructor, whose own defaults are date-only) is
+   lettered in the locale's own cycle, not the negotiated one. The WIP
+   modelled this as "a defaulted hour downgrades h11→h12 and h24→h23",
+   which is right only when the tag carries no extension. Node's actual
+   rule, recorded across all four locales × five extensions × fifteen
+   cycle options: the defaulted hour uses the *standard* member of the
+   negotiated cycle's family (h12 or h23) unless the tag's own `-u-hc-`
+   extension names that same family, in which case it uses whatever
+   member the extension named — so `en-US-u-hc-h11` is "0:45:30 AM" and
+   keeps h11's digits even against an explicit `hourCycle: 'h12'`, while
+   `en-US-u-hc-h24` against `hourCycle: 'h12'` drops the extension
+   outright and gives "12:45:30 AM". Implemented as `defaultedHourCycle`
+   in intl.go, used only where this function's own defaulting added the
+   hour; the explicit-hour path (`withHourCycle` on the requested cycle)
+   and the style path are untouched and still match. Fixed 128 diffs.
+2. **[Important] The offset refusal's narrowed predicate is correct as
+   the WIP left it — verified, not assumed.** Round 2 refused 584 en-GB
+   combinations of which 377 already matched Node. The WIP narrowed it to
+   a per-hour-cycle, per-width condition; unrefusing the build shows that
+   condition now coincides *exactly* with the shapes that differ: 171
+   refusals in the 12,960-combination offset sweep, 171 genuine diffs, no
+   overlap either way. The predicate's own shape, for the record:
+   `shortOffset` breaks only at h23 with a 'numeric' minute and an
+   effective second that is not '2-digit'; `longOffset` breaks on those
+   same widths at h24, and at h23 whenever either one of them holds.
+3. **[Important] The h24 append-item refusal was itself over-refusing.**
+   Round 2's condition caught every hour width. Node says a '2-digit'
+   hour is already right with an explicit `second: 'numeric'` (at any
+   fraction width) and with a lone `fractionalSecondDigits: 1`; it
+   differs only with `second: '2-digit'`, or with 2–3 fractional digits
+   and no explicit second. That boundary is a tie's distance, not a rule
+   with a reason, so it is recorded in the code comment as the table it
+   is. A first attempt at "a '2-digit' hour is never wrong" (by analogy
+   with the offset refusal) was caught by the committed option sweep,
+   which covers second and fraction widths the first probe did not —
+   which is why the probe was then widened to `fractionalSecondDigits`
+   of 2 as well.
+4. **[Important, pre-existing, out of the brief's three classes but
+   found by the same probe] `toLocaleDateString` accepted a `timeStyle`,
+   and `toLocaleTimeString` a `dateStyle`, when the style for its own
+   half came too.** Node throws `TypeError: Invalid option : timeStyle`
+   for `toLocaleDateString(…, {dateStyle:'short', timeStyle:'short'})`
+   exactly as it does for the `timeStyle` alone; the two conditions in
+   `nativeDateTimeFormat` each carried an extra `&& the other style is
+   empty` that has no basis in the spec or in Node. 360 silent diffs,
+   pre-existing on main for en-US and unrelated to this feature's
+   locales — fixed here rather than left as a known silent diff, since it
+   is two words in the same function the round was already editing.
+5. **Corrected fix round 1's note** (bullet 2 above in this file) about
+   the h24 tie-break reaching en-US/en-CA; it never did.
+
+**Tests**: three new probes in `scripts/js-parity/record.mjs`'s
+`dateProbes` pin all of the above against recorded Node output — the
+defaulted-hour cycle across all four locales × every extension × every
+`hourCycle`, the explicit-hour path as a regression guard (it must keep
+using the cycle that was asked for), and the two style `TypeError`s.
+`dateSweepRefusal` in intl_test.go rewritten again to mirror both
+corrected conditions by shape, including the h24 width table, and it is
+what makes `TestTheDateOptionSweepMatchesNode` pass (verified by
+narrowing the code and watching the test fail with the shapes it no
+longer refuses). RED evidence: both new probes fail against `ba3791e`
+for exactly these reasons.
+
+**Fix round 3 verification**: `go build ./...`, `go vet ./...`, `gofmt -l`
+clean, `go test ./internal/jsrun/ -count=1` green, `go test -race` on the
+sweep, dates, Luxon, zone-name and refusal tests green (~21s), `go test
+./...` (full repo) green, `node scripts/js-parity/record.mjs --check`
+clean. Probe: 34,680 combinations, 0 silent diffs, 335 refusals, 0
+over-refusals. Binary size unchanged at 39,539,842 bytes (no data grew;
+this round is logic and comments only).
+
+**Rebase**: `git rebase main` conflicted only on
+`internal/jsrun/corpus/baseline.json`/`BASELINE.md`, which main had
+rewritten meanwhile (BUG-9hx5xm and the other merged Code-node fixes).
+Resolved by taking main's file and re-running `make js-corpus-baseline`
+rather than merging by hand. The result still shows exactly one body
+unblocked by en-CA, `3363/18` (`threw: date locale en-CA` → `ok`), now
+against main's higher numbers: run-without-error 245→246 (74.5%→74.8% of
+accepted), runtime-error rate 84→83 (25.5%→25.2%); the `threw: date locale
+en-CA` row is gone from the blockers table and `threw: date locale id-ID`
+(out of scope) remains. So AC4's finding holds with main's current corpus.
 
 # Related Files
 

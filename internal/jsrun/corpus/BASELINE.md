@@ -11,12 +11,12 @@ The JavaScript Code nodes and Sort code comparators of the 500 most-viewed n8n t
 | Measured | 330 | |
 | Parse | 330 | 100.0% |
 | Parse and pass analysis | 329 | 99.7% |
-| Run without an error on synthesised input | 245 | 74.5% of accepted |
-| Runtime-error rate | 84 | 25.5% of accepted |
+| Run without an error on synthesised input | 246 | 74.8% of accepted |
+| Runtime-error rate | 83 | 25.2% of accepted |
 
 Of the measured bodies, 51 run once for each item and 0 are Sort comparators. 330 had no pinned data upstream and ran on a stand-in item shaped from the fields the body reads, so a failure among them may be the stand-in's, not the runtime's.
 
-Run time (wall clock of `Runner.Run`, including compiling the body once, on the machine that wrote this file): median **0.57 ms**, p95 **1.58 ms** over 329 runs.
+Run time (wall clock of `Runner.Run`, including compiling the body once, on the machine that wrote this file): median **0.56 ms**, p95 **1.60 ms** over 329 runs.
 
 ## What stops the rest
 
@@ -31,7 +31,6 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | error: this.helpers.prepareBinaryData (not wired in the instrument) | 1 |
 | refused: requires the module "youtube-transcript" | 1 |
 | threw: ReferenceError | 1 |
-| threw: date locale en-CA | 1 |
 | threw: date locale id-ID | 1 |
 | threw: this.helpers.httpRequest (not wired in the instrument) | 1 |
 | threw: this.helpers.prepareBinaryData (not wired in the instrument) | 1 |
@@ -261,7 +260,7 @@ Bodies stopped by exactly one thing, by that thing. A body refused for several r
 | 3363/13 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3363/14 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3363/16 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
-| 3363/18 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: date locale en-CA |
+| 3363/18 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3363/21 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |
 | 3379/7 | runOnceForAllItems | stand-in | ✓ | ✓ | · | threw: TypeError |
 | 3379/9 | runOnceForAllItems | stand-in | ✓ | ✓ | ✓ | ok |

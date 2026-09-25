@@ -15,15 +15,15 @@
     "stubbed": 330,
     "parsed": 330,
     "accepted": 329,
-    "ran": 245,
+    "ran": 246,
     "parseRate": 100,
     "acceptRate": 99.7,
-    "runtimeErrorRate": 25.5
+    "runtimeErrorRate": 25.2
   },
   "timing": {
     "runs": 329,
-    "medianMillis": 0.57,
-    "p95Millis": 1.58
+    "medianMillis": 0.56,
+    "p95Millis": 1.6
   },
   "blockers": {
     "error: this.helpers.prepareBinaryData (not wired in the instrument)": 1,
@@ -33,7 +33,6 @@
     "threw: ReferenceError": 1,
     "threw: SyntaxError": 5,
     "threw: TypeError": 63,
-    "threw: date locale en-CA": 1,
     "threw: date locale id-ID": 1,
     "threw: this.helpers.httpRequest (not wired in the instrument)": 1,
     "threw: this.helpers.prepareBinaryData (not wired in the instrument)": 1
@@ -2091,9 +2090,8 @@
       "stubbed": true,
       "parsed": true,
       "accepted": true,
-      "ran": false,
-      "outcome": "threw",
-      "reason": "date locale en-CA"
+      "ran": true,
+      "outcome": "ok"
     },
     {
       "key": "3363/21",

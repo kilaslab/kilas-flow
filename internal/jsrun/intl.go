@@ -1844,6 +1844,43 @@ func nativeHourCycle(locale *dateLocale, options dateTimeOptions, extensionCycle
 	return "h23"
 }
 
+// defaultedHourCycle is the hour cycle an hour renders with when the caller
+// never asked for one — Date#toLocaleString and Date#toLocaleTimeString,
+// whose ToDateTimeOptions defaults add hour, minute and second, and never
+// the Intl.DateTimeFormat constructor, whose own defaults are date-only.
+// That hour does not necessarily use the negotiated cycle's own digits:
+// h11 and h24 are the unusual members of their families (midnight is "0"
+// rather than "12", and "24" rather than "00"), and Node reaches for one of
+// them only when the locale itself asked, through its own -u-hc- extension,
+// for that same family. Verified directly against Node 24, one shape per
+// fresh process, for en, en-US, en-CA and en-GB with and without every
+// -u-hc- extension and every hourCycle/hour12 option:
+//   - Date#toLocaleTimeString('en-US', {hourCycle: 'h11'}) is "12:45:30 AM",
+//     not h11's own "0:45:30 AM" — but the same request with an explicit
+//     hour ({hour: 'numeric', …}) is "0:45:30 AM", so this is the defaulted
+//     hour's own rule, not the locale's.
+//   - 'en-US-u-hc-h11' with no options at all is "0:45:30 AM", and stays
+//     h11's even against an explicit hourCycle: 'h12' — the extension and
+//     the negotiated cycle agree on the 12-hour family, so the extension's
+//     own member wins.
+//   - 'en-US-u-hc-h24' against hourCycle: 'h12' is "12:45:30 AM": the
+//     families disagree, so the extension is ignored outright rather than
+//     answered in the other family's unusual member.
+//
+// Reading the same evidence the other way round: a defaulted hour renders
+// in the standard member of the negotiated cycle's family (h12 or h23)
+// unless the locale's own extension names that family, in which case it
+// renders in whatever member the extension named.
+func defaultedHourCycle(cycle, extensionCycle string) string {
+	if extensionCycle != "" && family24(extensionCycle) == family24(cycle) {
+		return extensionCycle
+	}
+	if family24(cycle) {
+		return "h23"
+	}
+	return "h12"
+}
+
 func nativeDateTimeFormat(args []any) (any, error) {
 	requested, err := canonicalLocales(argument(args, 0))
 	if err != nil {
@@ -1906,15 +1943,21 @@ func nativeDateTimeFormat(args []any) (any, error) {
 				return nil, typeError("Invalid option : option")
 			}
 		}
-		if options.required == "date" && options.timeStyle != "" && options.dateStyle == "" {
+		// Date#toLocaleDateString refuses a timeStyle and
+		// Date#toLocaleTimeString a dateStyle whether or not the style for
+		// its own half came too: Node throws "Invalid option : timeStyle"
+		// for toLocaleDateString('en-US', {dateStyle: 'short', timeStyle:
+		// 'short'}) exactly as it does for the timeStyle alone (verified
+		// directly).
+		if options.required == "date" && options.timeStyle != "" {
 			return nil, typeError("Invalid option : timeStyle")
 		}
-		if options.required == "time" && options.dateStyle != "" && options.timeStyle == "" {
+		if options.required == "time" && options.dateStyle != "" {
 			return nil, typeError("Invalid option : dateStyle")
 		}
 		tokens = locale.stylePattern(options.dateStyle, options.timeStyle, cycle, extensionCycle)
 	} else {
-		requestedSkeleton, matchCycle, err := optionsSkeleton(&options, cycle)
+		requestedSkeleton, letterCycle, err := optionsSkeleton(&options, cycle, extensionCycle)
 		if err != nil {
 			return nil, err
 		}
@@ -1935,7 +1978,25 @@ func nativeDateTimeFormat(args []any) (any, error) {
 		// (e.g. "Hv" covers hour+zone, missing only second, decisively
 		// closer than any hour-only or second-only candidate) and is
 		// correct on every locale including en-GB — do not refuse it.
-		if locale.tag == "en-GB" && requestedSkeleton.char[fieldHour] == 'k' && requestedSkeleton.has(fieldHour) &&
+		// Some second and fraction widths are already right as well, at a
+		// '2-digit' hour: a tie is only decided wrongly where the two
+		// candidates are close enough to tie at all, and how close they
+		// are depends on every width in the request, so which
+		// combinations differ is a boundary to record rather than a rule
+		// to state. Recorded from Node 24 for en-GB at hour cycle h24
+		// (from an explicit hourCycle, from hour12, or from the tag's own
+		// -u-hc-h24 — all three behave alike), with no minute and no
+		// zone, across every second and fractionalSecondDigits width:
+		//   - a 'numeric' hour differs in every one of them;
+		//   - a '2-digit' hour differs only with an explicit second:
+		//     '2-digit', or with fractionalSecondDigits of 2 or 3 and no
+		//     explicit second at all. An explicit second: 'numeric' (at
+		//     any fraction width) and a lone fractionalSecondDigits: 1
+		//     already match Node, so they are not refused (fix round 3;
+		//     fix round 2 refused those too).
+		h24Ties := requestedSkeleton.size[fieldHour] == 1 || requestedSkeleton.size[fieldSecond] == 2 ||
+			(!requestedSkeleton.has(fieldSecond) && requestedSkeleton.size[fieldFraction] >= 2)
+		if locale.tag == "en-GB" && requestedSkeleton.char[fieldHour] == 'k' && h24Ties &&
 			!requestedSkeleton.has(fieldMinute) && !requestedSkeleton.has(fieldZone) &&
 			(requestedSkeleton.has(fieldSecond) || requestedSkeleton.has(fieldFraction)) {
 			return nil, rangeError("date formatting in en-GB with hourCycle h24, an hour and a second but no minute is not supported")
@@ -2002,7 +2063,7 @@ func nativeDateTimeFormat(args []any) (any, error) {
 		}
 		tokens = locale.bestPattern(requestedSkeleton)
 		if requestedSkeleton.has(fieldHour) {
-			tokens = withHourCycle(tokens, matchCycle)
+			tokens = withHourCycle(tokens, letterCycle)
 		}
 	}
 
@@ -2048,22 +2109,9 @@ func nativeDateTimeFormat(args []any) (any, error) {
 
 // optionsSkeleton turns component options into a skeleton, filling in the
 // defaults ToDateTimeOptions asks for when none was given. It also returns
-// the hour cycle actually used to letter the hour field, which is not
-// always cycle: Date#toLocaleString/toLocaleTimeString (never the
-// Intl.DateTimeFormat constructor directly, whose own "defaults" never
-// includes hour — see nativeDateTimeFormat's required/defaults) letting
-// this function's own defaulting add "hour" (the caller never asked for it
-// explicitly) with hourCycle 'h11' or 'h24' downgrades to 'h12'/'h23' for
-// the digit itself — verified directly against Node, which renders a
-// defaulted hour's midnight boundary as "12"/"00" (h12/h23's convention)
-// there, but correctly as "0"/"24" (h11/h24's own convention) the moment
-// hour is explicit, even as trivially as {hour: 'numeric'} alongside the
-// exact same hourCycle. This is the same, pre-existing bug on main for
-// en-US (Date#toLocaleTimeString('en-US', {hourCycle: 'h11'}) already gave
-// "0:05:09 am" instead of Node's "12:05:09 am") that fix round 3 found
-// reaches en-CA and en-GB unchanged, not a regression this feature
-// introduced.
-func optionsSkeleton(options *dateTimeOptions, cycle string) (skeleton, string, error) {
+// the hour cycle the hour field is actually lettered with, which is not
+// always cycle: see defaultedHourCycle.
+func optionsSkeleton(options *dateTimeOptions, cycle, extensionCycle string) (skeleton, string, error) {
 	components := options.components
 	_, hourWasExplicit := components["hour"]
 	needDefaults := true
@@ -2090,13 +2138,9 @@ func optionsSkeleton(options *dateTimeOptions, cycle string) (skeleton, string, 
 	if needDefaults && (options.defaults == "time" || options.defaults == "all") {
 		components["hour"], components["minute"], components["second"] = "numeric", "numeric", "numeric"
 	}
-	matchCycle := cycle
-	if !hourWasExplicit {
-		if downgrade, ok := map[string]string{"h11": "h12", "h24": "h23"}[cycle]; ok {
-			if _, hourNowSet := components["hour"]; hourNowSet {
-				matchCycle = downgrade
-			}
-		}
+	letterCycle := cycle
+	if _, hourNowSet := components["hour"]; hourNowSet && !hourWasExplicit {
+		letterCycle = defaultedHourCycle(cycle, extensionCycle)
 	}
 	var s skeleton
 	widths := map[string]map[string]string{
@@ -2116,7 +2160,7 @@ func optionsSkeleton(options *dateTimeOptions, cycle string) (skeleton, string, 
 			continue
 		}
 		if key == "hour" {
-			char := map[string]byte{"h11": 'K', "h12": 'h', "h23": 'H', "h24": 'k'}[matchCycle]
+			char := map[string]byte{"h11": 'K', "h12": 'h', "h23": 'H', "h24": 'k'}[letterCycle]
 			size := 1
 			if value == "2-digit" {
 				size = 2
@@ -2125,18 +2169,18 @@ func optionsSkeleton(options *dateTimeOptions, cycle string) (skeleton, string, 
 			continue
 		}
 		if key == "timeZoneName" && (value == "shortGeneric" || value == "longGeneric") {
-			return s, matchCycle, rangeError("timeZoneName %s is not supported", value)
+			return s, letterCycle, rangeError("timeZoneName %s is not supported", value)
 		}
 		letters, ok := widths[key][value]
 		if !ok {
-			return s, matchCycle, rangeError("Value %s out of range for Intl.DateTimeFormat options property %s", value, key)
+			return s, letterCycle, rangeError("Value %s out of range for Intl.DateTimeFormat options property %s", value, key)
 		}
 		s.set(letters[0], len(letters))
 	}
 	if options.fractionalDigits != 0 {
 		s.set('S', options.fractionalDigits)
 	}
-	return s, matchCycle, nil
+	return s, letterCycle, nil
 }
 
 // stylePatternPadsHour decides the hour field's width for stylePattern's
@@ -2163,6 +2207,7 @@ func optionsSkeleton(options *dateTimeOptions, cycle string) (skeleton, string, 
 //     an explicit hourCycle: 'h23' option (no extension at all) gives
 //     width 2 ("08:07:03"), unlike en-GB's equivalent (hourCycle option
 //     alone, no extension, never changes width for en-GB).
+//
 // Both rules collapse to the same shape once phrased against the locale's
 // own default family: width 2 iff the extension (when present) is
 // 24-hour-family, OR — only for a 12-hour-family-default locale — the
