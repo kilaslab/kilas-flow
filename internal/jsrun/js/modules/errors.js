@@ -10,8 +10,8 @@
 // words come from Go's encoding/json) with V8's message for the same text.
 // The other errors are goja's own TypeErrors, which no hook sees as they are
 // made: reword rewrites one when the code can first read it, at the start of
-// each of the code's catch clauses (the compiled body calls it there) and on
-// the way out of an uncaught error.
+// each of the code's catch clauses (the compiled body calls it there), in a
+// promise rejection handler, and on the way out of an uncaught error.
 (function (kit) {
   'use strict';
 
@@ -274,6 +274,25 @@
       // The error stays as it was.
     }
   }
+
+  // A rejection handler is not a catch clause, so the compiled body never
+  // calls reword there. .catch and Promise.allSettled both reach the reason
+  // through Promise.prototype.then, so wrapping then is where those reads
+  // see V8's words. The original then still attaches the reaction, which is
+  // what the runtime's rejection tracker counts. The wrapper is declared
+  // with then's two parameters, so its name and length stay "then" and 2.
+  var nativeThen = Promise.prototype.then;
+  function then(onFulfilled, onRejected) {
+    if (typeof onRejected === 'function') {
+      var handler = onRejected;
+      onRejected = function (reason) {
+        reword(reason);
+        return apply(handler, this, arguments);
+      };
+    }
+    return apply(nativeThen, this, [onFulfilled, onRejected]);
+  }
+  defineProperty(Promise.prototype, 'then', { value: then, writable: true, enumerable: false, configurable: true });
 
   return { reword: reword };
 })

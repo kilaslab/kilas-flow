@@ -271,6 +271,24 @@ const jsonValues = [
 	{ name: 'a caught message', code: "try { JSON.parse('{\"a\":') } catch (e) { return [{ json: { m: e.message, name: e.name, isSyntax: e instanceof SyntaxError } }] }" },
 ];
 
+// ---- A rejection handler --------------------------------------------------------
+//
+// A promise rejection handler is not a catch clause. These bodies read the
+// error only there: .catch, the second argument of .then, and a reason from
+// Promise.allSettled. An error the code built itself is read the same way.
+
+const rejections = [
+	{ name: 'a missing method read in catch', code: "const value = {}\nreturn Promise.resolve().then(() => value.map((x) => x)).catch((e) => [{ json: { m: e.message } }])" },
+	{ name: 'a missing method read in then', code: "const value = {}\nreturn Promise.resolve().then(() => value.map((x) => x)).then(undefined, (e) => [{ json: { m: e.message } }])" },
+	{ name: 'a missing method read from allSettled', code: "const value = {}\nconst settled = await Promise.allSettled([Promise.resolve().then(() => value.map((x) => x))])\nreturn [{ json: { status: settled[0].status, m: settled[0].reason.message } }]" },
+	{ name: 'a property of undefined read in catch', code: "const none = undefined\nreturn Promise.resolve().then(() => none.field).catch((e) => [{ json: { m: e.message } }])" },
+	{ name: 'new of a number read in catch', code: "const X = 5\nreturn Promise.resolve().then(() => new X()).catch((e) => [{ json: { m: e.message } }])" },
+	{ name: 'a rethrown engine error read in catch', code: "const value = {}\nreturn Promise.resolve().then(() => { try { return value.map((x) => x) } catch (e) { throw e } }).catch((e) => [{ json: { m: e.message } }])" },
+	{ name: "the code's own TypeError read in catch", code: "return Promise.reject(new TypeError(\"Object has no member 'q'\")).catch((e) => [{ json: { m: e.message } }])" },
+	{ name: "the code's own TypeError read from allSettled", code: "const settled = await Promise.allSettled([Promise.reject(new TypeError(\"Object has no member 'q'\"))])\nreturn [{ json: { status: settled[0].status, m: settled[0].reason.message } }]" },
+	{ name: "then's name and length", code: "return [{ json: { name: Promise.prototype.then.name, length: Promise.prototype.then.length } }]" },
+];
+
 // ---- Writing ------------------------------------------------------------------
 
 const meta = {
@@ -285,6 +303,7 @@ const files = {
 		probes: await record(errors),
 		json: jsonTexts.map((text) => ({ text, error: jsonMessage(text) })),
 		jsonValues: await record(jsonValues),
+		rejections: await record(rejections),
 	},
 };
 

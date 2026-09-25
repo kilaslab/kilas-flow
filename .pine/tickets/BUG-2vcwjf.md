@@ -1,7 +1,7 @@
 ---
 id: BUG-2vcwjf
 title: 'Code node: an engine error read in a promise rejection handler keeps goja''s words'
-status: todo
+status: testing
 priority: low
 labels:
     - code-node
@@ -31,5 +31,17 @@ In js/modules/errors.js, wrap `Promise.prototype.then` so that its onRejected (w
 
 # Acceptance Criteria
 
-- [ ] `.catch(e => …)`, `.then(_, e => …)` and `Promise.allSettled` reasons read V8's words for the errors BUG-jwhj6y rewords, pinned by probes in scripts/js-parity/record-engine.mjs / testdata/parity/errors.json.
-- [ ] An error the code builds itself still keeps its words there.
+- [x] `.catch(e => …)`, `.then(_, e => …)` and `Promise.allSettled` reasons read V8's words for the errors BUG-jwhj6y rewords, pinned by probes in scripts/js-parity/record-engine.mjs / testdata/parity/errors.json.
+- [x] An error the code builds itself still keeps its words there.
+
+# Notes
+
+## Plan
+
+`errors` is the first module, so a wrap of `Promise.prototype.then` there is what `crypto` and `helpers` capture. The wrap calls the original `then` after replacing a function `onRejected` with one that runs `reword` and then the handler. `.catch` and `Promise.allSettled` both reach `then`, so they get the same words. `reword` already returns at once for anything but a goja TypeError, and a second call finds V8's words and stops, so it stays idempotent. The original `then` still attaches the reaction, so goja's rejection tracker is unchanged. The installed function is declared `function then(onFulfilled, onRejected)`, which keeps the name and the length.
+
+`.then(onFulfilled, onRejected)` does not see a throw from `onFulfilled`; the probe chains `.then(undefined, onRejected)` onto the promise that rejected, which is what the ticket's `.then(_, onRejected)` is.
+
+## Progress
+
+2026-09-25: probes recorded from Node 24. The new wording test failed on goja's sentences (`Object has no member 'map'`, `Cannot read property 'field' of undefined`, `Value is not an object: 5`) and passed after the wrap. A rejection with no handler still fails the run; one `.catch` reads does not.

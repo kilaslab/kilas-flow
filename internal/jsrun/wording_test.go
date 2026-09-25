@@ -261,6 +261,65 @@ func TestTheCodesOwnErrorsKeepTheirWordsForEachItem(t *testing.T) {
 	}
 }
 
+// An engine error read only in a rejection handler — .catch, the second
+// argument of .then, or a Promise.allSettled reason — has V8's words there.
+// An error the code built itself keeps its own, and Promise.prototype.then
+// keeps its name and length. testdata/parity/errors.json records what Node 24
+// returns for each body.
+func TestAnErrorReadInARejectionHandlerIsWordedAsNodeWordsIt(t *testing.T) {
+	var golden struct {
+		Rejections []errorProbe `json:"rejections"`
+	}
+	loadGolden(t, "errors.json", &golden)
+	if len(golden.Rejections) == 0 {
+		t.Fatal("the golden has no rejection probes")
+	}
+	for _, probe := range golden.Rejections {
+		result, err := newRunner().Run(context.Background(), jsrun.Task{Source: probe.Code, Items: numbered(1)})
+		if probe.Error != "" {
+			var thrown *jsrun.ScriptError
+			if !errors.As(err, &thrown) || thrown.Name+": "+thrown.Message != probe.Error {
+				t.Errorf("%s: got %v, want %s", probe.Name, err, probe.Error)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: Run() error = %v", probe.Name, err)
+			continue
+		}
+		got := make([]map[string]any, len(result.Items))
+		for index, item := range result.Items {
+			got[index] = item.JSON
+		}
+		if !sameJSON(got, probe.Want) {
+			encoded, _ := json.Marshal(got)
+			t.Errorf("%s:\n got  %s\n want %s", probe.Name, encoded, probe.Want)
+		}
+	}
+}
+
+// A rejection nobody handles still fails the node, with V8's words, once the
+// job queue has drained. One a handler reads is not unhandled.
+func TestAnEngineRejectionIsUnhandledOnlyWhenNobodyReadsIt(t *testing.T) {
+	_, err := newRunner().Run(context.Background(), jsrun.Task{Items: numbered(1), Source: strings.Join([]string{
+		"const value = {}",
+		"Promise.resolve().then(() => value.map((x) => x))",
+		sleep + "return items",
+	}, "\n")})
+	script := uncaught(t, err)
+	if script.Message != "value.map is not a function" {
+		t.Errorf("unhandled: %v", err)
+	}
+
+	if _, err := newRunner().Run(context.Background(), jsrun.Task{Items: numbered(1), Source: strings.Join([]string{
+		"const value = {}",
+		"await Promise.resolve().then(() => value.map((x) => x)).catch(() => {})",
+		sleep + "return items",
+	}, "\n")}); err != nil {
+		t.Errorf("handled: Run() error = %v", err)
+	}
+}
+
 // jsQuote writes text as a JavaScript string literal.
 func jsQuote(text string) string {
 	quoted, _ := json.Marshal(text)

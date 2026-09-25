@@ -14,8 +14,9 @@ import (
 // goja words these errors its own way and gives no hook where they are made,
 // so js/modules/errors.js rewrites one where the code can first read it: at
 // the start of each catch clause in the code (the compiled body calls it
-// there, see instrumentCatches) and on the way out of an uncaught error. The
-// words come from here.
+// there, see instrumentCatches), in a promise rejection handler (the errors
+// module wraps Promise.prototype.then, which .catch and Promise.allSettled
+// both use), and on the way out of an uncaught error. The words come from here.
 //
 // Only what can be said faithfully is reworded:
 //
