@@ -392,6 +392,15 @@ composition root: it is a package-level singleton built in a variable
 initialiser, which panics if the built-in types are invalid, and nothing in
 startup registers a credential type. A pack cannot contribute one today.
 
+A type states what an empty `allowedDomains` means for it. `DefaultDomains` is a
+fixed list, for a service at one address (`openAiApi`, `openRouterApi`, the
+Google types). `DefaultDomainsFrom` names a field whose URL host is the default,
+for a type that carries its own address (`telegramApi` and `wahaApi` name
+`baseUrl`). `NeverSentOverHTTP` marks a type the host never places on a request
+whose URL a node chooses — the database types, SQLite and `jwtAuth` — so it is
+never counted as unscoped. A type that sets none of them has no default, and an
+empty list means any host.
+
 There is one masking subtlety worth knowing if you author a type. Whether a field
 is *secret* — never returned by the API — is a separate flag from whether the
 editor *masks* it. Conflating them would make a masked-but-readable field start
@@ -455,7 +464,8 @@ request goes, so such a credential would, in their hands, be a way to read its
 secret. Scope the credential and the refusal goes away. Database, SQLite and JWT
 credentials are never unscoped in this sense: they are not placed on a request
 whose URL a node chooses. Nor is a credential a Webhook or Form trigger uses to
-verify the requests arriving at it, which it never sends. See
+verify the requests arriving at it, which it never sends, nor one on a disabled
+node, which never runs. See
 [what a session may actually do](/concepts/tenancy-and-embedding/#credentials-in-a-confined-callers-document).
 
 ## Source

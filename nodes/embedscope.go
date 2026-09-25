@@ -71,6 +71,12 @@ func DocumentReferences(document workflow.Document) embed.Confinement {
 // where a data table or a sub-workflow is required is refused rather than
 // skipped: the value is only knowable at run time, and a check that cannot see
 // the target cannot bound it.
+//
+// A disabled node is checked like any other. Unlike the unscoped-credential
+// rule, which asks whether a secret could leave and so skips a node that never
+// runs, this asks what the session may reference at all, and a disabled node
+// is one save from running. The owner's published revision grants whatever
+// its own disabled nodes reference, so saving that document back still passes.
 func EmbedScopeIssues(document workflow.Document, confinement embed.Confinement) []string {
 	var issues []string
 	for _, node := range document.Nodes {
@@ -155,7 +161,17 @@ func UnscopedCredentialIssues(document workflow.Document, lookup CredentialLooku
 // documented way to protect an embedded workflow's trigger, and refusing it
 // would refuse the guest editor every save. The same credential moved onto a
 // node that does call out is caught on that node.
+//
+// A disabled node sends nothing either: it never runs, the same reason the
+// compiler does not hold a disabled node's credentials against it. n8n imports
+// routinely carry a switched-off node whose credential nobody scoped, and
+// counting it would block a narrowed caller from every save of the workflow.
+// Switching the node on is a save, and that save is checked. The embed grant
+// check is not relaxed the same way — see EmbedScopeIssues.
 func sendableCredentialIDs(node workflow.Node) []string {
+	if node.Disabled {
+		return nil
+	}
 	inbound := inboundCredentialTypes[node.Type]
 	ids := make([]string, 0, len(node.Credentials))
 	for credentialType, id := range node.Credentials {

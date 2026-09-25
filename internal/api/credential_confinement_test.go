@@ -187,6 +187,36 @@ func TestAScopedKeyCannotSaveOrRunAnUnscopedCredential(t *testing.T) {
 	server.callJSON(t, http.MethodPost, "/api/v1/workflows/"+workflowID+"/run", tenantKey, nil, http.StatusAccepted)
 }
 
+// A switched-off node never runs, so an unscoped credential it still carries —
+// the leftover of an import, typically — is no way to read a secret, and must
+// not block a narrowed caller from saving or running the rest of the workflow.
+// Switching it back on is a save, and that save is refused.
+func TestAnUnscopedCredentialOnADisabledNodeDoesNotBlockAConfinedCaller(t *testing.T) {
+	server, keys := newAuthenticatedAPI(t, "tenant-a")
+	tenantKey := keys["tenant-a"]
+	unscoped := server.callJSON(t, http.MethodPost, "/api/v1/credentials", tenantKey, map[string]any{
+		"name": "Leftover", "type": "httpBearerAuth", "fields": map[string]string{"token": "LEFTOVER-SECRET"},
+	}, http.StatusCreated)
+	unscopedID, _ := unscoped["id"].(string)
+
+	leftover := httpNodeTo("old", "https://partner.test/api", "httpBearerAuth", unscopedID)
+	leftover.Disabled = true
+	document := documentReferencing("Imported", leftover)
+
+	workflowID := server.createWorkflowAs(t, tenantKey, "Imported")
+	bound := mintScopedKey(t, server, tenantKey, "bound agent", map[string]any{
+		"scopes": []string{"workflow:read", "workflow:write", "workflow:run"}, "workflowId": workflowID,
+	})
+	server.callJSON(t, http.MethodPut, "/api/v1/workflows/"+workflowID, bound, workflowDraft(document), http.StatusOK)
+	server.callJSON(t, http.MethodPost, "/api/v1/workflows/"+workflowID+"/run", bound, nil, http.StatusAccepted)
+
+	document.Nodes[1].Disabled = false
+	enabled := server.call(t, http.MethodPut, "/api/v1/workflows/"+workflowID, bound, workflowDraft(document))
+	if enabled.Code != http.StatusForbidden {
+		t.Fatalf("enabling save status = %d, want 403 for the unscoped credential it switches on (body: %s)", enabled.Code, enabled.Body)
+	}
+}
+
 func TestAFixedHostCredentialReadsBackWithItsDefaultScope(t *testing.T) {
 	handler, _ := credentialAPI(t, api.Deps{})
 

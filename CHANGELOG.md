@@ -445,8 +445,8 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
     that attaches an unscoped credential to a node that calls out. An unscoped
     credential is one that has no allowed domains of its own or from its type.
     Scoping the credential lifts the refusal. Database, SQLite and JWT
-    credentials, and credentials a Webhook or Form trigger only verifies
-    against, are not affected. The tenant's own keys and the dashboard are
+    credentials, credentials a Webhook or Form trigger only verifies against,
+    and credentials on a disabled node, are not affected. The tenant's own keys and the dashboard are
     unaffected.
 
 - An embed session's credential listing no longer discloses other

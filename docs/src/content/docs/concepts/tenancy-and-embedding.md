@@ -286,7 +286,10 @@ could be sent to a host it runs. Two rules close that:
   Webhook or Form trigger uses only to verify the requests arriving at it — the
   [embedding guide](/guides/embedding/)'s header-protected trigger keeps working.
   A generic HTTP credential the owner never scoped, on a node that calls out, is
-  refused, and the refusal says so — scoping it is the fix.
+  refused, and the refusal says so — scoping it is the fix. A disabled node is
+  skipped, since it never runs; switching it back on is a save, and is checked.
+  The grant check above is not relaxed for a disabled node: what a session may
+  reference does not depend on whether the node is switched on.
 - **A node may carry only the credential types it declares.** The compiler
   refuses anything else, so a granted OpenAI key cannot be moved onto an HTTP
   Request node.

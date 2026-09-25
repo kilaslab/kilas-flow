@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/kilaslab/kilas-flow/internal/credentials"
+	"github.com/kilaslab/kilas-flow/internal/embed"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
@@ -79,6 +80,41 @@ func TestUnscopedCredentialIssuesLetsATriggerVerifyWithAnUnscopedCredential(t *t
 	issues, err := UnscopedCredentialIssues(document, lookup)
 	if err != nil || len(issues) != 1 || !strings.Contains(issues[0], `"exfil"`) {
 		t.Fatalf("issues = %q, err = %v; want the node that calls out refused", issues, err)
+	}
+}
+
+// A disabled node never runs, so nothing it carries is ever sent — the rule the
+// compiler applies to a disabled node's credentials too. n8n imports routinely
+// carry a switched-off HTTP node, and refusing it would block every save of the
+// workflow. Enabling it is a save like any other, and is refused then.
+func TestUnscopedCredentialIssuesSkipsADisabledNode(t *testing.T) {
+	lookup := credentialScopeLookup(credentials.Record{ID: "cred_any", Name: "Anywhere", Type: "httpHeaderAuth"})
+	leftover := workflow.Node{
+		ID: "old", Name: "old", Type: "kilasflow.httpRequest", Disabled: true,
+		Credentials: map[string]string{"httpHeaderAuth": "cred_any"},
+	}
+	document := workflow.Document{Nodes: []workflow.Node{leftover}}
+	if issues, err := UnscopedCredentialIssues(document, lookup); err != nil || len(issues) != 0 {
+		t.Fatalf("issues = %q, err = %v; want a disabled node skipped", issues, err)
+	}
+
+	document.Nodes[0].Disabled = false
+	if issues, err := UnscopedCredentialIssues(document, lookup); err != nil || len(issues) != 1 {
+		t.Fatalf("issues = %q, err = %v; want the node refused once it is enabled", issues, err)
+	}
+}
+
+// The grant check is a different question and keeps asking it of a disabled
+// node: whether a session may reference a credential at all does not depend on
+// whether the node that references it is switched on, and a disabled node is
+// one save away from running.
+func TestEmbedScopeIssuesStillRefusesAnUngrantedCredentialOnADisabledNode(t *testing.T) {
+	document := workflow.Document{Nodes: []workflow.Node{{
+		ID: "old", Name: "old", Type: "kilasflow.httpRequest", Disabled: true,
+		Credentials: map[string]string{"httpHeaderAuth": "cred_foreign"},
+	}}}
+	if issues := EmbedScopeIssues(document, embed.Confinement{}); len(issues) != 1 {
+		t.Fatalf("issues = %q, want the ungranted credential refused on a disabled node", issues)
 	}
 }
 
