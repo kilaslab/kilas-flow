@@ -82,9 +82,8 @@ See EPIC-tjnr1z, *Plan → Phase 8*.
 - **The Go-side checks need an internal test.** Deciding whether an object is
   a reflected Go value, and comparing with the host callbacks by identity,
   needs the VM: `Runner.afterRun` (a test seam like `betweenItems`; it was
-  `inspect`) hands the
-  VM to the test after the code ran, and `vm.callbacks` keeps the callbacks
-  object for it.
+  `inspect`) hands the VM to the test after the code ran, and `vm.callbacks`
+  keeps the callbacks object for it.
 - **The load test is a Go benchmark** in `internal/jsworker`, where the test
   binary is already its own worker, reporting percentiles with
   `b.ReportMetric`; `make js-load` runs it with 400 executions per level and
