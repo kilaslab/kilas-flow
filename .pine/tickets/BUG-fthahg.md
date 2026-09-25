@@ -1,10 +1,10 @@
 ---
 id: BUG-fthahg
 title: 'Tolerated failures and $(''X'') reads diverge from n8n: one error item per input, error as an object, all output ports joined'
-status: testing
+status: done
 priority: medium
 created: "2026-09-23T07:47:27Z"
-updated: "2026-09-25T09:00:00Z"
+updated: "2026-09-25T10:30:15Z"
 ---
 
 # Description
@@ -196,3 +196,49 @@ As described above.
 # Related Files
 
 # Attachments
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-25.
+
+- Base: `988e2488` (last commit at or before ticket created 2026-09-23)
+- Commits (2):
+  - `7a275ad5` — BUG-fthahg: a Code node's error item reads as n8n's, the message and the line, and only the code's own failure is one error item for the batch; two follow-ups are filed.
+  - `945fef27` — BUG-fthahg: a Code node's tolerated failure and $('X') reads match n8n: one error item for an all-items batch, error as the message, and the connected output read by default.
+- Files changed (the ticket's own commits, aeb6ed9..worktree-agent-a877f335302a1b75e):
+
+```
+ .pine/tickets/BUG-5xkexq.md                           |  36 +++++++++
+ .pine/tickets/BUG-fthahg.md                           | 150 ++++++++++++++++++++++++++++++++++++--
+ .pine/tickets/FEAT-83rcve.md                          |  36 +++++++++
+ CHANGELOG.md                                          |  16 ++++
+ docs/src/content/docs/concepts/execution-model.md     |   8 ++
+ docs/src/content/docs/concepts/expressions.md         |  12 ++-
+ docs/src/content/docs/concepts/items-and-lineage.md   |   6 +-
+ docs/src/content/docs/guides/code-javascript.md       |  30 ++++++--
+ docs/src/content/docs/reference/expression-grammar.md |   6 +-
+ e2e/tests/js-code.spec.ts                             |  23 +++---
+ internal/engine/authenticate.go                       |   7 +-
+ internal/engine/batch_failure_test.go                 | 144 ++++++++++++++++++++++++++++++++++++
+ internal/engine/eval.go                               |  21 ++++++
+ internal/engine/eval_test.go                          |  40 ++++++++++
+ internal/engine/export_test.go                        |  13 +++-
+ internal/engine/item_outcomes.go                      |  17 +++++
+ internal/engine/node_branch_test.go                   |  92 +++++++++++++++++++++++
+ internal/engine/node_branches.go                      |  78 ++++++++++++++++++++
+ internal/engine/runner.go                             |  67 ++++++++++++++---
+ internal/expression/doc.go                            |   2 +-
+ internal/expression/expression.go                     |   5 ++
+ internal/expression/roots.go                          |  34 ++++++---
+ internal/jsrun/errors.go                              |  19 +++++
+ internal/jsrun/js/runtime.js                          |  31 ++++++--
+ internal/jsrun/roots.go                               |   3 +
+ internal/jsrun/roots_test.go                          |  16 ++--
+ internal/node/registry.go                             |   8 +-
+ internal/workflow/compiler.go                         |   4 +
+ nodes/jscode.go                                       |  42 ++++++++++-
+ nodes/jscode_lineage_test.go                          |  25 +++++--
+ nodes/jscode_roots.go                                 |   3 +-
+ nodes/jscode_run_test.go                              | 144 ++++++++++++++++++++++++++++++++++++
+ 32 files changed, 1065 insertions(+), 73 deletions(-)
+```
