@@ -1098,6 +1098,149 @@ func TestAPerItemWaitThatSuspendsOnTwoItemsProcessesBoth(t *testing.T) {
 	waitEveryItemOnce(t, doneInputs, 2)
 }
 
+// TestAPerItemWaitDeliversTheToleratedItemBeforeItAcrossARestart is
+// BUG-jx2g0k through the service: the first item fails and is tolerated, the
+// second waits for a decision, and the decision is answered and the run
+// continued by workers that never saw the suspension, and the third passes.
+// What the first item produced has to come back from the stored checkpoint —
+// the process that assembled it is gone — and the three outcomes reach the
+// node after the wait in order, in one delivery, as one run of Hold.
+func TestAPerItemWaitDeliversTheToleratedItemBeforeItAcrossARestart(t *testing.T) {
+	ctx, db, store, catalog, executors, tenant := waitTestSetup(t)
+
+	var holdCalls int
+	if err := executors.Register("test.hold", engine.ExecutorFunc(
+		func(_ context.Context, _ workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+			holdCalls++
+			switch input["main"][0].JSON["n"] {
+			case float64(1):
+				return nil, errors.New("item 1 broke")
+			case float64(2):
+				return nil, &engine.SuspendError{Mode: engine.WaitModeApproval}
+			}
+			// A fresh item, so the runner stamps its lineage.
+			return workflow.NodeOutput{{{JSON: input["main"][0].JSON}}}, nil
+		})); err != nil {
+		t.Fatalf("Register(hold) error = %v", err)
+	}
+	var doneCalls int
+	var doneInputs []workflow.NodeInput
+	if err := executors.Register("test.passthrough", &waitPassthrough{calls: &doneCalls, inputs: &doneInputs}); err != nil {
+		t.Fatalf("Register(passthrough) error = %v", err)
+	}
+	waitRegisterNumbered(t, catalog, executors, 3)
+
+	link := func(id, source, target string) workflow.Connection {
+		return workflow.Connection{ID: id, Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: source, Port: "main"},
+			Target: workflow.Endpoint{NodeID: target, Port: "main"}}
+	}
+	saved, err := repository.NewWorkflowStore(db.DB).SaveDraft(ctx, tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_per_item_tolerated_wait", Name: "Tolerated item before a wait",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "items", Name: "Items", Type: "test.items", TypeVersion: workflow.V(1)},
+			{ID: "hold", Name: "Hold", Type: "test.hold", TypeVersion: workflow.V(1),
+				Settings: map[string]any{"onError": "continueRegularOutput"}},
+			{ID: "done", Name: "Done", Type: "test.done", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{
+			link("c1", "manual", "items"),
+			link("c2", "items", "hold"),
+			link("c3", "hold", "done"),
+		},
+		Settings: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+
+	queued, err := store.QueueManualLatest(ctx, tenant, saved.ID, catalog, "", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("QueueManualLatest() error = %v", err)
+	}
+	if worked, err := waitTestService(t, store, catalog, executors, "worker-0").RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(suspend) = (%v, %v), want (true, nil)", worked, err)
+	}
+	waiting, err := store.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(waiting) error = %v", err)
+	}
+	if waiting.Status != execution.StatusWaiting {
+		t.Fatalf("status = %q, want waiting on the second item (error %s)", waiting.Status, waiting.Error)
+	}
+	if holdCalls != 2 || doneCalls != 0 {
+		t.Fatalf("before the decision Hold ran %d times and Done %d, want 2 and 0", holdCalls, doneCalls)
+	}
+
+	// One worker takes the decision and another continues the run, so nothing
+	// the first one assembled can have survived in memory.
+	wait, err := store.FindActiveWait(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("FindActiveWait() error = %v", err)
+	}
+	if _, _, err := waitTestService(t, store, catalog, executors, "worker-1").ResumeApproval(ctx, tenant.ID, wait.ResumeToken,
+		engine.ApprovalDecision{Approved: true, DecidedBy: "tester", RespondedAt: time.Now().UTC()}, false); err != nil {
+		t.Fatalf("ResumeApproval() error = %v", err)
+	}
+	if worked, err := waitTestService(t, store, catalog, executors, "worker-2").RunOnce(ctx); err != nil || !worked {
+		t.Fatalf("RunOnce(resume) = (%v, %v), want (true, nil)", worked, err)
+	}
+	finished, err := store.Get(ctx, tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get(finished) error = %v", err)
+	}
+	if finished.Status != execution.StatusSucceeded {
+		t.Fatalf("status = %q, want succeeded (error %s)", finished.Status, finished.Error)
+	}
+	if holdCalls != 3 {
+		t.Errorf("Hold ran %d times, want once per item and never again for the one that waited", holdCalls)
+	}
+	if doneCalls != 1 {
+		t.Fatalf("Done ran %d times, want once with every item's outcome", doneCalls)
+	}
+	delivered := doneInputs[0]["main"]
+	if len(delivered) != 3 {
+		t.Fatalf("Done received %d items, want the tolerated failure, the decision and item 3: %v", len(delivered), delivered)
+	}
+	failure, ok := delivered[0].JSON[engine.ErrorItemKey].(map[string]any)
+	if !ok || failure["message"] != "item 1 broke" {
+		t.Errorf("Done's first item = %v, want item 1's error item", delivered[0].JSON)
+	}
+	if delivered[1].JSON["approved"] != true {
+		t.Errorf("Done's second item = %v, want item 2's decision", delivered[1].JSON)
+	}
+	if delivered[2].JSON["n"] != float64(3) {
+		t.Errorf("Done's third item = %v, want item 3", delivered[2].JSON)
+	}
+	// Each outcome still pairs with the item it came from.
+	for index, item := range delivered {
+		if item.Paired == nil || item.Paired.Lost || item.Paired.SourceNodeID != "items" || item.Paired.ItemIndex != index {
+			t.Errorf("Done's item %d pairs with %+v, want item %d of Items", index, item.Paired, index)
+		}
+	}
+	// The record's output, what a sub-workflow call returns, holds the whole
+	// run too, not the piece after the wait.
+	var output map[string][][]workflow.Item
+	if err := json.Unmarshal(finished.Output, &output); err != nil {
+		t.Fatalf("decode execution output: %v (%s)", err, finished.Output)
+	}
+	if got := len(output["done"][0]); got != 3 {
+		t.Errorf("the execution output holds %d items for Done, want 3: %s", got, finished.Output)
+	}
+	// One run of Hold, so one row of it.
+	holdRows := 0
+	for _, run := range finished.NodeRuns {
+		if run.NodeID == "hold" {
+			holdRows++
+		}
+	}
+	if holdRows != 1 {
+		t.Errorf("the trace holds %d rows of Hold, want one for its one run", holdRows)
+	}
+}
+
 // TestAResumeThatFailsRecordsAFailedRunOnTheWait is the other half of the
 // finding: the refused resume failed the execution and recorded nothing, so
 // the replay showed every node green, the wait included, under a failed run

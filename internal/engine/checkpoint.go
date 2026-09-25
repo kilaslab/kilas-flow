@@ -8,10 +8,20 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
-// checkpointVersion is the only checkpoint encoding this binary reads and
-// writes. Bumped when the shape below changes; a resumed run carrying any
-// other version fails loudly rather than continuing on state it cannot read.
-const checkpointVersion = 1
+// checkpointVersion is the newest checkpoint encoding this binary reads and
+// writes. Bumped when the shape below changes; a resumed run carrying a
+// version it does not know fails loudly rather than continuing on state it
+// cannot read.
+//
+// Version 2 is a checkpoint carrying Partial. A binary that predates it would
+// read the field as absent and resume a per-item run with the resumed item
+// alone, silently dropping every other item; the bump makes it refuse the
+// resume instead. A checkpoint without Partial is still written as version 1,
+// the same bytes older binaries write and read.
+const (
+	checkpointVersion               = 2
+	checkpointVersionWithoutPartial = 1
+)
 
 // Checkpoint is the exact run state a suspended execution continues from. It
 // carries the completed outputs — including values whose keys look sensitive
@@ -63,6 +73,40 @@ type Checkpoint struct {
 	// would lose every waiting branch and look as though the branch that
 	// continues were the whole graph.
 	Pending []PendingNode `json:"pending"`
+	// Partial is the run a node resolved one item at a time was in the middle
+	// of when one of its items suspended: the whole invocation's input, the
+	// position that waited, and what the items before it produced. The resume
+	// puts the resumed item in its place, resolves the items after it, and
+	// completes the node once — one run, however many of its items waited.
+	//
+	// Absent for a node that runs its items as one invocation, for a per-item
+	// node given a single item, and in every checkpoint written before the
+	// field existed. Those older checkpoints scheduled the items after the
+	// wait as a pending invocation of their own and kept nothing of the items
+	// before it; they still resume that way.
+	Partial *PartialOutput `json:"partial,omitempty"`
+}
+
+// PartialOutput is a per-item run caught at the item that suspended.
+type PartialOutput struct {
+	// Input is the invocation the run was resolving; its main port holds
+	// every item, before and after Position, the one that waited.
+	Input    workflow.NodeInput `json:"input"`
+	Position int                `json:"position"`
+	// Output is every port's items from the items before Position, lineage
+	// already stamped, in the node's declared arity (the error port included
+	// when it has one).
+	Output workflow.NodeOutput `json:"output"`
+	// Failed counts the tolerated failures among them, and Error is the first
+	// one's message: the row written when the node completes is the whole
+	// run's, and has to say it partly failed just as the row of a run that
+	// never waited does.
+	Failed int    `json:"failed,omitempty"`
+	Error  string `json:"error,omitempty"`
+	// Response and Console are what the row would have captured from those
+	// items: the first answer the node produced, and what it printed.
+	Response json.RawMessage `json:"response,omitempty"`
+	Console  json.RawMessage `json:"console,omitempty"`
 }
 
 // PendingNode is one scheduled invocation carried across a suspension: the node
@@ -73,7 +117,10 @@ type PendingNode struct {
 }
 
 func marshalCheckpoint(checkpoint Checkpoint) ([]byte, error) {
-	checkpoint.Version = checkpointVersion
+	checkpoint.Version = checkpointVersionWithoutPartial
+	if checkpoint.Partial != nil {
+		checkpoint.Version = checkpointVersion
+	}
 	raw, err := json.Marshal(checkpoint)
 	if err != nil {
 		return nil, fmt.Errorf("encode wait checkpoint: %w", err)
@@ -86,8 +133,16 @@ func unmarshalCheckpoint(raw []byte) (Checkpoint, error) {
 	if err := json.Unmarshal(raw, &checkpoint); err != nil {
 		return Checkpoint{}, fmt.Errorf("decode wait checkpoint: %w", err)
 	}
-	if checkpoint.Version != checkpointVersion {
+	if checkpoint.Version != checkpointVersion && checkpoint.Version != checkpointVersionWithoutPartial {
 		return Checkpoint{}, fmt.Errorf("wait checkpoint version %d is not supported", checkpoint.Version)
+	}
+	// A partial run is only ever written as version 2, with its input and its
+	// waiting position. A version-1 checkpoint carrying one has a shape this
+	// binary cannot resume from — resuming it would run the node over an empty
+	// input and let the pending remainder complete it a second time — so it is
+	// refused rather than read as far as it goes.
+	if checkpoint.Version == checkpointVersionWithoutPartial && checkpoint.Partial != nil {
+		return Checkpoint{}, fmt.Errorf("wait checkpoint version %d carries a partial run, which only version %d may", checkpoint.Version, checkpointVersion)
 	}
 	if checkpoint.SuspendNode == "" {
 		return Checkpoint{}, fmt.Errorf("wait checkpoint names no suspending node")

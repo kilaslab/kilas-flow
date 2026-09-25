@@ -377,6 +377,15 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   fail with "suspended node already completed"; a resume that is refused now
   marks the Wait failed instead of leaving every node green.
 
+- A node that continues on failure and waits on one of its items (an approval,
+  or a Wait with a per-item duration) now hands on what the items before that
+  one produced when it resumes, tolerated error items included, ahead of the
+  resumed item and on the same output they were routed to. They used to be
+  dropped, and downstream saw only the resumed item. The node's items are one
+  run however many of them wait: one trace row, one run of the nodes after it,
+  one return to an enclosing loop per batch, and the execution's output holds
+  every item rather than only those after the last wait.
+
 - `$('Node').item` resolves through a node that changed the item count and on
   both branches of an error output or a continue-on-fail failure. Behind an IF,
   Set, Merge or a loop that follows such a node, where the pairing is not
