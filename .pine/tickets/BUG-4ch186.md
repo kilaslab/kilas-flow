@@ -1,14 +1,14 @@
 ---
 id: BUG-4ch186
 title: alwaysOutputData runs a node that got no input, which loops a Loop Over Items forever
-status: testing
+status: done
 priority: high
 labels:
     - engine
     - n8n
     - parity
 created: "2026-09-25T09:56:46Z"
-updated: "2026-09-25T09:56:46Z"
+updated: "2026-09-25T10:15:25Z"
 ---
 
 # Description
@@ -62,3 +62,24 @@ The node runs and emits `{}`; the loop never ends.
 
 - Fixed in `internal/engine/runner.go` (`push`, `Resume`, new `deliveredNothing`). New tests green; full engine/nodes/interop suites green under `-race`.
 - End-to-end check (temporary test, not committed) importing the four repro workflows and running them with the goja Code runtime: before the fix 12-loop and 11-loop-2896 hit a 15 s deadline after ~32,000–36,000 node runs and 12b ran AfterEmpty/SetAfter; after the fix all four finish in six runs or fewer, 12/11 identical to 09 (the same loop without the flag), and 12b records AfterEmpty and SetAfter as skipped.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-25.
+
+- Base: `4ee3d1a9` (last commit at or before ticket created 2026-09-25)
+- Commits (2):
+  - `1d775523` — BUG-4ch186: the ticket records n8n's rule and moves to testing, and the two parity gaps found beside it are filed
+  - `c9cce973` — BUG-4ch186: a node the branch before it sent nothing is not run, whatever its alwaysOutputData, so a Loop Over Items with a flagged body finishes
+- Files changed (the ticket's own commits, 18c3d51..worktree-agent-a274cf9e33b4f25a3):
+
+```
+ .pine/tickets/BUG-4ch186.md                   |  36 ++++-
+ .pine/tickets/BUG-e8ytyq.md                   |  36 +++++
+ .pine/tickets/BUG-hnvn3r.md                   |  36 +++++
+ CHANGELOG.md                                  |   7 +
+ docs/src/content/docs/guides/n8n-migration.md |   5 +-
+ internal/engine/always_output_test.go         | 379 ++++++++++++++++++++++++++++++++++++++++++++++
+ internal/engine/runner.go                     |  51 ++++++-
+ 7 files changed, 540 insertions(+), 10 deletions(-)
+```
