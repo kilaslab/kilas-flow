@@ -604,6 +604,31 @@ type SQLNodes struct {
 	MaxRows int `koanf:"max_rows"`
 	// MaxStatementTimeout is the longest a single statement may run.
 	MaxStatementTimeout time.Duration `koanf:"max_statement_timeout"`
+	// SQLiteRoot is the directory SQLite credentials are confined to. Each
+	// tenant gets its own subdirectory, created on first use, and a SQLite
+	// credential's path is read relative to it: `orders.db` for tenant acme is
+	// `<sqlite_root>/acme/orders.db`. Absolute paths, `..` escapes, symbolic
+	// links, and anything that is not a regular file are refused.
+	//
+	// A credential's path used to be read as the process would read it, so any
+	// tenant could open every other tenant's files, and create a file anywhere
+	// the server can write. The default sits beside the default SQLite
+	// database, inside whatever volume the operator already mounted.
+	//
+	// Setting it to the empty string disables SQLite credentials: a test or a
+	// node run using one is refused and names this key.
+	// Env: KILASFLOW_SQL_SQLITE_ROOT. Default: "./data/sqlite".
+	SQLiteRoot string `koanf:"sqlite_root"`
+	// SQLiteUnconfined reads a SQLite credential's path as the process would —
+	// absolute, or relative to the working directory — and ignores
+	// sqlite_root. This is the behaviour before confinement, kept for a
+	// single-tenant install whose credentials already name files elsewhere on
+	// disk. Every tenant on such an install can open every file the server
+	// can, so never turn it on where tenants do not trust each other; the
+	// server warns at boot while it is on. KilasFlow's own database, and
+	// anything that is not a regular file, stay refused either way.
+	// Env: KILASFLOW_SQL_SQLITE_UNCONFINED. Default: false.
+	SQLiteUnconfined bool `koanf:"sqlite_unconfined"`
 }
 
 // Credential bounds the credential test endpoint.
@@ -988,6 +1013,10 @@ func Default() Config {
 			// Kept equal to sqlnode.DefaultCeiling, which a test pins.
 			MaxRows:             50_000,
 			MaxStatementTimeout: 5 * time.Minute,
+			// Beside the default database and binary.root, so all three
+			// share a volume and a backup. See the field for why SQLite
+			// credentials are confined by default.
+			SQLiteRoot: "./data/sqlite",
 		},
 		Credential: Credential{
 			// Short on purpose. A person is watching this one: a probe that

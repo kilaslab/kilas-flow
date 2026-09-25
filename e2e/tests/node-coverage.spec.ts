@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { test, expect } from '../fixtures';
 import { exerciseErrorWorkflow, exerciseFormTrigger } from '../fixtures/error-form-nodes';
 import { readExecutionEvents, waitForExecution } from '../helpers/seed';
@@ -445,9 +448,10 @@ test('http, sqlite, code, calculator, date-time and wait run against the stub', 
 	const events = await readExecutionEvents(server.baseURL, httpStarted.body.id);
 	expect(events.map((event) => event.type)).toContain('execution.completed');
 
-	// SQLite runs a real query against a file beside the instance's database.
+	// SQLite runs a real query against a file in the tenant's own directory
+	// under sql.sqlite_root: the path is relative to it, never absolute.
 	const sqliteCredential = await createCredential(server.baseURL, 'Coverage SQLite', 'sqlite', {
-		path: `${server.dataDir}/node-coverage.db`
+		path: 'node-coverage.db'
 	});
 	const sqliteId = await createWorkflow(
 		server.baseURL,
@@ -460,6 +464,7 @@ test('http, sqlite, code, calculator, date-time and wait run against the stub', 
 	);
 	const sqliteRecord = await runToSuccess(server.baseURL, sqliteId);
 	expect(itemJson(sqliteRecord, 'db')).toMatchObject({ one: 1 });
+	expect(existsSync(join(server.sqliteRoot, 'default', 'node-coverage.db'))).toBe(true);
 
 	// Code runs its Go snippet in the sandbox and passes items through.
 	const codeId = await createWorkflow(

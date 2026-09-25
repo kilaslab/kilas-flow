@@ -168,6 +168,34 @@ On a match the connection is refused. The same guard is applied at **edit time**
 so a SQLite credential naming KilasFlow's own database is refused when it is
 tested exactly as it is when a workflow runs.
 
+**A SQLite credential stays inside its tenant's directory.** Refusing
+KilasFlow's own file is not enough on a multi-tenant install. A path read as the
+credential spells it reaches every other tenant's databases too, and creates a
+file anywhere the process can write. SQLite paths are therefore confined to
+`<sql.sqlite_root>/<tenant>/` and read relative to it. The guard, built once
+for the process, is narrowed to the tenant at each call site: node run, option
+loader, credential test.
+
+The guard refuses:
+
+- an absolute path;
+- a `..` that leaves the directory;
+- any symbolic link on the way. A tenant cannot make one through a workflow, so
+  one found there was put there by someone else;
+- anything that is not a regular file.
+
+The tenant ID has to be one plain directory name. `sql.sqlite_unconfined: true`
+is the single-tenant escape hatch back to unconfined paths, and it is warned
+about at boot. The zero guard, and an empty root, refuse every SQLite credential.
+
+**A SQLite open cannot hold a request or a worker.** The driver opens the file
+with no context, and only a running statement can be interrupted, so a blocked
+open used to ignore every deadline. It now runs in a goroutine the caller
+abandons at its deadline, or after 30 seconds when the caller has none. If the
+driver returns later, the handle it opened is closed. While that open is still
+stuck, the same file is refused straight away rather than queued behind it, and
+at most eight stuck opens are allowed in the process.
+
 A network target has its own half of the same guard. A PostgreSQL or MySQL
 credential whose database name, port and host match the installation's own DSN is
 refused before anything dials, and when the spelling differs the addresses both

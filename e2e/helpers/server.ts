@@ -25,6 +25,9 @@ export interface E2EServer {
 	// processes it starts, such as its JavaScript workers.
 	pid: number;
 	dataDir: string;
+	// sqliteRoot is the instance's sql.sqlite_root. A SQLite credential's path
+	// is relative to <sqliteRoot>/<tenant>; the default tenant is "default".
+	sqliteRoot: string;
 	logPath: string;
 	close: () => Promise<void>;
 }
@@ -46,6 +49,7 @@ export async function startServer(options: E2EServerOptions = {}): Promise<E2ESe
 	const port = await freePort();
 	const baseURL = `http://127.0.0.1:${port}`;
 	const logPath = join(dataDir, `kilasflow-${port}.log`);
+	const sqliteRoot = join(dataDir, 'sqlite');
 
 	const logStream = createWriteStream(logPath, { flags: 'a' });
 	const chunks: string[] = [];
@@ -56,6 +60,9 @@ export async function startServer(options: E2EServerOptions = {}): Promise<E2ESe
 			KILASFLOW_SERVER_HOST: '127.0.0.1',
 			KILASFLOW_SERVER_PORT: String(port),
 			KILASFLOW_DATABASE_DSN: join(dataDir, 'kilasflow.db'),
+			// Inside the per-instance temp directory: the default ./data/sqlite
+			// would resolve against the repository, where the binary runs.
+			KILASFLOW_SQL_SQLITE_ROOT: sqliteRoot,
 			KILASFLOW_OUTBOUND_ALLOWED_HOSTS: '127.0.0.1',
 			...(options.stubEndpoint
 				? { KILASFLOW_OUTBOUND_ALLOWED_PRIVATE_ENDPOINTS: options.stubEndpoint }
@@ -91,6 +98,7 @@ export async function startServer(options: E2EServerOptions = {}): Promise<E2ESe
 		port,
 		pid: child.pid ?? 0,
 		dataDir,
+		sqliteRoot,
 		logPath,
 		close: async () => {
 			if (closed) return;

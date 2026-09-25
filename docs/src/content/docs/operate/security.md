@@ -54,6 +54,21 @@ installation's own DSN. A table prefix does not scope the refusal — anything
 holding the connection can read every table under it, so the whole database is
 refused however the credential spells its target.
 
+**SQLite files are confined per tenant.** A SQLite credential's path is read
+relative to `<sql.sqlite_root>/<tenant>/`, which defaults to
+`./data/sqlite/<tenant>/` beside the default database and so sits inside the
+same volume and backup. Absolute paths, `..` escapes, symbolic links and
+non-regular files are refused. That way one tenant cannot open another's
+databases, or create a file anywhere else the server can write. Keep the root on
+a volume only KilasFlow writes to. Leave `sql.sqlite_unconfined` off on any
+install where tenants do not trust each other: it lets every tenant name any
+file the process can open, and the server warns at every boot while it is on. To
+offer no SQLite credentials at all, set `sql.sqlite_root: ""`.
+
+Opening a SQLite file is bounded by the caller's deadline even when the driver
+blocks. A credential test or a node run returns, and the test's in-flight claim
+is released.
+
 **SQL targets are checked like HTTP ones.** A network database credential is
 also subject to the instance egress policy: a host that resolves to loopback,
 private, link-local or otherwise internal address is refused before anything

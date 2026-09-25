@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -252,6 +253,13 @@ func run(args []string) error {
 	// so allow_private_networks: true permits a private database and false
 	// refuses it.
 	sqlGuard.Policy = outboundPolicy(cfg.Outbound)
+	// Where a SQLite credential's file may live. Resolved once here so every
+	// call site confines to the same directory whatever the working
+	// directory is when a node later runs.
+	sqlGuard.SQLite, err = sqliteFiles(cfg.SQL, log)
+	if err != nil {
+		return err
+	}
 	// The Go toolchain is not in the distroless image, so a default install
 	// cannot compile a Code node. That is reported through the node catalogue,
 	// with what the operator must provide, rather than discovered when a
@@ -1258,6 +1266,30 @@ func databaseGuard(cfg config.Database) (sqlnode.Guard, error) {
 		return sqlnode.Guard{}, nil
 	}
 	return sqlnode.Guard{InternalPaths: []string{path}}, nil
+}
+
+// sqliteFiles turns the sql section's SQLite keys into the confinement every
+// SQLite credential is opened under, and says at boot when it is not the
+// confined default: an operator who turned confinement off, or the type off
+// entirely, should see that in the log rather than discover it from a tenant.
+func sqliteFiles(cfg config.SQLNodes, log *slog.Logger) (sqlnode.SQLiteFiles, error) {
+	if cfg.SQLiteUnconfined {
+		log.Warn("SQLite credentials are unconfined (sql.sqlite_unconfined is true): "+
+			"every tenant can open or create any file this process can; use this only on a single-tenant install",
+			"key", "sql.sqlite_unconfined", "env", "KILASFLOW_SQL_SQLITE_UNCONFINED")
+		return sqlnode.SQLiteFiles{Unconfined: true}, nil
+	}
+	root := strings.TrimSpace(cfg.SQLiteRoot)
+	if root == "" {
+		log.Info("SQLite credentials are disabled (sql.sqlite_root is empty)",
+			"key", "sql.sqlite_root", "env", "KILASFLOW_SQL_SQLITE_ROOT")
+		return sqlnode.SQLiteFiles{}, nil
+	}
+	absolute, err := filepath.Abs(root)
+	if err != nil {
+		return sqlnode.SQLiteFiles{}, fmt.Errorf("resolve sql.sqlite_root %q: %w", root, err)
+	}
+	return sqlnode.SQLiteFiles{Root: absolute}, nil
 }
 
 // buildCodeCompiler wires the two Code keys that reach the toolchain.

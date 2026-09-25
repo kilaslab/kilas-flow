@@ -269,7 +269,9 @@ func (executor *DatabaseExecutor) Execute(ctx context.Context, ir workflow.IRNod
 		return nil, fmt.Errorf("node %q: credential %q is a %s credential, not %s", ir.Name, resolved.Name, resolved.Type, executor.credentialType)
 	}
 
-	guard := executor.guard
+	// Narrowed to the run's tenant, whose directory a SQLite path is read
+	// under, and to the credential's own scope.
+	guard := executor.guard.ForTenant(request.Execution.TenantID)
 	guard.AllowedDomains = resolved.AllowedDomains
 	// The credential's own domain scope binds a database connection exactly as
 	// it binds an HTTP request or a model call: a credential scoped to one host

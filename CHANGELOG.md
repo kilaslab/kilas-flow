@@ -433,6 +433,31 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   longer available to it. Hosted form pages carry a stricter policy with no
   script at all.
 
+- **Breaking:** a SQLite credential opens a file only inside its tenant's own
+  directory, `<sql.sqlite_root>/<tenant>/`, and its path is read relative to
+  that directory. `sql.sqlite_root` defaults to `./data/sqlite`, beside the
+  default database. An absolute path, a `..` escape, a path through a symbolic
+  link, and anything that is not a regular file (a directory, device, FIFO or
+  socket) are refused. Before, any path the process could open was accepted,
+  and a missing file was created there. On a multi-tenant install a tenant
+  could therefore read and write other tenants' SQLite files, and create files
+  anywhere the server could write. An existing SQLite credential that names an
+  absolute path now fails its test and its node runs. To fix one, move the file
+  to `<sql.sqlite_root>/<tenant>/` and change the path to its name there. A
+  single-tenant install that needs the old behaviour can set
+  `sql.sqlite_unconfined: true` (`KILASFLOW_SQL_SQLITE_UNCONFINED`), which logs
+  a warning at every boot. An empty `sql.sqlite_root` turns SQLite credentials
+  off.
+
+- Opening a SQLite file returns at the caller's deadline even when the driver
+  blocks inside its open, which it does with no context. A credential test of
+  such a file used to hang past its deadline. Its in-flight claim was then never
+  released, so every later test of that credential answered 409 "already
+  running", and a node run on it held an engine worker indefinitely. A file whose
+  earlier open is still stuck is refused straight away rather than queued behind
+  it, and the number of stuck opens is capped. The credential test endpoint also
+  answers by its deadline whatever its probe does, and releases its claim.
+
 - A JavaScript worker process runs one tenant's Code-node and Sort-comparator
   scripts and never another's, so code that escaped the engine and stayed in a
   worker cannot see a later tenant's jobs. A script whose tenant has no idle

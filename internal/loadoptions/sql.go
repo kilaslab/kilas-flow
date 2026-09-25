@@ -87,7 +87,9 @@ func openFor(ctx context.Context, scope Scope, guard sqlnode.Guard) (*sqlnode.Co
 	if !known {
 		return nil, fmt.Errorf("%q is not a database credential", scope.Credential.Record.Name)
 	}
-	connection, err := sqlnode.Open(ctx, driver, scope.Credential.Fields, guard)
+	// The tenant the lookup runs under, whose directory a SQLite path is
+	// read under: the same file a run of this workflow would open.
+	connection, err := sqlnode.Open(ctx, driver, scope.Credential.Fields, guard.ForTenant(scope.TenantID))
 	if err != nil {
 		// The DSN carries the password the credential store just decrypted, and
 		// both drivers echo it on a connection failure.

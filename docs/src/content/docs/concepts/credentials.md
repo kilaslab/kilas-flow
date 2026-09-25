@@ -156,6 +156,39 @@ than `/models`, because OpenRouter serves its model catalogue unauthenticated â€
 so `/models` answers 200 for a key that is expired or revoked, and the test would
 pass on a credential that cannot complete anything.
 
+A test answers by its own deadline (`credential.test_timeout`) whatever its probe
+does, and only one test of a credential runs at a time. That claim is released
+when the test answers, even if the probe underneath is still stuck. It used to be
+released only when the probe returned. A SQLite driver that blocked inside its
+open therefore left every later test of that credential answering 409 for the
+life of the process.
+
+## SQLite files
+
+A `sqlite` credential names a file on the server's own disk, so where that file
+may be is an operator decision, not a tenant's. Each tenant gets one directory
+under `sql.sqlite_root` (default `./data/sqlite`), created on first use, and the
+credential's `path` is read relative to it. `orders.db` for tenant `acme` is
+`<sqlite_root>/acme/orders.db`, and `reports/q1.db` works when `reports/` exists
+there. The file is created if it does not exist, but missing directories are
+not. The following are refused:
+
+- an absolute path;
+- a path that leaves the directory through `..`;
+- a path through a symbolic link, wherever the link points;
+- anything that is not a regular file: a directory, a device, a FIFO or a socket.
+
+Two tenants that both name `orders.db` reach two different files.
+
+An empty `sql.sqlite_root` turns the type off: a test or a node run using a
+SQLite credential is refused with a message naming the key. A single-tenant
+install whose credentials already name files elsewhere can set
+`sql.sqlite_unconfined: true`. That brings back the old reading: absolute, or
+relative to the working directory. KilasFlow's own database and non-regular
+files stay refused, and the server logs a warning at every boot while it is on.
+Do not use it where tenants do not trust each other: on an unconfined install,
+every tenant can open every file the server can.
+
 ## The built-in catalogue
 
 Thirteen types ship, all declared in one place, and node packs do not add
@@ -171,7 +204,7 @@ credential types today:
 | `jwtAuth` | verifying inbound JSON Web Tokens â€” a passphrase for HS, a PEM public key for RS, PS and ES |
 | `postgres` | PostgreSQL connections from a workflow |
 | `mysql` | MySQL and MariaDB connections from a workflow |
-| `sqlite` | a SQLite file path |
+| `sqlite` | a SQLite file in the tenant's own directory (see [SQLite files](#sqlite-files)) |
 | `telegramApi` | Telegram Bot API |
 | `wahaApi` | WAHA |
 | `openAiApi` | OpenAI |
