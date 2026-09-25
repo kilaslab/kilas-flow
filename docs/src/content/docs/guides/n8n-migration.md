@@ -256,6 +256,20 @@ to 8 and `waitBetweenTries` to 300,000 ms — clamped rather than refused, so a
 workflow with a larger retry budget still imports and one typo cannot become
 thousands of calls.
 
+n8n never checks its workflow JSON against a schema, so exports turn up with a
+number written as a string — `"typeVersion": "3.4"`. The importer reads these
+fields as n8n's engine does. `typeVersion`, `maxTries`, `waitBetweenTries`,
+`position` and a connection's `index` accept a number or a string that holds
+one. The flags (`disabled`, `retryOnFail`, `executeOnce`, `alwaysOutputData`,
+`continueOnFail`) are on only when they are literally `true`, so a string
+`"true"` leaves the flag off here as it does in n8n. A value that is not a
+number at all does not refuse the file. The node imports as though the field
+were absent, and the report names the field and quotes the value: `lossy` for
+`typeVersion`, because the node still lands on a version, and `dropped` for the
+others. A connection `index` that is not a whole number is the one exception,
+because guessing it would wire the workflow differently. It refuses the file,
+and the `422` names the connection.
+
 ## The diagnostic vocabulary
 
 Every import returns a list under `unsupported`, and every export returns one

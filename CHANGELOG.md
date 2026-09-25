@@ -380,6 +380,14 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 - A timestamp that was never set shows as "—" rather than as "Jan 1".
 
+- n8n import: a node whose `typeVersion` is a string (`"3.4"`) imports at that
+  version, where the whole file used to be refused with a Go decoding error.
+  `maxTries`, `waitBetweenTries`, `position` and a connection's `index` accept
+  a numeric string too. The node flags are on only when they are literally
+  `true`, which is how n8n reads them. A value that is not a number at all is
+  named in the import report, and a file that still cannot be read is refused
+  in words that name the node and field rather than a Go struct.
+
 
 ### Security
 

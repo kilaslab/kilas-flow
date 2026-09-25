@@ -78,6 +78,11 @@ type Node struct {
 	AlwaysOutputData bool    `json:"alwaysOutputData,omitempty"`
 	ExecuteOnce      bool    `json:"executeOnce,omitempty"`
 	OnError          string  `json:"onError,omitempty"`
+
+	// unreadable is what the export wrote in a numeric field that could not be
+	// read as a number. It is filled by UnmarshalJSON and reported on import;
+	// the field itself reads as absent.
+	unreadable []unreadableField
 }
 
 // Connections is n8n's shape: source node *name* → connection kind → one slot
@@ -762,7 +767,7 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 	var source Document
 	decoder := json.NewDecoder(strings.NewReader(string(payload)))
 	if err := decoder.Decode(&source); err != nil {
-		return ImportResult{}, fmt.Errorf("this is not valid n8n workflow JSON: %w", err)
+		return ImportResult{}, fmt.Errorf("this is not valid n8n workflow JSON: %w", plainDecodeError("the workflow", err))
 	}
 	if len(source.Nodes) == 0 {
 		return ImportResult{}, fmt.Errorf("the workflow contains no nodes")
@@ -814,6 +819,10 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 			ID: id, Name: name,
 			Position: positionFrom(node.Position),
 		}
+		// Before the branches below, because an unsupported node reads these
+		// fields too: its capsule is rebuilt from the decoded node, so what
+		// could not be read is not in it either.
+		unsupported = append(unsupported, unreadableIssues(name, id, node)...)
 
 		entry, supported := byN8NType(node.Type)
 		if !supported {
