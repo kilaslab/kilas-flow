@@ -1310,54 +1310,6 @@ func sortedParameterKeys(parameters map[string]any) []string {
 	return keys
 }
 
-// checkDatastoreToolFilled refuses a filled parameter tree whose shape the
-// model changed. Filling a plain string can only put a value where the string
-// was, so a marker, or a map with other keys, where the author's template had
-// neither is the model's doing — a column value like
-// {"mode": "$fromAI('m')", "value": "$fromAI('v')"} filled with "expression"
-// and a template would otherwise be evaluated as one. The value a whole-call
-// json argument fills in is checked for markers at any depth, for the same
-// reason.
-func checkDatastoreToolFilled(template, filled any, path string) error {
-	if !expression.IsExpression(template) && expression.IsExpression(filled) {
-		return fmt.Errorf("%s became an expression once the model's values were filled in, and a data table tool never evaluates one the author did not write", path)
-	}
-	switch typed := template.(type) {
-	case map[string]any:
-		if expression.IsExpression(typed) {
-			return nil
-		}
-		object, _ := filled.(map[string]any)
-		if len(object) != len(typed) {
-			return fmt.Errorf("%s changed its keys once the model's values were filled in", path)
-		}
-		for _, key := range sortedParameterKeys(typed) {
-			value, present := object[key]
-			if !present {
-				return fmt.Errorf("%s changed its keys once the model's values were filled in", path)
-			}
-			if err := checkDatastoreToolFilled(typed[key], value, path+"."+key); err != nil {
-				return err
-			}
-		}
-	case []any:
-		list, _ := filled.([]any)
-		if len(list) != len(typed) {
-			return fmt.Errorf("%s changed its length once the model's values were filled in", path)
-		}
-		for index, nested := range typed {
-			if err := checkDatastoreToolFilled(nested, list[index], fmt.Sprintf("%s[%d]", path, index)); err != nil {
-				return err
-			}
-		}
-	default:
-		if datastoreToolHoldsMarker(filled) {
-			return fmt.Errorf("%s became an expression once the model's values were filled in, and a data table tool never evaluates one the author did not write", path)
-		}
-	}
-	return nil
-}
-
 // DatastoreToolExecutor emits the descriptor that exposes one data table to
 // an AI Agent. The descriptor carries the table id, its frozen column list,
 // the operation the tool performs and the node's parameters — never rows,
@@ -1751,16 +1703,12 @@ func (tool *datastoreTool) invokeWrite(ctx context.Context, arguments json.RawMe
 			fromAI[call.Key] = call.Default
 		}
 	}
-	filled, err := datastoreToolPlainFromAI(tool.parameters, fromAI)
+	parameters, err := ai.SubstituteFromAI(tool.parameters, fromAI)
 	if err != nil {
 		return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
 	}
-	if err := checkDatastoreToolFilled(tool.parameters, filled, "parameters"); err != nil {
+	if err := checkToolFilled(tool.parameters, parameters, "parameters"); err != nil {
 		return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
-	}
-	parameters, _ := filled.(map[string]any)
-	if parameters == nil {
-		parameters = map[string]any{}
 	}
 	// The item an automatic mapping writes is the columns' own $fromAI calls
 	// — never a key that only a condition declares, which would write the
@@ -1812,51 +1760,6 @@ func (tool *datastoreTool) invokeWrite(ctx context.Context, arguments json.RawMe
 	return string(encoded), nil
 }
 
-// datastoreToolPlainFromAI fills the $fromAI calls in the parameters' plain
-// strings and leaves every expression marker exactly as the author wrote it.
-//
-// A plain string is data — nothing evaluates it — so the model's value can be
-// written into it, which is how a column set to the bare text
-// $fromAI('name') has always been filled. An expression is the author's code,
-// and the model's value never becomes part of its source: the step executor
-// evaluates it with the arguments in its context instead. The result is a
-// copy; the tool's own template is never written to.
-func datastoreToolPlainFromAI(value any, arguments map[string]any) (any, error) {
-	switch typed := value.(type) {
-	case string:
-		filled, err := ai.SubstituteFromAI(map[string]any{"text": typed}, arguments)
-		if err != nil {
-			return nil, err
-		}
-		return filled["text"], nil
-	case map[string]any:
-		if expression.IsExpression(typed) {
-			return typed, nil
-		}
-		copied := make(map[string]any, len(typed))
-		for key, nested := range typed {
-			filled, err := datastoreToolPlainFromAI(nested, arguments)
-			if err != nil {
-				return nil, err
-			}
-			copied[key] = filled
-		}
-		return copied, nil
-	case []any:
-		copied := make([]any, len(typed))
-		for index, nested := range typed {
-			filled, err := datastoreToolPlainFromAI(nested, arguments)
-			if err != nil {
-				return nil, err
-			}
-			copied[index] = filled
-		}
-		return copied, nil
-	default:
-		return value, nil
-	}
-}
-
 // checkDatastoreToolArgument holds one model-supplied argument to the type its
 // $fromAI call declared, so the value a write stores is the kind the schema
 // promised: a string argument must be a string, a number a number, a boolean
@@ -1879,34 +1782,11 @@ func checkDatastoreToolArgument(call ai.FromAIArgument, value any) error {
 			return fmt.Errorf("tool argument %q must be true or false", call.Key)
 		}
 	case "json":
-		if datastoreToolHoldsMarker(value) {
+		if holdsExpressionMarker(value) {
 			return fmt.Errorf("tool argument %q holds an expression marker, which a data table tool never accepts", call.Key)
 		}
 	}
 	return nil
-}
-
-// datastoreToolHoldsMarker reports whether a value, at any depth, is or holds
-// an expression marker.
-func datastoreToolHoldsMarker(value any) bool {
-	switch typed := value.(type) {
-	case map[string]any:
-		if mode, _ := typed["mode"].(string); mode == "expression" {
-			return true
-		}
-		for _, nested := range typed {
-			if datastoreToolHoldsMarker(nested) {
-				return true
-			}
-		}
-	case []any:
-		for _, nested := range typed {
-			if datastoreToolHoldsMarker(nested) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // columnNames lists the frozen columns for refusal messages, so a refused

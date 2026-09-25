@@ -143,9 +143,16 @@ func registerBuiltins() {
 	})
 	// Four arguments, as n8n spells it: key, description, type, default. The
 	// last is only read when the agent's arguments are in the context.
-	define("$fromAI", arity{min: 1, max: 4}, func(e *evaluator, args []any) (any, error) {
-		return callRoot("$fromAI", e.ctx, args)
-	})
+	// $fromai and $fromAi are the other spellings n8n accepts, and an
+	// imported workflow carries whichever its author typed. Agent tools used
+	// to splice the model's value over the call before the evaluator saw it,
+	// so any spelling worked there; now that the tools evaluate the call with
+	// the value as data, the evaluator has to know every spelling itself.
+	for _, spelling := range []string{"$fromAI", "$fromai", "$fromAi"} {
+		define(spelling, arity{min: 1, max: 4}, func(e *evaluator, args []any) (any, error) {
+			return callRoot(fromAIRoot, e.ctx, args)
+		})
+	}
 	define("$jmespath", arity{min: 1, max: 2}, func(*evaluator, []any) (any, error) {
 		return nil, fmt.Errorf("$jmespath is not available in this runtime; read the field directly or use Object.keys/map/filter")
 	})

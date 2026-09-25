@@ -103,7 +103,10 @@ An expression body must begin with one of these. Anything else is a parse error.
 `$now` and `$today` are fixed for the whole evaluation of one parameter tree, so
 two expressions in the same node cannot disagree about the time.
 
-`$fromAI` is an error anywhere other than a parameter an AI agent fills.
+`$fromAI` is an error anywhere other than a parameter an AI agent fills. There it
+evaluates to the model's argument — or the call's default, in its declared type
+— as a value, never as expression source, so an argument that spells an
+expression stays text. `$fromai` and `$fromAi` are accepted spellings.
 
 `$vars` holds what the runtime was given for this workflow, and nothing else: a
 variable that was never set stays absent rather than being invented.
