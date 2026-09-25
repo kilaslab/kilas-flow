@@ -414,6 +414,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Security
 
+- A page a workflow returns from a webhook — a Respond to Webhook body or a
+  trigger's `responseData` acknowledgement — no longer runs as the instance.
+  Every webhook answer carries `Content-Security-Policy: sandbox …` without
+  `allow-same-origin`, plus `X-Content-Type-Options: nosniff`, forced over any
+  such header the workflow set, so the page's script runs in an opaque origin
+  and cannot use the dashboard's session or read its API. The page still runs
+  its script, submits its forms and opens its links; `localStorage` is no
+  longer available to it. Hosted form pages carry a stricter policy with no
+  script at all.
+
 - A JavaScript worker process runs one tenant's Code-node and Sort-comparator
   scripts and never another's, so code that escaped the engine and stayed in a
   worker cannot see a later tenant's jobs. A script whose tenant has no idle

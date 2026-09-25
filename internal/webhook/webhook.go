@@ -98,6 +98,10 @@ func NewHandler(bindings repository.WebhookRepository, runner Runner, creds repo
 
 // ServeHTTP routes one inbound request to its workflow.
 func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Every answer below goes out sandboxed; see sandboxedWriter for why this
+	// wraps the writer instead of setting a header on the paths that serve
+	// HTML.
+	w = &sandboxedWriter{ResponseWriter: w}
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/webhook"), "/")
 	if path == "" {
 		problem(w, http.StatusNotFound, "No webhook path was given.")
@@ -922,7 +926,9 @@ func (handler *Handler) respondImmediate(w http.ResponseWriter, r *http.Request,
 	}
 	if body, ok := options["responseData"].(string); ok && strings.TrimSpace(body) != "" {
 		// A custom acknowledgement is text, and n8n sends it as text/html —
-		// which is what its own HTTP layer does with a string body.
+		// which is what its own HTTP layer does with a string body. It is the
+		// tenant's markup on the instance's origin, so it renders only inside
+		// the sandbox the writer forces over any header set above.
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, body)
@@ -943,6 +949,9 @@ func deliveryOf(r *http.Request, binding repository.WebhookBinding, _ TriggerKin
 // writePage answers with a rendered page.
 func writePage(w http.ResponseWriter, status int, page []byte) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// KilasFlow's own page, so the stricter policy: no script at all. Set
+	// after any header the trigger configured, which it replaces.
+	w.Header().Set("Content-Security-Policy", pagePolicy)
 	// A form page is per-workflow and per-binding, so a shared cache holding
 	// one tenant's form for another tenant's browser is not acceptable.
 	w.Header().Set("Cache-Control", "no-store")
@@ -1122,7 +1131,8 @@ func writeResponse(w http.ResponseWriter, response nodeResponse) {
 		} else {
 			// n8n answers a text response as text/html, which is what its own
 			// HTTP layer does with a string — and what makes an HTML result
-			// page render rather than appear as source.
+			// page render rather than appear as source. It renders sandboxed:
+			// the writer replaces any Content-Security-Policy copied above.
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		}
 	}
