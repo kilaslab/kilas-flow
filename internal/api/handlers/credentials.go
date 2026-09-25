@@ -98,8 +98,8 @@ func NewCredentials(store repository.CredentialRepository, tenants TenantResolve
 type credentialBody struct {
 	Name           string            `json:"name" minLength:"1" doc:"Display name"`
 	Type           string            `json:"type,omitempty" doc:"Credential type ID; immutable after creation"`
-	Fields         map[string]string `json:"fields" doc:"Field values for the credential type. Send the redaction placeholder to keep a stored secret."`
-	AllowedDomains []string          `json:"allowedDomains,omitempty" doc:"Hosts this credential may be sent to. Empty means unrestricted."`
+	Fields         map[string]string `json:"fields" doc:"Field values for the credential type. On create, every value is stored as sent and the redaction placeholder is refused. On update, a field left out, or sent as the redaction placeholder, keeps its stored value; send an empty string to clear one."`
+	AllowedDomains []string          `json:"allowedDomains,omitempty" doc:"Hosts this credential may be sent to. An empty list means unrestricted. On update, leaving this out keeps the stored scope and an explicit empty list clears it (a Google credential then gets the Google hosts)."`
 }
 
 type createCredentialInput struct {
@@ -167,7 +167,7 @@ func (handler *Credentials) Register(api huma.API) {
 	}, handler.Get)
 	huma.Register(api, huma.Operation{
 		OperationID: "update-credential", Method: http.MethodPut, Path: "/credentials/{id}",
-		Summary: "Update a credential", Description: "Replaces name, scope, and any field sent with a new value.", Tags: []string{"Credentials"},
+		Summary: "Update a credential", Description: "Replaces the name, and the scope and fields the request sends. A field or scope the request leaves out keeps its stored value.", Tags: []string{"Credentials"},
 		Metadata: sensitiveBody(),
 	}, handler.Update)
 	huma.Register(api, huma.Operation{
@@ -308,10 +308,12 @@ func (handler *Credentials) Update(ctx context.Context, input *updateCredentialI
 		return nil, huma.Error503ServiceUnavailable("credential storage unavailable")
 	}
 	credentialType := input.Body.Type
-	if credentialType == "" && len(input.Body.AllowedDomains) > 0 {
+	if credentialType == "" && input.Body.AllowedDomains != nil {
 		// The type is immutable after creation, so an update may omit it.
 		// The stored type decides: a scope added to a SQLite credential
-		// through a typeless update is the same defect as one set at create.
+		// through a typeless update is the same defect as one set at create,
+		// and an empty scope sent for a Google credential still means the
+		// Google hosts.
 		stored, err := handler.store.Get(ctx, handler.tenants.Resolve(ctx), input.ID)
 		if err != nil {
 			return nil, handler.problem(ctx, err)
@@ -328,7 +330,12 @@ func (handler *Credentials) Update(ctx context.Context, input *updateCredentialI
 	if update.Type == "" {
 		update.Type = credentialType
 	}
-	credentials.ApplyGoogleDefaults(&update)
+	// Only a scope the caller sent is defaulted. A nil one means "keep what is
+	// stored", and filling it with the Google hosts here would replace a
+	// narrower stored scope with the wider default on every rename.
+	if update.AllowedDomains != nil {
+		credentials.ApplyGoogleDefaults(&update)
+	}
 	record, err := handler.store.Update(ctx, handler.tenants.Resolve(ctx), input.ID, update)
 	if err != nil {
 		return nil, handler.problem(ctx, err)
@@ -369,7 +376,7 @@ func credentialResource(record credentials.Record) CredentialResource {
 	}
 	return CredentialResource{
 		ID: record.ID, Name: record.Name, Type: record.Type,
-		Fields:         credentials.Redacted(record.Type, record.Fields),
+		Fields:         credentials.RedactedRecord(record),
 		AllowedDomains: domains,
 		CreatedAt:      record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}

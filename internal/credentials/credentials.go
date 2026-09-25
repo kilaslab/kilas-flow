@@ -21,6 +21,12 @@ const KeySize = 32
 // without ever receiving the secret.
 const RedactedValue = "••••••••"
 
+// SetSecretsKey is where the store records, beside the public fields, which
+// secret fields hold a value. No credential type may declare a key starting
+// with "$", so it cannot collide with a field, and the store lifts it out into
+// Record.SetSecrets before any caller sees the field map.
+const SetSecretsKey = "$setSecrets"
+
 // ErrNoKey reports that the configured environment variable holds no key.
 var ErrNoKey = errors.New("credential encryption key is not set")
 
@@ -32,8 +38,13 @@ type Record struct {
 	Name     string
 	Type     string
 	Fields   map[string]string
+	// SetSecrets names the secret fields that hold a value, read from storage
+	// without decrypting the payload. Nil means the row predates the record,
+	// and every secret is then assumed set.
+	SetSecrets []string
 	// AllowedDomains scopes where this credential may be sent. An empty list
-	// means unrestricted, which the API surfaces explicitly.
+	// means unrestricted, which the API surfaces explicitly. On an update, nil
+	// means "keep the stored scope" and a non-nil empty list clears it.
 	AllowedDomains []string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -165,6 +176,40 @@ func Redacted(typeID string, fields map[string]string) map[string]string {
 			continue
 		}
 		safe[field.Key] = RedactedValue
+	}
+	return safe
+}
+
+// RedactedRecord is Redacted for a record read without its payload: the mask
+// appears only for a secret the store recorded as set, and an unset secret
+// reads as empty. The mask means "a value is stored here", so showing it for a
+// private key that was never written tells the editor something false.
+//
+// A row written before the store kept that record has nil SetSecrets and falls
+// back to Redacted, which masks every secret: over-reporting "stored" is the
+// safe error, since the editor then keeps a value rather than asking for one.
+func RedactedRecord(record Record) map[string]string {
+	safe := Redacted(record.Type, record.Fields)
+	if record.SetSecrets == nil {
+		return safe
+	}
+	definition, found := Lookup(record.Type)
+	if !found {
+		return safe
+	}
+	set := make(map[string]struct{}, len(record.SetSecrets))
+	for _, key := range record.SetSecrets {
+		set[key] = struct{}{}
+	}
+	for _, field := range definition.Fields {
+		if !field.Secret {
+			continue
+		}
+		if _, stored := set[field.Key]; stored {
+			safe[field.Key] = RedactedValue
+			continue
+		}
+		safe[field.Key] = ""
 	}
 	return safe
 }

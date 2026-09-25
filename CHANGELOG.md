@@ -414,6 +414,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Security
 
+- Updating a credential keeps every field and the scope the request leaves
+  out. An update used to clear any field it did not send, so a rename silently
+  dropped a JWT private key or the refresh token Connect stored. It also read a
+  missing `allowedDomains` as "unrestricted", so a rename let the secret go to
+  any host. Now a field is cleared by sending it empty, and the scope only by
+  sending an empty list. Creating a credential refuses the redaction
+  placeholder as a value instead of storing the bullets as the secret, and a
+  listing masks only the secrets that are set: an optional one that was never
+  written reads as empty.
+
 - A JavaScript worker process runs one tenant's Code-node and Sort-comparator
   scripts and never another's, so code that escaped the engine and stayed in a
   worker cannot see a later tenant's jobs. A script whose tenant has no idle

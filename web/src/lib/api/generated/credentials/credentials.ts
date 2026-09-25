@@ -689,7 +689,7 @@ export const getUpdateCredentialUrl = (id: string,) => {
 }
 
 /**
- * Replaces name, scope, and any field sent with a new value.
+ * Replaces the name, and the scope and fields the request sends. A field or scope the request leaves out keeps its stored value.
  * @summary Update a credential
  */
 export const updateCredential = async (id: string,

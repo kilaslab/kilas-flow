@@ -511,7 +511,7 @@ export interface CreatedAPIKeyResource {
 }
 
 /**
- * Field values for the credential type. Send the redaction placeholder to keep a stored secret.
+ * Field values for the credential type. On create, every value is stored as sent and the redaction placeholder is refused. On update, a field left out, or sent as the redaction placeholder, keeps its stored value; send an empty string to clear one.
  */
 export type CredentialBodyFields = {[key: string]: string};
 
@@ -519,11 +519,11 @@ export interface CredentialBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
-     * Hosts this credential may be sent to. Empty means unrestricted.
+     * Hosts this credential may be sent to. An empty list means unrestricted. On update, leaving this out keeps the stored scope and an explicit empty list clears it (a Google credential then gets the Google hosts).
      * @nullable
      */
   allowedDomains?: string[] | null;
-  /** Field values for the credential type. Send the redaction placeholder to keep a stored secret. */
+  /** Field values for the credential type. On create, every value is stored as sent and the redaction placeholder is refused. On update, a field left out, or sent as the redaction placeholder, keeps its stored value; send an empty string to clear one. */
   fields: CredentialBodyFields;
   /**
      * Display name
@@ -2887,7 +2887,7 @@ export const getUpdateCredentialUrl = (id: string,) => {
 }
 
 /**
- * Replaces name, scope, and any field sent with a new value.
+ * Replaces the name, and the scope and fields the request sends. A field or scope the request leaves out keeps its stored value.
  * @summary Update a credential
  */
 export const updateCredential = async (id: string,

@@ -268,6 +268,51 @@ func TestRedactedRemovesEverySecretFieldValue(t *testing.T) {
 	}
 }
 
+func TestRedactedRecordMasksOnlyTheSecretsTheStoreRecordedAsSet(t *testing.T) {
+	t.Parallel()
+
+	safe := credentials.RedactedRecord(credentials.Record{
+		Type:       "jwtAuth",
+		Fields:     map[string]string{"keyType": "passphrase", "algorithm": "HS256"},
+		SetSecrets: []string{"secret"},
+	})
+	if safe["secret"] != credentials.RedactedValue {
+		t.Errorf("secret = %q, want the mask", safe["secret"])
+	}
+	if safe["privateKey"] != "" {
+		t.Errorf("privateKey = %q, want empty for a secret that was never set", safe["privateKey"])
+	}
+	if safe["keyType"] != "passphrase" {
+		t.Errorf("keyType = %q, want the public value", safe["keyType"])
+	}
+
+	// A row from before the store kept the record cannot say, so every secret
+	// is reported as stored: the editor then keeps a value rather than
+	// prompting for one that exists.
+	legacy := credentials.RedactedRecord(credentials.Record{
+		Type:   "jwtAuth",
+		Fields: map[string]string{"keyType": "passphrase", "algorithm": "HS256"},
+	})
+	if legacy["secret"] != credentials.RedactedValue || legacy["privateKey"] != credentials.RedactedValue {
+		t.Errorf("legacy row = %#v, want every secret masked", legacy)
+	}
+}
+
+func TestARegisteredFieldCannotCollideWithTheStoresBookkeeping(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{credentials.SetSecretsKey, "$other", "a,b"} {
+		registry := credentials.NewRegistry()
+		err := registry.Register(credentials.Type{
+			ID: "collides", DisplayName: "Collides",
+			Properties: []property.PropertyDefinition{{Key: key, Label: "Field", Kind: property.KindString}},
+		})
+		if err == nil {
+			t.Errorf("Register() accepted field key %q", key)
+		}
+	}
+}
+
 // Not parallel: t.Setenv mutates process state.
 func TestKeyFromEnvironmentAcceptsBase64AndHex(t *testing.T) {
 	t.Setenv("KF_TEST_KEY_B64", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=")

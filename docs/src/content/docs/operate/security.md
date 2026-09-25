@@ -68,7 +68,10 @@ AES-256-GCM. The key is read from the environment and never from the
 configuration file; without it, credential storage is disabled rather than
 silently falling back to something weaker. Workflow `$env` expressions can
 never reach it either: only `KILASFLOW_WORKFLOW_ENV_*` is exposed to
-workflows, so a workflow can never read the DSN or the master key.
+workflows, so a workflow can never read the DSN or the master key. An update
+that leaves a credential's `allowedDomains` out keeps the stored scope, so a
+client that only renames a credential cannot widen where its secret may go;
+only an explicit empty list makes it unrestricted.
 
 **The master key can come from a manager, and credential fields can point at
 one.** A stored credential field may hold an `ext://<binding>/<key>`

@@ -113,7 +113,7 @@ Embed: Deny — listing workflows, minting sessions, schedules, credential write
 
 `PUT /api/v1/credentials/{id}`
 
-Replaces name, scope, and any field sent with a new value.
+Replaces the name, and the scope and fields the request sends. A field or scope the request leaves out keeps its stored value.
 
 Parameters:
 

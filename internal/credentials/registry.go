@@ -143,6 +143,12 @@ func (registry *Registry) Register(credentialType Type) error {
 		if _, exists := seen[field.Key]; exists {
 			return fmt.Errorf("credential type %q has duplicate field %q", credentialType.ID, field.Key)
 		}
+		// The store keeps its own bookkeeping beside the public fields under
+		// a "$" key and lists secret names comma-separated, so a field named
+		// either way would collide with it.
+		if strings.HasPrefix(field.Key, "$") || strings.Contains(field.Key, ",") {
+			return fmt.Errorf("credential type %q has field %q, and a field key may not start with $ or contain a comma", credentialType.ID, field.Key)
+		}
 		seen[field.Key] = struct{}{}
 	}
 	for _, secret := range credentialType.Secrets {

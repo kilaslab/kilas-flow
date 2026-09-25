@@ -33,14 +33,30 @@ disable authentication.
 The consequence for the API is a hard boundary that is easy to state:
 
 - `List` and `Get` return the **public half only**. They deliberately cannot
-  return plaintext, and the secret fields come back as a non-empty redaction
-  placeholder so an editor can tell "configured" from "empty".
+  return plaintext. A secret field that holds a value comes back as a non-empty
+  redaction placeholder, so an editor can tell "configured" from "empty"; one
+  that was never set comes back empty. Which secrets are set is recorded beside
+  the public half when the credential is written, so answering does not
+  decrypt the payload. A row written before that record existed shows the
+  placeholder for every secret until it is next saved.
 - `Resolve` is the single path by which a plaintext secret leaves storage, and
   only the runtime calls it.
 
-Editing a credential merges: a secret field left at the redaction placeholder
-keeps its stored value, so changing a name never silently blanks a password the
-client was never given.
+Editing a credential merges. A field the update leaves out keeps its stored
+value, and so does a field sent as the redaction placeholder: the client was
+never given the secret, so its silence about one is not a request to erase it.
+Changing a name therefore never blanks a password, a JWT private key, or the
+refresh token Connect stored. To clear a field, send it as an empty string.
+
+The scope follows the same rule. An update that leaves `allowedDomains` out
+keeps the stored scope; only an explicit empty list makes the credential
+unrestricted (a Google credential then gets the Google hosts, as it does at
+create). Reading an omitted scope as "unrestricted" would let any rename widen
+where the secret may be sent.
+
+Creating a credential refuses the redaction placeholder as a value. There is no
+stored value for it to stand for, so storing it would make eight bullet
+characters the secret.
 
 ## Encryption
 

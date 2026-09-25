@@ -137,8 +137,16 @@
 		}
 		return next;
 	}
+	// The server masks only a secret that holds a value, so "Stored" is shown
+	// only where there is something stored: an optional key that was never
+	// set reads as empty rather than as configured.
 	function isSecretStored(field: { key: string; secret: boolean }): boolean {
-		return Boolean(editing) && field.secret && !touchedSecrets.has(field.key);
+		return (
+			Boolean(editing) &&
+			field.secret &&
+			!touchedSecrets.has(field.key) &&
+			editing?.fields?.[field.key] === REDACTED
+		);
 	}
 
 	function openCreate() {
