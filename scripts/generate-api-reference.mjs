@@ -115,9 +115,16 @@ function embedVerdict(method, path) {
 	if (rest === '/workflows/import') {
 		return 'Deny — importing creates a new workflow, outside any session\u2019s single-workflow authority.';
 	}
+	if (rest === '/workflows/convert') {
+		return 'Allow with `workflow:read` — it translates pasted n8n JSON and saves nothing; the paste reaches the workflow only through a save the session\u2019s scopes govern.';
+	}
+	if (rest === '/workflows/validate') {
+		return 'Allow with `workflow:read` — a dry run that compiles the supplied document and saves nothing.';
+	}
 	if (rest.startsWith('/workflows/')) {
 		const action = rest.slice('/workflows/'.length).split('/')[1] ?? '';
 		if (action === 'run') return 'Allow with `workflow:run` — on the session\u2019s workflow only.';
+		if (action === 'duplicate') return 'Deny — a copy is a new workflow, outside any session\u2019s single-workflow authority.';
 		if (action === 'activate' || action === 'deactivate') return 'Deny — activation publishes a deployment-wide endpoint; an owner action, not an embed one.';
 		if (method === 'GET') return 'Allow with `workflow:read` — on the session\u2019s workflow only.';
 		if (method === 'DELETE') return 'Deny — an embed session cannot delete a workflow.';

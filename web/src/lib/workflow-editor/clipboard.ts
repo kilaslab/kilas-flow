@@ -113,14 +113,20 @@ export function pasteInto(
 	newID?: () => string
 ): { document: Document; nodeIDs: string[]; issues: ImportIssue[] } {
 	const inserted = insertNodes(document, payload.nodes, payload.connections, offset, newID);
-	const landed = new Map<string, WorkflowNode>();
+	const landedByID = new Map<string, WorkflowNode>();
+	const landedByName = new Map<string, WorkflowNode>();
 	const byID = new Map((inserted.document.nodes ?? []).map((node) => [node.id, node]));
 	payload.nodes.forEach((node, index) => {
 		const placed = byID.get(inserted.nodeIDs[index]);
-		if (placed) landed.set(node.id, placed);
+		if (!placed) return;
+		landedByID.set(node.id, placed);
+		landedByName.set(node.name, placed);
 	});
+	// An entry about a connection names its source node but carries no id, so
+	// it is matched by the name the node had in the payload — the importer
+	// keeps n8n's names as written.
 	const issues = payload.issues.map((issue) => {
-		const placed = issue.nodeId ? landed.get(issue.nodeId) : undefined;
+		const placed = issue.nodeId ? landedByID.get(issue.nodeId) : issue.nodeName ? landedByName.get(issue.nodeName) : undefined;
 		return placed ? { ...issue, nodeId: placed.id, nodeName: placed.name } : issue;
 	});
 	return { ...inserted, issues };

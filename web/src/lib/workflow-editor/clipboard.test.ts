@@ -139,4 +139,22 @@ describe('pasteInto', () => {
 		expect(issues[0]).toMatchObject({ nodeId: 'landed-1', nodeName: 'Set2', field: 'notes' });
 		expect(issues[1]).toEqual(payload.issues[1]);
 	});
+
+	it('points a connection entry, which names its node but carries no id, at the node as it landed', () => {
+		const payload: PastePayload = {
+			nodes: [{ id: 'n8n-a', name: 'Set', type: 'kilasflow.set', typeVersion: 1, position: { x: 0, y: 0 } }],
+			connections: [],
+			issues: [
+				{ severity: 'lossy', nodeName: 'Set', reason: 'the connection from "Set" to "Model" was held back' },
+				{ severity: 'lossy', nodeName: 'Elsewhere', reason: 'a connection starts at "Elsewhere", which is not a node' }
+			]
+		};
+
+		const { issues } = pasteInto(document(), payload, { x: 0, y: 0 }, () => 'landed-1');
+
+		expect(issues[0]).toMatchObject({ nodeId: 'landed-1', nodeName: 'Set2' });
+		// A name that is not one of the pasted nodes is left as the importer wrote it,
+		// never attached to the canvas's own node of that name.
+		expect(issues[1]).toEqual(payload.issues[1]);
+	});
 });
