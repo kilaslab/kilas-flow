@@ -266,7 +266,9 @@ See the [HTTP API reference](/reference/api/).
 
 An [embed session](/concepts/tenancy-and-embedding/) may read the credential
 list — an editor has to offer a picker — and may do nothing else with
-credentials.
+credentials. The list it reads holds only the credentials its session was
+granted, and they are chosen in the query before the page is cut, so neither the
+rows nor the paging cursor name any other credential.
 
 An embed session and a scoped API key may not save or run a workflow that
 attaches an **unscoped** credential: one that would be sent over HTTP and has no

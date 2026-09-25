@@ -439,6 +439,13 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
     against, are not affected. The tenant's own keys and the dashboard are
     unaffected.
 
+- An embed session's credential listing no longer discloses other
+  credentials through its paging cursor. The listing was filtered after the page
+  was cut, and the cursor still named the last row of the unfiltered page, so
+  paging with `limit=1` walked every credential name and id in the tenant. The
+  session's grant is now applied in the query, and every row and cursor comes
+  from it.
+
 - A JavaScript worker process runs one tenant's Code-node and Sort-comparator
   scripts and never another's, so code that escaped the engine and stayed in a
   worker cannot see a later tenant's jobs. A script whose tenant has no idle

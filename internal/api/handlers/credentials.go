@@ -11,6 +11,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/kilaslab/kilas-flow/internal/api/middleware"
 	"github.com/kilaslab/kilas-flow/internal/credentials"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
@@ -240,9 +241,17 @@ func (handler *Credentials) List(ctx context.Context, input *credentialListInput
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("credential storage unavailable")
 	}
-	page, err := handler.store.ListPage(ctx, handler.tenants.Resolve(ctx), repository.CredentialFilter{
-		Limit: input.Limit, Cursor: input.Cursor,
-	})
+	filter := repository.CredentialFilter{Limit: input.Limit, Cursor: input.Cursor}
+	// An embed session's subset is chosen in the query, not by filtering the
+	// page afterwards: the page's cursor names its last row, and a page cut
+	// from the whole tenant ends on a sibling the session may not see — its
+	// name and id, base64'd into a header. Restricting first means every row
+	// and every cursor come from the grant.
+	if session, embedded := middleware.EmbedSessionFrom(ctx); embedded {
+		filter.Restricted = true
+		filter.IDs = session.Confinement.Credentials
+	}
+	page, err := handler.store.ListPage(ctx, handler.tenants.Resolve(ctx), filter)
 	// A cursor the client did not receive from this API is a bad request, not
 	// a server fault.
 	if errors.Is(err, repository.ErrInvalidCursor) {
@@ -253,6 +262,8 @@ func (handler *Credentials) List(ctx context.Context, input *credentialListInput
 	}
 	resources := make([]CredentialResource, 0, len(page.Credentials))
 	for _, record := range page.Credentials {
+		// Kept behind the query's restriction as a second fence: a store that
+		// ignored the filter would then return a short page, never a row.
 		if !embedAllowsCredential(ctx, record.ID) {
 			continue
 		}

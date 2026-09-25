@@ -181,6 +181,15 @@ type CredentialFilter struct {
 	// Cursor continues a previous listing. It is opaque to callers; only
 	// ListPage may construct one.
 	Cursor string
+	// Restricted limits the listing to IDs; with no IDs it lists nothing.
+	//
+	// The restriction is applied in the query, before the page is cut and its
+	// cursor built, because the cursor names the last row of the page: a
+	// listing filtered afterwards hands its caller the name and id of a row it
+	// was never meant to see. The flag is separate from the slice so that an
+	// empty grant cannot be mistaken for no restriction at all.
+	Restricted bool
+	IDs        []string
 }
 
 // CredentialPage is one page of stored credentials.
@@ -220,7 +229,13 @@ func (store *GORMCredentialStore) ListPage(ctx context.Context, tenant TenantSco
 		limit = MaxCredentialPageSize
 	}
 
+	if filter.Restricted && len(filter.IDs) == 0 {
+		return CredentialPage{Credentials: []credentials.Record{}}, nil
+	}
 	query := store.db.WithContext(ctx).Where("tenant_id = ?", tenant.ID)
+	if filter.Restricted {
+		query = query.Where("id IN ?", filter.IDs)
+	}
 	if filter.Cursor != "" {
 		name, id, err := decodeCredentialCursor(filter.Cursor)
 		if err != nil {

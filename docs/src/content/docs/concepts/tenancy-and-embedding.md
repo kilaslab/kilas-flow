@@ -230,7 +230,7 @@ handler will run.
 | Request | Result |
 | --- | --- |
 | anything under `/node-types` | needs `workflow:read` |
-| `GET /credentials` | needs `workflow:read` — the editor has to offer a picker |
+| `GET /credentials` | needs `workflow:read` — the editor has to offer a picker; lists only the credentials the session was granted, and pages over those alone, so no cursor names another |
 | `GET /workflows/{that one}` | needs `workflow:read` |
 | `POST /workflows/{that one}/run` | needs `workflow:run` |
 | any other write to `/workflows/{that one}` | needs `workflow:write` |

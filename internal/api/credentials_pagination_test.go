@@ -1,8 +1,10 @@
 package api_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/kilaslab/kilas-flow/internal/api"
@@ -72,5 +74,61 @@ func TestCredentialsArePagedWithACursor(t *testing.T) {
 	broken := get(t, handler, "/api/v1/credentials?cursor=not-a-cursor")
 	if broken.Code != http.StatusBadRequest {
 		t.Errorf("status = %d for a malformed cursor, want 400 (body: %s)", broken.Code, broken.Body)
+	}
+}
+
+// An embed session's listing used to be filtered after the store had built the
+// page, and still carried the store's cursor — base64 of the last unfiltered
+// row's name and id. Paging with limit=1 therefore walked the whole tenant one
+// sibling at a time, and every cursor decoded to a credential the session was
+// never granted. The rows and the cursors are both read here.
+func TestAnEmbedSessionsCredentialCursorNamesNoOtherCredential(t *testing.T) {
+	handler, _, workflowID := embedServer(t)
+
+	siblings := []credentialResource{
+		storeCredential(t, handler, "Alpha sibling", "httpHeaderAuth", map[string]string{"name": "X-A", "value": "a"}),
+		storeCredential(t, handler, "Mike sibling", "httpHeaderAuth", map[string]string{"name": "X-M", "value": "m"}),
+		storeCredential(t, handler, "Zulu sibling", "httpHeaderAuth", map[string]string{"name": "X-Z", "value": "z"}),
+	}
+	granted := storeScopedCredential(t, handler, "Granted", "httpHeaderAuth",
+		map[string]string{"name": "X-G", "value": "g"}, "partner.test")
+	requestJSON[workflowResource](t, handler, http.MethodPut, "/api/v1/workflows/"+workflowID,
+		workflowDraft(documentReferencing("Embeddable", embedWorkflowNode("collect", granted.ID))), http.StatusOK)
+	requestJSON[workflowResource](t, handler, http.MethodPost, "/api/v1/workflows/"+workflowID+"/activate", nil, http.StatusOK)
+
+	token := mintEmbedSession(t, handler, workflowID, "workflow:read")
+
+	var listed []credentialResource
+	disclosed := ""
+	cursor := ""
+	for page := 0; page < 10; page++ {
+		path := "/api/v1/credentials?limit=1"
+		if cursor != "" {
+			path += "&cursor=" + cursor
+		}
+		got := embedRequest(t, handler, token, http.MethodGet, path, nil)
+		if got.Code != http.StatusOK {
+			t.Fatalf("page %d status = %d, want 200 (body: %s)", page, got.Code, got.Body)
+		}
+		listed = append(listed, decodeCredentials(t, got.Body.Bytes())...)
+		disclosed += got.Body.String()
+		cursor = got.Header().Get("X-Next-Cursor")
+		if cursor == "" {
+			break
+		}
+		decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+		if err != nil {
+			t.Fatalf("cursor %q is not the store's encoding: %v", cursor, err)
+		}
+		disclosed += string(decoded)
+	}
+
+	if len(listed) != 1 || listed[0].ID != granted.ID {
+		t.Fatalf("listed = %#v, want exactly the granted credential", listed)
+	}
+	for _, sibling := range siblings {
+		if strings.Contains(disclosed, sibling.ID) || strings.Contains(disclosed, sibling.Name) {
+			t.Errorf("the listing or its cursor disclosed %q (%s)", sibling.Name, sibling.ID)
+		}
 	}
 }
