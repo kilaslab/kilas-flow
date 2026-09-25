@@ -1,13 +1,13 @@
 ---
 id: BUG-hejyb9
 title: 'Code node: httpRequest''s error for a non-2xx status does not read as n8n''s'
-status: testing
+status: done
 priority: low
 labels:
     - code-node
     - javascript
 created: "2026-09-25T09:56:46Z"
-updated: "2026-09-25T09:56:46Z"
+updated: "2026-09-25T10:11:00Z"
 ---
 
 # Description
@@ -89,3 +89,21 @@ Found by the 2026-09-25 Code-node self-test. When `this.helpers.httpRequest` get
 - Corpus: `make js-corpus && make js-corpus-check` passes with the baseline
   unchanged (httpRequest is not wired in the instrument).
 - Surface: `TestTheScriptSurfaceIsTheReviewedOne` passes unchanged.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-25.
+
+- Base: `4ee3d1a9` (last commit at or before ticket created 2026-09-25)
+- Commits (1):
+  - `9507d29c` — BUG-hejyb9: httpRequest rejects a status outside 2xx with n8n's AxiosError, its message, code and status, and no response
+- Files changed (the ticket's own commits, 57f6779..worktree-agent-aad405ea2277eae60):
+
+```
+ .pine/tickets/BUG-hejyb9.md                     | 78 +++++++++++++++++++++++++++++++++++++++++++--
+ CHANGELOG.md                                    |  5 +++
+ docs/src/content/docs/guides/code-javascript.md | 15 +++++++--
+ internal/jsrun/helpers_test.go                  | 42 ++++++++++++++++++++++--
+ internal/jsrun/js/modules/helpers.js            | 23 +++++++++----
+ 5 files changed, 150 insertions(+), 13 deletions(-)
+```
