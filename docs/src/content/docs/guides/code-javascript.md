@@ -234,7 +234,11 @@ when the node runs, as a `SyntaxError` with its line, not when it is saved.
   counts as one host call. Base64 wrapped in lines, URL-safe or without its
   padding is read; `data` that is not base64, or a `mimeType` that is not a
   media type, is refused with the item named rather than stored as different
-  bytes.
+  bytes. A file already stored for a run that then fails — one
+  `prepareBinaryData` wrote, or an inline file stored before a later one
+  could not be — stays in that execution's storage, with nothing referencing
+  it, until the execution's storage is removed. It does not outlive the
+  execution.
 - **The time limit counts the code's own running time.** Starting the engine,
   loading a library, handling the input and output, and waiting for the
   server to answer a helper are not counted. The deployment sets the ceiling
