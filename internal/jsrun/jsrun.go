@@ -214,8 +214,8 @@ type Runner struct {
 	betweenItems  func()
 	forcedLibrary []string
 	onInterrupt   func(time.Time)
-	// inspect is handed the VM once the code has run, before it is closed.
-	inspect func(*vm)
+	// afterRun is handed the VM once the code has run, before it is closed.
+	afterRun func(*vm)
 }
 
 // NewRunner builds a runner for one deployment.

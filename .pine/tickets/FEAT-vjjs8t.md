@@ -81,7 +81,8 @@ See EPIC-tjnr1z, *Plan → Phase 8*.
   the same), which keeps it at ~490 reviewable lines.
 - **The Go-side checks need an internal test.** Deciding whether an object is
   a reflected Go value, and comparing with the host callbacks by identity,
-  needs the VM: `Runner.inspect` (a test seam like `betweenItems`) hands the
+  needs the VM: `Runner.afterRun` (a test seam like `betweenItems`; it was
+  `inspect`) hands the
   VM to the test after the code ran, and `vm.callbacks` keeps the callbacks
   object for it.
 - **The load test is a Go benchmark** in `internal/jsworker`, where the test
@@ -283,6 +284,31 @@ beyond one execution per CPU, throughput holds and latency grows with the
 queue (p99 grows about linearly with the queue length), and nothing failed.
 The 10-core number is under the 4+6 split, so the efficiency cores slow the
 10-at-once rows.
+
+## Progress (2026-09-25)
+
+Touch-up after en-CA/en-GB merged. Status stays `testing`.
+
+Docs now name `en`, `en-US`, `en-CA` and `en-GB` as the date locales, and say
+every other date locale is still a named error. Zone names follow the higher
+offset, so Dublin matches Node on either tzdata form; the page does not say
+they depend on the host's daylight-saving flag. The fixed bounds list the
+1,000-arrow-function limit. The page, the safety-boundaries paragraph and the
+surface-file header say what the walk lists: own properties of globals and of
+sampled instances, not every value a call would return.
+
+The surface walk now roots symbol-keyed globals, and skips only its own
+`__samples`, `__leaves` and `__restore`. A comparator that has not loaded
+Luxon or Intl still has those globals as getters; the Code-node samples load
+them, so the reviewed list now carries both. `a` and `b` are the input items,
+already the shape of a sampled item. `Runner.inspect` is `afterRun`. The
+load-test percentile uses ceil, and a repeated concurrency level is kept once.
+The Export comment says `ExportTo` into a struct does go through the mapper.
+
+Tests added: the async-function constructor beside the other compilers; a
+getter on a returned item's own `json` and `binary`; `Symbol.toPrimitive` on
+a file id; `Array[Symbol.species]` returning a foreign file. Each leaves no
+file the node was not given.
 
 # Related Files
 

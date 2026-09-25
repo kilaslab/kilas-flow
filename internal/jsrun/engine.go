@@ -264,10 +264,14 @@ func newVM(limits Limits) (*vm, error) {
 // and methods included. The runtime never hands one over, but goja_nodejs
 // does: its Buffer keeps its own *Buffer under a symbol on the constructor,
 // and every URL and URLSearchParams is one of its structs, which its
-// functions find again by exporting the object. Exporting does not go through
+// functions find again by exporting the object. Export does not go through
 // this mapper, so those keep working, and a script sees only an opaque
-// handle. Without it, Buffer's handle offered WrapBytes, which copies an
-// array-like of any length in one call nothing can interrupt (BUG-h6tj4e).
+// handle. ExportTo into a struct does: goja maps each struct field through
+// the mapper, and a name mapped to "" is read as the property "", so an
+// ExportTo into a struct here would leave every field zero. The runtime
+// never exports into a struct. Without the mapper, Buffer's handle offered
+// WrapBytes, which copies an array-like of any length in one call nothing
+// can interrupt (BUG-h6tj4e).
 type noGoMembers struct{}
 
 func (noGoMembers) FieldName(reflect.Type, reflect.StructField) string { return "" }

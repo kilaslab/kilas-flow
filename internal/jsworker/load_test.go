@@ -3,6 +3,7 @@ package jsworker
 import (
 	"context"
 	"fmt"
+	"math"
 	"runtime"
 	"slices"
 	"sync"
@@ -49,7 +50,7 @@ func BenchmarkCodeNodeUnderLoad(b *testing.B) {
 } }))`, loadItems(1000)},
 	}
 	for _, body := range bodies {
-		for _, concurrency := range slices.Compact([]int{1, 4, cpus, 4 * cpus}) {
+		for _, concurrency := range loadLevels(cpus) {
 			b.Run(fmt.Sprintf("%s/concurrency=%d", body.name, concurrency), func(b *testing.B) {
 				pool := New(Options{MaxConcurrent: cpus})
 				b.Cleanup(pool.Close)
@@ -90,7 +91,10 @@ func BenchmarkCodeNodeUnderLoad(b *testing.B) {
 
 				slices.Sort(latencies)
 				percentile := func(p float64) float64 {
-					index := int(p*float64(len(latencies))+0.5) - 1
+					// ceil, so a rank that is not a sample is the next one
+					// up. Nearest-rank under-reports a p that falls between
+					// two samples.
+					index := int(math.Ceil(p*float64(len(latencies)))) - 1
 					index = max(0, min(index, len(latencies)-1))
 					return float64(latencies[index]) / float64(time.Millisecond)
 				}
@@ -102,6 +106,22 @@ func BenchmarkCodeNodeUnderLoad(b *testing.B) {
 			})
 		}
 	}
+}
+
+// loadLevels are the concurrency levels, in order, with a repeated one kept
+// once. One CPU makes 1 and 4*cpus collide with the fixed 1 and 4, and
+// slices.Compact would keep a repeat that is not next to its twin.
+func loadLevels(cpus int) []int {
+	var levels []int
+	seen := map[int]bool{}
+	for _, level := range []int{1, 4, cpus, 4 * cpus} {
+		if seen[level] || level < 1 {
+			continue
+		}
+		seen[level] = true
+		levels = append(levels, level)
+	}
+	return levels
 }
 
 // loadItems are count items shaped like the orders a real workflow reshapes.

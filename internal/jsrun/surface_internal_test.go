@@ -69,7 +69,7 @@ const surfaceWalker = `(function (bareNames, samples, leaves) {
     var keys = getOwnPropertyNames(object).sort();
     var symbols = getOwnPropertySymbols(object).sort(function (a, b) { return String(a) < String(b) ? -1 : 1; });
     keys.concat(symbols).forEach(function (key) {
-      var name = typeof key === 'symbol' ? '[' + String(key) + ']' : key;
+      var name = label(key);
       var at = path + '.' + name;
       var descriptor = getOwnPropertyDescriptor(object, key);
       if (hostNames.indexOf(name) >= 0 && typeof descriptor.value === 'function') hostShaped.push(at);
@@ -98,9 +98,13 @@ const surfaceWalker = `(function (bareNames, samples, leaves) {
       describe(entry[0], entry[1], entry[2]);
     }
   }
+  function label(key) { return typeof key === 'symbol' ? '[' + String(key) + ']' : key; }
+  // The walk plants these three names itself. Any other name, including one
+  // that only starts with "__", is the runtime's and is listed.
+  var walkerNames = { __samples: true, __leaves: true, __restore: true };
   function root(object, path, key) {
     var descriptor = getOwnPropertyDescriptor(object, key);
-    var at = path + key;
+    var at = path + label(key);
     if ('value' in descriptor) {
       lines.push(at + ' ' + kind(descriptor.value));
       visit(descriptor.value, at, true);
@@ -116,7 +120,10 @@ const surfaceWalker = `(function (bareNames, samples, leaves) {
   });
   drain();
   getOwnPropertyNames(globalThis).sort().forEach(function (name) {
-    if (bareNames.indexOf(name) < 0 && name.slice(0, 2) !== '__') root(globalThis, '', name);
+    if (bareNames.indexOf(name) < 0 && !walkerNames[name]) root(globalThis, '', name);
+  });
+  getOwnPropertySymbols(globalThis).sort(function (a, b) { return String(a) < String(b) ? -1 : 1; }).forEach(function (symbol) {
+    root(globalThis, '', symbol);
   });
   drain();
   if (samples) {
@@ -224,7 +231,7 @@ func scriptSurface(t *testing.T, mode Mode, prefix string) (walked, *goja.Object
 	runner := NewRunner(Options{})
 	var surface walked
 	var callbacks *goja.Object
-	runner.inspect = func(v *vm) {
+	runner.afterRun = func(v *vm) {
 		samples := v.rt.Get("__samples")
 		if samples == nil || goja.IsUndefined(samples) {
 			// The run failed, and says why.
@@ -423,9 +430,97 @@ const hooked = []
 }
 `
 
-// Every property the runtime adds to what a bare goja VM offers, and every
-// property of what the runtime and its modules hand a script, is the reviewed
-// list in testdata/surface.txt.
+// The walk's list, beyond a bare goja VM, is testdata/surface.txt. It lists
+// own properties, symbol-keyed ones included, of each global and of each
+// sampled instance. It does not call a getter or a function, so a value that
+// exists only as a call's result is listed only when a sample builds it.
+// Array indexes are one "[i]". A function's length, name and untouched
+// prototype are left out. A vendored library is listed by its root.
+func TestTheWalkListsASymbolGlobalAndADoubleUnderscoreName(t *testing.T) {
+	runner := NewRunner(Options{})
+	var lines []string
+	runner.afterRun = func(v *vm) {
+		lines = walk(t, v.rt, BareGlobalsForTest(), v.rt.Get("__samples"), v.rt.Get("__leaves")).lines
+	}
+	_, err := runner.Run(context.Background(), Task{
+		Source: "globalThis.__probe = { marker: 1 }\n" +
+			"globalThis[Symbol.for('kilasflow.probe')] = { marker: 2 }\n" +
+			"globalThis.__samples = {}\n" +
+			"globalThis.__leaves = []\n" +
+			"return items",
+		Items: []workflow.Item{{JSON: map[string]any{"n": 1}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := "\n" + strings.Join(lines, "\n") + "\n"
+	for _, want := range []string{"\n__probe object\n", "\n__probe.marker number\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("walk missed %q\n%s", want, got)
+		}
+	}
+	var symbolListed bool
+	for _, line := range lines {
+		if strings.HasPrefix(line, "[Symbol(") && strings.Contains(line, "kilasflow.probe") {
+			symbolListed = true
+		}
+		if strings.HasPrefix(line, "__samples") || strings.HasPrefix(line, "__leaves") || strings.HasPrefix(line, "__restore") {
+			t.Errorf("the walk listed its own name %q", line)
+		}
+	}
+	if !symbolListed {
+		t.Errorf("walk listed no symbol-keyed global\n%s", got)
+	}
+}
+
+// comparatorSurface walks a Sort comparator that never loads Luxon or Intl.
+// Its parameters a and b are the input items. The globals those libraries
+// leave as getters, until something loads them, are the lines a Code-node
+// walk does not have: the Code-node samples load both.
+func comparatorSurface(t *testing.T) walked {
+	t.Helper()
+	runner := NewRunner(Options{})
+	var surface walked
+	runner.afterRun = func(v *vm) {
+		surface = walk(t, v.rt, BareGlobalsForTest(), v.rt.Get("__samples"), v.rt.Get("__leaves"))
+	}
+	_, err := runner.Run(context.Background(), Task{
+		Source: "globalThis.__samples = { left: a, right: b, items }\n" +
+			"globalThis.__leaves = []\n" +
+			"return 0",
+		Mode:  ModeComparator,
+		Items: []workflow.Item{{JSON: map[string]any{"n": 1}}, {JSON: map[string]any{"n": 2}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return surface
+}
+
+// A comparator adds the unloaded Luxon and Intl getters and nothing else.
+// a and b are items, the same shape the Code-node samples already list.
+func TestTheComparatorSurfaceAddsTheUnloadedGetters(t *testing.T) {
+	code, _ := scriptSurface(t, ModeAllItems, "")
+	known := map[string]bool{}
+	for _, line := range code.lines {
+		known[line] = true
+	}
+	var extra []string
+	for _, line := range comparatorSurface(t).lines {
+		if strings.HasPrefix(line, "sample.") || known[line] {
+			continue
+		}
+		extra = append(extra, line)
+	}
+	slices.Sort(extra)
+	want := []string{
+		"DateTime get/set", "Duration get/set", "Info get/set", "Interval get/set", "Intl get/set", "Settings get/set",
+	}
+	if strings.Join(extra, "\n") != strings.Join(want, "\n") {
+		t.Errorf("comparator adds\n%s\nwant\n%s", strings.Join(extra, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 func TestTheScriptSurfaceIsTheReviewedOne(t *testing.T) {
 	bareRT := goja.New()
 	bare := walk(t, bareRT, BareGlobalsForTest(), goja.Undefined(), bareRT.ToValue([]any{}))
@@ -442,15 +537,28 @@ func TestTheScriptSurfaceIsTheReviewedOne(t *testing.T) {
 			}
 		}
 	}
+	for _, line := range comparatorSurface(t).lines {
+		if !builtIn[line] && !strings.HasPrefix(line, "sample.") {
+			added = append(added, line)
+		}
+	}
 	slices.Sort(added)
 	added = slices.Compact(added)
 
 	if *updateSurface {
-		header := "# The script surface of a Code node (FEAT-vjjs8t): every property a script can\n" +
-			"# reach that a bare goja VM does not have, with what it holds. Generated by\n" +
+		header := "# The script surface of a Code node (FEAT-vjjs8t): the properties the walk\n" +
+			"# lists beyond a bare goja VM, with what each holds. The walk lists own\n" +
+			"# properties, symbol-keyed ones included, of each global and of each sampled\n" +
+			"# instance. It does not call a getter or a function, so a value that exists\n" +
+			"# only as a call's result is listed only when a sample builds it. Array\n" +
+			"# indexes are one \"[i]\". A function's length, name and untouched prototype\n" +
+			"# are left out. \"library\" is a vendored library, listed by its root.\n" +
+			"# A comparator that has not loaded Luxon or Intl lists those globals as\n" +
+			"# getters; a Code node that has loaded them lists the values.\n" +
+			"# Generated by\n" +
 			"# go test ./internal/jsrun -run TestTheScriptSurfaceIsTheReviewedOne -update-surface\n" +
 			"# Review every changed line before committing it: each is something a script can\n" +
-			"# now read, call or replace. \"library\" is a vendored library, listed by its root.\n"
+			"# now read, call or replace.\n"
 		if err := os.WriteFile(surfacePath, []byte(header+strings.Join(added, "\n")+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}

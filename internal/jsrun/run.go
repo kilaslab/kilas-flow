@@ -100,8 +100,8 @@ func (runner *Runner) Execute(ctx context.Context, job Job, answers Host) (execu
 		return Executed{}, err
 	}
 	defer v.close()
-	if runner.inspect != nil {
-		defer runner.inspect(v)
+	if runner.afterRun != nil {
+		defer runner.afterRun(v)
 	}
 	v.onInterrupt = runner.onInterrupt
 	defer func() { executed.HelperCalls = v.helperCalls }()

@@ -109,6 +109,14 @@ func TestPollutionCannotMakeAResultNameAnotherFile(t *testing.T) {
 		"Array.prototype.toJSON = function () { return [{ json: {}, binary: { data: { id: 'bin_someone_elses' } }, paired: null }] }\nreturn [{ json: {} }]",
 		"const item = $input.first()\nitem.binary.data.id = 'bin_someone_elses'\nreturn [item]",
 		"Object.prototype.toJSON = function () { return this && this.json ? { json: {}, binary: { data: { id: 'bin_someone_elses' } } } : this }\nreturn [{ json: {} }]",
+		// A getter on the returned item itself, not on a prototype.
+		"const item = {}\nObject.defineProperty(item, 'json', { get() { return { n: 1 } }, enumerable: true })\nObject.defineProperty(item, 'binary', { get() { return { data: { id: 'bin_someone_elses' } } }, enumerable: true })\nreturn [item]",
+		// Symbol.toPrimitive coerces an id when something stringifies it by
+		// primitive, which JSON does not; the id must not become a file.
+		"const id = { [Symbol.toPrimitive]() { return 'bin_someone_elses' } }\nreturn [{ json: {}, binary: { data: { id } } }]",
+		// Symbol.species runs when an array method builds its result. A
+		// species that returns a foreign file must not be accepted as one.
+		"Array[Symbol.species] = function () { return [{ json: {}, binary: { data: { id: 'bin_someone_elses' } } }] }\nreturn [{ json: { n: 1 } }].slice()",
 	} {
 		result, err := runAll(t, newRunner(), source, []workflow.Item{given})
 		for _, item := range result.Items {
@@ -138,17 +146,22 @@ func TestCodeCompiledAtRunTimeReachesNothingTheBodyCannot(t *testing.T) {
 		"  newFunction: source => new Function(source)(),",
 		"  functionConstructor: source => Function.prototype.constructor(source)(),",
 		"  generatorConstructor: source => (function* () {}).constructor(source)().next().value,",
+		"  asyncFunctionConstructor: source => (async function () {}).constructor(source)(),",
 		"  hostFunctionConstructor: source => $input.all.constructor(source)(),",
 		"  bufferConstructor: source => Buffer.from.constructor(source)(),",
 		"  errorChain: source => new Error('x').constructor.constructor(source)(),",
 		"}",
 		"const found = {}",
 		"for (const [name, compile] of Object.entries(compilers)) {",
-		"  const run = source => name === 'indirectEval' ? compile(source) : compile(name === 'generatorConstructor' ? 'yield ' + source : 'return ' + source)",
+		"  const run = async source => {",
+		"    const body = name === 'generatorConstructor' ? 'yield ' + source : 'return ' + source",
+		"    const compiled = name === 'indirectEval' ? compile(source) : compile(body)",
+		"    return compiled && typeof compiled.then === 'function' ? await compiled : compiled",
+		"  }",
 		"  found[name] = [",
-		"    run('globalThis') === global,",
-		"    run('[typeof process, typeof module, typeof exports, typeof global, typeof __dirname, typeof Deno, typeof Bun, typeof WebAssembly, typeof fetch, typeof XMLHttpRequest, typeof SharedArrayBuffer].join()'),",
-		"    run('require') === require,",
+		"    await run('globalThis') === global,",
+		"    await run('[typeof process, typeof module, typeof exports, typeof global, typeof __dirname, typeof Deno, typeof Bun, typeof WebAssembly, typeof fetch, typeof XMLHttpRequest, typeof SharedArrayBuffer].join()'),",
+		"    await run('require') === require,",
 		"  ].join(' ')",
 		"}",
 		"let direct = eval('[typeof process, typeof require, this === globalThis].join()')",
@@ -157,7 +170,7 @@ func TestCodeCompiledAtRunTimeReachesNothingTheBodyCannot(t *testing.T) {
 		"return [{ json: { ...found, direct, refused } }]",
 	}, "\n")})
 	got := result.Items[0].JSON
-	for _, name := range []string{"indirectEval", "newFunction", "functionConstructor", "generatorConstructor", "hostFunctionConstructor", "bufferConstructor", "errorChain"} {
+	for _, name := range []string{"indirectEval", "newFunction", "functionConstructor", "generatorConstructor", "asyncFunctionConstructor", "hostFunctionConstructor", "bufferConstructor", "errorChain"} {
 		if want := "true " + strings.Repeat("undefined,", 10) + "undefined true"; got[name] != want {
 			t.Errorf("%s: got %q, want %q", name, got[name], want)
 		}
