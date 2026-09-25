@@ -248,8 +248,9 @@ Everything else n8n writes on a node crosses, and is honoured rather than merely
 stored: `disabled` lands on the imported node and goes back out on export,
 `onError` carries the mode verbatim (with the legacy `continueOnFail` boolean
 kept beside it), an edge leaving n8n's error slot resolves to the node's own
-`error` port, `alwaysOutputData` emits the empty item n8n emits, `executeOnce`
-runs the node once for the whole batch, and `retryOnFail`, `maxTries`,
+`error` port, `alwaysOutputData` emits the empty item n8n emits when the node
+ran and returned nothing (a node that received no items still does not run),
+`executeOnce` runs the node once for the whole batch, and `retryOnFail`, `maxTries`,
 `waitBetweenTries` land on the node's canonical settings. `maxTries` is clamped
 to 8 and `waitBetweenTries` to 300,000 ms — clamped rather than refused, so a
 workflow with a larger retry budget still imports and one typo cannot become

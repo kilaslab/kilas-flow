@@ -317,6 +317,13 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   404", with `status` and axios's `code`, and with no `response`, since n8n's
   has none. It used to read "The request failed with status 404 Not Found",
   so code matching n8n's message took the wrong branch.
+- A node with Always Output Data (`alwaysOutputData`) no longer runs when the
+  node before it sent it nothing. It used to run on no input and hand on an
+  empty item, so the nodes after it ran too, and a Loop Over Items whose body
+  carried the setting fed that item back into the loop and never finished
+  until the execution timed out. As in n8n, the setting only adds the empty
+  item when the node did run and returned nothing. A run resumed after a Wait
+  likewise no longer runs a sibling branch that had been sent no items.
 - A chat model node that never set "Stream output" now streams, as the editor
   already showed. An absent `stream` key used to mean off.
 - An agent ended by the workflow's own execution timeout says so, and names

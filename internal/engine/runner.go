@@ -729,6 +729,36 @@ func delivered(graph preparedGraph, nodeID string, completed map[string]workflow
 	return true
 }
 
+// deliveredNothing reports whether a scheduled invocation of a node that is fed
+// items carries none, which is what a branch that delivered nothing leaves on
+// the stack.
+//
+// A node with no incoming item edge is never one: a trigger or a root is
+// scheduled with an empty input because nothing feeds it, not because a
+// branch came up empty.
+func deliveredNothing(graph preparedGraph, nodeID string, input workflow.NodeInput) bool {
+	target, found := graph.nodes[nodeID]
+	if !found {
+		return false
+	}
+	fed := false
+	for _, edge := range graph.incoming[nodeID] {
+		if edge.Kind == workflow.ConnectionMain {
+			fed = true
+			break
+		}
+	}
+	if !fed {
+		return false
+	}
+	for _, port := range target.Definition.Inputs {
+		if port.Kind == workflow.ConnectionMain && len(input[port.Name]) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // mergeConfigInputs fills a scheduled invocation's typed inputs from the nodes
 // that have already run.
 //
@@ -842,15 +872,20 @@ func (state *runState) push(graph preparedGraph, node workflow.IRNode, output wo
 		if edge.SourceOutputIndex >= 0 && edge.SourceOutputIndex < len(output) {
 			items = output[edge.SourceOutputIndex]
 		}
-		// Nothing on this port is nothing to deliver — unless the target asked
-		// for an item regardless, which is what Always Output Data means.
+		// Nothing on this port is nothing to deliver, and a node nothing was
+		// delivered to does not run. That holds whatever the target's own
+		// settings say: Always Output Data decides what a node that ran hands
+		// on, never whether a node runs, which is n8n's rule too. Running the
+		// target anyway made it invent an item out of no input, and on a loop
+		// body that item went back into the loop as new work, so the loop
+		// never finished.
 		//
-		// A loop entry is deliberately not exempt. It is invoked by the data its
+		// A loop entry is not exempt either. It is invoked by the data its
 		// body returns, and an empty return means the body produced nothing to
 		// iterate: starting the next batch on it would both mis-order a nested
 		// loop — the inner loop's `done` is empty on every iteration it has not
 		// finished — and hand the outer loop work it never received.
-		empty := len(items) == 0 && !settingBool(target.Settings, "alwaysOutputData")
+		empty := len(items) == 0
 		entry, found := byTarget[edge.Target.NodeID]
 		if !found {
 			entry = &pendingInvocation{nodeID: edge.Target.NodeID, input: workflow.NodeInput{}, skipped: empty}
@@ -1039,9 +1074,17 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 	}
 	// The work the suspended run had not reached, restored below the branch the
 	// suspended node is about to continue.
+	//
+	// A checkpoint does not say which of those entries were skipped deliveries,
+	// so it is read back from the input itself: an entry that carries no items
+	// for a node that is fed items is a branch that delivered nothing, and it is
+	// recorded as skipped rather than run on no input. Reading it from the
+	// input rather than storing a flag also covers checkpoints written before
+	// this was considered.
 	for _, invocation := range checkpoint.Pending {
 		state.pending = append(state.pending, pendingInvocation{
 			nodeID: invocation.NodeID, input: cloneInput(invocation.Input),
+			skipped: deliveredNothing(graph, invocation.NodeID, invocation.Input),
 		})
 	}
 	// The suspending node completes here, mirroring a normal completion:
