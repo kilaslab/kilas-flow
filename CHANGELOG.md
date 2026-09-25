@@ -388,6 +388,13 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   named in the import report, and a file that still cannot be read is refused
   in words that name the node and field rather than a Go struct.
 
+- n8n import: a loop that does not close onto Loop Over Items is reported as
+  `blocking`, one entry per loop, naming its nodes in order. It used to import
+  with nothing blocking, and then run and activate refused it with
+  `workflow.invalid_topology`. The report uses the compiler's own cycle rule,
+  so the two cannot disagree. It names the loop even beside other blocking
+  issues, where the compiler would only reach the loop once those were fixed.
+
 
 ### Security
 

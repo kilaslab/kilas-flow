@@ -247,7 +247,7 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 	edgeKeys := make(map[edgeKey]struct{}, len(document.Connections))
 
 	for index, node := range document.Nodes {
-		definition, found := catalog.Lookup(node.Type, node.TypeVersion)
+		definition, found := resolveDefinition(catalog, node)
 		if !found {
 			code := ErrorUnknownNode
 			message := fmt.Sprintf("node type %q version %s is not registered", node.Type, node.TypeVersion)
@@ -269,18 +269,6 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 			refused[node.ID] = true
 			continue
 		}
-		// A node whose ports depend on its own parameters is resolved here,
-		// once, before anything reads them: the connection check, the runner's
-		// output arity and the editor all have to see the same list.
-		if definition.PortsFor != nil {
-			inputs, outputs := definition.PortsFor(node.Parameters, node.TypeVersion)
-			definition.Inputs, definition.Outputs = inputs, outputs
-		}
-		// A node that routes failed items to its own error branch declares a
-		// port for it. The port is the runner's — an executor knows nothing
-		// about error routing — so the compiler adds it here, before any
-		// connection is resolved against the node's ports.
-		definition = withErrorPort(definition, node.Settings)
 		definitions[node.ID] = definition
 		nodes[node.ID] = node
 		ir.Nodes = append(ir.Nodes, IRNode{
@@ -343,9 +331,9 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 	}
 
 	for index, connection := range document.Connections {
-		sourceNode, sourceFound := nodes[connection.Source.NodeID]
-		targetNode, targetFound := nodes[connection.Target.NodeID]
-		if !sourceFound || !targetFound {
+		edge, targetPort, fault := resolveEdge(connection, nodes, definitions)
+		switch fault {
+		case edgeUnknownNode:
 			// A node whose type was refused already carries the issue that
 			// explains it — "not available to this workspace" is the sentence
 			// the author has to read. This one sorts before it (connections
@@ -360,31 +348,23 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 				Message: "connection must reference registered source and target nodes",
 			})
 			continue
-		}
-
-		sourcePort, sourceIndex, sourcePortFound := outputPort(definitions[sourceNode.ID], connection.Source.Port)
-		targetPort, targetPortFound := inputPort(definitions[targetNode.ID], connection.Target.Port)
-		if !sourcePortFound || !targetPortFound {
+		case edgeUnknownPort:
 			issues.add(ValidationError{
 				Code: ErrorUnknownPort, Path: fmt.Sprintf("/connections/%d", index), ConnectionID: connection.ID,
 				Message: "connection must reference declared source and target ports",
 			})
 			continue
-		}
-		if connection.Kind != sourcePort.Kind || connection.Kind != targetPort.Kind {
+		case edgeIncompatibleKind:
 			issues.add(ValidationError{
 				Code: ErrorIncompatiblePort, Path: fmt.Sprintf("/connections/%d/kind", index), ConnectionID: connection.ID,
 				Message: "connection kind must match both endpoint ports",
 			})
 			continue
-		}
-		// A port may name which node types it accepts. Checking it here rather
-		// than only in the editor is what stops an imported document from
-		// bypassing the rule.
-		if !portAcceptsNodeType(targetPort, sourceNode.Type) {
+		case edgeNodeNotAllowed:
 			issues.add(ValidationError{
 				Code: ErrorPortNotAllowed, Path: fmt.Sprintf("/connections/%d", index), ConnectionID: connection.ID,
-				Message: fmt.Sprintf("port %q does not accept a connection from node type %q", targetPort.Name, sourceNode.Type),
+				Message: fmt.Sprintf("port %q does not accept a connection from node type %q",
+					targetPort.Name, nodes[connection.Source.NodeID].Type),
 			})
 			continue
 		}
@@ -404,14 +384,13 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 		}
 		edgeKeys[key] = struct{}{}
 
-		ir.Edges = append(ir.Edges, IREdge{
-			ID: connection.ID, Kind: connection.Kind, Source: connection.Source,
-			SourceOutputIndex: sourceIndex, Target: connection.Target,
-		})
+		ir.Edges = append(ir.Edges, edge)
 	}
 
 	if len(issues.Issues) == 0 {
-		if hasIllegalCycle(ir.Edges, definitions) {
+		// Only whether there is a cycle matters here, so no node order is
+		// given; IllegalCycles is what names them.
+		if len(illegalCycles(nil, ir.Edges, definitions)) > 0 {
 			issues.add(ValidationError{
 				Code:    ErrorInvalidTopology,
 				Path:    "/connections",
@@ -601,7 +580,9 @@ func validateExecutableTopology(ir IR, issues *ValidationErrors) {
 	}
 }
 
-// hasIllegalCycle reports a cycle that is not a declared loop.
+// illegalCycles finds the cycles that are not a declared loop, one for each
+// group of nodes that loop among themselves (see cyclesAmong). Compile refuses
+// the workflow when there is any; IllegalCycles names them to an importer.
 //
 // n8n's Split In Batches pattern is a cycle by construction: the loop node's
 // body wires back into its input so the next batch is dispatched, and refusing
@@ -615,7 +596,7 @@ func validateExecutableTopology(ir IR, issues *ValidationErrors) {
 // simpler and was wrong: which edge of a cycle appears to be the back edge
 // depends on where the traversal happens to start, so a graph could be accepted
 // or rejected according to Go's map iteration order.
-func hasIllegalCycle(edges []IREdge, definitions map[string]NodeDefinition) bool {
+func illegalCycles(order []string, edges []IREdge, definitions map[string]NodeDefinition) [][]string {
 	closing := loopClosingEdges(edges, definitions)
 	remaining := make([]IREdge, 0, len(edges))
 	for _, edge := range edges {
@@ -623,7 +604,7 @@ func hasIllegalCycle(edges []IREdge, definitions map[string]NodeDefinition) bool
 			remaining = append(remaining, edge)
 		}
 	}
-	return hasAnyCycle(remaining)
+	return cyclesAmong(order, remaining)
 }
 
 // loopClosingEdges finds the edges that close a declared loop: an edge whose
@@ -662,43 +643,6 @@ func reaches(forward map[string][]string, from, to string) bool {
 			}
 			seen[next] = true
 			queue = append(queue, next)
-		}
-	}
-	return false
-}
-
-func hasAnyCycle(edges []IREdge) bool {
-	adjacent := make(map[string][]string)
-	for _, edge := range edges {
-		adjacent[edge.Source.NodeID] = append(adjacent[edge.Source.NodeID], edge.Target.NodeID)
-	}
-
-	const (
-		unvisited = iota
-		visiting
-		visited
-	)
-	states := make(map[string]int, len(adjacent))
-	var visit func(string) bool
-	visit = func(nodeID string) bool {
-		states[nodeID] = visiting
-		for _, targetID := range adjacent[nodeID] {
-			switch states[targetID] {
-			case visiting:
-				return true
-			case unvisited:
-				if visit(targetID) {
-					return true
-				}
-			}
-		}
-		states[nodeID] = visited
-		return false
-	}
-
-	for nodeID := range adjacent {
-		if states[nodeID] == unvisited && visit(nodeID) {
-			return true
 		}
 	}
 	return false
@@ -756,6 +700,70 @@ func cloneJSONValue(value any) any {
 	default:
 		return value
 	}
+}
+
+// resolveDefinition is the definition Compile checks a node against: the
+// catalogue's, with the ports the node's own configuration gives it.
+//
+// It is shared with IllegalCycles so that a cycle named to an importer is
+// found on exactly the graph Compile builds.
+func resolveDefinition(catalog Catalog, node Node) (NodeDefinition, bool) {
+	definition, found := catalog.Lookup(node.Type, node.TypeVersion)
+	if !found {
+		return NodeDefinition{}, false
+	}
+	// A node whose ports depend on its own parameters is resolved here,
+	// once, before anything reads them: the connection check, the runner's
+	// output arity and the editor all have to see the same list.
+	if definition.PortsFor != nil {
+		inputs, outputs := definition.PortsFor(node.Parameters, node.TypeVersion)
+		definition.Inputs, definition.Outputs = inputs, outputs
+	}
+	// A node that routes failed items to its own error branch declares a
+	// port for it. The port is the runner's — an executor knows nothing
+	// about error routing — so the compiler adds it here, before any
+	// connection is resolved against the node's ports.
+	return withErrorPort(definition, node.Settings), true
+}
+
+// edgeFault is why a connection could not become an edge of the graph.
+type edgeFault int
+
+const (
+	edgeResolved edgeFault = iota
+	edgeUnknownNode
+	edgeUnknownPort
+	edgeIncompatibleKind
+	edgeNodeNotAllowed
+)
+
+// resolveEdge turns a connection into the edge Compile adds to the graph, or
+// says why it cannot. The target port is returned for the message a refusal
+// needs. nodes and definitions hold only the nodes the catalogue resolved.
+func resolveEdge(connection Connection, nodes map[string]Node, definitions map[string]NodeDefinition) (IREdge, Port, edgeFault) {
+	sourceNode, sourceFound := nodes[connection.Source.NodeID]
+	targetNode, targetFound := nodes[connection.Target.NodeID]
+	if !sourceFound || !targetFound {
+		return IREdge{}, Port{}, edgeUnknownNode
+	}
+	sourcePort, sourceIndex, sourcePortFound := outputPort(definitions[sourceNode.ID], connection.Source.Port)
+	targetPort, targetPortFound := inputPort(definitions[targetNode.ID], connection.Target.Port)
+	if !sourcePortFound || !targetPortFound {
+		return IREdge{}, Port{}, edgeUnknownPort
+	}
+	if connection.Kind != sourcePort.Kind || connection.Kind != targetPort.Kind {
+		return IREdge{}, targetPort, edgeIncompatibleKind
+	}
+	// A port may name which node types it accepts. Checking it here rather
+	// than only in the editor is what stops an imported document from
+	// bypassing the rule.
+	if !portAcceptsNodeType(targetPort, sourceNode.Type) {
+		return IREdge{}, targetPort, edgeNodeNotAllowed
+	}
+	return IREdge{
+		ID: connection.ID, Kind: connection.Kind, Source: connection.Source,
+		SourceOutputIndex: sourceIndex, Target: connection.Target,
+	}, targetPort, edgeResolved
 }
 
 func inputPort(definition NodeDefinition, name string) (Port, bool) {

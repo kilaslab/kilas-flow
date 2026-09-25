@@ -791,6 +791,9 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 	// n8n connections are keyed by node *name*; KilasFlow's are keyed by ID.
 	idByName := make(map[string]string, len(source.Nodes))
 	seenName := make(map[string]bool, len(source.Nodes))
+	// sourceByID is the n8n node each imported one came from, so a diagnostic
+	// raised about the whole graph can still name the node's n8n identity.
+	sourceByID := make(map[string]Node, len(source.Nodes))
 
 	for index, node := range source.Nodes {
 		// Verbatim, never trimmed. n8n keys connections by the name as written,
@@ -814,6 +817,7 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 			id = fmt.Sprintf("n8n-%d", index+1)
 		}
 		idByName[name] = id
+		sourceByID[id] = node
 
 		converted := workflow.Node{
 			ID: id, Name: name,
@@ -929,16 +933,65 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 	unsupported = append(unsupported, settingIssues...)
 	unsupported = append(unsupported, documentIssues(source)...)
 
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		Name:          name,
+		Nodes:         nodes,
+		Connections:   connections,
+		Settings:      settings,
+	}
+	if catalog != nil {
+		unsupported = append(unsupported, cycleIssues(document, catalog, sourceByID)...)
+	}
+
 	return ImportResult{
-		Document: workflow.Document{
-			SchemaVersion: workflow.CurrentSchemaVersion,
-			Name:          name,
-			Nodes:         nodes,
-			Connections:   connections,
-			Settings:      settings,
-		},
+		Document:    document,
 		Unsupported: withDefaultSeverity(unsupported),
 	}, nil
+}
+
+// cycleIssues names each cycle run and activate will refuse.
+//
+// n8n runs a workflow whose nodes loop back on one another — a poll that
+// waits and asks again, a branch that returns to the If that decided it — and
+// KilasFlow refuses any loop that does not close onto a Loop Over Items node.
+// Without this the import said nothing blocking and the first run failed with
+// workflow.invalid_topology, while the migration guide promises that no
+// blocking entries means the workflow activates (BUG-gk7mf5).
+//
+// The import stays a translation and the compiler stays the one authority:
+// the rule is the compiler's own, asked through workflow.IllegalCycles on the
+// document the import saves, so the report cannot name a loop the run would
+// accept or miss one it would refuse. It needs the catalogue, because only
+// the registry says which node is a loop entry.
+func cycleIssues(document workflow.Document, catalog workflow.Catalog, sourceByID map[string]Node) []ImportIssue {
+	cycles := workflow.IllegalCycles(document, catalog)
+	if len(cycles) == 0 {
+		return nil
+	}
+	nameByID := make(map[string]string, len(document.Nodes))
+	for _, node := range document.Nodes {
+		nameByID[node.ID] = node.Name
+	}
+	issues := make([]ImportIssue, 0, len(cycles))
+	for _, cycle := range cycles {
+		// The first node is named again at the end, so the loop reads closed.
+		named := make([]string, 0, len(cycle)+1)
+		for _, nodeID := range cycle {
+			named = append(named, strconv.Quote(nameByID[nodeID]))
+		}
+		named = append(named, named[0])
+		start := sourceByID[cycle[0]]
+		issues = append(issues, ImportIssue{
+			Severity: SeverityBlocking,
+			NodeName: nameByID[cycle[0]], NodeID: cycle[0], Field: "connections",
+			Type: start.Type, TypeVersion: sourceTypeVersion(start.TypeVersion),
+			Reason: fmt.Sprintf("these nodes connect in a loop: %s. KilasFlow runs a loop only when it closes back "+
+				"onto a Loop Over Items (Split In Batches) node, so run and activate refuse this workflow until the "+
+				"loop is removed or rebuilt around Loop Over Items.", strings.Join(named, " → ")),
+		})
+	}
+	return issues
 }
 
 // withDefaultSeverity fills in the severity of issues raised by the per-node

@@ -223,6 +223,30 @@ different subject — *this node's code uses an async generator (line 12), which
 this server does not run* — and [the Code (JavaScript) page](/guides/code-javascript/#what-is-refused-and-when)
 lists every such construct.
 
+### Loops that do not go through Loop Over Items
+
+n8n runs a workflow whose nodes route back to an earlier node. A common case is
+a poll that waits, asks a service again and checks the answer. Another is a
+branch that returns to the If that decided it. KilasFlow runs a loop only when
+its back edge closes onto a Loop Over Items (`splitInBatches`, imported as
+`kilasflow.loop`) node, because that node has a bound on how many times it
+goes round. Any other loop is refused by run and activate with
+`workflow.invalid_topology`.
+
+The import reports each such loop as `blocking`, with `field` set to
+`connections`. The issue is attached to the node where the flow enters the
+loop, and the reason names the whole loop in order:
+
+> these nodes connect in a loop: "Get Task" → "Is Ready" → "Wait a Minute" →
+> "Get Task". …
+
+The check is the compiler's own rule, run on the document the import saves. The
+report cannot name a loop that run would accept, or miss one that run would
+refuse. The compiler reports only one loop, and only once nothing else in the
+workflow is wrong. The import reports one entry for each separate loop, beside
+whatever else it found. To fix one, remove the edge that closes it or rebuild
+the loop around Loop Over Items.
+
 ### Document-level elements
 
 Four things on the n8n document are read and then not carried — or carried only
@@ -279,7 +303,7 @@ and moved on".
 
 | Severity | Meaning | What to do |
 | --- | --- | --- |
-| `blocking` | The workflow cannot run as imported. | Fix it. The workflow will not activate until you do. This is an unsupported node type, a Python Code node or JavaScript that uses something the runtime refuses, a credential that must be re-bound, an unavailable `typeVersion`, or a parameter the mapped node genuinely cannot express. |
+| `blocking` | The workflow cannot run as imported. | Fix it. The workflow will not activate until you do. This is an unsupported node type, a Python Code node or JavaScript that uses something the runtime refuses, a credential that must be re-bound, an unavailable `typeVersion`, a loop that does not close onto Loop Over Items, or a parameter the mapped node genuinely cannot express. |
 | `lossy` | The element was carried, but differently. | Read it and decide. The workflow will activate. Whether the difference matters is a judgement only you can make — a query replacement split into three bound values is fine if the values had no commas in them and wrong if they did. |
 | `dropped` | The element was not carried at all. | Decide whether you need it. Nothing about it survived, and calling it lossy would imply a setting was applied in some reduced form when it was ignored entirely. A dropped `webhookId` means this installation minted its own binding for the node. |
 
