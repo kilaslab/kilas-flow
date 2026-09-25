@@ -157,6 +157,8 @@ func (executor *JSCodeExecutor) Execute(ctx context.Context, ir workflow.IRNode,
 		// A node that continues on failure goes on past a failed item in
 		// per-item mode, as n8n does; the runner routes the failed ones.
 		ContinueOnItemError: request.TolerateItemFailures && mode == jsrun.ModeEachItem,
+		// A worker pool keeps each tenant's code on workers of its own.
+		Tenant: request.Execution.TenantID,
 	})
 	emitConsole(request, ir, result)
 	if err == nil {

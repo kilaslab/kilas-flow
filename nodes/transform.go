@@ -401,6 +401,7 @@ func (executor sortExecutor) sortWithComparator(ctx context.Context, ir workflow
 	items := input["main"]
 	result, err := runtime.runner.Run(ctx, jsrun.Task{
 		Source: source, Mode: jsrun.ModeComparator, Items: items, Roots: jsRootsOf(ir, input, request),
+		Tenant: request.Execution.TenantID,
 	})
 	emitConsole(request, ir, result)
 	if err != nil {
