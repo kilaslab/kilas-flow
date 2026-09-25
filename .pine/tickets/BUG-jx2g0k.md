@@ -1,14 +1,14 @@
 ---
 id: BUG-jx2g0k
 title: runPerItem drops the output of items processed before one that suspends
-status: todo
+status: doing
 priority: high
 labels:
     - engine
     - data-loss
 parent: EPIC-8rbys7
 created: "2026-09-23T07:35:20Z"
-updated: "2026-09-23T07:35:37Z"
+updated: "2026-09-25T12:32:17Z"
 ---
 
 # Description

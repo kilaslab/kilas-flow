@@ -1,14 +1,14 @@
 ---
 id: BUG-x2sxzt
 title: Respond to Webhook serves tenant-written HTML on the instance's own origin with no CSP sandbox
-status: todo
+status: doing
 priority: high
 labels:
     - security
     - webhooks
 parent: EPIC-7c3ry9
 created: "2026-09-23T07:35:21Z"
-updated: "2026-09-23T07:35:37Z"
+updated: "2026-09-25T12:32:17Z"
 ---
 
 # Description

@@ -1,7 +1,7 @@
 ---
 id: BUG-9296bf
 title: the HTTP Request Tool and Workflow Tool evaluate model-supplied $fromAI text as expressions
-status: todo
+status: doing
 priority: high
 labels:
     - security
@@ -9,7 +9,7 @@ labels:
     - ai-tools
 parent: EPIC-8rbys7
 created: "2026-09-23T07:35:21Z"
-updated: "2026-09-23T07:35:37Z"
+updated: "2026-09-25T12:32:17Z"
 ---
 
 # Description
