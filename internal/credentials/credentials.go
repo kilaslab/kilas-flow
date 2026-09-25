@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
 // KeySize is the AES-256 master key length in bytes.
@@ -20,6 +22,12 @@ const KeySize = 32
 // non-empty placeholder so an editor can tell "configured" from "empty"
 // without ever receiving the secret.
 const RedactedValue = "••••••••"
+
+// SetSecretsKey is where the store records, beside the public fields, which
+// secret fields hold a value. No credential type may declare a key starting
+// with "$", so it cannot collide with a field, and the store lifts it out into
+// Record.SetSecrets before any caller sees the field map.
+const SetSecretsKey = "$setSecrets"
 
 // ErrNoKey reports that the configured environment variable holds no key.
 var ErrNoKey = errors.New("credential encryption key is not set")
@@ -32,9 +40,15 @@ type Record struct {
 	Name     string
 	Type     string
 	Fields   map[string]string
+	// SetSecrets names the secret fields that hold a value, read from storage
+	// without decrypting the payload. Nil means the row predates the record,
+	// and every secret is then assumed set.
+	SetSecrets []string
 	// AllowedDomains scopes where this credential may be sent, as its author
 	// saved it. An empty list means the type's default scope, which is
-	// unrestricted only for a type that has none — see EffectiveDomains.
+	// unrestricted only for a type that has none — see EffectiveDomains. On an
+	// update, nil means "keep the stored scope" and a non-nil empty list
+	// clears it.
 	AllowedDomains []string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -70,6 +84,82 @@ func (record Record) AllowsHost(host string) bool {
 		}
 	}
 	return false
+}
+
+// IntersectDomains returns the scope that admits exactly the hosts both scopes
+// admit. An empty scope is unrestricted, so it yields the other one unchanged.
+//
+// Two non-empty scopes that share no host yield ok false, never an empty
+// list: an empty list means unrestricted, and returning one would turn "no
+// host is allowed by both" into "every host is".
+func IntersectDomains(first, second []string) (scope []string, ok bool) {
+	first, second = scopeEntries(first), scopeEntries(second)
+	if len(first) == 0 {
+		return second, true
+	}
+	if len(second) == 0 {
+		return first, true
+	}
+	seen := map[string]struct{}{}
+	for _, left := range first {
+		for _, right := range second {
+			entry, overlaps := intersectEntry(left, right)
+			if !overlaps {
+				continue
+			}
+			if _, duplicate := seen[entry]; duplicate {
+				continue
+			}
+			seen[entry] = struct{}{}
+			scope = append(scope, entry)
+		}
+	}
+	return scope, len(scope) > 0
+}
+
+// scopeEntries normalises a scope the way AllowsHost reads it.
+func scopeEntries(domains []string) []string {
+	entries := make([]string, 0, len(domains))
+	for _, domain := range domains {
+		domain = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), ".")
+		if domain != "" {
+			entries = append(entries, domain)
+		}
+	}
+	return entries
+}
+
+// intersectEntry is the overlap of two scope entries: an exact host when one
+// side names it and the other admits it, the narrower wildcard when one
+// wildcard's domain sits under the other's.
+func intersectEntry(left, right string) (string, bool) {
+	leftSuffix, leftWildcard := strings.CutPrefix(left, "*.")
+	rightSuffix, rightWildcard := strings.CutPrefix(right, "*.")
+	switch {
+	case !leftWildcard && !rightWildcard:
+		return left, left == right
+	case !leftWildcard:
+		return left, strings.HasSuffix(left, "."+rightSuffix)
+	case !rightWildcard:
+		return right, strings.HasSuffix(right, "."+leftSuffix)
+	case leftSuffix == rightSuffix || strings.HasSuffix(leftSuffix, "."+rightSuffix):
+		return left, true
+	case strings.HasSuffix(rightSuffix, "."+leftSuffix):
+		return right, true
+	}
+	return "", false
+}
+
+// RedirectScope is the bound this credential places on a request's redirect
+// chain: its domains when it names any, and the first request's host when it
+// names none. Every caller that attaches a credential to a request attaches
+// this, so the two halves cannot be assembled differently in two places.
+//
+// "Names none" is asked of the effective scope: a credential whose domains come
+// from its type's default — an OpenAI key held to api.openai.com — is bounded
+// by that default across a redirect too, not merely pinned to the first host.
+func (record Record) RedirectScope() safehttp.CredentialScope {
+	return safehttp.CredentialScope{AllowsHost: record.AllowsHost, Unbounded: len(record.EffectiveDomains()) == 0}
 }
 
 func hostWithoutPort(host string) string {
@@ -176,6 +266,40 @@ func Redacted(typeID string, fields map[string]string) map[string]string {
 			continue
 		}
 		safe[field.Key] = RedactedValue
+	}
+	return safe
+}
+
+// RedactedRecord is Redacted for a record read without its payload: the mask
+// appears only for a secret the store recorded as set, and an unset secret
+// reads as empty. The mask means "a value is stored here", so showing it for a
+// private key that was never written tells the editor something false.
+//
+// A row written before the store kept that record has nil SetSecrets and falls
+// back to Redacted, which masks every secret: over-reporting "stored" is the
+// safe error, since the editor then keeps a value rather than asking for one.
+func RedactedRecord(record Record) map[string]string {
+	safe := Redacted(record.Type, record.Fields)
+	if record.SetSecrets == nil {
+		return safe
+	}
+	definition, found := Lookup(record.Type)
+	if !found {
+		return safe
+	}
+	set := make(map[string]struct{}, len(record.SetSecrets))
+	for _, key := range record.SetSecrets {
+		set[key] = struct{}{}
+	}
+	for _, field := range definition.Fields {
+		if !field.Secret {
+			continue
+		}
+		if _, stored := set[field.Key]; stored {
+			safe[field.Key] = RedactedValue
+			continue
+		}
+		safe[field.Key] = ""
 	}
 	return safe
 }

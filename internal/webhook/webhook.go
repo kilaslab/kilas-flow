@@ -98,6 +98,10 @@ func NewHandler(bindings repository.WebhookRepository, runner Runner, creds repo
 
 // ServeHTTP routes one inbound request to its workflow.
 func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Every answer below goes out sandboxed; see sandboxedWriter for why this
+	// wraps the writer instead of setting a header on the paths that serve
+	// HTML.
+	w = &sandboxedWriter{ResponseWriter: w}
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/webhook"), "/")
 	if path == "" {
 		problem(w, http.StatusNotFound, "No webhook path was given.")
@@ -652,6 +656,7 @@ func (handler *Handler) authenticate(r *http.Request, binding repository.Webhook
 		if name == "" || !equal(r.Header.Get(name), fields["value"]) {
 			return http.StatusUnauthorized, errors.New("Header authentication failed.")
 		}
+		withVerifiedHeader(r, name)
 	case "jwtAuth":
 		if record.Type != credentialType {
 			return http.StatusInternalServerError, errors.New("This webhook is bound to a credential of the wrong type.")
@@ -702,6 +707,19 @@ func credentialReference(binding repository.WebhookBinding, credentialType strin
 	return strings.TrimSpace(id)
 }
 
+// verifiedHeaderKey carries the name of the header a header-auth trigger
+// verified from admit to readDelivery, which withholds it.
+type verifiedHeaderKey struct{}
+
+func withVerifiedHeader(r *http.Request, name string) {
+	*r = *r.WithContext(context.WithValue(r.Context(), verifiedHeaderKey{}, name))
+}
+
+func verifiedHeader(r *http.Request) string {
+	name, _ := r.Context().Value(verifiedHeaderKey{}).(string)
+	return name
+}
+
 // equal compares in constant time so a wrong secret cannot be discovered by
 // timing how long the comparison took.
 func equal(got, want string) bool {
@@ -743,6 +761,18 @@ func (handler *Handler) readDelivery(r *http.Request, binding repository.Webhook
 	}
 	if r.Host != "" {
 		headers["host"] = r.Host
+	}
+	// The one exception to keeping the caller's headers verbatim: the header
+	// this trigger's header auth just verified is the shared secret itself,
+	// and its name is whatever the credential says — X-Hook-Pass as readily as
+	// X-Api-Key — so the key-based redaction on the read surfaces cannot be
+	// relied on to recognise it. It is withheld by that name before anything
+	// is stored. The workflow loses nothing by it: the request only got this
+	// far because the value matched.
+	if name := verifiedHeader(r); name != "" {
+		if _, present := headers[strings.ToLower(name)]; present {
+			headers[strings.ToLower(name)] = execution.RedactedValue
+		}
 	}
 
 	query := make(map[string]any, len(r.URL.Query()))
@@ -922,7 +952,9 @@ func (handler *Handler) respondImmediate(w http.ResponseWriter, r *http.Request,
 	}
 	if body, ok := options["responseData"].(string); ok && strings.TrimSpace(body) != "" {
 		// A custom acknowledgement is text, and n8n sends it as text/html —
-		// which is what its own HTTP layer does with a string body.
+		// which is what its own HTTP layer does with a string body. It is the
+		// tenant's markup on the instance's origin, so it renders only inside
+		// the sandbox the writer forces over any header set above.
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, body)
@@ -943,6 +975,9 @@ func deliveryOf(r *http.Request, binding repository.WebhookBinding, _ TriggerKin
 // writePage answers with a rendered page.
 func writePage(w http.ResponseWriter, status int, page []byte) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// KilasFlow's own page, so the stricter policy: no script at all. Set
+	// after any header the trigger configured, which it replaces.
+	w.Header().Set("Content-Security-Policy", pagePolicy)
 	// A form page is per-workflow and per-binding, so a shared cache holding
 	// one tenant's form for another tenant's browser is not acceptable.
 	w.Header().Set("Cache-Control", "no-store")
@@ -1122,7 +1157,8 @@ func writeResponse(w http.ResponseWriter, response nodeResponse) {
 		} else {
 			// n8n answers a text response as text/html, which is what its own
 			// HTTP layer does with a string — and what makes an HTML result
-			// page render rather than appear as source.
+			// page render rather than appear as source. It renders sandboxed:
+			// the writer replaces any Content-Security-Policy copied above.
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		}
 	}

@@ -240,6 +240,14 @@ func (executor *HTTPExecutor) redirectClient(parameters map[string]any) *http.Cl
 // Execute sends one request per incoming item and maps each response to an
 // output item. Running per item is what lets a URL or body reference `$json`.
 func (executor *HTTPExecutor) Execute(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+	return executor.execute(ctx, ir, input, request, nil)
+}
+
+// execute is Execute with an agent's $fromAI arguments in the expression
+// context. The HTTP Request tool passes them, so the author's expressions read
+// the model's values as data rather than having them spliced into their
+// source; the step node passes nil.
+func (executor *HTTPExecutor) execute(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request, fromAI map[string]any) (workflow.NodeOutput, error) {
 	items := input["main"]
 	if len(items) == 0 {
 		// A trigger-less run still has to make the configured call once, with an
@@ -250,7 +258,9 @@ func (executor *HTTPExecutor) Execute(ctx context.Context, ir workflow.IRNode, i
 
 	results := make([]workflow.Item, 0, len(items))
 	for index, item := range items {
-		resolved, err := expression.Resolve(ir.Parameters, expressionContext(item, input, request, index))
+		scope := expressionContext(item, input, request, index)
+		scope.FromAIArguments = fromAI
+		resolved, err := expression.Resolve(ir.Parameters, scope)
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 		}
@@ -328,7 +338,9 @@ func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, p
 
 	response, err := executor.redirectClient(parameters).Do(httpRequest)
 	if err != nil {
-		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+		// The transport error prints the URL, and an httpQueryAuth credential
+		// was just written into its query: only the scheme and host go on.
+		return nil, fmt.Errorf("node %q: %w", ir.Name, safehttp.RedactError(err))
 	}
 	defer response.Body.Close()
 

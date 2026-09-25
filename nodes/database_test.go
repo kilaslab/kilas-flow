@@ -130,7 +130,7 @@ func TestDatabaseNodeQueriesAndMapsRowsToItems(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "workflow.db")
 	resolver := sqliteCredential(path)
-	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{}, sqlnode.DefaultCeiling())
+	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", unconfinedSQLite(), sqlnode.DefaultCeiling())
 
 	setup := databaseNode(t, nodes.SQLiteNodeType, "sqlite", "cred-db", map[string]any{
 		"operation":        "execute",
@@ -176,7 +176,7 @@ func TestDatabaseNodeRunsATransactionAtomically(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "workflow.db")
 	resolver := sqliteCredential(path)
-	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{}, sqlnode.DefaultCeiling())
+	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", unconfinedSQLite(), sqlnode.DefaultCeiling())
 
 	setup := databaseNode(t, nodes.SQLiteNodeType, "sqlite", "cred-db", map[string]any{
 		"operation": "execute", "executeStatement": `CREATE TABLE ledger (amount INTEGER)`,
@@ -229,7 +229,7 @@ func TestDatabaseNodeCannotOpenTheInternalDatabase(t *testing.T) {
 	}
 
 	resolver := sqliteCredential(internal)
-	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{InternalPaths: []string{internal}}, sqlnode.DefaultCeiling())
+	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{InternalPaths: []string{internal}, SQLite: sqlnode.SQLiteFiles{Unconfined: true}}, sqlnode.DefaultCeiling())
 	ir := databaseNode(t, nodes.SQLiteNodeType, "sqlite", "cred-db", map[string]any{
 		"operation": "query", "statement": `SELECT * FROM credentials`,
 	})
@@ -250,7 +250,7 @@ func TestDatabaseNodeRejectsACredentialOfTheWrongType(t *testing.T) {
 		ID: "cred-db", Name: "Wrong", Type: "postgres",
 		Fields: map[string]string{"host": "localhost"},
 	}}
-	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{}, sqlnode.DefaultCeiling())
+	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", unconfinedSQLite(), sqlnode.DefaultCeiling())
 	ir := databaseNode(t, nodes.SQLiteNodeType, "sqlite", "cred-db", map[string]any{
 		"operation": "query", "statement": `SELECT 1`,
 	})
@@ -292,7 +292,7 @@ func TestDatabaseNodeSurfacesTruncationRatherThanHidingIt(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "workflow.db")
 	resolver := sqliteCredential(path)
-	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{}, sqlnode.DefaultCeiling())
+	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", unconfinedSQLite(), sqlnode.DefaultCeiling())
 
 	setup := databaseNode(t, nodes.SQLiteNodeType, "sqlite", "cred-db", map[string]any{
 		"operation": "execute", "executeStatement": `CREATE TABLE numbers (n INTEGER)`,
@@ -336,6 +336,44 @@ func mustJSON(t *testing.T, value any) string {
 // sqlGuard is the empty guard used by tests that do not exercise the
 // internal-database protection.
 func sqlGuard() sqlnode.Guard { return sqlnode.Guard{} }
+
+// unconfinedSQLite reads a SQLite credential's path as written, so the tests
+// about statements can keep their files in a temp directory. Confinement has
+// its own tests, here and in internal/sqlnode.
+func unconfinedSQLite() sqlnode.Guard {
+	return sqlnode.Guard{SQLite: sqlnode.SQLiteFiles{Unconfined: true}}
+}
+
+// The executor narrows the process guard to the run's tenant, so a relative
+// SQLite path lands in that tenant's directory and a second tenant naming the
+// same path reaches a different file.
+func TestADatabaseNodeOpensSQLiteInsideTheRunsTenantDirectory(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite",
+		sqlnode.Guard{SQLite: sqlnode.SQLiteFiles{Root: root}}, sqlnode.DefaultCeiling())
+	resolver := sqliteCredential("orders.db")
+	create := databaseNode(t, nodes.SQLiteNodeType, "sqlite", "cred-db", map[string]any{
+		"operation": "execute", "executeStatement": `CREATE TABLE orders (id INTEGER)`,
+	})
+
+	for _, tenant := range []string{"acme", "globex"} {
+		request := engine.Request{Credentials: resolver, Execution: engine.ExecutionContext{TenantID: tenant}}
+		if _, err := executor.Execute(context.Background(), create, workflow.NodeInput{}, request); err != nil {
+			t.Fatalf("%s: create table error = %v", tenant, err)
+		}
+		if _, err := os.Stat(filepath.Join(root, tenant, "orders.db")); err != nil {
+			t.Fatalf("%s's database is not in its own directory: %v", tenant, err)
+		}
+	}
+
+	escape := sqliteCredential("../acme/orders.db")
+	request := engine.Request{Credentials: escape, Execution: engine.ExecutionContext{TenantID: "globex"}}
+	if _, err := executor.Execute(context.Background(), create, workflow.NodeInput{}, request); !errors.Is(err, sqlnode.ErrForbiddenTarget) {
+		t.Fatalf("a path into another tenant's directory = %v, want ErrForbiddenTarget", err)
+	}
+}
 
 // runExecutor looks up a registered executor and runs it, so a test exercises
 // the same binding the engine would.
@@ -381,7 +419,7 @@ func TestABulkExecuteIsOneAtomicBatchAndKeepsItsPerItemOutput(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "workflow.db")
 	resolver := sqliteCredential(path)
-	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{}, sqlnode.DefaultCeiling())
+	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", unconfinedSQLite(), sqlnode.DefaultCeiling())
 	createTable(t, executor, resolver, `CREATE TABLE readings (id INTEGER PRIMARY KEY, value INTEGER)`)
 
 	insert := func() workflow.IRNode {
@@ -442,7 +480,7 @@ func TestABatchOfOneStatementRunsAsOneTransaction(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "workflow.db")
 	resolver := sqliteCredential(path)
-	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{}, sqlnode.DefaultCeiling())
+	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", unconfinedSQLite(), sqlnode.DefaultCeiling())
 	createTable(t, executor, resolver, `CREATE TABLE animals (name TEXT)`)
 
 	// This test used to vary the statement text per item through an
@@ -530,7 +568,7 @@ func TestSQLBuiltFromAnExpressionIsRefusedAtSaveAndAtRun(t *testing.T) {
 		// actually happen, so it refuses too.
 		path := filepath.Join(t.TempDir(), "workflow.db")
 		resolver := sqliteCredential(path)
-		executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{}, sqlnode.DefaultCeiling())
+		executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", unconfinedSQLite(), sqlnode.DefaultCeiling())
 		createTable(t, executor, resolver, `CREATE TABLE t (name TEXT)`)
 
 		ir := databaseNode(t, nodes.SQLiteNodeType, "sqlite", "cred-db", map[string]any{
@@ -553,7 +591,7 @@ func TestATransactionStatementDeclaredReturningHandsItsRowsOn(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "workflow.db")
 	resolver := sqliteCredential(path)
-	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{}, sqlnode.DefaultCeiling())
+	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", unconfinedSQLite(), sqlnode.DefaultCeiling())
 	createTable(t, executor, resolver, `CREATE TABLE orders (id INTEGER PRIMARY KEY, total INTEGER)`)
 
 	ir := databaseNode(t, nodes.SQLiteNodeType, "sqlite", "cred-db", map[string]any{
@@ -638,7 +676,7 @@ func TestLimitsArrivingFromAnExpressionAreClampedAndSaidSo(t *testing.T) {
 	resolver := sqliteCredential(path)
 	// A deployment that allows two rows and one second.
 	ceiling := sqlnode.Ceiling{MaxRows: 2, MaxTimeout: time.Second}
-	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{}, ceiling)
+	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", unconfinedSQLite(), ceiling)
 	createTable(t, executor, resolver, `CREATE TABLE numbers (n INTEGER)`)
 
 	seed := databaseNode(t, nodes.SQLiteNodeType, "sqlite", "cred-db", map[string]any{
@@ -703,7 +741,7 @@ func TestATimeoutSavedUnderTheOldKeyStillApplies(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "workflow.db")
 	resolver := sqliteCredential(path)
 	ceiling := sqlnode.Ceiling{MaxRows: 10, MaxTimeout: time.Hour}
-	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", sqlnode.Guard{}, ceiling)
+	executor := nodes.NewDatabaseExecutor(sqlnode.DriverSQLite, "sqlite", unconfinedSQLite(), ceiling)
 	createTable(t, executor, resolver, `CREATE TABLE numbers (n INTEGER)`)
 
 	// A workflow saved before the rename carries the parameter under the name

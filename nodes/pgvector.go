@@ -879,7 +879,7 @@ func (executor *EmbeddingsExecutor) Execute(ctx context.Context, ir workflow.IRN
 	if err != nil {
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
-	embeddings, err := executor.embed(ctx, target.String(), secret.Fields[apiKeyField], model, texts, timeout)
+	embeddings, err := executor.embed(ctx, target.String(), secret.Fields[apiKeyField], secret.RedirectScope(), model, texts, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
@@ -919,12 +919,16 @@ func embeddingsTimeout(ir workflow.IRNode) (time.Duration, error) {
 // embed calls the provider's embeddings endpoint once for the whole batch.
 // One request rather than one per item: the API takes an array, and a call
 // per item would spend the handshake once per row for no reason.
-func (executor *EmbeddingsExecutor) embed(ctx context.Context, baseURL, apiKey, model string, texts []string, timeout time.Duration) ([][]float64, error) {
+//
+// The credential's scope rides on the request's context, so the redirect check
+// applies its rules to the call: the key is in an Authorization header, which
+// Go keeps on a same-host redirect, including one down to plain http.
+func (executor *EmbeddingsExecutor) embed(ctx context.Context, baseURL, apiKey string, scope safehttp.CredentialScope, model string, texts []string, timeout time.Duration) ([][]float64, error) {
 	body, err := json.Marshal(map[string]any{"model": model, "input": texts})
 	if err != nil {
 		return nil, fmt.Errorf("the embeddings request does not encode as JSON: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(safehttp.WithCredentialScope(ctx, scope), timeout)
 	defer cancel()
 	call, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/embeddings", bytes.NewReader(body))
 	if err != nil {
@@ -934,7 +938,7 @@ func (executor *EmbeddingsExecutor) embed(ctx context.Context, baseURL, apiKey, 
 	call.Header.Set("Authorization", "Bearer "+apiKey)
 	response, err := executor.client.Do(call)
 	if err != nil {
-		return nil, err
+		return nil, safehttp.RedactError(err)
 	}
 	defer response.Body.Close()
 	payload, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
@@ -1015,7 +1019,7 @@ func (executor *EmbeddingsExecutor) EmbedFromDescriptor(ctx context.Context, nod
 	if milliseconds := numberValue(descriptor["timeout"]); milliseconds > 0 {
 		timeout = time.Duration(milliseconds) * time.Millisecond
 	}
-	embeddings, err := executor.embed(ctx, target.String(), secret.Fields[apiKeyField], model, texts, timeout)
+	embeddings, err := executor.embed(ctx, target.String(), secret.Fields[apiKeyField], secret.RedirectScope(), model, texts, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("node %q: %w", nodeName, err)
 	}

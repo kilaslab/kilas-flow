@@ -377,6 +377,15 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   fail with "suspended node already completed"; a resume that is refused now
   marks the Wait failed instead of leaving every node green.
 
+- A node that continues on failure and waits on one of its items (an approval,
+  or a Wait with a per-item duration) now hands on what the items before that
+  one produced when it resumes, tolerated error items included, ahead of the
+  resumed item and on the same output they were routed to. They used to be
+  dropped, and downstream saw only the resumed item. The node's items are one
+  run however many of them wait: one trace row, one run of the nodes after it,
+  one return to an enclosing loop per batch, and the execution's output holds
+  every item rather than only those after the last wait.
+
 - `$('Node').item` resolves through a node that changed the item count and on
   both branches of an error output or a continue-on-fail failure. Behind an IF,
   Set, Merge or a loop that follows such a node, where the pairing is not
@@ -423,7 +432,8 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
     Google credentials keep their Google hosts. The default applies to
     credentials stored before this release too. The API reads each credential
     back with the scope it enforces, and the credential form says what leaving
-    the field empty means. **Behaviour change:** an existing OpenAI or OpenRouter
+    the field empty means, and a redirect is held to that default scope too.
+    **Behaviour change:** an existing OpenAI or OpenRouter
     credential that a chat model node sends to a gateway or proxy through its
     base URL, with no allowed domains saved, is now refused there. Add the
     gateway's host to the credential's allowed domains.
@@ -445,6 +455,107 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   paging with `limit=1` walked every credential name and id in the tenant. The
   session's grant is now applied in the query, and every row and cursor comes
   from it.
+
+- A secret placed in a URL no longer leaks through a failed request's error.
+  Go's transport error prints the whole URL, so an `httpQueryAuth` secret (in
+  the query) or a Telegram bot token (in the path) reached the execution's
+  error, the error item a failure branch sends on, logs, option-loader answers,
+  WASM pack errors, Telegram polling logs and a trigger activation's 502
+  detail. Every outbound call now reports only the scheme and host, and a
+  node's error and error items are scrubbed of the secret values of every
+  credential the node resolved before they are stored or passed on.
+
+- A credential's header no longer follows a redirect to another host. Go
+  drops only `Authorization` and `Cookie` across hosts, and a credential with
+  an empty domain list allowed every host, so an `X-Api-Key` (`httpHeaderAuth`,
+  `wahaApi`) or a custom template's headers reached whatever host a redirect
+  named. While a credential is attached, a redirect now stays on the first
+  request's host when the credential names no domains, stays inside its
+  domains when it names some, and never steps down from `https` to `http`.
+  Trigger lifecycle requests (pack registration templates and the Telegram
+  trigger's registration and polling calls) and Telegram file downloads now
+  check the credential's type and domains and bind the same redirect scope a
+  node's request does. The AI chat model and embeddings calls bind it too, so
+  their `Authorization: Bearer` key no longer follows a same-host redirect
+  down to plain `http`; Vault reads and Google OAuth token requests stay on
+  their own host and on `https`.
+
+- A webhook trigger using Header auth no longer stores its shared secret. With
+  a custom header name such as `X-Hook-Pass`, the secret was kept in the stored
+  trigger payload and shown in the execution view, because read-side redaction
+  recognises common header names only. The verified header is now stored as
+  `[redacted]` under the name its credential gives.
+
+- A page a workflow returns from a webhook — a Respond to Webhook body or a
+  trigger's `responseData` acknowledgement — no longer runs as the instance.
+  Every webhook answer carries `Content-Security-Policy: sandbox …` without
+  `allow-same-origin`, plus `X-Content-Type-Options: nosniff`, forced over any
+  such header the workflow set, so the page's script runs in an opaque origin
+  and cannot use the dashboard's session or read its API. The page still runs
+  its script, submits its forms and opens its links; `localStorage` is no
+  longer available to it. Hosted form pages carry a stricter policy with no
+  script at all.
+
+- **Breaking:** a SQLite credential opens a file only inside its tenant's own
+  directory, `<sql.sqlite_root>/<tenant>/`, and its path is read relative to
+  that directory. `sql.sqlite_root` defaults to `./data/sqlite`, beside the
+  default database. An absolute path, a `..` escape, a path through a symbolic
+  link, and anything that is not a regular file (a directory, device, FIFO or
+  socket) are refused. Before, any path the process could open was accepted,
+  and a missing file was created there. On a multi-tenant install a tenant
+  could therefore read and write other tenants' SQLite files, and create files
+  anywhere the server could write. An existing SQLite credential that names an
+  absolute path now fails its test and its node runs. To fix one, move the file
+  to `<sql.sqlite_root>/<tenant>/` and change the path to its name there. A
+  single-tenant install that needs the old behaviour can set
+  `sql.sqlite_unconfined: true` (`KILASFLOW_SQL_SQLITE_UNCONFINED`), which logs
+  a warning at every boot. An empty `sql.sqlite_root` turns SQLite credentials
+  off.
+
+- Opening a SQLite file returns at the caller's deadline even when the driver
+  blocks inside its open, which it does with no context. A credential test of
+  such a file used to hang past its deadline. Its in-flight claim was then never
+  released, so every later test of that credential answered 409 "already
+  running", and a node run on it held an engine worker indefinitely. A file whose
+  earlier open is still stuck is refused straight away rather than queued behind
+  it, and the number of stuck opens is capped. The credential test endpoint also
+  answers by its deadline whatever its probe does, and releases its claim.
+
+- Google Connect is bound to the browser that started it, is single-use, and
+  uses PKCE. The state used to be a bearer token for ten minutes: someone could
+  send their authorize URL to a victim, and the victim's consent stored the
+  victim's Google tokens in the sender's credential. Starting Connect now sets
+  an HttpOnly, SameSite=Lax nonce cookie whose hash is signed into the state,
+  and the callback refuses a browser without it. A used state is recorded in
+  the database, so a replayed callback is refused on every replica. The code is
+  exchanged with an S256 PKCE verifier derived from the nonce. A Connect popup
+  opened before the upgrade has to be started again. The start request must now
+  come from the browser that will open the popup, as the dashboard's does: a
+  backend that calls it with an API key and hands the URL to a browser is the
+  shape of the attack, and its callback is refused. Behind a proxy that
+  rewrites `Host`, set `server.public_url` so the callback reaches the host
+  that set the cookie.
+
+- Testing an unsaved edit of a credential can no longer send its stored
+  secret to a host of the caller's choosing. A redaction placeholder is filled
+  from storage only while the edit keeps the stored host, port, base URL and
+  URL; otherwise the test is refused with a 422. A test that uses a stored
+  secret runs under the stored `allowedDomains`, narrowed by any scope the
+  request sends, instead of under the request's scope alone. `credentialId` is
+  checked against the caller's tenant before it is used. A tenant can run at
+  most four credential tests at once (a fifth is answered `429`), so random
+  credential ids no longer buy unlimited parallel probes. The dashboard now
+  sends the form's scope with a test.
+
+- Updating a credential keeps every field and the scope the request leaves
+  out. An update used to clear any field it did not send, so a rename silently
+  dropped a JWT private key or the refresh token Connect stored. It also read a
+  missing `allowedDomains` as "unrestricted", so a rename let the secret go to
+  any host. Now a field is cleared by sending it empty, and the scope only by
+  sending an empty list. Creating a credential refuses the redaction
+  placeholder as a value instead of storing the bullets as the secret, and a
+  listing masks only the secrets that are set: an optional one that was never
+  written reads as empty.
 
 - A JavaScript worker process runs one tenant's Code-node and Sort-comparator
   scripts and never another's, so code that escaped the engine and stayed in a

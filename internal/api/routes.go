@@ -66,6 +66,13 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 		deps.OAuthTokenURL,
 		deps.OAuthHTTP,
 	)
+	// Used Connect states are recorded in the database, not in this process:
+	// any replica may serve a callback, and a replay that landed on another
+	// one would find an in-memory record empty. The idempotency table is the
+	// replica-safe "this happened once" record the server already keeps.
+	if deps.Idempotency != nil {
+		credentials.WithOAuthStateLedger(deps.Idempotency)
+	}
 	credentials.Register(v1)
 	handlers.NewSchedules(deps.Schedules, deps.Tenants).Register(v1)
 	handlers.NewDatastores(deps.Datastores, deps.Tenants).WithIdempotency(deps.Idempotency).Register(v1)

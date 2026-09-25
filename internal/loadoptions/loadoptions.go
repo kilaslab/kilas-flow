@@ -249,11 +249,9 @@ func (resolver *Resolver) loadHTTP(
 		// AllowedDomains never named, because Go strips only Authorization and
 		// Cookie on a cross-host hop. Attaching it here keeps the scope beside
 		// the check that produced it, and AllowsHost ignores the port half of
-		// the host:port the redirect check hands it.
-		request = request.WithContext(safehttp.WithCredentialScope(
-			request.Context(),
-			safehttp.CredentialScope{AllowsHost: record.AllowsHost},
-		))
+		// the host:port the redirect check hands it. A credential naming no
+		// domains is held to this host; see Record.RedirectScope.
+		request = request.WithContext(safehttp.WithCredentialScope(request.Context(), record.RedirectScope()))
 		credentialType, known := credentials.Default().Get(record.Type)
 		if !known {
 			return Result{Reason: "this credential's type is not registered on this server"}, nil
@@ -266,8 +264,10 @@ func (resolver *Resolver) loadHTTP(
 	response, err := safehttp.NewClient(policy).Do(request)
 	if err != nil {
 		// safehttp's own refusal text is passed through, so a loader aimed at a
-		// disallowed host fails with the error an HTTP node would produce.
-		return Result{}, err
+		// disallowed host fails with the error an HTTP node would produce —
+		// redacted the same way, because the credential may be in the URL and
+		// this answer goes straight back to the editor.
+		return Result{}, safehttp.RedactError(err)
 	}
 	defer response.Body.Close()
 	body, _, err := policy.ReadBody(response.Body)

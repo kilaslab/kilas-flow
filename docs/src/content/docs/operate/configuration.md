@@ -64,6 +64,13 @@ misreads in production:
   allowlist fails closed even with a key.
 - **No config file at all.** Fully supported. The server boots on SQLite with
   an unauthenticated API on port 8080 and says so in the logs.
+- **An empty `sql.sqlite_root`** (`KILASFLOW_SQL_SQLITE_ROOT=""`). The server
+  starts and logs that SQLite credentials are disabled. A test or a node run
+  using one is then refused, with a message naming the key. The default,
+  `./data/sqlite`, confines each tenant's SQLite files to its own subdirectory.
+  `sql.sqlite_unconfined: true` is the single-tenant escape hatch back to
+  absolute paths, and it logs a warning at every boot. See
+  [credentials](/concepts/credentials/#sqlite-files).
 
 One missing key refuses to start rather than warn: `auth.enabled: true` with
 no signing key. A server that answered every request with `401` would look

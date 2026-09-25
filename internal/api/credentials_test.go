@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -72,24 +73,29 @@ func storeCredential(t *testing.T, handler http.Handler, name, credentialType st
 }
 
 func TestADatabaseCredentialIsTestedByOpeningAConnection(t *testing.T) {
-	handler, _ := credentialAPI(t, api.Deps{})
+	root := t.TempDir()
+	handler, _ := credentialAPI(t, api.Deps{DatabaseGuard: sqlnode.Guard{SQLite: sqlnode.SQLiteFiles{Root: root}}})
 
 	// SQLite creates the file on connect, so a writable directory is a
-	// reachable target and a directory that does not exist is not.
+	// reachable target and a directory that does not exist is not. The path is
+	// the tenant's own, under the confined root.
 	reachable := storeCredential(t, handler, "Workflow database", "sqlite", map[string]string{
-		"path": filepath.Join(t.TempDir(), "workflow.db"),
+		"path": "workflow.db",
 	})
 	verdict := requestJSON[testCredentialResource](t, handler, http.MethodPost,
 		"/api/v1/credentials/"+reachable.ID+"/test", nil, http.StatusOK)
 	if !verdict.OK {
 		t.Fatalf("verdict = %#v, want a reachable database", verdict)
 	}
+	if _, err := os.Stat(filepath.Join(root, repository.DefaultTenantID, "workflow.db")); err != nil {
+		t.Fatalf("the test did not open the file in the caller's tenant directory: %v", err)
+	}
 
 	// All three database types, so none of them can quietly fall through to the
 	// HTTP probe — which has no URL to fetch and would report "no test defined"
 	// for a credential this server can perfectly well check.
 	for credentialType, fields := range map[string]map[string]string{
-		"sqlite": {"path": filepath.Join(t.TempDir(), "no", "such", "directory", "workflow.db")},
+		"sqlite": {"path": "no/such/directory/workflow.db"},
 		"postgres": {
 			"host": "127.0.0.1", "port": "1", "database": "app",
 			"user": "ada", "password": "hunter2", "sslMode": "disable",
@@ -154,7 +160,10 @@ func TestTheTestEndpointRefusesWhatTheExecutorsWouldRefuse(t *testing.T) {
 	// The same guard the database executors receive. A probe held to a laxer
 	// one would report reachable for a path a node then refuses — and this
 	// particular path is every credential in the installation.
-	handler, _ := credentialAPI(t, api.Deps{DatabaseGuard: sqlnode.Guard{InternalPaths: []string{internal}}})
+	// Unconfined, the one mode in which a credential can spell that path.
+	handler, _ := credentialAPI(t, api.Deps{DatabaseGuard: sqlnode.Guard{
+		InternalPaths: []string{internal}, SQLite: sqlnode.SQLiteFiles{Unconfined: true},
+	}})
 
 	stored := storeCredential(t, handler, "Sneaky", "sqlite", map[string]string{"path": internal})
 	verdict := requestJSON[testCredentialResource](t, handler, http.MethodPost,
@@ -167,6 +176,39 @@ func TestTheTestEndpointRefusesWhatTheExecutorsWouldRefuse(t *testing.T) {
 	}
 }
 
+// The live findings, through the endpoint: on a confined install a SQLite
+// credential cannot name a system file, escape its tenant's directory, or
+// create a file anywhere else — and neither the stored nor the unsaved test
+// route opens one.
+func TestTheTestEndpointConfinesSQLitePathsToTheTenant(t *testing.T) {
+	root := t.TempDir()
+	handler, _ := credentialAPI(t, api.Deps{DatabaseGuard: sqlnode.Guard{SQLite: sqlnode.SQLiteFiles{Root: root}}})
+
+	outside := filepath.Join(t.TempDir(), "created-by-tenant.db")
+	for name, path := range map[string]string{
+		"a system file":        "/etc/passwd",
+		"a dot-dot escape":     "../../../../etc/hosts",
+		"a new file elsewhere": outside,
+	} {
+		t.Run(name, func(t *testing.T) {
+			stored := storeCredential(t, handler, "Escape", "sqlite", map[string]string{"path": path})
+			verdict := requestJSON[testCredentialResource](t, handler, http.MethodPost,
+				"/api/v1/credentials/"+stored.ID+"/test", nil, http.StatusOK)
+			if verdict.OK || !strings.Contains(verdict.Detail, "not allowed") {
+				t.Fatalf("stored test verdict = %#v, want the path refused", verdict)
+			}
+			unsaved := requestJSON[testCredentialResource](t, handler, http.MethodPost,
+				"/api/v1/credential-types/sqlite/test", map[string]any{"fields": map[string]string{"path": path}}, http.StatusOK)
+			if unsaved.OK || !strings.Contains(unsaved.Detail, "not allowed") {
+				t.Fatalf("unsaved test verdict = %#v, want the path refused", unsaved)
+			}
+		})
+	}
+	if _, err := os.Stat(outside); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a refused path still created %s (stat err = %v)", outside, err)
+	}
+}
+
 func TestAnUnsavedEditIsTestedAgainstItsStoredSecrets(t *testing.T) {
 	handler, _ := credentialAPI(t, api.Deps{})
 	stored := storeCredential(t, handler, "Remote", "postgres", map[string]string{
@@ -175,13 +217,14 @@ func TestAnUnsavedEditIsTestedAgainstItsStoredSecrets(t *testing.T) {
 	})
 
 	// The editor only ever saw the placeholder, so an edit that changes the
-	// host sends it straight back. Passing it through would authenticate with
-	// eight bullet characters and blame the password.
+	// database sends it straight back. Passing it through would authenticate
+	// with eight bullet characters and blame the password. (An edit that moves
+	// the host is refused instead: see credentials_probe_scope_test.go.)
 	verdict := requestJSON[testCredentialResource](t, handler, http.MethodPost,
 		"/api/v1/credential-types/postgres/test", map[string]any{
 			"credentialId": stored.ID,
 			"fields": map[string]string{
-				"host": "127.0.0.2", "port": "1", "database": "app",
+				"host": "127.0.0.1", "port": "1", "database": "reporting",
 				"user": "ada", "password": credentials.RedactedValue, "sslMode": "disable",
 			},
 		}, http.StatusOK)

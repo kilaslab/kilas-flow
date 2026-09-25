@@ -164,7 +164,7 @@ func (google *GoogleClient) do(ctx context.Context, request engine.Request, ir w
 	}
 	response, err := google.client.Do(httpRequest)
 	if err != nil {
-		return nil, nil, fmt.Errorf("node %q: %w", ir.Name, err)
+		return nil, nil, fmt.Errorf("node %q: %w", ir.Name, safehttp.RedactError(err))
 	}
 	contents, truncated, err := google.policy.ReadBody(response.Body)
 	_ = response.Body.Close()

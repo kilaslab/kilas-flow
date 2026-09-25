@@ -511,7 +511,7 @@ export interface CreatedAPIKeyResource {
 }
 
 /**
- * Field values for the credential type. Send the redaction placeholder to keep a stored secret.
+ * Field values for the credential type. On create, every value is stored as sent and the redaction placeholder is refused. On update, a field left out, or sent as the redaction placeholder, keeps its stored value; send an empty string to clear one.
  */
 export type CredentialBodyFields = {[key: string]: string};
 
@@ -519,11 +519,11 @@ export interface CredentialBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
-     * Hosts this credential may be sent to. Empty means the type's default scope, or any host for a type that has none.
+     * Hosts this credential may be sent to. An empty list means the type's default scope, or any host for a type that has none. On update, leaving this out keeps the stored scope and an explicit empty list resets it to that default.
      * @nullable
      */
   allowedDomains?: string[] | null;
-  /** Field values for the credential type. Send the redaction placeholder to keep a stored secret. */
+  /** Field values for the credential type. On create, every value is stored as sent and the redaction placeholder is refused. On update, a field left out, or sent as the redaction placeholder, keeps its stored value; send an empty string to clear one. */
   fields: CredentialBodyFields;
   /**
      * Display name
@@ -1628,11 +1628,11 @@ export interface TestPayloadBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
-     * Hosts this credential may be sent to. Empty means the type's default scope, or any host for a type that has none.
+     * Hosts the probe may reach. Empty means the type's default scope, or any host for a type that has none, unless a stored secret was used: the stored credential's effective scope then applies, narrowed by these.
      * @nullable
      */
   allowedDomains?: string[] | null;
-  /** Stored credential the redaction placeholder resolves against */
+  /** Stored credential the redaction placeholder resolves against. It must name a credential of this type in the caller's tenant. */
   credentialId?: string;
   /** Field values to test. Send the redaction placeholder to use a stored secret. */
   fields: TestPayloadBodyFields;
@@ -2622,7 +2622,7 @@ export const getTestCredentialPayloadUrl = (type: string,) => {
 }
 
 /**
- * Runs a credential type's probe against a payload that has not been saved. Send credentialId alongside the redaction placeholder to test an edit against stored secrets.
+ * Runs a credential type's probe against a payload that has not been saved. Send credentialId alongside the redaction placeholder to test an edit against stored secrets. A placeholder is filled only while host, port, baseUrl and url match the stored values, and a test that uses a stored secret runs under the stored allowedDomains narrowed by the ones sent. A tenant runs at most four tests at once; one more is answered 429.
  * @summary Test an unsaved credential
  */
 export const testCredentialPayload = async (type: string,
@@ -2897,7 +2897,7 @@ export const getUpdateCredentialUrl = (id: string,) => {
 }
 
 /**
- * Replaces name, scope, and any field sent with a new value.
+ * Replaces the name, and the scope and fields the request sends. A field or scope the request leaves out keeps its stored value.
  * @summary Update a credential
  */
 export const updateCredential = async (id: string,
@@ -2955,7 +2955,7 @@ export const getStartCredentialOauthUrl = (id: string,) => {
 }
 
 /**
- * Returns the Google authorization URL for this credential. Open it in a popup (window.open), not an iframe: Google blocks OAuth inside frames.
+ * Returns the Google authorization URL for this credential. Open it in a popup (window.open), not an iframe: Google blocks OAuth inside frames. The response also sets an HttpOnly cookie that binds the sign-in to this browser: the callback completes only in the browser that made this request, and only once. The authorization request uses PKCE (S256).
  * @summary Start Google OAuth
  */
 export const startCredentialOauth = async (id: string, options?: RequestInit): Promise<startCredentialOauthResponse> => {

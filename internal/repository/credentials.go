@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -63,17 +64,12 @@ func (store *GORMCredentialStore) Create(ctx context.Context, tenant TenantScope
 	if err != nil {
 		return credentials.Record{}, err
 	}
-	secret, public := credentials.Split(record.Type, record.Fields)
-	if err := rejectPublicReferences(public); err != nil {
+	if err := rejectPlaceholders(record.Fields); err != nil {
 		return credentials.Record{}, err
 	}
-	sealed, err := store.cipher.Encrypt(secret)
+	sealed, publicFields, err := store.seal(record.Type, record.Fields)
 	if err != nil {
 		return credentials.Record{}, err
-	}
-	publicFields, err := json.Marshal(public)
-	if err != nil {
-		return credentials.Record{}, fmt.Errorf("encode credential fields: %w", err)
 	}
 	domains, err := json.Marshal(normalizeDomains(record.AllowedDomains))
 	if err != nil {
@@ -91,10 +87,15 @@ func (store *GORMCredentialStore) Create(ctx context.Context, tenant TenantScope
 	return credentialFromModel(model)
 }
 
-// Update replaces a credential's name, scope, and payload.
+// Update replaces a credential's name and the fields and scope the caller sent.
 //
-// A secret field left at the redaction placeholder keeps its stored value, so
-// editing a name never silently blanks a password the client was never given.
+// A field the caller did not send keeps its stored value, and so does one left
+// at the redaction placeholder: the client was never given a secret, so its
+// silence about one is not a request to erase it. Clearing is explicit — an
+// empty string for a field. The scope follows the same rule: a nil
+// AllowedDomains keeps the stored scope, and only a non-nil empty list makes
+// the credential unrestricted, because reading an omitted scope as
+// "unrestricted" would let any rename widen where the secret may be sent.
 func (store *GORMCredentialStore) Update(ctx context.Context, tenant TenantScope, credentialID string, record credentials.Record) (credentials.Record, error) {
 	if err := store.ready(tenant); err != nil {
 		return credentials.Record{}, err
@@ -108,14 +109,27 @@ func (store *GORMCredentialStore) Update(ctx context.Context, tenant TenantScope
 	}
 	record.Type = model.Type
 
+	previous, err := credentialFromModel(model)
+	if err != nil {
+		return credentials.Record{}, err
+	}
 	stored, err := store.cipher.Decrypt(model.Payload)
 	if err != nil {
 		return credentials.Record{}, err
 	}
-	merged := make(map[string]string, len(record.Fields))
+	// The starting point is everything stored, both halves, so an omitted
+	// field is kept whichever half it lives in.
+	merged := make(map[string]string, len(stored)+len(previous.Fields)+len(record.Fields))
+	for key, value := range previous.Fields {
+		merged[key] = value
+	}
+	for key, value := range stored {
+		merged[key] = value
+	}
 	for key, value := range record.Fields {
 		if value == credentials.RedactedValue {
-			merged[key] = stored[key]
+			// Kept as stored. A placeholder for a field that holds nothing
+			// stays absent rather than becoming its value.
 			continue
 		}
 		merged[key] = value
@@ -125,26 +139,20 @@ func (store *GORMCredentialStore) Update(ctx context.Context, tenant TenantScope
 		return credentials.Record{}, err
 	}
 
-	secret, public := credentials.Split(record.Type, merged)
-	if err := rejectPublicReferences(public); err != nil {
-		return credentials.Record{}, err
-	}
-	sealed, err := store.cipher.Encrypt(secret)
+	sealed, publicFields, err := store.seal(record.Type, merged)
 	if err != nil {
 		return credentials.Record{}, err
 	}
-	publicFields, err := json.Marshal(public)
-	if err != nil {
-		return credentials.Record{}, fmt.Errorf("encode credential fields: %w", err)
-	}
-	domains, err := json.Marshal(normalizeDomains(record.AllowedDomains))
-	if err != nil {
-		return credentials.Record{}, fmt.Errorf("encode allowed domains: %w", err)
+	if record.AllowedDomains != nil {
+		domains, err := json.Marshal(normalizeDomains(record.AllowedDomains))
+		if err != nil {
+			return credentials.Record{}, fmt.Errorf("encode allowed domains: %w", err)
+		}
+		model.AllowedDomains = domains
 	}
 	model.Name = strings.TrimSpace(record.Name)
 	model.Payload = sealed
 	model.PublicFields = publicFields
-	model.AllowedDomains = domains
 	model.UpdatedAt = time.Now().UTC()
 	if err := store.db.WithContext(ctx).Save(&model).Error; err != nil {
 		return credentials.Record{}, fmt.Errorf("update credential: %w", err)
@@ -355,6 +363,53 @@ func (store *GORMCredentialStore) ready(tenant TenantScope) error {
 	return nil
 }
 
+// seal splits a payload into its sealed and public halves and encodes both.
+//
+// The public half also records which secret fields hold a value, under a key
+// no credential type may declare. That is what lets a listing show the mask
+// only for a secret that is set without decrypting the payload to find out.
+func (store *GORMCredentialStore) seal(typeID string, fields map[string]string) ([]byte, []byte, error) {
+	secret, public := credentials.Split(typeID, fields)
+	if err := rejectPublicReferences(public); err != nil {
+		return nil, nil, err
+	}
+	sealed, err := store.cipher.Encrypt(secret)
+	if err != nil {
+		return nil, nil, err
+	}
+	set := make([]string, 0, len(secret))
+	for key, value := range secret {
+		if value != "" {
+			set = append(set, key)
+		}
+	}
+	sort.Strings(set)
+	public[credentials.SetSecretsKey] = strings.Join(set, ",")
+	publicFields, err := json.Marshal(public)
+	if err != nil {
+		return nil, nil, fmt.Errorf("encode credential fields: %w", err)
+	}
+	return sealed, publicFields, nil
+}
+
+// rejectPlaceholders refuses a payload that carries the redaction placeholder
+// as a value. On create there is no stored value for it to stand for, so the
+// only thing it could become is the literal secret — eight bullets that
+// authenticate nothing and read back, forever, exactly like a real value.
+func rejectPlaceholders(fields map[string]string) error {
+	keys := make([]string, 0, len(fields))
+	for key, value := range fields {
+		if value == credentials.RedactedValue {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	sort.Strings(keys)
+	return fmt.Errorf("credential field %q holds the redaction placeholder, which stands for a stored value, and a new credential has none: send the real value", keys[0])
+}
+
 func validateCredential(record credentials.Record) error {
 	if strings.TrimSpace(record.Name) == "" {
 		return fmt.Errorf("credential name is required")
@@ -388,11 +443,26 @@ func credentialFromModel(model credentialModel) (credentials.Record, error) {
 			return credentials.Record{}, fmt.Errorf("decode credential fields: %w", err)
 		}
 	}
+	// The set-secrets bookkeeping is lifted out of the field map, so no
+	// reader — Resolve's merge, $credentials, the API — ever sees it as a
+	// field. A row written before it existed has none, and SetSecrets stays
+	// nil to say so.
+	var setSecrets []string
+	if raw, recorded := public[credentials.SetSecretsKey]; recorded {
+		delete(public, credentials.SetSecretsKey)
+		setSecrets = []string{}
+		for _, key := range strings.Split(raw, ",") {
+			if key != "" {
+				setSecrets = append(setSecrets, key)
+			}
+		}
+	}
 	// Fields carries only the non-secret half. A caller that needs the secret
 	// goes through Resolve, which is the one path that uses the cipher.
 	return credentials.Record{
 		ID: model.ID, TenantID: model.TenantID, Name: model.Name, Type: model.Type,
-		Fields: public, AllowedDomains: domains, CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt,
+		Fields: public, SetSecrets: setSecrets, AllowedDomains: domains,
+		CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt,
 	}, nil
 }
 

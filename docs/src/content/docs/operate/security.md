@@ -54,6 +54,21 @@ installation's own DSN. A table prefix does not scope the refusal — anything
 holding the connection can read every table under it, so the whole database is
 refused however the credential spells its target.
 
+**SQLite files are confined per tenant.** A SQLite credential's path is read
+relative to `<sql.sqlite_root>/<tenant>/`, which defaults to
+`./data/sqlite/<tenant>/` beside the default database and so sits inside the
+same volume and backup. Absolute paths, `..` escapes, symbolic links and
+non-regular files are refused. That way one tenant cannot open another's
+databases, or create a file anywhere else the server can write. Keep the root on
+a volume only KilasFlow writes to. Leave `sql.sqlite_unconfined` off on any
+install where tenants do not trust each other: it lets every tenant name any
+file the process can open, and the server warns at every boot while it is on. To
+offer no SQLite credentials at all, set `sql.sqlite_root: ""`.
+
+Opening a SQLite file is bounded by the caller's deadline even when the driver
+blocks. A credential test or a node run returns, and the test's in-flight claim
+is released.
+
 **SQL targets are checked like HTTP ones.** A network database credential is
 also subject to the instance egress policy: a host that resolves to loopback,
 private, link-local or otherwise internal address is refused before anything
@@ -68,7 +83,25 @@ AES-256-GCM. The key is read from the environment and never from the
 configuration file; without it, credential storage is disabled rather than
 silently falling back to something weaker. Workflow `$env` expressions can
 never reach it either: only `KILASFLOW_WORKFLOW_ENV_*` is exposed to
-workflows, so a workflow can never read the DSN or the master key.
+workflows, so a workflow can never read the DSN or the master key. An update
+that leaves a credential's `allowedDomains` out keeps the stored scope, so a
+client that only renames a credential cannot widen where its secret may go;
+only an explicit empty list makes it unrestricted.
+
+**Google Connect is bound to the browser that started it.** Starting Connect
+sets an HttpOnly, SameSite=Lax nonce cookie, and the signed state carries only
+the nonce's hash. The callback completes only in a browser holding the nonce,
+only once (the used state is recorded in the database, so a replay is refused
+on every replica), and only with the PKCE verifier derived from that nonce. An
+authorize URL sent to someone else cannot put their Google account into the
+sender's credential. See [Google Connect](/concepts/credentials/#google-connect).
+
+**Testing an edit never moves a stored secret.** The unsaved-credential test
+fills a redaction placeholder from storage only while the edit keeps the stored
+host, port and base URL. It holds the probe to the stored scope, which the
+request can narrow but never widen, and checks the named credential against the
+caller's tenant before using it. No more than four credential tests run at once
+per tenant, so the test endpoint cannot be fanned out into a scanner.
 
 **The master key can come from a manager, and credential fields can point at
 one.** A stored credential field may hold an `ext://<binding>/<key>`
@@ -107,7 +140,9 @@ lands in a node's stored input or output. What follows for an operator is the
 part worth reading twice: **a raw table dump, a database backup or a support
 export carries inbound trigger headers and bodies verbatim.** Treat those files
 as credential-bearing, and prefer the API over a SQL client when handing run
-data to somebody else.
+data to somebody else. The one header withheld before storage is the shared
+secret a Header-auth trigger verified: it is stored as `[redacted]` under the
+name its credential gives, whatever that name is.
 
 **Webhook routes are unguessable rather than authenticated.** The route
 segment carries 16 bytes of entropy, because this endpoint is very often
@@ -120,6 +155,14 @@ recorded. Where being unguessable is not enough, set `webhook.require_auth` to
 turn that posture into a required-credential one: it refuses any delivery to a
 trigger that does not authenticate its callers with a `403` naming the workflow
 and the fix, and the boot log states which posture is running.
+
+**A page a workflow returns cannot act as the instance.** Webhook answers
+share the dashboard's origin, and a Respond to Webhook node writes whatever
+body and headers it likes. Every webhook answer therefore carries a
+`Content-Security-Policy` sandbox without `allow-same-origin`, forced over any
+policy the workflow set, so a returned page's script runs in an opaque origin:
+it cannot read the instance's cookies or call its API as the signed-in user.
+See [responses render sandboxed](/concepts/webhooks/#responses-render-sandboxed).
 
 **The bundled API reference makes no external requests.** The `/docs` page is
 served with a strict Content-Security-Policy and its JavaScript is vendored

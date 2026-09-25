@@ -268,6 +268,86 @@ func TestRedactedRemovesEverySecretFieldValue(t *testing.T) {
 	}
 }
 
+func TestRedactedRecordMasksOnlyTheSecretsTheStoreRecordedAsSet(t *testing.T) {
+	t.Parallel()
+
+	safe := credentials.RedactedRecord(credentials.Record{
+		Type:       "jwtAuth",
+		Fields:     map[string]string{"keyType": "passphrase", "algorithm": "HS256"},
+		SetSecrets: []string{"secret"},
+	})
+	if safe["secret"] != credentials.RedactedValue {
+		t.Errorf("secret = %q, want the mask", safe["secret"])
+	}
+	if safe["privateKey"] != "" {
+		t.Errorf("privateKey = %q, want empty for a secret that was never set", safe["privateKey"])
+	}
+	if safe["keyType"] != "passphrase" {
+		t.Errorf("keyType = %q, want the public value", safe["keyType"])
+	}
+
+	// A row from before the store kept the record cannot say, so every secret
+	// is reported as stored: the editor then keeps a value rather than
+	// prompting for one that exists.
+	legacy := credentials.RedactedRecord(credentials.Record{
+		Type:   "jwtAuth",
+		Fields: map[string]string{"keyType": "passphrase", "algorithm": "HS256"},
+	})
+	if legacy["secret"] != credentials.RedactedValue || legacy["privateKey"] != credentials.RedactedValue {
+		t.Errorf("legacy row = %#v, want every secret masked", legacy)
+	}
+}
+
+func TestIntersectDomainsAdmitsOnlyWhatBothScopesAdmit(t *testing.T) {
+	t.Parallel()
+
+	for name, testCase := range map[string]struct {
+		first, second []string
+		want          []string
+		ok            bool
+	}{
+		"unrestricted first":      {nil, []string{"api.test"}, []string{"api.test"}, true},
+		"unrestricted second":     {[]string{"API.test."}, []string{" "}, []string{"api.test"}, true},
+		"both unrestricted":       {nil, nil, []string{}, true},
+		"same exact host":         {[]string{"db.corp.test"}, []string{"db.corp.test"}, []string{"db.corp.test"}, true},
+		"exact under a wildcard":  {[]string{"*.corp.test"}, []string{"db.corp.test"}, []string{"db.corp.test"}, true},
+		"wildcard over the exact": {[]string{"db.corp.test"}, []string{"*.corp.test"}, []string{"db.corp.test"}, true},
+		"narrower wildcard wins":  {[]string{"*.corp.test"}, []string{"*.eu.corp.test"}, []string{"*.eu.corp.test"}, true},
+		"bare parent is not a subdomain": {
+			[]string{"*.corp.test"}, []string{"corp.test"}, nil, false,
+		},
+		"disjoint": {[]string{"db.corp.test"}, []string{"attacker.test"}, nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, ok := credentials.IntersectDomains(testCase.first, testCase.second)
+			if ok != testCase.ok {
+				t.Fatalf("IntersectDomains() ok = %v, want %v (scope %#v)", ok, testCase.ok, got)
+			}
+			if !ok {
+				return
+			}
+			if strings.Join(got, ",") != strings.Join(testCase.want, ",") {
+				t.Fatalf("IntersectDomains() = %#v, want %#v", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestARegisteredFieldCannotCollideWithTheStoresBookkeeping(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{credentials.SetSecretsKey, "$other", "a,b"} {
+		registry := credentials.NewRegistry()
+		err := registry.Register(credentials.Type{
+			ID: "collides", DisplayName: "Collides",
+			Properties: []property.PropertyDefinition{{Key: key, Label: "Field", Kind: property.KindString}},
+		})
+		if err == nil {
+			t.Errorf("Register() accepted field key %q", key)
+		}
+	}
+}
+
 // Not parallel: t.Setenv mutates process state.
 func TestKeyFromEnvironmentAcceptsBase64AndHex(t *testing.T) {
 	t.Setenv("KF_TEST_KEY_B64", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=")

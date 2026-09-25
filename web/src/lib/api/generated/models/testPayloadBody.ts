@@ -11,11 +11,11 @@ export interface TestPayloadBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
-     * Hosts this credential may be sent to. Empty means the type's default scope, or any host for a type that has none.
+     * Hosts the probe may reach. Empty means the type's default scope, or any host for a type that has none, unless a stored secret was used: the stored credential's effective scope then applies, narrowed by these.
      * @nullable
      */
   allowedDomains?: string[] | null;
-  /** Stored credential the redaction placeholder resolves against */
+  /** Stored credential the redaction placeholder resolves against. It must name a credential of this type in the caller's tenant. */
   credentialId?: string;
   /** Field values to test. Send the redaction placeholder to use a stored secret. */
   fields: TestPayloadBodyFields;

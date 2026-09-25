@@ -1171,8 +1171,16 @@ func (backend *modelBackend) resolveModel(ctx context.Context, nodeName string, 
 	if value, present := descriptor[ModelOptionMaxRetries]; present && value != nil {
 		maxRetries = positiveInt(numberValue(value))
 	}
+	model := ai.NewOpenAICompatible(backend.client, baseURL, apiKey)
+	if credentialID != "" {
+		// The host check above covers the base URL; the scope carries the
+		// same bound through every redirect the call meets, holds a
+		// credential that names no domains to this host, and refuses a step
+		// down to plain http, where the key would travel in the clear.
+		model.WithCredentialScope(secret.RedirectScope())
+	}
 	return resolvedModel{
-		model:   ai.NewOpenAICompatible(backend.client, baseURL, apiKey),
+		model:   model,
 		name:    textValue(descriptor["model"], "gpt-4o-mini"),
 		timeout: timeout,
 		stream:  boolValue(descriptor["stream"]),
@@ -2022,23 +2030,25 @@ func (tool *httpRequestTool) Invoke(ctx context.Context, arguments json.RawMessa
 			}
 		}
 	}
-	// The model's arguments replace the $fromAI calls before the request
-	// executes; anything without such a call keeps reading them as $json.
-	parameters, err := ai.SubstituteFromAI(tool.node.Parameters, argsMap)
+	// The model's arguments reach the $fromAI calls as data: plain strings
+	// are filled, and the expressions read them from their context when the
+	// request resolves (fillToolFromAI). Anything without such a call keeps
+	// reading them as $json.
+	parameters, fromAI, err := fillToolFromAI(tool.node.Parameters, argsMap)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("tool %q: %w", tool.name, err)
 	}
-	// The substitution goes into a copy of the node, never into the tool's own
-	// template. A tool outlives one call: writing the first call's arguments
-	// back over the $fromAI placeholders made every later call — and every
-	// later item — repeat the first request, while the agent answered with the
-	// wrong data and the execution still reported success. The copy is also
-	// what keeps Definition() offering the model the real argument schema
-	// after the first call.
+	// The filled parameters go into a copy of the node, never into the tool's
+	// own template. A tool outlives one call: writing the first call's
+	// arguments back over the $fromAI placeholders made every later call — and
+	// every later item — repeat the first request, while the agent answered
+	// with the wrong data and the execution still reported success. The copy
+	// is also what keeps Definition() offering the model the real argument
+	// schema after the first call.
 	node := tool.node
 	node.Parameters = parameters
 
-	output, err := tool.executor.Execute(ctx, node, workflow.NodeInput{"main": {item}}, tool.request)
+	output, err := tool.executor.execute(ctx, node, workflow.NodeInput{"main": {item}}, tool.request, fromAI)
 	if err != nil {
 		return "", err
 	}
@@ -2620,15 +2630,19 @@ func (tool *workflowTool) Invoke(ctx context.Context, arguments json.RawMessage)
 	if err != nil {
 		return "", err
 	}
-	parameters, err := ai.SubstituteFromAI(tool.parameters, argsMap)
+	// The model's arguments reach the $fromAI calls as data, the same way the
+	// HTTP Request tool's do (fillToolFromAI).
+	parameters, fromAI, err := fillToolFromAI(tool.parameters, argsMap)
+	if err != nil {
+		return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
+	}
+	scope := expressionContext(item, nil, tool.request, 0)
+	scope.FromAIArguments = fromAI
+	target, err := workflowToolTarget(tool.agentNode, tool.rawWorkflow, parameters, scope)
 	if err != nil {
 		return "", err
 	}
-	target, err := workflowToolTarget(tool.agentNode, tool.rawWorkflow, parameters, item, tool.request)
-	if err != nil {
-		return "", err
-	}
-	inputItem, err := workflowToolInput(tool.agentNode, parameters, item, tool.request)
+	inputItem, err := workflowToolInput(tool.agentNode, parameters, item, scope)
 	if err != nil {
 		return "", err
 	}
@@ -2659,17 +2673,18 @@ func (tool *workflowTool) Invoke(ctx context.Context, arguments json.RawMessage)
 
 // workflowToolTarget resolves which workflow to run. A locator chosen from
 // the list is fixed; one written by ID may still be an expression, which
-// resolves against the tool's input item.
-func workflowToolTarget(agentNode string, raw any, parameters map[string]any, item workflow.Item, request engine.Request) (string, error) {
+// resolves in the tool call's scope: its input item and the model's $fromAI
+// arguments.
+func workflowToolTarget(agentNode string, raw any, parameters map[string]any, scope expression.Context) (string, error) {
 	value := raw
 	if expression.IsExpression(raw) {
-		resolved, err := expression.Resolve(map[string]any{"workflowId": raw}, expressionContext(item, nil, request, 0))
+		resolved, err := expression.Resolve(map[string]any{"workflowId": raw}, scope)
 		if err != nil {
 			return "", fmt.Errorf("node %q: %w", agentNode, err)
 		}
 		value = resolved["workflowId"]
 	} else if expression.IsExpression(parameters["workflowId"]) {
-		resolved, err := expression.Resolve(map[string]any{"workflowId": parameters["workflowId"]}, expressionContext(item, nil, request, 0))
+		resolved, err := expression.Resolve(map[string]any{"workflowId": parameters["workflowId"]}, scope)
 		if err != nil {
 			return "", fmt.Errorf("node %q: %w", agentNode, err)
 		}
@@ -2684,8 +2699,9 @@ func workflowToolTarget(agentNode string, raw any, parameters map[string]any, it
 
 // workflowToolInput builds the sub-workflow's input item: the model's
 // arguments overlaid with the configured static inputs, which win on
-// conflict because the author wrote them explicitly.
-func workflowToolInput(agentNode string, parameters map[string]any, item workflow.Item, request engine.Request) (workflow.Item, error) {
+// conflict because the author wrote them explicitly. The inputs resolve in
+// the tool call's scope.
+func workflowToolInput(agentNode string, parameters map[string]any, item workflow.Item, scope expression.Context) (workflow.Item, error) {
 	merged := make(map[string]any, len(item.JSON)+1)
 	for key, value := range item.JSON {
 		merged[key] = value
@@ -2694,7 +2710,7 @@ func workflowToolInput(agentNode string, parameters map[string]any, item workflo
 	if !present || raw == nil {
 		return workflow.Item{JSON: merged}, nil
 	}
-	resolved, err := expression.Resolve(map[string]any{"workflowInputs": raw}, expressionContext(item, nil, request, 0))
+	resolved, err := expression.Resolve(map[string]any{"workflowInputs": raw}, scope)
 	if err != nil {
 		return workflow.Item{}, fmt.Errorf("node %q: %w", agentNode, err)
 	}
@@ -2759,8 +2775,8 @@ func (tool *calculatorTool) Definition() ai.ToolDefinition {
 	}
 }
 
-// Invoke substitutes the model's arguments, resolves any remaining
-// expressions against them, and evaluates.
+// Invoke resolves the parameters with the model's arguments as data, and
+// evaluates the arithmetic they produce.
 func (tool *calculatorTool) Invoke(ctx context.Context, arguments json.RawMessage) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -2769,11 +2785,16 @@ func (tool *calculatorTool) Invoke(ctx context.Context, arguments json.RawMessag
 	if err != nil {
 		return "", err
 	}
-	parameters, err := ai.SubstituteFromAI(tool.parameters, argsMap)
+	// The model's arguments reach the $fromAI calls as data, so what reaches
+	// the arithmetic is the value the model sent, never something the
+	// expression evaluator ran first (fillToolFromAI).
+	parameters, fromAI, err := fillToolFromAI(tool.parameters, argsMap)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
 	}
-	resolved, err := expression.Resolve(parameters, expressionContext(item, nil, tool.request, 0))
+	scope := expressionContext(item, nil, tool.request, 0)
+	scope.FromAIArguments = fromAI
+	resolved, err := expression.Resolve(parameters, scope)
 	if err != nil {
 		return "", fmt.Errorf("node %q: %w", tool.agentNode, err)
 	}
@@ -3462,7 +3483,9 @@ func (executor *MCPClientToolExecutor) mcpCall(ctx context.Context, ir workflow.
 	}
 	response, err := executor.client.Do(httpRequest)
 	if err != nil {
-		return nil, "", fmt.Errorf("MCP %s: %w", method, err)
+		// An MCP server's credential may sit in the URL's query; the
+		// transport error prints the URL, so only its scheme and host go on.
+		return nil, "", fmt.Errorf("MCP %s: %w", method, safehttp.RedactError(err))
 	}
 	defer response.Body.Close()
 	next := response.Header.Get("mcp-session-id")
@@ -3504,7 +3527,7 @@ func (executor *MCPClientToolExecutor) mcpNotify(ctx context.Context, ir workflo
 	}
 	response, err := executor.client.Do(httpRequest)
 	if err != nil {
-		return fmt.Errorf("MCP notifications/initialized: %w", err)
+		return fmt.Errorf("MCP notifications/initialized: %w", safehttp.RedactError(err))
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, mcpMaxResponseBytes(executor.policy)))

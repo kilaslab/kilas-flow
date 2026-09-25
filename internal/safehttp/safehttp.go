@@ -31,14 +31,22 @@ type CredentialScope struct {
 	// AllowsHost reports whether the credential may be sent to a host,
 	// using the same wildcard rule Authenticate applied to the first URL.
 	AllowsHost func(host string) bool
+	// Unbounded reports that the credential names no domains, so AllowsHost
+	// admits every host. A redirect is then held to the hostname the first
+	// request went to instead: an empty domain list is the author saying
+	// "wherever this node sends it", not "wherever a server redirects it",
+	// and Go forwards every header but Authorization and Cookie across a
+	// host change — X-Api-Key and a custom template's headers included.
+	Unbounded bool
 }
 
 type credentialScopeKey struct{}
 
 // WithCredentialScope attaches a credential's domain bound to a request
-// context. A nil AllowsHost is stored as-is and never consulted — the
-// redirect check treats a scope without a rule as absent rather than as a
-// refusal, so callers that have no credential behave exactly as before.
+// context. A scope on the context means a credential is on the request, so
+// the redirect check refuses a scheme downgrade whatever the scope says. A nil
+// AllowsHost skips only the domain check, which is never read as a refusal.
+// A caller with no credential attaches no scope and behaves exactly as before.
 func WithCredentialScope(ctx context.Context, scope CredentialScope) context.Context {
 	return context.WithValue(ctx, credentialScopeKey{}, scope)
 }
@@ -388,14 +396,54 @@ func NewClient(policy Policy) *http.Client {
 			// host:port is passed (not just the hostname) so a scope may be
 			// port-aware where the deployment needs it; AllowsHost
 			// implementations that match hostnames ignore the port half.
-			if scope, ok := CredentialScopeFrom(request.Context()); ok {
-				if !scope.AllowsHost(request.URL.Host) {
-					return http.ErrUseLastResponse
-				}
+			// A credential that names no domains is held to the first
+			// request's host, and no credential follows a step down to
+			// plain http; see allowsHop.
+			if scope, ok := CredentialScopeFrom(request.Context()); ok && !scope.allowsHop(request.URL, via) {
+				return http.ErrUseLastResponse
 			}
 			return nil
 		},
 	}
+}
+
+// allowsHop reports whether a redirect may carry the credential on to next.
+//
+// Three rules, each stopping the chain with the last in-scope response rather
+// than failing the call, as the domain rule always has:
+//
+//   - the credential's own domains, when it names any;
+//   - the first request's hostname, when it names none — Unbounded is an
+//     author sending the secret where the node points, not wherever a server
+//     answers with a Location header. The port is not compared, as the domain
+//     rule does not compare it, so a service moving to another port of the
+//     same host keeps working;
+//   - no step down from https to http, since the secret would cross the
+//     network in the clear on the next hop.
+func (scope CredentialScope) allowsHop(next *url.URL, via []*http.Request) bool {
+	if scope.AllowsHost != nil && !scope.AllowsHost(next.Host) {
+		return false
+	}
+	if len(via) == 0 {
+		return true
+	}
+	if scope.Unbounded && !sameHostname(via[0].URL, next) {
+		return false
+	}
+	previous := via[len(via)-1].URL
+	if strings.EqualFold(previous.Scheme, "https") && !strings.EqualFold(next.Scheme, "https") {
+		return false
+	}
+	return true
+}
+
+// sameHostname compares two URLs' hostnames the way the domain rule does:
+// case-insensitive, a trailing dot ignored, the port left out.
+func sameHostname(first, next *url.URL) bool {
+	normalise := func(target *url.URL) string {
+		return strings.ToLower(strings.TrimSuffix(target.Hostname(), "."))
+	}
+	return normalise(first) == normalise(next)
 }
 
 // ReadBody reads at most MaxResponseBytes and reports when the limit was hit,

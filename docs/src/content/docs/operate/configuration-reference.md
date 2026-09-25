@@ -772,6 +772,43 @@ sqlnode's own ceiling rather than meaning unbounded.
 
 MaxStatementTimeout is the longest a single statement may run.
 
+### sql.sqlite_root
+
+- Type: `string`
+- Default: `'./data/sqlite'`
+- Environment: `KILASFLOW_SQL_SQLITE_ROOT`
+- Required: no
+
+SQLiteRoot is the directory SQLite credentials are confined to. Each
+tenant gets its own subdirectory, created on first use, and a SQLite
+credential's path is read relative to it: `orders.db` for tenant acme is
+`<sqlite_root>/acme/orders.db`. Absolute paths, `..` escapes, symbolic
+links, and anything that is not a regular file are refused.
+
+A credential's path used to be read as the process would read it, so any
+tenant could open every other tenant's files, and create a file anywhere
+the server can write. The default sits beside the default SQLite
+database, inside whatever volume the operator already mounted.
+
+Setting it to the empty string disables SQLite credentials: a test or a
+node run using one is refused and names this key.
+
+### sql.sqlite_unconfined
+
+- Type: `bool`
+- Default: `false`
+- Environment: `KILASFLOW_SQL_SQLITE_UNCONFINED`
+- Required: no
+
+SQLiteUnconfined reads a SQLite credential's path as the process would —
+absolute, or relative to the working directory — and ignores
+sqlite_root. This is the behaviour before confinement, kept for a
+single-tenant install whose credentials already name files elsewhere on
+disk. Every tenant on such an install can open every file the server
+can, so never turn it on where tenants do not trust each other; the
+server warns at boot while it is on. KilasFlow's own database, and
+anything that is not a regular file, stay refused either way.
+
 ## credential
 
 Credential bounds the credential test endpoint.

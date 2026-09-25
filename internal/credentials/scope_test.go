@@ -194,3 +194,20 @@ func TestApplyDefaultDomainsMaterialisesOnlyAFixedList(t *testing.T) {
 		t.Errorf("AllowedDomains = %v, want an authored list untouched", authored.AllowedDomains)
 	}
 }
+
+// A redirect is held to the default scope, not merely to the first host: a
+// credential whose domains come from its type names domains, so it is not
+// "unbounded" in the redirect rule's sense.
+func TestARedirectScopeReadsTheEffectiveDomains(t *testing.T) {
+	t.Parallel()
+	openAI := credentials.Record{Type: "openAiApi"}.RedirectScope()
+	if openAI.Unbounded {
+		t.Error("an OpenAI key with its default scope reads as unbounded")
+	}
+	if openAI.AllowsHost("attacker.test") || !openAI.AllowsHost("api.openai.com") {
+		t.Error("the redirect scope does not follow the default domains")
+	}
+	if !(credentials.Record{Type: "httpHeaderAuth"}).RedirectScope().Unbounded {
+		t.Error("a generic credential with no domains must still read as unbounded")
+	}
+}

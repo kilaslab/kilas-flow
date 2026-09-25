@@ -451,6 +451,9 @@ func TestFromAIArgumentsAreDataTheExpressionComputesWith(t *testing.T) {
 		{`{{ $fromAI('object').b }}`, "nested"},
 		{`{{ $fromAI('score', 'the score', 'number') * 100 + '' }}`, "300"},
 		{`{{ $fromAI('plan', 'the plan', 'string', 'free') }}`, "free"},
+		// The other spellings n8n accepts, which an imported workflow carries.
+		{`Customer {{ $fromai('name') }}`, "Customer {{ $execution.id }}"},
+		{`Customer {{ $fromAi('name') }}`, "Customer {{ $execution.id }}"},
 	} {
 		value, err := expression.Evaluate(row.template, ctx)
 		if err != nil {

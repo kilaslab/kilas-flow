@@ -23,9 +23,15 @@ func TestSQLiteRequiresAnExplicitPath(t *testing.T) {
 		"uri form":  {"path": "file:data.db?mode=ro"},
 		"query":     {"path": "data.db?cache=shared"},
 	} {
-		_, err := sqlnode.Open(context.Background(), sqlnode.DriverSQLite, fields, sqlnode.Guard{})
-		if !errors.Is(err, sqlnode.ErrForbiddenTarget) {
-			t.Errorf("%s path = %v, want ErrForbiddenTarget", name, err)
+		// Refused whichever way the install reads a path.
+		for mode, guard := range map[string]sqlnode.Guard{
+			"confined":   sqlnode.Guard{SQLite: sqlnode.SQLiteFiles{Root: t.TempDir()}}.ForTenant("acme"),
+			"unconfined": {SQLite: sqlnode.SQLiteFiles{Unconfined: true}},
+		} {
+			_, err := sqlnode.Open(context.Background(), sqlnode.DriverSQLite, fields, guard)
+			if !errors.Is(err, sqlnode.ErrForbiddenTarget) {
+				t.Errorf("%s: %s path = %v, want ErrForbiddenTarget", mode, name, err)
+			}
 		}
 	}
 }
@@ -38,7 +44,10 @@ func TestSQLiteRefusesKilasFlowsOwnDatabase(t *testing.T) {
 	if err := os.WriteFile(internal, []byte("internal"), 0o600); err != nil {
 		t.Fatalf("write internal database: %v", err)
 	}
-	guard := sqlnode.Guard{InternalPaths: []string{internal}}
+	// Unconfined, because that is the mode in which a credential can spell a
+	// path outside a tenant directory at all; the confined mode keeps the same
+	// check for a root an operator set around the data directory.
+	guard := sqlnode.Guard{InternalPaths: []string{internal}, SQLite: sqlnode.SQLiteFiles{Unconfined: true}}
 
 	// The exact path, its WAL sidecar, and a relative spelling of the same file
 	// all reach the same database, so all three must be refused.
@@ -71,7 +80,7 @@ func TestSQLiteRefusesASymlinkPointingAtTheInternalDatabase(t *testing.T) {
 
 	// A string comparison alone would let this through.
 	_, err := sqlnode.Open(context.Background(), sqlnode.DriverSQLite, map[string]string{"path": link},
-		sqlnode.Guard{InternalPaths: []string{internal}})
+		sqlnode.Guard{InternalPaths: []string{internal}, SQLite: sqlnode.SQLiteFiles{Unconfined: true}})
 	if !errors.Is(err, sqlnode.ErrForbiddenTarget) {
 		t.Errorf("symlinked path = %v, want ErrForbiddenTarget", err)
 	}
@@ -81,10 +90,12 @@ func TestSQLiteOpensAWorkflowOwnedDatabase(t *testing.T) {
 	t.Parallel()
 
 	directory := t.TempDir()
-	guard := sqlnode.Guard{InternalPaths: []string{filepath.Join(directory, "kilasflow.db")}}
-	target := filepath.Join(directory, "customer.db")
+	guard := sqlnode.Guard{
+		InternalPaths: []string{filepath.Join(directory, "kilasflow.db")},
+		SQLite:        sqlnode.SQLiteFiles{Root: filepath.Join(directory, "sqlite")},
+	}.ForTenant("acme")
 
-	connection, err := sqlnode.Open(context.Background(), sqlnode.DriverSQLite, map[string]string{"path": target}, guard)
+	connection, err := sqlnode.Open(context.Background(), sqlnode.DriverSQLite, map[string]string{"path": "customer.db"}, guard)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -96,10 +107,16 @@ func TestSQLiteOpensAWorkflowOwnedDatabase(t *testing.T) {
 	}
 }
 
+// workflowGuard confines SQLite files to a fresh root, as a default install does.
+func workflowGuard(t *testing.T) sqlnode.Guard {
+	t.Helper()
+	return sqlnode.Guard{SQLite: sqlnode.SQLiteFiles{Root: t.TempDir()}}.ForTenant("acme")
+}
+
 func newSQLite(t *testing.T) *sqlnode.Connection {
 	t.Helper()
 	connection, err := sqlnode.Open(context.Background(), sqlnode.DriverSQLite,
-		map[string]string{"path": filepath.Join(t.TempDir(), "workflow.db")}, sqlnode.Guard{})
+		map[string]string{"path": "workflow.db"}, workflowGuard(t))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -269,7 +286,7 @@ func TestClosedConnectionRefusesFurtherWork(t *testing.T) {
 	t.Parallel()
 
 	connection, err := sqlnode.Open(context.Background(), sqlnode.DriverSQLite,
-		map[string]string{"path": filepath.Join(t.TempDir(), "closed.db")}, sqlnode.Guard{})
+		map[string]string{"path": "closed.db"}, workflowGuard(t))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}

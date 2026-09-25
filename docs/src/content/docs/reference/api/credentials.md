@@ -30,7 +30,7 @@ Embed: Deny — listing workflows, minting sessions, schedules, credential write
 
 `POST /api/v1/credential-types/{type}/test`
 
-Runs a credential type's probe against a payload that has not been saved. Send credentialId alongside the redaction placeholder to test an edit against stored secrets.
+Runs a credential type's probe against a payload that has not been saved. Send credentialId alongside the redaction placeholder to test an edit against stored secrets. A placeholder is filled only while host, port, baseUrl and url match the stored values, and a test that uses a stored secret runs under the stored allowedDomains narrowed by the ones sent. A tenant runs at most four tests at once; one more is answered 429.
 
 Parameters:
 
@@ -113,7 +113,7 @@ Embed: Deny — listing workflows, minting sessions, schedules, credential write
 
 `PUT /api/v1/credentials/{id}`
 
-Replaces name, scope, and any field sent with a new value.
+Replaces the name, and the scope and fields the request sends. A field or scope the request leaves out keeps its stored value.
 
 Parameters:
 
@@ -178,7 +178,7 @@ Embed: Deny — listing workflows, minting sessions, schedules, credential write
 
 `POST /api/v1/credentials/{id}/oauth/start`
 
-Returns the Google authorization URL for this credential. Open it in a popup (window.open), not an iframe: Google blocks OAuth inside frames.
+Returns the Google authorization URL for this credential. Open it in a popup (window.open), not an iframe: Google blocks OAuth inside frames. The response also sets an HttpOnly cookie that binds the sign-in to this browser: the callback completes only in the browser that made this request, and only once. The authorization request uses PKCE (S256).
 
 Parameters:
 

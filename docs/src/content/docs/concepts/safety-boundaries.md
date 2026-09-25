@@ -59,7 +59,11 @@ IPv4-mapped IPv6 forms are refused too, so `::ffff:127.0.0.1` does not slip past
 **On every redirect hop.** A redirect can point anywhere, so the destination gets
 the same scheme and allowlist check the original URL did — and because each hop
 re-enters the dialer, the address check runs again as well. After five hops the
-request fails.
+request fails. A request carrying a credential is held tighter still: each hop
+must stay inside the credential's `allowedDomains`, a credential with an empty
+list may only stay on the first request's hostname, and no hop may step down
+from `https` to `http`. A hop that breaks one of those stops the chain with the
+last in-scope response; see [redirects](/concepts/credentials/#redirects).
 
 ### The levers do not consult each other
 
@@ -118,8 +122,8 @@ lives, and it is worth re-reading whenever a section is added to the policy.
 ### Credentials narrow it further
 
 A [credential's](/concepts/credentials/) own `allowedDomains` is checked against
-the target host **before the secret touches the request**, in all four places a
-credential can be applied. It is a narrowing on top of the policy above, never a
+the target host **before the secret touches the request**, everywhere a
+credential can be applied, trigger lifecycle requests included. It is a narrowing on top of the policy above, never a
 replacement: a credential permitted to reach `example.com` still cannot reach it
 if the deployment's outbound policy refuses the resolved address.
 
@@ -138,6 +142,17 @@ declare, so an HTTP Request node cannot carry an OpenAI key to a URL of its
 choosing. And an embed session or a scoped API key may not save or run a
 document that attaches an unscoped credential; see
 [what is not defended](#what-is-not-defended) for the tenant's own writers.
+
+### A failed request names its host, never its URL
+
+Go's transport error prints the whole request URL, and a credential can sit in
+its query or its path. Every outbound call site passes that error through
+`safehttp.RedactError`, which keeps the operation, the scheme and host (port
+included) and the cause, and withholds the path, the query and any userinfo:
+`Get "http://127.0.0.1:18999": dial tcp …: connection refused`. A node's error is
+also scrubbed of the secret values of every credential the node resolved before
+the runner records it; see [keeping a secret out of error
+text](/concepts/credentials/#keeping-a-secret-out-of-error-text).
 
 ### The JavaScript sidecar (opt-in)
 
@@ -183,6 +198,34 @@ engine's database. The guard:
 On a match the connection is refused. The same guard is applied at **edit time**,
 so a SQLite credential naming KilasFlow's own database is refused when it is
 tested exactly as it is when a workflow runs.
+
+**A SQLite credential stays inside its tenant's directory.** Refusing
+KilasFlow's own file is not enough on a multi-tenant install. A path read as the
+credential spells it reaches every other tenant's databases too, and creates a
+file anywhere the process can write. SQLite paths are therefore confined to
+`<sql.sqlite_root>/<tenant>/` and read relative to it. The guard, built once
+for the process, is narrowed to the tenant at each call site: node run, option
+loader, credential test.
+
+The guard refuses:
+
+- an absolute path;
+- a `..` that leaves the directory;
+- any symbolic link on the way. A tenant cannot make one through a workflow, so
+  one found there was put there by someone else;
+- anything that is not a regular file.
+
+The tenant ID has to be one plain directory name. `sql.sqlite_unconfined: true`
+is the single-tenant escape hatch back to unconfined paths, and it is warned
+about at boot. The zero guard, and an empty root, refuse every SQLite credential.
+
+**A SQLite open cannot hold a request or a worker.** The driver opens the file
+with no context, and only a running statement can be interrupted, so a blocked
+open used to ignore every deadline. It now runs in a goroutine the caller
+abandons at its deadline, or after 30 seconds when the caller has none. If the
+driver returns later, the handle it opened is closed. While that open is still
+stuck, the same file is refused straight away rather than queued behind it, and
+at most eight stuck opens are allowed in the process.
 
 A network target has its own half of the same guard. A PostgreSQL or MySQL
 credential whose database name, port and host match the installation's own DSN is
@@ -445,7 +488,11 @@ it fails with a message saying so rather than silently dropping an attachment.
 The [webhook surface](/concepts/webhooks/) bounds the request body at 1 MiB
 (`webhook.max_body_bytes`) and the synchronous response wait at 30 seconds
 (`webhook.response_timeout`). Route identifiers carry 128 bits of entropy from
-`crypto/rand`, and every kind of miss returns an identical `404`.
+`crypto/rand`, and every kind of miss returns an identical `404`. Every answer
+the surface sends carries a `Content-Security-Policy` sandbox without
+`allow-same-origin`, so a page a workflow returns runs in an opaque origin rather
+than as the instance, and a workflow-set policy cannot loosen it — see
+[responses render sandboxed](/concepts/webhooks/#responses-render-sandboxed).
 
 ## What is *not* defended
 
@@ -507,8 +554,11 @@ instead that every credential such a caller's document carries be bounded.
 **Storage keeps what the caller sent.** Redaction is a read-surface guarantee:
 API responses, the live event feed and the inspector withhold credential keys and
 normalise header names, but a raw table dump, a database backup or a support
-export carries inbound trigger headers and bodies exactly as they arrived. See
-[the security posture](/operate/security/) for what that asks of an operator.
+export carries inbound trigger headers and bodies exactly as they arrived — with
+one exception: the header a Header-auth trigger verified is withheld by the name
+its credential gives before the delivery is stored, since that value is the
+shared secret. See [the security posture](/operate/security/) for what that asks
+of an operator.
 
 ## Configuration is generated from the code
 
@@ -524,7 +574,8 @@ stops a list like this one from silently going stale.
 
 `internal/safehttp/safehttp.go` (`Policy.CheckURL`, `Policy.CheckAddress`,
 `ReadBody`, and the `DialContext` and `CheckRedirect` closures `NewClient`
-builds), `internal/sqlnode/sqlnode.go` (`Guard`,
+builds), `internal/safehttp/redact.go` (`RedactError`),
+`internal/sqlnode/sqlnode.go` (`Guard`,
 `sqlitePath`, `Ceiling`), `internal/runcode/` (the wazero sandbox and its
 limits), `internal/credentials/credentials.go` (`AllowsHost`),
 `internal/credentials/scope.go` (default scopes and `Unscoped`),

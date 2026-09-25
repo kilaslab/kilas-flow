@@ -13,8 +13,9 @@ import (
 //
 // A tool parameter written as {{ $fromAI('city', 'the city to look up') }}
 // contributes a typed property to the tool's JSON Schema, and the model's
-// argument for that key replaces the call before the node executes. Without
-// any such call the model's arguments arrive as $json, exactly as before.
+// argument for that key is what the call evaluates to when the tool runs —
+// as a value, never as expression source. Without any such call the model's
+// arguments arrive as $json, exactly as before.
 type FromAIArgument struct {
 	Key         string
 	Description string
@@ -356,6 +357,21 @@ func FromAISchema(calls []FromAIArgument) map[string]any {
 	}
 	return schema
 }
+
+// SubstituteFromAI fills the $fromAI calls in a parameter tree's plain
+// strings with the model's arguments, and leaves every expression marker
+// exactly as the author wrote it. A string that is one whole call takes the
+// argument with its type; a call inside other text takes the argument as
+// text. A call whose key the model omitted takes its default, and one with
+// neither is an error naming the key. The result is a copy.
+//
+// A plain string is data — nothing evaluates it — so writing the model's
+// value into it is safe. An expression is the author's code: splicing the
+// model's value into its source let the value become code, so an expression
+// reads the arguments from its context instead
+// (expression.Context.FromAIArguments), where $fromAI evaluates to the value
+// itself. A caller that fills a tree the executor then resolves still has to
+// check that a filled value did not bring a marker of its own.
 func SubstituteFromAI(parameters map[string]any, arguments map[string]any) (map[string]any, error) {
 	if arguments == nil {
 		arguments = map[string]any{}
@@ -377,8 +393,8 @@ func substituteFromAIValue(value any, arguments map[string]any) (any, error) {
 		return substituteFromAIString(typed, arguments)
 	case map[string]any:
 		if mode, _ := typed["mode"].(string); mode == "expression" {
-			if template, ok := typed["value"].(string); ok {
-				return substituteFromAITemplate(template, arguments)
+			if _, ok := typed["value"].(string); ok {
+				return typed, nil
 			}
 		}
 		resolved := make(map[string]any, len(typed))
@@ -419,55 +435,11 @@ func substituteFromAIString(source string, arguments map[string]any) (any, error
 	return renderFromAISegments(source, arguments)
 }
 
-func substituteFromAITemplate(template string, arguments map[string]any) (any, error) {
-	calls, err := scanFromAICalls(template)
-	if err != nil {
-		return nil, err
-	}
-	if len(calls) == 0 {
-		return map[string]any{"mode": "expression", "value": template}, nil
-	}
-	if only, ok := soleFromAICall(template, calls); ok {
-		return fromAIValue(only, arguments)
-	}
-	rendered, err := renderFromAISegments(template, arguments)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"mode": "expression", "value": rendered}, nil
-}
-
-// soleFromAICall reports whether the template is exactly {{ one call }} and
-// nothing else.
-func soleFromAICall(template string, calls []fromAICall) (FromAIArgument, bool) {
-	if len(calls) != 1 {
-		return FromAIArgument{}, false
-	}
-	open := strings.Index(template, "{{")
-	close := strings.LastIndex(template, "}}")
-	if open < 0 || close < 0 || open+2 > close {
-		return FromAIArgument{}, false
-	}
-	if strings.TrimSpace(template[:open]) != "" || strings.TrimSpace(template[close+2:]) != "" {
-		return FromAIArgument{}, false
-	}
-	inner := template[open+2 : close]
-	innerCalls, err := scanFromAICalls(inner)
-	if err != nil || len(innerCalls) != 1 {
-		return FromAIArgument{}, false
-	}
-	call := innerCalls[0]
-	if strings.TrimSpace(inner[:call.Start]) != "" || strings.TrimSpace(inner[call.End:]) != "" {
-		return FromAIArgument{}, false
-	}
-	return calls[0].Argument, true
-}
-
-// renderFromAISegments substitutes calls in a template that holds more than
+// renderFromAISegments fills the calls in a plain string that is more than
 // one bare call. A {{ }} segment holding exactly one call collapses to the
-// rendered value with its braces gone, so the evaluator never sees it; a
-// segment holding anything else substitutes inline and keeps its braces for
-// the evaluator. Calls outside any segment substitute inline.
+// rendered value with its braces gone; a segment holding anything else fills
+// inline and keeps its braces. Calls outside any segment fill inline. The
+// result is text nothing evaluates, so the braces left in it are only text.
 func renderFromAISegments(source string, arguments map[string]any) (string, error) {
 	var rendered strings.Builder
 	cursor := 0

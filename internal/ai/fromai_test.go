@@ -1,6 +1,7 @@
 package ai_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -73,12 +74,15 @@ func TestExtractFromAIRejectsUnknownTypeNamingTheCall(t *testing.T) {
 	}
 }
 
-func TestSubstituteFromAIWholeMarkerKeepsType(t *testing.T) {
+// TestSubstituteFromAIFillsPlainStringsAndKeepsTheirType pins the fill: a
+// plain string that is one whole call takes the argument with its type, or
+// the call's typed default, and a call inside other text takes it as text.
+func TestSubstituteFromAIFillsPlainStringsAndKeepsTheirType(t *testing.T) {
 	t.Parallel()
 
 	parameters := map[string]any{
-		"limit": map[string]any{"mode": "expression", "value": "{{ $fromAI('limit', 'max rows', 'number', 10) }}"},
-		"url":   map[string]any{"mode": "expression", "value": "https://api.test/weather/{{ $fromAI('city', 'the city') }}?verbose={{ $fromAI('verbose', 'details', 'boolean', false) }}"},
+		"limit": "$fromAI('limit', 'max rows', 'number', 10)",
+		"url":   "https://api.test/weather/$fromAI('city', 'the city')?verbose=$fromAI('verbose', 'details', 'boolean', false)",
 	}
 
 	substituted, err := ai.SubstituteFromAI(parameters, map[string]any{"city": "Utrecht"})
@@ -88,18 +92,33 @@ func TestSubstituteFromAIWholeMarkerKeepsType(t *testing.T) {
 	if substituted["limit"] != float64(10) {
 		t.Errorf("limit = %#v, want the numeric default 10", substituted["limit"])
 	}
-	url, _ := substituted["url"].(map[string]any)["value"].(string)
-	if url != "https://api.test/weather/Utrecht?verbose=false" {
-		t.Errorf("url = %q, want arguments interpolated", url)
+	if substituted["url"] != "https://api.test/weather/Utrecht?verbose=false" {
+		t.Errorf("url = %#v, want arguments interpolated", substituted["url"])
+	}
+}
+
+// TestSubstituteFromAILeavesExpressionsAsWritten keeps the model's value out
+// of an expression's source. Spliced in, a value spelling `{{ … }}` or code
+// ran when the expression was evaluated; an expression reads the arguments
+// from its context instead.
+func TestSubstituteFromAILeavesExpressionsAsWritten(t *testing.T) {
+	t.Parallel()
+
+	marker := map[string]any{"mode": "expression", "value": "Note: {{ $fromAI('note', 'a note') }}"}
+	parameters := map[string]any{"note": marker, "nested": map[string]any{"list": []any{marker}}}
+	substituted, err := ai.SubstituteFromAI(parameters, map[string]any{"note": "{{ $execution.id }}"})
+	if err != nil {
+		t.Fatalf("SubstituteFromAI() error = %v", err)
+	}
+	if !reflect.DeepEqual(substituted, parameters) {
+		t.Errorf("SubstituteFromAI() = %#v, want every expression exactly as written", substituted)
 	}
 }
 
 func TestSubstituteFromAIMissingRequiredArgumentNamesKey(t *testing.T) {
 	t.Parallel()
 
-	parameters := map[string]any{
-		"url": map[string]any{"mode": "expression", "value": "{{ $fromAI('city', 'the city') }}"},
-	}
+	parameters := map[string]any{"city": "$fromAI('city', 'the city')"}
 	_, err := ai.SubstituteFromAI(parameters, map[string]any{})
 	if err == nil || !strings.Contains(err.Error(), "city") {
 		t.Fatalf("SubstituteFromAI() error = %v, want the key named", err)

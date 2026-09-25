@@ -101,6 +101,14 @@ joined. A node this one is not connected to is read at its first output.
 anywhere else it is a clear error rather than a value. Without that gate an
 author would use it in an HTTP URL and get something meaningless.
 
+In a tool's parameter — the HTTP Request, Workflow, Calculator and Data table
+tools — `$fromAI('name')` evaluates to the model's argument as a value, the way
+`$json.name` would. The argument is never spliced into the expression's source,
+so `{{ 'Order ' + $fromAI('id') }}` sends `Order ` followed by whatever the
+model wrote, even when that text spells `{{ $env.TOKEN }}` or code. An argument
+that is itself an expression marker is refused. `$fromai` and `$fromAi`, the
+other spellings n8n accepts, behave the same.
+
 `$('Name').item` is checked against the
 [paired-item lineage](/concepts/items-and-lineage/), and resolves only when the
 named node produced exactly one item and every item it produced carries intact

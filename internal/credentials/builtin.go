@@ -264,9 +264,9 @@ func RegisterAll(registry *Registry) error {
 			"https://www.googleapis.com/auth/gmail.modify"),
 		{
 			ID: "sqlite", DisplayName: "SQLite file",
-			Description: "Opens a SQLite file on the server. The path must be given explicitly and cannot be KilasFlow's own database.",
+			Description: "Opens a SQLite file in this tenant's own directory on the server. The file is created on first use if it does not exist.",
 			Properties: []property.PropertyDefinition{
-				{Key: "path", Label: "File path", Kind: property.KindString, Required: true, Description: "Absolute path to the database file."},
+				{Key: "path", Label: "File path", Kind: property.KindString, Required: true, Description: "Path relative to this tenant's SQLite directory, for example orders.db or reports/q1.db. Absolute paths and .. are refused."},
 			},
 			NeverSentOverHTTP: true,
 		},
