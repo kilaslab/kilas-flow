@@ -38,6 +38,28 @@ A 2026-09-23 review walked a real host SaaS application's replacement plan: a mu
 
 The documentation for all of this is tracked in EPIC-62zt4j, including the SaaS integration playbook.
 
+# Sequencing (recorded 2026-09-25)
+
+No blocker outside this epic remains open: BUG-b3p8va, FEAT-2f68r8 and BUG-vsmnby are done. Recorded `deps`:
+
+- FEAT-mccadj → FEAT-1ge0xc, FEAT-7t0xks
+- FEAT-n12211 → FEAT-pt6ge9, FEAT-hxztwz
+- FEAT-r267jj → FEAT-pt6ge9
+- BUG-mzk0xn → FEAT-0xsc1s
+- FEAT-z90r5a → FEAT-5g42rz, FEAT-27g2za, FEAT-6r663e
+- FEAT-5g42rz → FEAT-9ep5pw
+
+Coordinate, not deps: FEAT-rdfjh1 / FEAT-mngmn1 / FEAT-8zgwp6 all touch the tenant API and per-tenant counters. Parallel branches collide on migration numbers.
+
+Audit (each child carries its own "Audit 2026-09-25" note):
+- Tickets to fix before starting: FEAT-pt6ge9 (an HTTP `OptionsLoader` already exists, so the AC shape is wrong), FEAT-9ep5pw (confinement AC unclear), FEAT-gzd32h (declared output undefined), FEAT-4jhtny (the admin surface refuses every session by design).
+- Partly done: FEAT-1ge0xc (`Kind.Accept` filter hook), FEAT-6r663e (CSV import exists), FEAT-hxztwz (`secretCapture` exists), FEAT-s3sfx5 / FEAT-t58m89 (server plumbing exists).
+- Missing infrastructure, now ticketed:
+  - FEAT-4fp51b, tenant settings and update endpoint → FEAT-rdfjh1, FEAT-mngmn1
+  - FEAT-g33qf6, per-tenant rate limiter (only sign-in is throttled today) → FEAT-rdfjh1
+  - FEAT-2npfgy, metrics endpoint → FEAT-rdfjh1; FEAT-1ge0xc's metrics criterion only
+  - FEAT-wdxkvw, durable outbox → FEAT-39ttf6
+
 # Related tickets elsewhere
 
 - **EPIC-8rbys7:** BUG-b3p8va (cross-origin embed 403), FEAT-bfrkyk (listen for test event), FEAT-70j6dn (pinned data), FEAT-nq1vsx (MCP Server Trigger), FEAT-a3dwj2 (theme toggle in the dashboard), FEAT-zn5rqy (executions UI), BUG-e7dwpk (datastore name collisions), BUG-rytwy7 (datastore search loop).

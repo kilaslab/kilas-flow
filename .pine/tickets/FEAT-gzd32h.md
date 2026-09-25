@@ -26,6 +26,11 @@ A host's AI agent calls workflows as synchronous tools and needs a machine-reada
 
 Source: a 2026-09-23 review of a host SaaS application (a multi-tenant customer-messaging and CRM product) that plans to replace its in-house workflow engine and data tables by embedding KilasFlow. Written generically on purpose: any SaaS embedding KilasFlow hits the same gap.
 
+## Audit 2026-09-25 (code vs ticket, main @ 17b6d38)
+
+Valid. No `/workflows/{id}/contract` route. Source data exists: `kilasflow.executeWorkflowTrigger` `inputSource` + `workflowInputs` (nodes/subworkflow.go:118-147); the only JSON-Schema derivation today is `$fromAI` (nodes/ai.go:1984-1990).
+- Underspecified: nothing declares a workflow's output today — define where "the declared output" comes from before implementing. FEAT-nq1vsx is still todo.
+
 # Related Files
 
 # Attachments

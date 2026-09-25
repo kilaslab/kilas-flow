@@ -7,9 +7,12 @@ labels:
     - saas
     - packs
     - loadoptions
+deps:
+    - FEAT-n12211
+    - FEAT-r267jj
 parent: EPIC-7c3ry9
 created: "2026-09-23T02:07:00Z"
-updated: "2026-09-23T02:07:00Z"
+updated: "2026-09-25T09:52:33Z"
 ---
 
 # Description
@@ -28,6 +31,13 @@ The host's WhatsApp/CRM actions need pickers filled from the host API: channels,
 # Notes
 
 Source: a 2026-09-23 review of a host SaaS application (a multi-tenant customer-messaging and CRM product) that plans to replace its in-house workflow engine and data tables by embedding KilasFlow. Written generically on purpose: any SaaS embedding KilasFlow hits the same gap.
+
+## Audit 2026-09-25 (code vs ticket, main @ 17b6d38)
+
+**Premise wrong, gap real.** An HTTP options loader already exists: `property.OptionsLoader` with `Source: "http"` (Method, Endpoint, BaseURLParameter, CredentialType, ItemsPath, LabelTemplate, ValueField, DependsOn) at internal/property/loader.go:20-66, resolved at internal/loadoptions/loadoptions.go:167-200 and used by built-in nodes (nodes/ai.go:248, :368). Other internal loaders exist too (loadoptions/datastores.go, schema.go).
+- The AC's `typeOptions.loadOptions` placement conflicts with the model: `LoadOptions` sits beside TypeOptions on `PropertyDefinition` (property.go:419-422), `resourceLocator` list mode has its own (property.go:87-88), and pack TypeOptions rejects unknown keys (internal/nodepack/validate.go:417-420).
+- Real work: let pack parameters carry the existing `loadOptions` (allowlists at validate.go:308 and convert.go:90 pass only `typeOptions`), then validate it in nodepackgen. Rewrite the first AC against `OptionsLoader` before starting.
+- Refs: nodepack.go:268-274 is the cascade loader; property.go:298-318 is now the TypeOptions struct.
 
 # Related Files
 

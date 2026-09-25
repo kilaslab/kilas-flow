@@ -40,6 +40,11 @@ The full `*url.Error` string, including the complete URL, is logged at Warn (`De
 - [ ] The same stripped form is used for the 502 activation detail
 - [ ] A test asserts a URL carrying a token/secret does not appear in the logged error or the 502 detail after a forced transport failure
 
+## Audit 2026-09-25 (code vs ticket, main @ 17b6d38)
+
+Valid, minor drift: `call` request_lifecycle.go:473-507 (bare `Do` error :492-494); `Activated` lifecycle.go:169, wrap :202, surfaced as 502 at internal/api/handlers/workflows.go:764; `Deactivated` Warn now :230-231. No `url.Error` redaction exists in internal/webhook or internal/safehttp.
+- Missed paths: `unkept` (request_lifecycle.go:201-217) also logs the error at Warn, and the check step (~:140) sends transport errors to the same 502.
+
 # Related Files
 
 internal/webhook/request_lifecycle.go `call`, ~473-499 (the outbound request; the source of the `*url.Error`)

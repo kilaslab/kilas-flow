@@ -30,6 +30,12 @@ A workflow session's confinement (the credentials, data tables and sub-workflows
 
 Source: a 2026-09-23 review of a host SaaS application (a multi-tenant customer-messaging and CRM product) that plans to replace its in-house workflow engine and data tables by embedding KilasFlow. Written generically on purpose: any SaaS embedding KilasFlow hits the same gap.
 
+## Audit 2026-09-25 (code vs ticket, main @ 17b6d38)
+
+Valid. Refs current: `Create` embed.go:90, derivation embed.go:103-113, `embedConfinementOf` embedscope.go:56-73; `embedSessionBody` (embed.go:59-66) has no `allow`, `Confinement` (internal/embed/confinement.go:34-43) holds only the derived set.
+- The credential list is already filtered to the confinement (`embedAllowsCredential`, internal/api/handlers/credentials.go:222-244): the picker AC means widening that filter to the declared set, not a new picker.
+- Enforcement sites to extend: workflows.go:603/:622 (publish/restore, `embedVersionProblem`), :678 (save, `embedDocumentProblem`), :874 (run).
+
 # Related Files
 
 # Attachments

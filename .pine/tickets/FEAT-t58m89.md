@@ -27,6 +27,11 @@ The embed shows only the last run of the current session. A host has to build it
 
 Source: a 2026-09-23 review of a host SaaS application (a multi-tenant customer-messaging and CRM product) that plans to replace its in-house workflow engine and data tables by embedding KilasFlow. Written generically on purpose: any SaaS embedding KilasFlow hits the same gap.
 
+## Audit 2026-09-25 (code vs ticket, main @ 17b6d38)
+
+Valid, UI/SDK only. Server authz is already done: embeds may list their own workflow's executions (scope.go:259-269) and read one (scope.go:271-284, `ownsExecution` executions.go:676); `listExecutionsInput` has status/trigger/limit/cursor (executions.go:211-217).
+- Missing: `?execution=` handling in web/src/routes/embed/[id]/+page.svelte and `mountExecutions` in the SDK.
+
 # Related Files
 
 # Attachments

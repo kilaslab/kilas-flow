@@ -30,6 +30,12 @@ updated: "2026-09-23T02:07:00Z"
 
 Source: a 2026-09-23 review of a host SaaS application (a multi-tenant customer-messaging and CRM product) that plans to replace its in-house workflow engine and data tables by embedding KilasFlow. Written generically on purpose: any SaaS embedding KilasFlow hits the same gap.
 
+## Audit 2026-09-25 (code vs ticket, main @ 17b6d38)
+
+Valid, refs accurate (scope.go:242-250, internal/embed/embed.go:33-35, `NormalizeScopes` :466, web/src/lib/embed/session.svelte.ts:70-86, embed-editor.svelte:36).
+- Also fix the false comment at embedscope.go:59-61 ("activation and publishing are refused to embed sessions by the routing middleware") — publish is not refused; :76-84 contradicts it.
+- guides/embedding.md:271 says nothing about publish; update with the three levels.
+
 # Related Files
 
 # Attachments

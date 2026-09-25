@@ -27,6 +27,12 @@ The host needs editor test runs not to send real customer WhatsApp messages or c
 
 Source: a 2026-09-23 review of a host SaaS application (a multi-tenant customer-messaging and CRM product) that plans to replace its in-house workflow engine and data tables by embedding KilasFlow. Written generically on purpose: any SaaS embedding KilasFlow hits the same gap.
 
+## Audit 2026-09-25 (code vs ticket, main @ 17b6d38)
+
+Stale refs, gap real. roots.go:229-235 is now the root allowlist; the `$execution` map (id, mode, resumeUrl, approvalUrl) is roots.go:263-269, mode from `record.Trigger` (internal/engine/eval.go:209); no `test` field.
+- Pack routing resolves through `request.ExpressionContext` (internal/routing/executor.go:110), so `$execution.mode` likely already works in pack parameters (inferred, not tested); lifecycle templates only have Parameter/ParameterJSON/Captured (request_lifecycle.go:523).
+- No `X-KilasFlow-Execution-*` header exists. "Every pack request" = routing (executor.go:242-245), wasmpack, sidecarnode and lifecycle `call`.
+
 # Related Files
 
 # Attachments

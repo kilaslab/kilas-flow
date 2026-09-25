@@ -8,7 +8,7 @@ labels:
     - packs
 parent: EPIC-7c3ry9
 created: "2026-09-23T07:35:21Z"
-updated: "2026-09-23T07:35:37Z"
+updated: "2026-09-25T09:57:34Z"
 ---
 
 # Description
@@ -37,6 +37,11 @@ Add a section (or extend the existing trigger-lifecycle section) to `docs/src/co
 # Notes
 
 None of this needs new behavior — it's undocumented existing mechanism.
+
+## Audit 2026-09-25 (code vs ticket, main @ 17b6d38)
+
+Valid, all refs current. docs/src/content/docs/guides/node-authoring.md lifecycle/HMAC section (~344-430) mentions only `secretParameter` (367) and `sha512` (426); nothing under docs/src mentions `secretCapture`, `ParameterJSON` or `.Captured.`.
+- Documents existing behaviour, so it does not wait on FEAT-hxztwz (dep intentionally not set); refresh the HMAC paragraph when FEAT-hxztwz lands.
 
 # Related Files
 

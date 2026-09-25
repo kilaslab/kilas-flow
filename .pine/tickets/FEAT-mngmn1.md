@@ -7,9 +7,11 @@ labels:
     - saas
     - tenancy
     - node-catalog
+deps:
+    - FEAT-4fp51b
 parent: EPIC-7c3ry9
 created: "2026-09-23T02:07:00Z"
-updated: "2026-09-23T02:07:00Z"
+updated: "2026-09-25T10:08:26Z"
 ---
 
 # Description
@@ -26,6 +28,11 @@ updated: "2026-09-23T02:07:00Z"
 # Notes
 
 Source: a 2026-09-23 review of a host SaaS application (a multi-tenant customer-messaging and CRM product) that plans to replace its in-house workflow engine and data tables by embedding KilasFlow. Written generically on purpose: any SaaS embedding KilasFlow hits the same gap.
+
+## Audit 2026-09-25 (code vs ticket, main @ 17b6d38)
+
+Valid. tenant-scoped-nodes.md:137-138 still says built-ins cannot be scoped; no `nodes.deny`/`nodes.allow` anywhere. Reuse `node.not_available` from internal/workflow/compiler.go:153 (RestrictedCatalog).
+- Coordinate with FEAT-rdfjh1: both add a field to the tenant API, which has no update endpoint today (FEAT-4fp51b, recorded as a dep).
 
 # Related Files
 

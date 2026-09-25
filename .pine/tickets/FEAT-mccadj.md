@@ -33,6 +33,12 @@ A host raises domain events per org/workspace, such as "message received", "cont
 
 Source: a 2026-09-23 review of a host SaaS application (a multi-tenant customer-messaging and CRM product) that plans to replace its in-house workflow engine and data tables by embedding KilasFlow. Written generically on purpose: any SaaS embedding KilasFlow hits the same gap.
 
+## Audit 2026-09-25 (code vs ticket, main @ 17b6d38)
+
+Valid; ref workflows.md:164-186 accurate (run can also pin via `workflowVersionId`, :177). No `/events` route or `publishEvent`.
+- Reuse: `workflows.active_version_id` (internal/repository/models.go:221), idempotency claims (internal/repository/idempotency.go:176), per-route dedup `ClaimDelivery` (internal/repository/webhooks.go:423).
+- The pack trigger manifest has only `Events []string` (internal/nodepack/trigger.go:32-57); the event catalogue (schema, sample) needs new manifest fields.
+
 # Related Files
 
 # Attachments

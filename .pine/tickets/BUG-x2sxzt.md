@@ -36,6 +36,12 @@ The response is served with no CSP header, `text/html` (or whatever content-type
 - [ ] Webhook HTML responses carry a CSP that sandboxes them (`sandbox` without `allow-same-origin`), or are served from a separate origin
 - [ ] A test asserts a webhook HTML response carries the sandboxing header
 
+## Audit 2026-09-25 (code vs ticket, main @ 17b6d38)
+
+Valid, refs accurate (webhook.go:1115-1131, routes.go:84-85; the only CSP is internal/web/embed.go:238-246).
+- A second site: webhook.go:923-929 serves the trigger's own `responseData` acknowledgement as `text/html` with no CSP — same fix needed.
+- `writeResponse` copies workflow-set headers first (:1116-1118), so a workflow can set its own `Content-Security-Policy`: force the sandbox header after the copy (or strip tenant CSP).
+
 # Related Files
 
 internal/webhook/webhook.go `writeResponse`, ~1115-1131 (defaults an unrecognized body to `text/html`, sets no CSP)

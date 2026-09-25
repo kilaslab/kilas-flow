@@ -1,15 +1,17 @@
 ---
 id: FEAT-0xsc1s
-title: "Embed postMessage protocol v2: token refresh without reload, dirty-state and expiry events, host commands"
+title: 'Embed postMessage protocol v2: token refresh without reload, dirty-state and expiry events, host commands'
 status: todo
 priority: high
 labels:
     - saas
     - embedding
     - sdk
+deps:
+    - BUG-mzk0xn
 parent: EPIC-7c3ry9
 created: "2026-09-23T02:07:00Z"
-updated: "2026-09-23T02:07:00Z"
+updated: "2026-09-25T09:52:33Z"
 ---
 
 # Description
@@ -29,6 +31,12 @@ updated: "2026-09-23T02:07:00Z"
 # Notes
 
 Source: a 2026-09-23 review of a host SaaS application (a multi-tenant customer-messaging and CRM product) that plans to replace its in-house workflow engine and data tables by embedding KilasFlow. Written generically on purpose: any SaaS embedding KilasFlow hits the same gap.
+
+## Audit 2026-09-25 (code vs ticket, main @ 17b6d38)
+
+Valid, refs accurate. `workflow-published` is emitted only from the history `onPublished` path gated on `canPublish`, which is never true today — hence the dep on BUG-mzk0xn.
+- Groundwork: the frame's message listener (session.svelte.ts:184-208) stays attached after the handshake and accepts a second `kilasflow:embed-session`, re-attaching the token. Check whether that remounts `EmbedEditor` before building `setSession`.
+- The SDK handshake payload (sdk/src/browser.ts:127-136) does not send `expiresAt`; `session-expiring` needs it.
 
 # Related Files
 

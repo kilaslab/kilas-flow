@@ -26,6 +26,11 @@ The token names the tenant, workflow, scopes and origin, but not the user (`inte
 
 Source: a 2026-09-23 review of a host SaaS application (a multi-tenant customer-messaging and CRM product) that plans to replace its in-house workflow engine and data tables by embedding KilasFlow. Written generically on purpose: any SaaS embedding KilasFlow hits the same gap.
 
+## Audit 2026-09-25 (code vs ticket, main @ 17b6d38)
+
+Valid, but the plumbing is half there. Versions and publish events already carry actor columns (internal/repository/models.go:252-265, :297-305) filled by `audited()` (internal/api/handlers/workflows.go:958-976); API enums are `user,key` (workflows.go:178, :199).
+- Work = an `embed` actor kind + mapping the session actor in `audited()`. Only executions lack actor fields (schema change needed there).
+
 # Related Files
 
 # Attachments

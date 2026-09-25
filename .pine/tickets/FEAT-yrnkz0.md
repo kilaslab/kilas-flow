@@ -27,6 +27,11 @@ A light palette exists but nothing can select it; the app is dark-first (`web/sr
 
 Source: a 2026-09-23 review of a host SaaS application (a multi-tenant customer-messaging and CRM product) that plans to replace its in-house workflow engine and data tables by embedding KilasFlow. Written generically on purpose: any SaaS embedding KilasFlow hits the same gap.
 
+## Audit 2026-09-25 (code vs ticket, main @ 17b6d38)
+
+Stale refs, gap real. Branding table is now guides/embedding.md:288-300 (not 279-291); light palette at app.css:140. `Branding` (internal/embed/embed.go:81-91) has no theme/font/radius; nothing sets `data-theme`; `<SvelteFlow>` sets no `colorMode` (workflow-editor.svelte:1194, execution-canvas.svelte:94).
+- `sanitizeBranding` in session.svelte.ts (~260-275) must learn the new fields. Tokens: `--radius` app.css:124, `--font-sans` :27. Shares the light-palette work with FEAT-a3dwj2.
+
 # Related Files
 
 # Attachments
