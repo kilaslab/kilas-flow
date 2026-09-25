@@ -652,6 +652,7 @@ func (handler *Handler) authenticate(r *http.Request, binding repository.Webhook
 		if name == "" || !equal(r.Header.Get(name), fields["value"]) {
 			return http.StatusUnauthorized, errors.New("Header authentication failed.")
 		}
+		withVerifiedHeader(r, name)
 	case "jwtAuth":
 		if record.Type != credentialType {
 			return http.StatusInternalServerError, errors.New("This webhook is bound to a credential of the wrong type.")
@@ -702,6 +703,19 @@ func credentialReference(binding repository.WebhookBinding, credentialType strin
 	return strings.TrimSpace(id)
 }
 
+// verifiedHeaderKey carries the name of the header a header-auth trigger
+// verified from admit to readDelivery, which withholds it.
+type verifiedHeaderKey struct{}
+
+func withVerifiedHeader(r *http.Request, name string) {
+	*r = *r.WithContext(context.WithValue(r.Context(), verifiedHeaderKey{}, name))
+}
+
+func verifiedHeader(r *http.Request) string {
+	name, _ := r.Context().Value(verifiedHeaderKey{}).(string)
+	return name
+}
+
 // equal compares in constant time so a wrong secret cannot be discovered by
 // timing how long the comparison took.
 func equal(got, want string) bool {
@@ -743,6 +757,18 @@ func (handler *Handler) readDelivery(r *http.Request, binding repository.Webhook
 	}
 	if r.Host != "" {
 		headers["host"] = r.Host
+	}
+	// The one exception to keeping the caller's headers verbatim: the header
+	// this trigger's header auth just verified is the shared secret itself,
+	// and its name is whatever the credential says — X-Hook-Pass as readily as
+	// X-Api-Key — so the key-based redaction on the read surfaces cannot be
+	// relied on to recognise it. It is withheld by that name before anything
+	// is stored. The workflow loses nothing by it: the request only got this
+	// far because the value matched.
+	if name := verifiedHeader(r); name != "" {
+		if _, present := headers[strings.ToLower(name)]; present {
+			headers[strings.ToLower(name)] = execution.RedactedValue
+		}
 	}
 
 	query := make(map[string]any, len(r.URL.Query()))

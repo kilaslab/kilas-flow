@@ -435,6 +435,12 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   check the credential's type and domains and bind the same redirect scope a
   node's request does.
 
+- A webhook trigger using Header auth no longer stores its shared secret. With
+  a custom header name such as `X-Hook-Pass`, the secret was kept in the stored
+  trigger payload and shown in the execution view, because read-side redaction
+  recognises common header names only. The verified header is now stored as
+  `[redacted]` under the name its credential gives.
+
 - A JavaScript worker process runs one tenant's Code-node and Sort-comparator
   scripts and never another's, so code that escaped the engine and stayed in a
   worker cannot see a later tenant's jobs. A script whose tenant has no idle

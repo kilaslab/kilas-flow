@@ -496,8 +496,11 @@ equivalent to read access to secrets, and should be granted on that basis.
 **Storage keeps what the caller sent.** Redaction is a read-surface guarantee:
 API responses, the live event feed and the inspector withhold credential keys and
 normalise header names, but a raw table dump, a database backup or a support
-export carries inbound trigger headers and bodies exactly as they arrived. See
-[the security posture](/operate/security/) for what that asks of an operator.
+export carries inbound trigger headers and bodies exactly as they arrived — with
+one exception: the header a Header-auth trigger verified is withheld by the name
+its credential gives before the delivery is stored, since that value is the
+shared secret. See [the security posture](/operate/security/) for what that asks
+of an operator.
 
 ## Configuration is generated from the code
 

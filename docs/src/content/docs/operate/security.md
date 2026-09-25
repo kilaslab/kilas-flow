@@ -107,7 +107,9 @@ lands in a node's stored input or output. What follows for an operator is the
 part worth reading twice: **a raw table dump, a database backup or a support
 export carries inbound trigger headers and bodies verbatim.** Treat those files
 as credential-bearing, and prefer the API over a SQL client when handing run
-data to somebody else.
+data to somebody else. The one header withheld before storage is the shared
+secret a Header-auth trigger verified: it is stored as `[redacted]` under the
+name its credential gives, whatever that name is.
 
 **Webhook routes are unguessable rather than authenticated.** The route
 segment carries 16 bytes of entropy, because this endpoint is very often
