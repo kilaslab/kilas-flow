@@ -1,6 +1,7 @@
 package credentials
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kilaslab/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
 const (
@@ -199,7 +201,18 @@ func postGoogleToken(client *http.Client, tokenURL string, values url.Values) (m
 	if strings.TrimSpace(tokenURL) == "" {
 		tokenURL = googleTokenURL
 	}
-	response, err := client.PostForm(tokenURL, values)
+	// The body carries the client secret and the refresh token or code, and a
+	// 307 or 308 re-sends a body to wherever it points. The request is held to
+	// the token endpoint's own host and never steps down to plain http — the
+	// same scope a credential with no domains carries.
+	request, err := http.NewRequestWithContext(
+		safehttp.WithCredentialScope(context.Background(), safehttp.CredentialScope{Unbounded: true}),
+		http.MethodPost, tokenURL, strings.NewReader(values.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("google token request could not be built")
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("google token request: %w", err)
 	}

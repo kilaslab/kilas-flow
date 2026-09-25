@@ -1171,8 +1171,16 @@ func (backend *modelBackend) resolveModel(ctx context.Context, nodeName string, 
 	if value, present := descriptor[ModelOptionMaxRetries]; present && value != nil {
 		maxRetries = positiveInt(numberValue(value))
 	}
+	model := ai.NewOpenAICompatible(backend.client, baseURL, apiKey)
+	if credentialID != "" {
+		// The host check above covers the base URL; the scope carries the
+		// same bound through every redirect the call meets, holds a
+		// credential that names no domains to this host, and refuses a step
+		// down to plain http, where the key would travel in the clear.
+		model.WithCredentialScope(secret.RedirectScope())
+	}
 	return resolvedModel{
-		model:   ai.NewOpenAICompatible(backend.client, baseURL, apiKey),
+		model:   model,
 		name:    textValue(descriptor["model"], "gpt-4o-mini"),
 		timeout: timeout,
 		stream:  boolValue(descriptor["stream"]),

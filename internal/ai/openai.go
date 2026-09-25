@@ -26,6 +26,9 @@ type OpenAICompatible struct {
 	client  *http.Client
 	baseURL string
 	apiKey  string
+	// scope is the credential's redirect bound, carried on every request's
+	// context. Nil for a model called with no credential.
+	scope *safehttp.CredentialScope
 }
 
 var _ ChatModel = (*OpenAICompatible)(nil)
@@ -44,6 +47,19 @@ func NewOpenAICompatible(client *http.Client, baseURL, apiKey string) *OpenAICom
 		baseURL = "https://api.openai.com/v1"
 	}
 	return &OpenAICompatible{client: client, baseURL: baseURL, apiKey: apiKey}
+}
+
+// WithCredentialScope binds the key's credential scope to every request the
+// adapter sends, and returns the adapter.
+//
+// The key rides in an Authorization header, which Go drops across a host
+// change but keeps on a same-host redirect — including one that steps down
+// from https to plain http, where the key would cross the network in the
+// clear. The redirect check reads the scope off the request's context, so
+// without it none of the credential's redirect rules apply to a model call.
+func (model *OpenAICompatible) WithCredentialScope(scope safehttp.CredentialScope) *OpenAICompatible {
+	model.scope = &scope
+	return model
 }
 
 // Complete returns one assistant turn.
@@ -242,6 +258,9 @@ func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, s
 			} else {
 				attemptCtx, cancel = context.WithTimeout(ctx, request.Timeout)
 			}
+		}
+		if model.scope != nil {
+			attemptCtx = safehttp.WithCredentialScope(attemptCtx, *model.scope)
 		}
 		httpRequest, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, model.baseURL+"/chat/completions", bytes.NewReader(encoded))
 		if err != nil {

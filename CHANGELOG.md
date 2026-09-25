@@ -442,7 +442,10 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   Trigger lifecycle requests (pack registration templates and the Telegram
   trigger's registration and polling calls) and Telegram file downloads now
   check the credential's type and domains and bind the same redirect scope a
-  node's request does.
+  node's request does. The AI chat model and embeddings calls bind it too, so
+  their `Authorization: Bearer` key no longer follows a same-host redirect
+  down to plain `http`; Vault reads and Google OAuth token requests stay on
+  their own host and on `https`.
 
 - A webhook trigger using Header auth no longer stores its shared secret. With
   a custom header name such as `X-Hook-Pass`, the secret was kept in the stored

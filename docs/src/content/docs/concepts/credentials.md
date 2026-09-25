@@ -111,7 +111,17 @@ attached:
   that names its domains is held to those instead, and a redirect to another
   host it names is followed.
 - **No step down from `https` to `http`.** The secret would cross the network in
-  the clear on the next hop.
+  the clear on the next hop. This matters even for `Authorization`, which Go
+  keeps on a same-host redirect.
+
+The redirect rules apply wherever the secret is placed on the request, not only
+on the runtime's `Request.Authenticate` path: the AI chat model and embeddings
+calls (which set their own `Authorization: Bearer` header), Telegram downloads,
+trigger lifecycle requests and the community-node sidecar all bind the same
+scope. Two operator-held secrets get the rule a credential with no domains gets
+— the request stays on its first host and never steps down to `http`: the Vault
+token on external-secret reads, and the client secret and refresh token a
+Google OAuth token exchange or refresh posts.
 
 That single shared implementation is deliberate. The check used to live beside
 one node, and the comment on it now says why it moved: with two callers, a second

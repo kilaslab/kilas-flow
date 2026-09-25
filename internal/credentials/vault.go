@@ -115,7 +115,11 @@ func (provider *VaultProvider) Fetch(ctx context.Context, key string) (string, e
 	for index, segment := range segments {
 		segments[index] = url.PathEscape(segment)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
+	// The token rides in X-Vault-Token, a header Go forwards across a host
+	// change. Vault names no domains, so the request is held to the address
+	// the operator configured, and never steps down to plain http.
+	request, err := http.NewRequestWithContext(
+		safehttp.WithCredentialScope(ctx, safehttp.CredentialScope{Unbounded: true}), http.MethodGet,
 		provider.address+"/v1/secret/data/"+strings.Join(segments, "/"), nil)
 	if err != nil {
 		return "", fmt.Errorf("vault request: %w", err)
