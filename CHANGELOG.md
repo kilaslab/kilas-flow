@@ -312,6 +312,11 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Fixed
 
+- Code (JavaScript): `this.helpers.httpRequest` rejects a status outside 2xx
+  as n8n's does: an `AxiosError` reading "Request failed with status code
+  404", with `status` and axios's `code`, and with no `response`, since n8n's
+  has none. It used to read "The request failed with status 404 Not Found",
+  so code matching n8n's message took the wrong branch.
 - A chat model node that never set "Stream output" now streams, as the editor
   already showed. An absent `stream` key used to mean off.
 - An agent ended by the workflow's own execution timeout says so, and names

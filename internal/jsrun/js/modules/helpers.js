@@ -251,6 +251,21 @@
     return status >= 200 && status < 300;
   }
 
+  // statusError is what a status the request does not accept rejects with,
+  // as n8n's helper's error reaches a Code node (BUG-hejyb9 records it):
+  // axios's wording, name and code, where the code tells a 4xx from any
+  // other status, and the status. There is no response on it, because n8n's
+  // error crosses from its main process to the task runner as JSON, which
+  // leaves the response out; the body of such a status is read with
+  // ignoreHttpStatusErrors and returnFullResponse, there as here.
+  function statusError(status) {
+    var error = new ErrorType('Request failed with status code ' + status);
+    error.name = 'AxiosError';
+    error.code = status >= 400 && status < 500 ? 'ERR_BAD_REQUEST' : 'ERR_BAD_RESPONSE';
+    error.status = status;
+    return error;
+  }
+
   function httpRequest(options) {
     var built;
     try {
@@ -260,14 +275,10 @@
     }
     return ask('httpRequest', built.request, built.bytes, function (answer) {
       var response = answer.response;
-      var body = decode(answer.data, built.encoding);
       if (!passes(response.statusCode, built.options.ignoreHttpStatusErrors)) {
-        var error = new ErrorType('The request failed with status ' + response.statusCode +
-          (response.statusMessage ? ' ' + response.statusMessage : ''));
-        error.status = response.statusCode;
-        error.response = { status: response.statusCode, statusText: response.statusMessage, headers: response.headers, data: body };
-        throw error;
+        throw statusError(response.statusCode);
       }
+      var body = decode(answer.data, built.encoding);
       if (built.options.returnFullResponse) {
         return { body: body, headers: response.headers, statusCode: response.statusCode, statusMessage: response.statusMessage };
       }

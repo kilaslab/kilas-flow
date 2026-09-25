@@ -88,8 +88,13 @@ with `Promise.all` are in flight together.
   policy's, never lengthen it), `disableFollowRedirect`, `maxRedirects`,
   `returnFullResponse` (for `{ body, headers, statusCode, statusMessage }`),
   `encoding` (`arraybuffer` for a `Buffer`, `text` or `json`) and
-  `ignoreHttpStatusErrors`. A status outside 2xx rejects with an error whose
-  `status` and `response` say what came back. `proxy`,
+  `ignoreHttpStatusErrors`. A status outside 2xx rejects as n8n's does, with
+  an error named `AxiosError` whose message reads "Request failed with status
+  code 404", whose `status` is the status and whose `code` is
+  `ERR_BAD_REQUEST` for a 4xx and `ERR_BAD_RESPONSE` for any other. As in
+  n8n, the error carries no `response`: to read the body of such a status,
+  pass `ignoreHttpStatusErrors: true` with `returnFullResponse: true` and
+  check `statusCode`. `proxy`,
   `skipSslCertificateValidation` and the rest of the options that would change
   what the request does are refused by name rather than ignored. No
   credential is ever reachable, as in n8n.
@@ -272,6 +277,12 @@ when the node runs, as a `SyntaxError` with its line, not when it is saved.
   Rarer errors (destructuring or iterating `undefined`, the `in` operator on
   a primitive) keep the engine's own words, as does an error the code only
   sees in a promise's `.catch()` handler.
+- **A refused status is an `Error`.** n8n's helper error reaches the code as
+  a plain object, because it crosses from n8n's main process to its task
+  runner as JSON; here it is an `Error` with the same `name`, `message`,
+  `code` and `status`. So `err instanceof Error` is `true` where n8n says
+  `false`, and the error has no `config`, n8n's copy of the request's
+  settings.
 - **Stack traces are text.** `err.stack` is a string, `Error.prepareStackTrace`
   is never called and `Error.captureStackTrace` does not exist, so code that
   inspects V8's call-site objects has nothing to inspect.

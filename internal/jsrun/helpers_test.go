@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -136,7 +137,7 @@ func TestHTTPRequestAnswersInN8nsShapes(t *testing.T) {
 		"const full = await this.helpers.httpRequest({ url: 'https://example.com', returnFullResponse: true })",
 		"const bytes = await this.helpers.httpRequest({ url: 'https://example.com', encoding: 'arraybuffer', disableFollowRedirect: true })",
 		"let failure",
-		"try { await this.helpers.httpRequest({ url: 'https://example.com/missing' }) } catch (error) { failure = { message: error.message, status: error.status, data: error.response.data } }",
+		"try { await this.helpers.httpRequest({ url: 'https://example.com/missing' }) } catch (error) { failure = { message: error.message, status: error.status, hasResponse: error.response !== undefined } }",
 		"const ignored = await this.helpers.httpRequest({ url: 'https://example.com/missing', ignoreHttpStatusErrors: true })",
 		"return [{ json: { full, isBuffer: Buffer.isBuffer(bytes), text: bytes.toString(), failure, ignored } }]",
 	}, "\n"))
@@ -146,11 +147,48 @@ func TestHTTPRequestAnswersInN8nsShapes(t *testing.T) {
 	if got["isBuffer"] != true || got["text"] != "plain text" || got["ignored"] != "plain text" {
 		t.Errorf("got %#v", got)
 	}
-	if fmt.Sprint(got["failure"]) != "map[data:plain text message:The request failed with status 404 Status status:404]" {
+	if fmt.Sprint(got["failure"]) != "map[hasResponse:false message:Request failed with status code 404 status:404]" {
 		t.Errorf("failure = %v", got["failure"])
 	}
 	if redirects := fake.requests[1].Redirects; redirects == nil || *redirects != 0 {
 		t.Errorf("disableFollowRedirect sent redirects = %v, want 0", redirects)
+	}
+}
+
+// A status the request does not accept rejects as n8n's helper rejects: in
+// axios's words, named AxiosError, with axios's code for the status's class
+// and the status, and with no response, since n8n's error reaches the code
+// without one (BUG-hejyb9). Left uncaught, it fails the node in those words.
+func TestAStatusTheRequestDoesNotAcceptRejectsAsN8nsHelperDoes(t *testing.T) {
+	fake := &fakeHelpers{http: func(_ context.Context, request jsrun.HTTPRequest) (jsrun.HTTPResponse, []byte, error) {
+		status, _ := strconv.Atoi(strings.TrimPrefix(request.URL, "https://example.com/"))
+		return jsrun.HTTPResponse{StatusCode: status, StatusMessage: "Text"}, []byte(`{"detail":"why"}`), nil
+	}}
+	got := helperJSON(t, fake, strings.Join([]string{
+		"const seen = []",
+		"for (const [status, extra] of [[404, {}], [401, { ignoreHttpStatusErrors: { except: [401] } }], [500, {}], [302, { disableFollowRedirect: true }]]) {",
+		"  try {",
+		"    await this.helpers.httpRequest({ url: 'https://example.com/' + status, ...extra })",
+		"  } catch (error) {",
+		"    seen.push([error instanceof Error, error.name, error.message, error.code, error.status, error.response, error.statusCode].join('|'))",
+		"  }",
+		"}",
+		"return [{ json: { seen } }]",
+	}, "\n"))
+	want := []string{
+		"true|AxiosError|Request failed with status code 404|ERR_BAD_REQUEST|404||",
+		"true|AxiosError|Request failed with status code 401|ERR_BAD_REQUEST|401||",
+		"true|AxiosError|Request failed with status code 500|ERR_BAD_RESPONSE|500||",
+		"true|AxiosError|Request failed with status code 302|ERR_BAD_RESPONSE|302||",
+	}
+	if fmt.Sprint(got["seen"]) != fmt.Sprint(want) {
+		t.Errorf("seen = %v\nwant   %v", got["seen"], want)
+	}
+
+	_, err := helperRun(t, fake, "await this.helpers.httpRequest({ url: 'https://example.com/503' })\nreturn []")
+	var failure *jsrun.ScriptError
+	if !errors.As(err, &failure) || failure.Name != "AxiosError" || failure.Message != "Request failed with status code 503" {
+		t.Fatalf("Run() error = %v, want the AxiosError failing the node", err)
 	}
 }
 
