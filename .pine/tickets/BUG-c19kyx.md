@@ -1,14 +1,14 @@
 ---
 id: BUG-c19kyx
 title: 'Code node: a literal run argument to $items() or .all() is not flagged at import or save'
-status: todo
+status: testing
 priority: low
 labels:
     - code-node
     - javascript
 parent: EPIC-tjnr1z
 created: "2026-09-24T15:12:28Z"
-updated: "2026-09-24T15:12:28Z"
+updated: "2026-09-25T03:00:00Z"
 ---
 
 # Description
@@ -19,4 +19,22 @@ The only run arguments that are always safe are a literal `-1` (n8n's "latest") 
 
 # Acceptance Criteria
 
-- [ ] Decide whether the analyser should warn (not refuse: the read can be right) at import and save when a run argument to `$items(…)` or `.all(…)` is anything other than a literal `-1` or `$runIndex`, and if so, add it as a non-blocking diagnostic naming the line.
+- [x] Decide whether the analyser should warn (not refuse: the read can be right) at import and save when a run argument to `$items(…)` or `.all(…)` is anything other than a literal `-1` or `$runIndex`, and if so, add it as a non-blocking diagnostic naming the line.
+
+# Notes
+
+## Decision (2026-09-25)
+
+Do not add a diagnostic. The runtime refusal of an earlier run is unchanged.
+
+A run argument other than a literal `-1` or `$runIndex` may name an earlier run, and it may not: `$items('X', 0, 0)` is right on a node's first run and refused on its third. Noting it must not refuse the read, the import, or the save.
+
+Import issues are only `blocking`, `lossy`, and `dropped` (`internal/interop/n8n/n8n.go`). There is no warning severity. Amendment 14 of EPIC-tjnr1z already dropped a non-blocking hint for that reason.
+
+- `blocking` stops the workflow activating (`docs/src/content/docs/guides/n8n-migration.md`, the editor's import report). That refuses a read that can be right.
+- `lossy` means the element was carried, but differently. The workflow still activates. The run argument is carried as written, so this word would claim a change that did not happen.
+- `dropped` means the element was not carried at all. The workflow still activates. The argument is still in the code and still runs, so this word would claim it was discarded.
+
+Save-time validation has the same gap: `ConfigValidator` returns an error, and `POST /workflows/validate` records every compiler refusal as `blocking`. A note there would stop the node saving.
+
+Neither `lossy` nor `dropped` can say "this might fail when the code reaches it" without changing what those words mean. The Code (JavaScript) page already says an earlier run fails only then; it now also says import and save stay quiet about the argument.

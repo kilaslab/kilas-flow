@@ -165,6 +165,11 @@ The rest fail by name the moment the code reaches them: `$jmespath`,
 built-in that reads its length, which would run the proxy's traps once per
 element inside one call that nothing can interrupt.
 
+A run argument to `$items(…)` or `.all(…)` other than a literal `-1` or
+`$runIndex` is not noted at import or when the node is saved. `$items('Name', 0, 0)`
+is right on the node's first run and refused on a later one, and which run is
+the latest is known only when the code reaches the read.
+
 A body longer than 128 KiB, nested more than a thousand levels deep, holding
 more than a thousand arrow functions, or holding a constant expression that
 would take the engine seconds to fold, or a BigInt constant of more than a
