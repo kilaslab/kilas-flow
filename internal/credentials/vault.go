@@ -90,7 +90,7 @@ func (provider *VaultProvider) Health(ctx context.Context) error {
 	}
 	response, err := provider.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("vault is unreachable: %w", err)
+		return fmt.Errorf("vault is unreachable: %w", safehttp.RedactError(err))
 	}
 	defer response.Body.Close()
 	_, _, _ = provider.policy.ReadBody(response.Body)
@@ -115,7 +115,11 @@ func (provider *VaultProvider) Fetch(ctx context.Context, key string) (string, e
 	for index, segment := range segments {
 		segments[index] = url.PathEscape(segment)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
+	// The token rides in X-Vault-Token, a header Go forwards across a host
+	// change. Vault names no domains, so the request is held to the address
+	// the operator configured, and never steps down to plain http.
+	request, err := http.NewRequestWithContext(
+		safehttp.WithCredentialScope(ctx, safehttp.CredentialScope{Unbounded: true}), http.MethodGet,
 		provider.address+"/v1/secret/data/"+strings.Join(segments, "/"), nil)
 	if err != nil {
 		return "", fmt.Errorf("vault request: %w", err)
@@ -123,7 +127,7 @@ func (provider *VaultProvider) Fetch(ctx context.Context, key string) (string, e
 	request.Header.Set("X-Vault-Token", provider.token)
 	response, err := provider.client.Do(request)
 	if err != nil {
-		return "", fmt.Errorf("vault fetch: %w", err)
+		return "", fmt.Errorf("vault fetch: %w", safehttp.RedactError(err))
 	}
 	defer response.Body.Close()
 	switch response.StatusCode {

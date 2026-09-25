@@ -452,6 +452,11 @@ func lifecycleFields(ctx context.Context, credentialType string, lifecycleContex
 	if err != nil {
 		return nil, credential, fmt.Errorf("resolve %s credential: %w", credentialType, err)
 	}
+	// Checked before a field is read into a template: a credential of another
+	// type bound here would hand its secret to a request built for this one.
+	if err := resolved.CheckType(credentialType); err != nil {
+		return nil, credential, err
+	}
 	for key, value := range resolved.Fields {
 		fields[key] = value
 	}
@@ -482,6 +487,14 @@ func call(ctx context.Context, lifecycleContext LifecycleContext, credential eng
 		request.Header.Set("Content-Type", "application/json")
 	}
 	if credential.Type != "" {
+		// The engine's own two checks, before anything secret is placed on the
+		// request by the type's authentication: the credential's domains
+		// against this host, and its redirect scope on the request. They run
+		// whether or not the type authenticates, because a template may already
+		// have written a credential field into the URL, a header or the body.
+		if err := credential.ScopeRequest(request); err != nil {
+			return nil, err
+		}
 		if credentialType, known := credentials.Default().Get(credential.Type); known && credentialType.Authenticate != nil {
 			if err := credentials.ApplyAuthentication(request, credentialType, credential.Fields); err != nil {
 				return nil, fmt.Errorf("apply %s credential: %w", credential.Type, err)
@@ -491,7 +504,10 @@ func call(ctx context.Context, lifecycleContext LifecycleContext, credential eng
 
 	response, err := safehttp.NewClient(lifecycleContext.HTTP).Do(request)
 	if err != nil {
-		return nil, err
+		// A lifecycle URL may carry the credential — a bot token in the path —
+		// and this error becomes activation's 502 detail and deactivation's
+		// Warn line: only the scheme and host go on.
+		return nil, safehttp.RedactError(err)
 	}
 	defer response.Body.Close()
 	payload, _, err := lifecycleContext.HTTP.ReadBody(response.Body)

@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
 // KeySize is the AES-256 master key length in bytes.
@@ -138,6 +140,14 @@ func intersectEntry(left, right string) (string, bool) {
 		return right, true
 	}
 	return "", false
+}
+
+// RedirectScope is the bound this credential places on a request's redirect
+// chain: its domains when it names any, and the first request's host when it
+// names none. Every caller that attaches a credential to a request attaches
+// this, so the two halves cannot be assembled differently in two places.
+func (record Record) RedirectScope() safehttp.CredentialScope {
+	return safehttp.CredentialScope{AllowsHost: record.AllowsHost, Unbounded: len(record.AllowedDomains) == 0}
 }
 
 func hostWithoutPort(host string) string {

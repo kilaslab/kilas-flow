@@ -77,27 +77,58 @@ func (request Request) ResolveAttachedCredential(ctx context.Context, ir workflo
 // It is a free function rather than a method because it needs nothing from the
 // request: what it needs is the credential and the URL.
 func applyResolved(ir workflow.IRNode, resolved Credential, httpRequest *http.Request) error {
-	if !resolved.AllowsHost(httpRequest.URL.Host) {
-		return fmt.Errorf("node %q: credential %q is not allowed for host %q", ir.Name, resolved.Name, httpRequest.URL.Hostname())
+	if err := resolved.ScopeRequest(httpRequest); err != nil {
+		return fmt.Errorf("node %q: %w", ir.Name, err)
 	}
-	// The same bound has to survive a redirect. The check above covers the URL
-	// the node names; without the scope on the request context, a 30x from it
-	// carries the credential's header or query secret to a host AllowedDomains
-	// never named, because Go strips only Authorization and Cookie on a
-	// cross-host hop. The redirect check reads the scope off the initial
-	// request's context, so it is attached here — beside the check that
-	// produced it — rather than in each caller, which is the whole reason this
-	// function exists instead of a copy per node.
-	//
-	// The request is mutated in place because its context is what the HTTP
-	// client carries into the redirect chain; returning a new request would
-	// change a signature two callers already use.
-	*httpRequest = *httpRequest.WithContext(safehttp.WithCredentialScope(
-		httpRequest.Context(),
-		safehttp.CredentialScope{AllowsHost: resolved.AllowsHost},
-	))
 	if err := credentials.Apply(httpRequest, resolved.Type, resolved.Fields); err != nil {
 		return fmt.Errorf("node %q: %w", ir.Name, err)
+	}
+	return nil
+}
+
+// ScopeRequest checks that this credential may be sent to the request's host
+// and binds the credential's redirect scope to the request, before anything
+// secret is placed on it.
+//
+// The same bound has to survive a redirect. The host check covers the URL the
+// caller names; without the scope on the request context, a 30x from it
+// carries the credential's header or query secret to a host AllowedDomains
+// never named, because Go strips only Authorization and Cookie on a cross-host
+// hop — and a credential naming no domains would follow a redirect to any host
+// at all. The redirect check reads the scope off the initial request's
+// context, so it is attached here, beside the check that produced it.
+//
+// Exported so a caller that places a credential on a request by some other
+// means — a trigger lifecycle whose template writes the secret into the URL,
+// the Telegram registration calls — goes through the same two checks the
+// engine applies to a node's request rather than a copy that drifts.
+//
+// The request is mutated in place because its context is what the HTTP client
+// carries into the redirect chain; returning a new request would change a
+// signature two callers already use.
+func (credential Credential) ScopeRequest(httpRequest *http.Request) error {
+	if !credential.AllowsHost(httpRequest.URL.Host) {
+		return fmt.Errorf("credential %q is not allowed for host %q", credential.Name, httpRequest.URL.Hostname())
+	}
+	*httpRequest = *httpRequest.WithContext(safehttp.WithCredentialScope(httpRequest.Context(), credential.RedirectScope()))
+	return nil
+}
+
+// RedirectScope is the bound this credential places on a redirect chain; see
+// credentials.Record.RedirectScope.
+func (credential Credential) RedirectScope() safehttp.CredentialScope {
+	return credentials.Record{AllowedDomains: credential.AllowedDomains}.RedirectScope()
+}
+
+// CheckType reports a credential that is not of the type its caller declared.
+//
+// It is the half that stops a caller from being pointed at a credential of
+// another kind — a database credential where an HTTP one was expected, a
+// header key where a bot token was — and every lookup path applies it, the
+// engine's own and a trigger lifecycle's alike.
+func (credential Credential) CheckType(want string) error {
+	if want != "" && credential.Type != want {
+		return fmt.Errorf("credential %q is a %s credential, not %s", credential.Name, credential.Type, want)
 	}
 	return nil
 }
@@ -151,8 +182,8 @@ func (request Request) resolveCredential(ctx context.Context, ir workflow.IRNode
 	if err != nil {
 		return Credential{}, false, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
-	if credentialType != "" && resolved.Type != credentialType {
-		return Credential{}, false, fmt.Errorf("node %q: credential %q is a %s credential, not %s", ir.Name, resolved.Name, resolved.Type, credentialType)
+	if err := resolved.CheckType(credentialType); err != nil {
+		return Credential{}, false, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
 	return resolved, true, nil
 }

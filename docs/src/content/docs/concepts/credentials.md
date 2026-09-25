@@ -98,10 +98,46 @@ port is stripped, the host is lowercased, a trailing dot is trimmed, and:
   domain**, so scoping to `*.internal.test` does not silently authorize
   `internal.test` itself.
 
-The check runs in four places, and in every one it happens **before the secret
-touches the request**: the runtime's `Request.Authenticate`, used by both the
-hand-written HTTP node and the declarative routing interpreter; the AI chat model
-call; edit-time option loading; and the credential test endpoint.
+The check runs everywhere a credential is placed on a request, and in every one
+it happens **before the secret touches the request**: the runtime's
+`Request.Authenticate`, used by both the hand-written HTTP node and the
+declarative routing interpreter; the AI chat model call; edit-time option
+loading; the credential test endpoint; Telegram file downloads; and every
+trigger lifecycle request — a pack's registration templates and the Telegram
+trigger's registration and polling calls. A lifecycle request goes through the
+runtime's own `Credential.CheckType` and `Credential.ScopeRequest` rather than a
+copy, so it checks the credential's type, its domains against the target host,
+and binds the redirect scope below, exactly as a node's request does.
+
+### Redirects
+
+The bound follows the request through redirects. Each hop is checked against the
+credential's `allowedDomains` again, and a hop that fails stops the chain with
+the last in-scope response rather than failing the call — the node sees the
+`30x`. Go drops only `Authorization` and `Cookie` when a redirect changes host,
+so without this an `X-Api-Key`, a WAHA key or a custom template's headers would
+follow a redirect anywhere. Two more rules apply while a credential is
+attached:
+
+- **A credential with an empty domain list stays on the first host.**
+  Unrestricted means "wherever the node sends it", not "wherever a server
+  redirects it", so a redirect may only go to the hostname of the first
+  request. The port is not compared, as the domain check does not compare it, so
+  a service moving between ports on the same host keeps working. A credential
+  that names its domains is held to those instead, and a redirect to another
+  host it names is followed.
+- **No step down from `https` to `http`.** The secret would cross the network in
+  the clear on the next hop. This matters even for `Authorization`, which Go
+  keeps on a same-host redirect.
+
+The redirect rules apply wherever the secret is placed on the request, not only
+on the runtime's `Request.Authenticate` path: the AI chat model and embeddings
+calls (which set their own `Authorization: Bearer` header), Telegram downloads,
+trigger lifecycle requests and the community-node sidecar all bind the same
+scope. Two operator-held secrets get the rule a credential with no domains gets
+— the request stays on its first host and never steps down to `http`: the Vault
+token on external-secret reads, and the client secret and refresh token a
+Google OAuth token exchange or refresh posts.
 
 That single shared implementation is deliberate. The check used to live beside
 one node, and the comment on it now says why it moved: with two callers, a second
@@ -159,6 +195,37 @@ The `{{ field }}` templates in a descriptor are expanded from the credential's
 [expression evaluator](/concepts/expressions/): a descriptor is written by
 whoever declares the credential type, and the full grammar would let it read
 run-time data while signing a request.
+
+## Keeping a secret out of error text
+
+Two credential types put their secret in the URL: `httpQueryAuth` in the query,
+and `telegramApi` in the path as `/bot<token>/`. Go's transport error prints the
+whole request URL, so a request to a closed port or an unreachable host used to
+fail with the secret in its message — and that message became the execution's
+error, the error item a "notify on failure" branch sends on, a log line and an
+API answer.
+
+Two rules keep it out, and they are independent so that either one alone holds:
+
+- **Every outbound call cuts a transport error's URL to its scheme and host**
+  before returning or logging it (`safehttp.RedactError`). The host and port
+  stay, because they say which service failed; the path, the query and any
+  userinfo are withheld. The HTTP node, the routing interpreter behind every
+  declarative pack, edit-time option loading, WASM and JavaScript-sidecar
+  packs, the AI model, MCP and embedding calls, Google, Telegram downloads,
+  pack-trigger media downloads, Vault, and every trigger lifecycle request —
+  registration, removal and Telegram's polling loop — all go through it.
+- **A node's error is scrubbed of the secret values of every credential that
+  node resolved** before the runner records it. The runner notes each
+  credential the node's resolver hands out during an attempt and replaces
+  those values with `[redacted]` in the error's text, in the trace row, in the
+  execution's own error, and in every error item — per-item outcomes of a
+  whole-batch node included. Which values count is the type's declared
+  secrets, in the forms a request writes them (as written, trimmed,
+  query-escaped and path-escaped, and each string inside an `httpCustomAuth`
+  template); a base URL or a header name is left alone, and a value shorter
+  than four characters is not replaced. The error keeps its cause, so a
+  timeout still reads as a timeout.
 
 ## Testing a credential
 
@@ -339,4 +406,7 @@ credentials.
 `Authentication`, `ApplyAuthentication`, `RunTest`),
 `internal/credentials/builtin.go` (the built-in types, including Google Drive and Gmail OAuth2),
 `internal/repository/credentials.go` (the storage split and `Resolve`),
-`internal/engine/authenticate.go` (the domain check on the run path).
+`internal/engine/authenticate.go` (the domain check on the run path),
+`internal/engine/secret_scrub.go` and `internal/credentials/scrub.go` (scrubbing
+a node's error of the secrets it resolved), `internal/safehttp/redact.go`
+(`RedactError`).

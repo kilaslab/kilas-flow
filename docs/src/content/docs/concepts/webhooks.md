@@ -300,6 +300,15 @@ sees them even though storage holds them. That is a storage-posture fact, not a
 detail: see [the security page](/operate/security/) for what it means for
 backups and dumps.
 
+One header is the exception. A trigger using **Header auth** has just compared
+the header its credential names against the shared secret, and that name is
+whatever the credential says — `X-Hook-Pass` as readily as `X-Api-Key` — so the
+read-side rule, which knows common header names, cannot be relied on to
+recognise it. That header is replaced with `[redacted]` by the credential's own
+name before the delivery is stored. The key stays, so a workflow can still see
+the header was sent; the value is gone from storage, backups and the execution
+view alike.
+
 ## Which node types can bind a route
 
 A node type binds an inbound path only if its definition carries a `Webhook`

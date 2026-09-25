@@ -59,7 +59,11 @@ IPv4-mapped IPv6 forms are refused too, so `::ffff:127.0.0.1` does not slip past
 **On every redirect hop.** A redirect can point anywhere, so the destination gets
 the same scheme and allowlist check the original URL did — and because each hop
 re-enters the dialer, the address check runs again as well. After five hops the
-request fails.
+request fails. A request carrying a credential is held tighter still: each hop
+must stay inside the credential's `allowedDomains`, a credential with an empty
+list may only stay on the first request's hostname, and no hop may step down
+from `https` to `http`. A hop that breaks one of those stops the chain with the
+last in-scope response; see [redirects](/concepts/credentials/#redirects).
 
 ### The levers do not consult each other
 
@@ -118,10 +122,21 @@ lives, and it is worth re-reading whenever a section is added to the policy.
 ### Credentials narrow it further
 
 A [credential's](/concepts/credentials/) own `allowedDomains` is checked against
-the target host **before the secret touches the request**, in all four places a
-credential can be applied. It is a narrowing on top of the policy above, never a
+the target host **before the secret touches the request**, everywhere a
+credential can be applied, trigger lifecycle requests included. It is a narrowing on top of the policy above, never a
 replacement: a credential permitted to reach `example.com` still cannot reach it
 if the deployment's outbound policy refuses the resolved address.
+
+### A failed request names its host, never its URL
+
+Go's transport error prints the whole request URL, and a credential can sit in
+its query or its path. Every outbound call site passes that error through
+`safehttp.RedactError`, which keeps the operation, the scheme and host (port
+included) and the cause, and withholds the path, the query and any userinfo:
+`Get "http://127.0.0.1:18999": dial tcp …: connection refused`. A node's error is
+also scrubbed of the secret values of every credential the node resolved before
+the runner records it; see [keeping a secret out of error
+text](/concepts/credentials/#keeping-a-secret-out-of-error-text).
 
 ### The JavaScript sidecar (opt-in)
 
@@ -513,8 +528,11 @@ equivalent to read access to secrets, and should be granted on that basis.
 **Storage keeps what the caller sent.** Redaction is a read-surface guarantee:
 API responses, the live event feed and the inspector withhold credential keys and
 normalise header names, but a raw table dump, a database backup or a support
-export carries inbound trigger headers and bodies exactly as they arrived. See
-[the security posture](/operate/security/) for what that asks of an operator.
+export carries inbound trigger headers and bodies exactly as they arrived — with
+one exception: the header a Header-auth trigger verified is withheld by the name
+its credential gives before the delivery is stored, since that value is the
+shared secret. See [the security posture](/operate/security/) for what that asks
+of an operator.
 
 ## Configuration is generated from the code
 
@@ -530,7 +548,8 @@ stops a list like this one from silently going stale.
 
 `internal/safehttp/safehttp.go` (`Policy.CheckURL`, `Policy.CheckAddress`,
 `ReadBody`, and the `DialContext` and `CheckRedirect` closures `NewClient`
-builds), `internal/sqlnode/sqlnode.go` (`Guard`,
+builds), `internal/safehttp/redact.go` (`RedactError`),
+`internal/sqlnode/sqlnode.go` (`Guard`,
 `sqlitePath`, `Ceiling`), `internal/runcode/` (the wazero sandbox and its
 limits), `internal/credentials/credentials.go` (`AllowsHost`),
 `internal/binary/binary.go`, `internal/expression/doc.go`,

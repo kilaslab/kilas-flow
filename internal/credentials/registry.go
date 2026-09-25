@@ -399,8 +399,9 @@ func RunTest(ctx context.Context, credentialType Type, record Record, fields map
 	// AllowedDomains never named, because Go strips only Authorization and
 	// Cookie on a cross-host hop. AllowsHost is handed the full host:port and
 	// ignores the port half, exactly as the check above does with the hostname.
+	// A credential naming no domains is held to the test URL's own host.
 	request, err := http.NewRequestWithContext(
-		safehttp.WithCredentialScope(ctx, safehttp.CredentialScope{AllowsHost: record.AllowsHost}),
+		safehttp.WithCredentialScope(ctx, record.RedirectScope()),
 		method, target, nil,
 	)
 	if err != nil {

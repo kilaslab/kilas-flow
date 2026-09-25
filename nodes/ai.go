@@ -1171,8 +1171,16 @@ func (backend *modelBackend) resolveModel(ctx context.Context, nodeName string, 
 	if value, present := descriptor[ModelOptionMaxRetries]; present && value != nil {
 		maxRetries = positiveInt(numberValue(value))
 	}
+	model := ai.NewOpenAICompatible(backend.client, baseURL, apiKey)
+	if credentialID != "" {
+		// The host check above covers the base URL; the scope carries the
+		// same bound through every redirect the call meets, holds a
+		// credential that names no domains to this host, and refuses a step
+		// down to plain http, where the key would travel in the clear.
+		model.WithCredentialScope(secret.RedirectScope())
+	}
 	return resolvedModel{
-		model:   ai.NewOpenAICompatible(backend.client, baseURL, apiKey),
+		model:   model,
 		name:    textValue(descriptor["model"], "gpt-4o-mini"),
 		timeout: timeout,
 		stream:  boolValue(descriptor["stream"]),
@@ -3475,7 +3483,9 @@ func (executor *MCPClientToolExecutor) mcpCall(ctx context.Context, ir workflow.
 	}
 	response, err := executor.client.Do(httpRequest)
 	if err != nil {
-		return nil, "", fmt.Errorf("MCP %s: %w", method, err)
+		// An MCP server's credential may sit in the URL's query; the
+		// transport error prints the URL, so only its scheme and host go on.
+		return nil, "", fmt.Errorf("MCP %s: %w", method, safehttp.RedactError(err))
 	}
 	defer response.Body.Close()
 	next := response.Header.Get("mcp-session-id")
@@ -3517,7 +3527,7 @@ func (executor *MCPClientToolExecutor) mcpNotify(ctx context.Context, ir workflo
 	}
 	response, err := executor.client.Do(httpRequest)
 	if err != nil {
-		return fmt.Errorf("MCP notifications/initialized: %w", err)
+		return fmt.Errorf("MCP notifications/initialized: %w", safehttp.RedactError(err))
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, mcpMaxResponseBytes(executor.policy)))

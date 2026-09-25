@@ -3,6 +3,7 @@ package loadoptions_test
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -449,5 +450,34 @@ func TestTheWorkflowLoaderIsBoundToAnEmbedSessionsOwnWorkflow(t *testing.T) {
 
 	if _, err := loader(context.Background(), loadoptions.Scope{}); err == nil {
 		t.Error("the loader answered with no tenant")
+	}
+}
+
+// A loader's error goes straight back to the editor, and an httpQueryAuth
+// credential is written into the URL's query, which Go's transport error
+// prints whole. Only the scheme and host may come back.
+func TestALoaderTransportErrorDoesNotCarryAQueryCredential(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	closed := "http://" + listener.Addr().String()
+	_ = listener.Close()
+
+	resolver := loadoptions.NewResolver(openPolicy(closed), time.Minute)
+	credential := &fakeCredentials{
+		id:     "cred_1",
+		record: credentials.Record{ID: "cred_1", Type: "httpQueryAuth"},
+		fields: map[string]string{"name": "api_key", "value": "LOADER-QUERY-SECRET"},
+	}
+	_, err = resolver.Load(context.Background(), property.OptionsLoader{
+		Source: property.LoaderHTTP, Method: http.MethodGet, Endpoint: closed + "/api/sessions",
+		CredentialType: "httpQueryAuth", ValueField: "id",
+	}, loadoptions.Scope{TenantID: "t1"}, "cred_1", credential)
+	if err == nil {
+		t.Fatal("a loader reached a closed port")
+	}
+	if strings.Contains(err.Error(), "LOADER-QUERY-SECRET") || strings.Contains(err.Error(), "/api/sessions") {
+		t.Errorf("error = %q, want the path and query withheld", err)
 	}
 }

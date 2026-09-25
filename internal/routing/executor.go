@@ -250,7 +250,10 @@ func (executor *Executor) call(
 
 	response, err := executor.client.Do(httpRequest)
 	if err != nil {
-		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+		// The credential was just placed on this request, in its query or —
+		// for the Telegram Bot API — in its path, and the transport error
+		// prints the URL: only the scheme and host go on.
+		return nil, fmt.Errorf("node %q: %w", ir.Name, safehttp.RedactError(err))
 	}
 	defer response.Body.Close()
 
@@ -528,7 +531,7 @@ func (executor *Executor) download(
 	}
 	response, err := executor.client.Do(httpRequest)
 	if err != nil {
-		return fmt.Errorf("node %q: download: %w", ir.Name, err)
+		return fmt.Errorf("node %q: download: %w", ir.Name, safehttp.RedactError(err))
 	}
 	defer response.Body.Close()
 	if response.StatusCode >= 400 {

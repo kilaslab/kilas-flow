@@ -115,3 +115,33 @@ func TestOptionLoaderStillFollowsARedirectInsideItsCredentialsDomains(t *testing
 		t.Errorf("Load() = %#v (reached: %t), want the in-scope redirect followed", result, reached)
 	}
 }
+
+// A credential that names no domains allows every host, which used to let a
+// redirect carry its header to any of them. It is held to the host the loader
+// named instead.
+func TestOptionLoaderHoldsAnUnscopedCredentialToItsFirstHost(t *testing.T) {
+	var leaked http.Header
+	outsider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaked = r.Header.Clone()
+		_, _ = w.Write([]byte(`[{"id":"stolen"}]`))
+	}))
+	defer outsider.Close()
+	insider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, outsideName(t, outsider.URL)+"/api/sessions", http.StatusFound)
+	}))
+	defer insider.Close()
+
+	resolver := loadoptions.NewResolver(twoNamePolicy(), time.Minute)
+	credential := &fakeCredentials{
+		id:     "cred_3",
+		record: credentials.Record{ID: "cred_3", Type: "httpHeaderAuth"},
+		fields: map[string]string{"name": "X-Api-Key", "value": "UNSCOPED-SECRET"},
+	}
+	_, err := resolver.Load(context.Background(), property.OptionsLoader{
+		Source: property.LoaderHTTP, Method: http.MethodGet,
+		Endpoint: insider.URL + "/api/sessions", CredentialType: "httpHeaderAuth", ValueField: "id",
+	}, loadoptions.Scope{TenantID: "t1"}, "cred_3", credential)
+	if leaked != nil {
+		t.Errorf("the option loader followed an unscoped credential to another host: %v (err: %v)", leaked, err)
+	}
+}

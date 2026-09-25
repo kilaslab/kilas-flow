@@ -423,6 +423,36 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Security
 
+- A secret placed in a URL no longer leaks through a failed request's error.
+  Go's transport error prints the whole URL, so an `httpQueryAuth` secret (in
+  the query) or a Telegram bot token (in the path) reached the execution's
+  error, the error item a failure branch sends on, logs, option-loader answers,
+  WASM pack errors, Telegram polling logs and a trigger activation's 502
+  detail. Every outbound call now reports only the scheme and host, and a
+  node's error and error items are scrubbed of the secret values of every
+  credential the node resolved before they are stored or passed on.
+
+- A credential's header no longer follows a redirect to another host. Go
+  drops only `Authorization` and `Cookie` across hosts, and a credential with
+  an empty domain list allowed every host, so an `X-Api-Key` (`httpHeaderAuth`,
+  `wahaApi`) or a custom template's headers reached whatever host a redirect
+  named. While a credential is attached, a redirect now stays on the first
+  request's host when the credential names no domains, stays inside its
+  domains when it names some, and never steps down from `https` to `http`.
+  Trigger lifecycle requests (pack registration templates and the Telegram
+  trigger's registration and polling calls) and Telegram file downloads now
+  check the credential's type and domains and bind the same redirect scope a
+  node's request does. The AI chat model and embeddings calls bind it too, so
+  their `Authorization: Bearer` key no longer follows a same-host redirect
+  down to plain `http`; Vault reads and Google OAuth token requests stay on
+  their own host and on `https`.
+
+- A webhook trigger using Header auth no longer stores its shared secret. With
+  a custom header name such as `X-Hook-Pass`, the secret was kept in the stored
+  trigger payload and shown in the execution view, because read-side redaction
+  recognises common header names only. The verified header is now stored as
+  `[redacted]` under the name its credential gives.
+
 - A page a workflow returns from a webhook — a Respond to Webhook body or a
   trigger's `responseData` acknowledgement — no longer runs as the instance.
   Every webhook answer carries `Content-Security-Policy: sandbox …` without

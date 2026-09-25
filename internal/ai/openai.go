@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
 // OpenAICompatible is a ChatModel over the OpenAI chat-completions API shape.
@@ -24,6 +26,9 @@ type OpenAICompatible struct {
 	client  *http.Client
 	baseURL string
 	apiKey  string
+	// scope is the credential's redirect bound, carried on every request's
+	// context. Nil for a model called with no credential.
+	scope *safehttp.CredentialScope
 }
 
 var _ ChatModel = (*OpenAICompatible)(nil)
@@ -42,6 +47,19 @@ func NewOpenAICompatible(client *http.Client, baseURL, apiKey string) *OpenAICom
 		baseURL = "https://api.openai.com/v1"
 	}
 	return &OpenAICompatible{client: client, baseURL: baseURL, apiKey: apiKey}
+}
+
+// WithCredentialScope binds the key's credential scope to every request the
+// adapter sends, and returns the adapter.
+//
+// The key rides in an Authorization header, which Go drops across a host
+// change but keeps on a same-host redirect — including one that steps down
+// from https to plain http, where the key would cross the network in the
+// clear. The redirect check reads the scope off the request's context, so
+// without it none of the credential's redirect rules apply to a model call.
+func (model *OpenAICompatible) WithCredentialScope(scope safehttp.CredentialScope) *OpenAICompatible {
+	model.scope = &scope
+	return model
 }
 
 // Complete returns one assistant turn.
@@ -241,6 +259,9 @@ func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, s
 				attemptCtx, cancel = context.WithTimeout(ctx, request.Timeout)
 			}
 		}
+		if model.scope != nil {
+			attemptCtx = safehttp.WithCredentialScope(attemptCtx, *model.scope)
+		}
 		httpRequest, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, model.baseURL+"/chat/completions", bytes.NewReader(encoded))
 		if err != nil {
 			cancel()
@@ -257,6 +278,9 @@ func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, s
 		response, err := model.client.Do(httpRequest)
 		if err != nil {
 			cancel()
+			// The transport error prints the URL, which a provider's base URL
+			// may have given a key in its query: only the scheme and host go on.
+			err = safehttp.RedactError(err)
 			// The attempt's own deadline is named only when the attempt is
 			// what expired. A caller whose context ended first — the
 			// deployment's run ceiling on an agent node — did not ask for too
