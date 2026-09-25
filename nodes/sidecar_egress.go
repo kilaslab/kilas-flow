@@ -146,7 +146,7 @@ func (egress *sidecarEgress) HTTP(ctx context.Context, call sidecar.HTTPRequest)
 
 	response, err := egress.client.Do(request)
 	if err != nil {
-		return sidecar.HTTPResponse{}, egress.refuse(err)
+		return sidecar.HTTPResponse{}, egress.refuse(safehttp.RedactError(err))
 	}
 	defer response.Body.Close()
 

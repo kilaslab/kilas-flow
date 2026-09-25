@@ -414,6 +414,15 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Security
 
+- A secret placed in a URL no longer leaks through a failed request's error.
+  Go's transport error prints the whole URL, so an `httpQueryAuth` secret (in
+  the query) or a Telegram bot token (in the path) reached the execution's
+  error, the error item a failure branch sends on, logs, option-loader answers,
+  WASM pack errors, Telegram polling logs and a trigger activation's 502
+  detail. Every outbound call now reports only the scheme and host, and a
+  node's error and error items are scrubbed of the secret values of every
+  credential the node resolved before they are stored or passed on.
+
 - A JavaScript worker process runs one tenant's Code-node and Sort-comparator
   scripts and never another's, so code that escaped the engine and stayed in a
   worker cannot see a later tenant's jobs. A script whose tenant has no idle

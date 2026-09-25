@@ -166,7 +166,9 @@ func (client *TelegramFileClient) get(ctx context.Context, target *url.URL) ([]b
 	}
 	response, err := client.client.Do(request)
 	if err != nil {
-		return nil, err
+		// A Bot API URL carries the bot token in its path, and the transport
+		// error prints the URL: only the scheme and host go on.
+		return nil, safehttp.RedactError(err)
 	}
 	defer response.Body.Close()
 	contents, truncated, err := client.policy.ReadBody(response.Body)

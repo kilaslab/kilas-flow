@@ -144,6 +144,37 @@ The `{{ field }}` templates in a descriptor are expanded from the credential's
 whoever declares the credential type, and the full grammar would let it read
 run-time data while signing a request.
 
+## Keeping a secret out of error text
+
+Two credential types put their secret in the URL: `httpQueryAuth` in the query,
+and `telegramApi` in the path as `/bot<token>/`. Go's transport error prints the
+whole request URL, so a request to a closed port or an unreachable host used to
+fail with the secret in its message — and that message became the execution's
+error, the error item a "notify on failure" branch sends on, a log line and an
+API answer.
+
+Two rules keep it out, and they are independent so that either one alone holds:
+
+- **Every outbound call cuts a transport error's URL to its scheme and host**
+  before returning or logging it (`safehttp.RedactError`). The host and port
+  stay, because they say which service failed; the path, the query and any
+  userinfo are withheld. The HTTP node, the routing interpreter behind every
+  declarative pack, edit-time option loading, WASM and JavaScript-sidecar
+  packs, the AI model, MCP and embedding calls, Google, Telegram downloads,
+  pack-trigger media downloads, Vault, and every trigger lifecycle request —
+  registration, removal and Telegram's polling loop — all go through it.
+- **A node's error is scrubbed of the secret values of every credential that
+  node resolved** before the runner records it. The runner notes each
+  credential the node's resolver hands out during an attempt and replaces
+  those values with `[redacted]` in the error's text, in the trace row, in the
+  execution's own error, and in every error item — per-item outcomes of a
+  whole-batch node included. Which values count is the type's declared
+  secrets, in the forms a request writes them (as written, trimmed,
+  query-escaped and path-escaped, and each string inside an `httpCustomAuth`
+  template); a base URL or a header name is left alone, and a value shorter
+  than four characters is not replaced. The error keeps its cause, so a
+  timeout still reads as a timeout.
+
 ## Testing a credential
 
 A type may also declare a test as data — a method, a URL and the status below
@@ -232,4 +263,7 @@ credentials.
 `Authentication`, `ApplyAuthentication`, `RunTest`),
 `internal/credentials/builtin.go` (the built-in types, including Google Drive and Gmail OAuth2),
 `internal/repository/credentials.go` (the storage split and `Resolve`),
-`internal/engine/authenticate.go` (the domain check on the run path).
+`internal/engine/authenticate.go` (the domain check on the run path),
+`internal/engine/secret_scrub.go` and `internal/credentials/scrub.go` (scrubbing
+a node's error of the secrets it resolved), `internal/safehttp/redact.go`
+(`RedactError`).

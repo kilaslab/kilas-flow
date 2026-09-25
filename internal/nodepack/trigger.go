@@ -336,7 +336,7 @@ func (executor *TriggerExecutor) attachMedia(
 	}
 	response, err := executor.client.Do(httpRequest)
 	if err != nil {
-		return fmt.Errorf("node %q: download media: %w", ir.Name, err)
+		return fmt.Errorf("node %q: download media: %w", ir.Name, safehttp.RedactError(err))
 	}
 	defer response.Body.Close()
 	if response.StatusCode >= 400 {

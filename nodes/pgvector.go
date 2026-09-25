@@ -934,7 +934,7 @@ func (executor *EmbeddingsExecutor) embed(ctx context.Context, baseURL, apiKey, 
 	call.Header.Set("Authorization", "Bearer "+apiKey)
 	response, err := executor.client.Do(call)
 	if err != nil {
-		return nil, err
+		return nil, safehttp.RedactError(err)
 	}
 	defer response.Body.Close()
 	payload, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))

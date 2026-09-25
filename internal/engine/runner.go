@@ -1318,8 +1318,14 @@ func (runner *Runner) invoke(ctx context.Context, graph preparedGraph, node work
 		if capture != nil {
 			execution.Events = capture.sink(execution.Events)
 		}
+		// The credentials this attempt resolves are noted so its error can be
+		// scrubbed of their secrets before anything records it; see
+		// resolvedSecrets.
+		secrets := &resolvedSecrets{}
+		execution.Credentials = secrets.recording(execution.Credentials)
 		output, err = executor.Execute(nodeCtx, node, cloneInput(input), execution)
 		cancel()
+		err = secrets.scrub(err)
 		var suspended *SuspendError
 		if err != nil && errors.As(err, &suspended) {
 			return nil, nil, "", attempt, suspended, nil

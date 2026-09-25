@@ -203,6 +203,12 @@ func (b *binding) requestContext(ctx context.Context, timeoutMS int) (context.Co
 
 // requestFailed maps a failed request onto what the pack is told.
 func (b *binding) requestFailed(ctx context.Context, module api.Module, err error, target string) int32 {
+	// Every branch below may quote the error, and the request carried the
+	// host-applied credential — a query secret, a token in the path, or
+	// userinfo — so the URL is cut to its scheme and host before anything
+	// reads it. A pack that read the secret back out of an error message would
+	// have learned what the host never meant to hand it.
+	err = safehttp.RedactError(err)
 	// A request that ran out of the run's wall clock ended the run, and the
 	// honest report is the run's time limit rather than a failed call the pack
 	// would retry.
@@ -217,24 +223,8 @@ func (b *binding) requestFailed(ctx context.Context, module api.Module, err erro
 	case errors.Is(err, context.Canceled):
 		return b.fail(sdk.ErrFailed, "the request to "+displayURL(target)+" was cancelled")
 	default:
-		return b.fail(sdk.ErrFailed, sanitizedFailure(err))
+		return b.fail(sdk.ErrFailed, err.Error())
 	}
-}
-
-// sanitizedFailure renders a transport failure without the URL's userinfo.
-//
-// A *url.Error carries the URL it failed on, and a URL may carry credentials in
-// its userinfo; a pack that read them back out of an error message would have
-// learned a secret the host never meant to hand it.
-func sanitizedFailure(err error) string {
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) {
-		if parsed, parseErr := url.Parse(urlErr.URL); parseErr == nil && parsed.User != nil {
-			parsed.User = nil
-			return fmt.Sprintf("%s %s: %v", urlErr.Op, parsed, urlErr.Err)
-		}
-	}
-	return err.Error()
 }
 
 // displayURL renders a target for a message, without its userinfo.

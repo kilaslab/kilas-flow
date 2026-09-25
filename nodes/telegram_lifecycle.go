@@ -170,7 +170,10 @@ func telegramCall(ctx context.Context, policy safehttp.Policy, baseURL, token, m
 	}
 	response, err := safehttp.NewClient(policy).Do(request)
 	if err != nil {
-		return nil, err
+		// The URL carries the bot token in its path, and this error reaches
+		// activation's answer and the polling loop's Warn line on every
+		// failure: only the scheme and host go on.
+		return nil, safehttp.RedactError(err)
 	}
 	defer response.Body.Close()
 	contents, _, err := policy.ReadBody(response.Body)

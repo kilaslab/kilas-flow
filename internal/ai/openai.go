@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
 // OpenAICompatible is a ChatModel over the OpenAI chat-completions API shape.
@@ -257,6 +259,9 @@ func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, s
 		response, err := model.client.Do(httpRequest)
 		if err != nil {
 			cancel()
+			// The transport error prints the URL, which a provider's base URL
+			// may have given a key in its query: only the scheme and host go on.
+			err = safehttp.RedactError(err)
 			// The attempt's own deadline is named only when the attempt is
 			// what expired. A caller whose context ended first — the
 			// deployment's run ceiling on an agent node — did not ask for too

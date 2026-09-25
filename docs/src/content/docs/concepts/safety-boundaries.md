@@ -123,6 +123,17 @@ credential can be applied. It is a narrowing on top of the policy above, never a
 replacement: a credential permitted to reach `example.com` still cannot reach it
 if the deployment's outbound policy refuses the resolved address.
 
+### A failed request names its host, never its URL
+
+Go's transport error prints the whole request URL, and a credential can sit in
+its query or its path. Every outbound call site passes that error through
+`safehttp.RedactError`, which keeps the operation, the scheme and host (port
+included) and the cause, and withholds the path, the query and any userinfo:
+`Get "http://127.0.0.1:18999": dial tcp …: connection refused`. A node's error is
+also scrubbed of the secret values of every credential the node resolved before
+the runner records it; see [keeping a secret out of error
+text](/concepts/credentials/#keeping-a-secret-out-of-error-text).
+
 ### The JavaScript sidecar (opt-in)
 
 The claim above — *every* outbound request a node makes goes through
@@ -498,7 +509,8 @@ stops a list like this one from silently going stale.
 
 `internal/safehttp/safehttp.go` (`Policy.CheckURL`, `Policy.CheckAddress`,
 `ReadBody`, and the `DialContext` and `CheckRedirect` closures `NewClient`
-builds), `internal/sqlnode/sqlnode.go` (`Guard`,
+builds), `internal/safehttp/redact.go` (`RedactError`),
+`internal/sqlnode/sqlnode.go` (`Guard`,
 `sqlitePath`, `Ceiling`), `internal/runcode/` (the wazero sandbox and its
 limits), `internal/credentials/credentials.go` (`AllowsHost`),
 `internal/binary/binary.go`, `internal/expression/doc.go`,

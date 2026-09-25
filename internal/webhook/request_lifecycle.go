@@ -491,7 +491,10 @@ func call(ctx context.Context, lifecycleContext LifecycleContext, credential eng
 
 	response, err := safehttp.NewClient(lifecycleContext.HTTP).Do(request)
 	if err != nil {
-		return nil, err
+		// A lifecycle URL may carry the credential — a bot token in the path —
+		// and this error becomes activation's 502 detail and deactivation's
+		// Warn line: only the scheme and host go on.
+		return nil, safehttp.RedactError(err)
 	}
 	defer response.Body.Close()
 	payload, _, err := lifecycleContext.HTTP.ReadBody(response.Body)

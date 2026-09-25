@@ -90,7 +90,7 @@ func (provider *VaultProvider) Health(ctx context.Context) error {
 	}
 	response, err := provider.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("vault is unreachable: %w", err)
+		return fmt.Errorf("vault is unreachable: %w", safehttp.RedactError(err))
 	}
 	defer response.Body.Close()
 	_, _, _ = provider.policy.ReadBody(response.Body)
@@ -123,7 +123,7 @@ func (provider *VaultProvider) Fetch(ctx context.Context, key string) (string, e
 	request.Header.Set("X-Vault-Token", provider.token)
 	response, err := provider.client.Do(request)
 	if err != nil {
-		return "", fmt.Errorf("vault fetch: %w", err)
+		return "", fmt.Errorf("vault fetch: %w", safehttp.RedactError(err))
 	}
 	defer response.Body.Close()
 	switch response.StatusCode {

@@ -328,7 +328,9 @@ func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, p
 
 	response, err := executor.redirectClient(parameters).Do(httpRequest)
 	if err != nil {
-		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+		// The transport error prints the URL, and an httpQueryAuth credential
+		// was just written into its query: only the scheme and host go on.
+		return nil, fmt.Errorf("node %q: %w", ir.Name, safehttp.RedactError(err))
 	}
 	defer response.Body.Close()
 

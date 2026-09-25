@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kilaslab/kilas-flow/internal/execution"
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
@@ -378,6 +377,10 @@ func (cache *RefCache) InvalidateBinding(tenantID, binding string) {
 // redaction cannot see: a token interpolated into a request body under an
 // innocuous field name. Only string scalars are touched; keys, numbers and
 // structure survive, so an inspector still shows the shape of what ran.
+//
+// Each string goes through ScrubText, the same replacement the engine applies
+// to a node's error text, so a payload and an error cannot disagree about what
+// a withheld secret looks like.
 func ScrubResolved(payload json.RawMessage, secrets []string) json.RawMessage {
 	needles := make([]string, 0, len(secrets))
 	for _, secret := range secrets {
@@ -403,13 +406,7 @@ func ScrubResolved(payload json.RawMessage, secrets []string) json.RawMessage {
 func scrubValue(value any, needles []string) any {
 	switch typed := value.(type) {
 	case string:
-		scrubbed := typed
-		for _, needle := range needles {
-			if strings.Contains(scrubbed, needle) {
-				scrubbed = strings.ReplaceAll(scrubbed, needle, execution.RedactedValue)
-			}
-		}
-		return scrubbed
+		return ScrubText(typed, needles)
 	case map[string]any:
 		for key, nested := range typed {
 			typed[key] = scrubValue(nested, needles)

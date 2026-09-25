@@ -266,8 +266,10 @@ func (resolver *Resolver) loadHTTP(
 	response, err := safehttp.NewClient(policy).Do(request)
 	if err != nil {
 		// safehttp's own refusal text is passed through, so a loader aimed at a
-		// disallowed host fails with the error an HTTP node would produce.
-		return Result{}, err
+		// disallowed host fails with the error an HTTP node would produce —
+		// redacted the same way, because the credential may be in the URL and
+		// this answer goes straight back to the editor.
+		return Result{}, safehttp.RedactError(err)
 	}
 	defer response.Body.Close()
 	body, _, err := policy.ReadBody(response.Body)
