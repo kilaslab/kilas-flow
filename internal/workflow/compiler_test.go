@@ -1,6 +1,7 @@
 package workflow_test
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -94,6 +95,90 @@ func TestCompileRequiresADeclaredCredential(t *testing.T) {
 	// A node whose credential is optional still compiles with none.
 	if _, err := workflow.Compile(document("test.optionalCredential", nil), catalog); err != nil {
 		t.Errorf("Compile() of a node with no required credential = %v, want accepted", err)
+	}
+}
+
+// A node may only carry a credential of a type it declares.
+//
+// The runtime resolves whatever a node attaches and checks the credential
+// against the key it was attached under, never against the node: an HTTP
+// Request node carrying {"openAiApi": id} would sign its request with the
+// OpenAI key and send it to whatever URL the editor typed. The compiler is
+// where that is refused, because it is what gates both activation and a run.
+func TestCompileRefusesACredentialTypeTheNodeDoesNotDeclare(t *testing.T) {
+	t.Parallel()
+
+	catalog := stubCatalog{definitions: map[string]workflow.NodeDefinition{
+		"test.trigger": {
+			Type: "test.trigger", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+		"test.http": {
+			Type: "test.http", Version: workflow.V(1),
+			Inputs:          []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs:         []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			CredentialTypes: []string{"httpHeaderAuth", "httpBearerAuth"},
+		},
+		"test.plain": {
+			Type: "test.plain", Version: workflow.V(1),
+			Inputs:  []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+	}}
+	document := func(nodeType string, disabled bool, credentials map[string]string) workflow.Document {
+		return workflow.Document{
+			SchemaVersion: workflow.CurrentSchemaVersion,
+			ID:            "wf_undeclared", Name: "Undeclared credential",
+			Nodes: []workflow.Node{
+				{ID: "trigger", Name: "Trigger", Type: "test.trigger", TypeVersion: workflow.V(1)},
+				{ID: "node", Name: "Exfil", Type: nodeType, TypeVersion: workflow.V(1), Credentials: credentials, Disabled: disabled},
+			},
+			Connections: []workflow.Connection{{
+				ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "trigger", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "node", Port: "main"},
+			}},
+			Settings: map[string]any{},
+		}
+	}
+
+	_, err := workflow.Compile(document("test.http", false, map[string]string{"openAiApi": "cred-ai"}), catalog)
+	var validation *workflow.ValidationErrors
+	if err == nil {
+		t.Fatal("Compile() accepted an HTTP node carrying an OpenAI credential it does not declare")
+	}
+	for _, want := range []string{"openAiApi", "test.http", "httpHeaderAuth"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Compile() = %v, want the problem to name %q", err, want)
+		}
+	}
+	if errors.As(err, &validation) {
+		found := false
+		for _, issue := range validation.Issues {
+			if issue.Path == "/nodes/1/credentials/openAiApi" && issue.NodeID == "node" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("issues = %#v, want one pointing at the attached credential", validation.Issues)
+		}
+	}
+
+	// A node that declares no credential at all is held to the same rule.
+	if _, err := workflow.Compile(document("test.plain", false, map[string]string{"httpHeaderAuth": "cred-1"}), catalog); err == nil {
+		t.Error("Compile() accepted a credential on a node that declares none")
+	}
+	// A declared type compiles, and an empty reference is no attachment.
+	if _, err := workflow.Compile(document("test.http", false, map[string]string{"httpHeaderAuth": "cred-1"}), catalog); err != nil {
+		t.Errorf("Compile() with a declared type = %v, want accepted", err)
+	}
+	if _, err := workflow.Compile(document("test.http", false, map[string]string{"openAiApi": "  "}), catalog); err != nil {
+		t.Errorf("Compile() with an empty undeclared reference = %v, want accepted", err)
+	}
+	// A disabled node never runs, so nothing it carries is ever applied — the
+	// same reason a disabled node's missing credential is not a refusal.
+	if _, err := workflow.Compile(document("test.http", true, map[string]string{"openAiApi": "cred-ai"}), catalog); err != nil {
+		t.Errorf("Compile() of a disabled node = %v, want accepted", err)
 	}
 }
 

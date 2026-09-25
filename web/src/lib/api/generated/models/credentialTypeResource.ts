@@ -8,6 +8,13 @@
 import type { Field } from './field';
 
 export interface CredentialTypeResource {
+  /**
+     * Hosts a credential of this type is confined to when it is saved with no allowed domains
+     * @nullable
+     */
+  defaultDomains?: string[] | null;
+  /** Field whose URL host is the default scope when the credential is saved with no allowed domains */
+  defaultDomainsFrom?: string;
   description?: string;
   displayName: string;
   /** @nullable */

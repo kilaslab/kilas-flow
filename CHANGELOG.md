@@ -423,6 +423,39 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Security
 
+- An embedded guest editor or a narrowed agent token can no longer send a
+  credential it may use to a host of its own and read the secret. Three rules
+  close it:
+  - OpenAI and OpenRouter credentials saved with no allowed domains are held to
+    `api.openai.com` and `openrouter.ai`. Telegram and WAHA credentials are held
+    to the host of their own base URL, so a local Bot API server keeps working.
+    Google credentials keep their Google hosts. The default applies to
+    credentials stored before this release too. The API reads each credential
+    back with the scope it enforces, and the credential form says what leaving
+    the field empty means, and a redirect is held to that default scope too.
+    **Behaviour change:** an existing OpenAI or OpenRouter
+    credential that a chat model node sends to a gateway or proxy through its
+    base URL, with no allowed domains saved, is now refused there. Add the
+    gateway's host to the credential's allowed domains.
+  - A node may carry only a credential type it declares. A workflow that
+    attaches another type, such as an OpenAI key on an HTTP Request node, no
+    longer runs or activates, and the problem names the node, the type and the
+    types the node accepts. The draft still saves.
+  - An embed session and a scoped API key may not save, run or retry a workflow
+    that attaches an unscoped credential to a node that calls out. An unscoped
+    credential is one that has no allowed domains of its own or from its type.
+    Scoping the credential lifts the refusal. Database, SQLite and JWT
+    credentials, credentials a Webhook or Form trigger only verifies against,
+    and credentials on a disabled node, are not affected. The tenant's own keys and the dashboard are
+    unaffected.
+
+- An embed session's credential listing no longer discloses other
+  credentials through its paging cursor. The listing was filtered after the page
+  was cut, and the cursor still named the last row of the unfiltered page, so
+  paging with `limit=1` walked every credential name and id in the tenant. The
+  session's grant is now applied in the query, and every row and cursor comes
+  from it.
+
 - A secret placed in a URL no longer leaks through a failed request's error.
   Go's transport error prints the whole URL, so an `httpQueryAuth` secret (in
   the query) or a Telegram bot token (in the path) reached the execution's

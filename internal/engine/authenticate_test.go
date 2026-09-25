@@ -263,3 +263,42 @@ func TestAuthenticateAsHonoursTheCredentialDomainScope(t *testing.T) {
 		t.Error("the scope does not match the credential's AllowedDomains")
 	}
 }
+
+// TestAnUnscopedFixedHostCredentialIsHeldToItsTypesDefault is the re-pointing
+// exploit at the engine seam: an OpenAI key stored with no allowed domains,
+// attached to a node whose URL the editor chose. The resolver hands back the
+// row as stored — empty list and all — so the default has to be applied where
+// the scope is checked, not where the row is read, or a resolver that is not
+// the repository would skip it.
+func TestAnUnscopedFixedHostCredentialIsHeldToItsTypesDefault(t *testing.T) {
+	t.Parallel()
+
+	request := engine.Request{Credentials: stubCredentials{credential: engine.Credential{
+		ID: "cred_ai", Name: "OpenAI", Type: "openAiApi",
+		Fields: map[string]string{"apiKey": "sk-live-secret"},
+	}}}
+	node := workflow.IRNode{Name: "Model", Credentials: map[string]string{"openAiApi": "cred_ai"}}
+
+	attacker, err := http.NewRequest(http.MethodPost, "https://attacker.example/v1/chat/completions", nil)
+	if err != nil {
+		t.Fatalf("building the request failed: %v", err)
+	}
+	if err := request.Authenticate(context.Background(), node, attacker); err == nil {
+		t.Fatal("Authenticate() sent an OpenAI key to a host outside api.openai.com")
+	}
+	if got := attacker.Header.Get("Authorization"); got != "" {
+		t.Errorf("Authorization = %q, want no secret on a refused host", got)
+	}
+
+	home, err := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	if err != nil {
+		t.Fatalf("building the request failed: %v", err)
+	}
+	if err := request.Authenticate(context.Background(), node, home); err != nil {
+		t.Fatalf("Authenticate() refused the credential's own service: %v", err)
+	}
+	unscoped := engine.Credential{Type: "openAiApi"}
+	if !unscoped.AllowsHost("api.openai.com") || unscoped.AllowsHost("attacker.example") {
+		t.Error("Credential.AllowsHost does not apply the type's default scope")
+	}
+}

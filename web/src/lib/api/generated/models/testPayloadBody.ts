@@ -11,7 +11,7 @@ export interface TestPayloadBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
-     * Hosts the probe may reach. Empty means unrestricted, unless a stored secret was used: the stored credential's allowedDomains then apply, narrowed by these.
+     * Hosts the probe may reach. Empty means the type's default scope, or any host for a type that has none, unless a stored secret was used: the stored credential's effective scope then applies, narrowed by these.
      * @nullable
      */
   allowedDomains?: string[] | null;

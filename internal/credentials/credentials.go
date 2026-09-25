@@ -44,9 +44,11 @@ type Record struct {
 	// without decrypting the payload. Nil means the row predates the record,
 	// and every secret is then assumed set.
 	SetSecrets []string
-	// AllowedDomains scopes where this credential may be sent. An empty list
-	// means unrestricted, which the API surfaces explicitly. On an update, nil
-	// means "keep the stored scope" and a non-nil empty list clears it.
+	// AllowedDomains scopes where this credential may be sent, as its author
+	// saved it. An empty list means the type's default scope, which is
+	// unrestricted only for a type that has none — see EffectiveDomains. On an
+	// update, nil means "keep the stored scope" and a non-nil empty list
+	// clears it.
 	AllowedDomains []string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -55,12 +57,18 @@ type Record struct {
 // AllowsHost reports whether this credential may be sent to a host. A leading
 // `*.` matches any subdomain but never the bare parent domain, so scoping to
 // `*.internal.test` does not silently authorize `internal.test` itself.
+//
+// The scope checked is the effective one, so a credential saved with no list
+// is still held to its type's default. Every place a credential is applied
+// asks this method, which is why the default is resolved here rather than in
+// each of them.
 func (record Record) AllowsHost(host string) bool {
-	if len(record.AllowedDomains) == 0 {
+	domains := record.EffectiveDomains()
+	if len(domains) == 0 {
 		return true
 	}
 	host = strings.ToLower(strings.TrimSuffix(hostWithoutPort(host), "."))
-	for _, domain := range record.AllowedDomains {
+	for _, domain := range domains {
 		domain = strings.ToLower(strings.TrimSpace(domain))
 		if domain == "" {
 			continue
@@ -146,8 +154,12 @@ func intersectEntry(left, right string) (string, bool) {
 // chain: its domains when it names any, and the first request's host when it
 // names none. Every caller that attaches a credential to a request attaches
 // this, so the two halves cannot be assembled differently in two places.
+//
+// "Names none" is asked of the effective scope: a credential whose domains come
+// from its type's default — an OpenAI key held to api.openai.com — is bounded
+// by that default across a redirect too, not merely pinned to the first host.
 func (record Record) RedirectScope() safehttp.CredentialScope {
-	return safehttp.CredentialScope{AllowsHost: record.AllowsHost, Unbounded: len(record.AllowedDomains) == 0}
+	return safehttp.CredentialScope{AllowsHost: record.AllowsHost, Unbounded: len(record.EffectiveDomains()) == 0}
 }
 
 func hostWithoutPort(host string) string {
@@ -181,6 +193,10 @@ type Definition struct {
 	DisplayName string  `json:"displayName"`
 	Description string  `json:"description,omitempty"`
 	Fields      []Field `json:"fields"`
+	// DefaultDomains and DefaultDomainsFrom tell an editor what an empty
+	// allowed-domains list means for this type; see Type.
+	DefaultDomains     []string `json:"defaultDomains,omitempty"`
+	DefaultDomainsFrom string   `json:"defaultDomainsFrom,omitempty"`
 }
 
 // Lookup returns one credential type definition.

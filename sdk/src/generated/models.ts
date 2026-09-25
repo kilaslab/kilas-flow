@@ -519,7 +519,7 @@ export interface CredentialBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
-     * Hosts this credential may be sent to. An empty list means unrestricted. On update, leaving this out keeps the stored scope and an explicit empty list clears it (a Google credential then gets the Google hosts).
+     * Hosts this credential may be sent to. An empty list means the type's default scope, or any host for a type that has none. On update, leaving this out keeps the stored scope and an explicit empty list resets it to that default.
      * @nullable
      */
   allowedDomains?: string[] | null;
@@ -551,7 +551,10 @@ export type CredentialResourceFields = {[key: string]: string};
 export interface CredentialResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
+  /**
+     * Hosts this credential may be sent to, including its type's default when none were saved. Empty means any host.
+     * @nullable
+     */
   allowedDomains: string[] | null;
   createdAt: string;
   fields: CredentialResourceFields;
@@ -571,6 +574,13 @@ export interface Field {
 }
 
 export interface CredentialTypeResource {
+  /**
+     * Hosts a credential of this type is confined to when it is saved with no allowed domains
+     * @nullable
+     */
+  defaultDomains?: string[] | null;
+  /** Field whose URL host is the default scope when the credential is saved with no allowed domains */
+  defaultDomainsFrom?: string;
   description?: string;
   displayName: string;
   /** @nullable */
@@ -1618,7 +1628,7 @@ export interface TestPayloadBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
-     * Hosts the probe may reach. Empty means unrestricted, unless a stored secret was used: the stored credential's allowedDomains then apply, narrowed by these.
+     * Hosts the probe may reach. Empty means the type's default scope, or any host for a type that has none, unless a stored secret was used: the stored credential's effective scope then applies, narrowed by these.
      * @nullable
      */
   allowedDomains?: string[] | null;

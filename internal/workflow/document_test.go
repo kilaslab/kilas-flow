@@ -601,6 +601,9 @@ func TestCompileCopiesCanonicalDataIntoIndependentIR(t *testing.T) {
 		"kilasflow.set": {
 			Type: "kilasflow.set", Version: workflow.V(1),
 			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			// Declared, because a node may carry only a credential type it
+			// uses; this test is about the copy, not that rule.
+			CredentialTypes: []string{"authentication"},
 		},
 	})
 	if err != nil {

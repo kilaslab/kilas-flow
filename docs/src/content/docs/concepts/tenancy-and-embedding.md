@@ -230,7 +230,7 @@ handler will run.
 | Request | Result |
 | --- | --- |
 | anything under `/node-types` | needs `workflow:read` |
-| `GET /credentials` | needs `workflow:read` — the editor has to offer a picker |
+| `GET /credentials` | needs `workflow:read` — the editor has to offer a picker; lists only the credentials the session was granted, and pages over those alone, so no cursor names another |
 | `GET /workflows/{that one}` | needs `workflow:read` |
 | `POST /workflows/{that one}/run` | needs `workflow:run` |
 | any other write to `/workflows/{that one}` | needs `workflow:write` |
@@ -261,6 +261,49 @@ default:
 A route added tomorrow is denied to embed sessions until somebody deliberately
 permits it. That is the correct direction for a security boundary, and it is the
 opposite of what an enumerate-the-forbidden approach would give.
+
+### Credentials in a confined caller's document
+
+The table bounds what a session may *call*. The document it saves is checked
+too, at every point where it hands one to the server — a save, a publish, a
+restore, a run and a retry — against a confinement minted into the token from the
+revision the workflow's owner published: the credentials, data tables and
+sub-workflows that revision uses, and nothing else.
+
+That check on credential **ids** is not enough on its own. A guest holding
+`workflow:write` may edit where a request goes — an HTTP node's URL, a chat model
+node's base URL — so a credential it was granted, attached to a node it wrote,
+could be sent to a host it runs. Two rules close that:
+
+- **A session may not save or run a document that attaches an unscoped
+  credential**, one that is sent over HTTP and has no allowed domains of its own
+  or from its type. A scoped credential is refused at every host outside its
+  scope, whatever URL the guest types, so this is the whole rule: it does not
+  try to predict which host a node will reach, which an expression decides only
+  at run time. OpenAI, OpenRouter, Google, Telegram and WAHA credentials have a
+  default scope and pass; database, SQLite and JWT credentials are never sent on
+  a request whose URL a node chooses and pass too, and so does a credential a
+  Webhook or Form trigger uses only to verify the requests arriving at it — the
+  [embedding guide](/guides/embedding/)'s header-protected trigger keeps working.
+  A generic HTTP credential the owner never scoped, on a node that calls out, is
+  refused, and the refusal says so — scoping it is the fix. A disabled node is
+  skipped, since it never runs; switching it back on is a save, and is checked.
+  The grant check above is not relaxed for a disabled node: what a session may
+  reference does not depend on whether the node is switched on.
+- **A node may carry only the credential types it declares.** The compiler
+  refuses anything else, so a granted OpenAI key cannot be moved onto an HTTP
+  Request node.
+
+The refusal names the node and the credential id, never the credential's name.
+A credential outside the session's grant is refused as ungranted without the
+session learning whether it is scoped.
+
+A **scoped API key** — an agent token — is held to the unscoped-credential rule
+as well, on create, save, restore, run and retry. It is not held to
+the minted grant: a key has no minted confinement, and choosing which of the
+tenant's credentials a workflow uses is inside the authority the tenant gave its
+own automation. Reading a secret is not, which is what the rule stops. A
+tenant-wide key and the dashboard are unaffected.
 
 The token is read from an `X-KilasFlow-Embed` header, or from an
 `Authorization: Bearer` value **only if** it starts with `kfe1.` — so an API key

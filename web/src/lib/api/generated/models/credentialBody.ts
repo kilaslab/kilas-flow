@@ -11,7 +11,7 @@ export interface CredentialBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
-     * Hosts this credential may be sent to. An empty list means unrestricted. On update, leaving this out keeps the stored scope and an explicit empty list clears it (a Google credential then gets the Google hosts).
+     * Hosts this credential may be sent to. An empty list means the type's default scope, or any host for a type that has none. On update, leaving this out keeps the stored scope and an explicit empty list resets it to that default.
      * @nullable
      */
   allowedDomains?: string[] | null;

@@ -102,7 +102,8 @@ func (egress *sidecarEgress) HTTP(ctx context.Context, call sidecar.HTTPRequest)
 	if len(egress.held) > 0 {
 		unbounded := false
 		for _, credential := range egress.held {
-			unbounded = unbounded || len(credential.AllowedDomains) == 0
+			// The effective scope decides, so a type default counts as named.
+			unbounded = unbounded || credential.RedirectScope().Unbounded
 		}
 		scoped = safehttp.WithCredentialScope(ctx, safehttp.CredentialScope{AllowsHost: func(host string) bool {
 			for _, credential := range egress.held {

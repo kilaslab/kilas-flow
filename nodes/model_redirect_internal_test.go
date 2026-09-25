@@ -25,10 +25,14 @@ func (resolver fixedModelCredential) ResolveCredential(context.Context, string) 
 	return resolver.credential, nil
 }
 
+// A generic bearer credential rather than an OpenAI one: an OpenAI key with no
+// domains is held to api.openai.com by its type's default, so it could never
+// reach these loopback servers, and the "no domains named" redirect rule these
+// tests pin applies only to a credential whose type has no default either.
 func modelKeyCredential(domains ...string) engine.Request {
 	return engine.Request{Credentials: fixedModelCredential{credential: engine.Credential{
-		ID: "cred-1", Name: "Model key", Type: OpenAICredentialType, AllowedDomains: domains,
-		Fields: map[string]string{"apiKey": "MODEL-KEY-SECRET"},
+		ID: "cred-1", Name: "Model key", Type: BearerCredentialType, AllowedDomains: domains,
+		Fields: map[string]string{"token": "MODEL-KEY-SECRET"},
 	}}}
 }
 

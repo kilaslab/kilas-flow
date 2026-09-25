@@ -61,6 +61,10 @@ func (handler *Executions) Retry(ctx context.Context, input *executionPathInput)
 		}
 	}
 
+	if err := handler.confinedRetryProblem(ctx, record); err != nil {
+		return nil, err
+	}
+
 	// The same queue path a manual run takes, with the revision named instead
 	// of resolved: the graph is compiled under this tenant's catalogue and the
 	// trigger node is checked against it before anything is queued, so a retry
@@ -188,6 +192,39 @@ type WorkflowVersionReader interface {
 func (handler *Executions) WithWorkflowVersions(workflows WorkflowVersionReader) *Executions {
 	handler.workflows = workflows
 	return handler
+}
+
+// WithCredentials gives the handler the credential store a confined caller's
+// retry is checked against.
+func (handler *Executions) WithCredentials(store repository.CredentialRepository) *Executions {
+	handler.credentials = store
+	return handler
+}
+
+// confinedRetryProblem holds a retry by a confined caller to the same document
+// check a run gets.
+//
+// A retry queues the revision the original ran, which need not be the latest
+// one a run would check: an old revision attaching an unscoped credential — or,
+// for a session, a credential outside its grant — would otherwise execute
+// through this route with the tenant's authority. Without the revision reader
+// the document cannot be read, so a confined caller is refused rather than let
+// through unchecked.
+func (handler *Executions) confinedRetryProblem(ctx context.Context, record execution.Record) error {
+	if _, _, caller, confined := confinedCaller(ctx); !confined {
+		return nil
+	} else if handler.workflows == nil {
+		return huma.Error503ServiceUnavailable("workflow revisions unavailable: " + caller + " cannot retry here")
+	}
+	tenant := handler.tenants.Resolve(ctx)
+	version, err := handler.workflows.GetVersionByID(ctx, tenant, record.WorkflowID, record.WorkflowVersionID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return huma.Error404NotFound("the revision this execution ran no longer exists")
+	}
+	if err != nil {
+		return serverProblem(ctx, "execution revision lookup failed", err)
+	}
+	return confinedDocumentProblem(ctx, handler.credentials, tenant, version.Document)
 }
 
 // ranDocument reads the revision an execution was pinned to.

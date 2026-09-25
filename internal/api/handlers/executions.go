@@ -189,8 +189,13 @@ type Executions struct {
 	catalog workflow.Catalog
 	// workflows reads the revision an execution ran, so an evaluation can name
 	// nodes the way the workflow's own expressions do. Optional: without it an
-	// evaluation addresses nodes by the ids the trace shows.
+	// evaluation addresses nodes by the ids the trace shows. A confined
+	// caller's retry reads the revision through it too, and is refused
+	// without it.
 	workflows WorkflowVersionReader
+	// credentials reads the scope of each credential a confined caller's
+	// retried revision attaches.
+	credentials repository.CredentialRepository
 	// api is the surface this handler registered on, kept so an operation
 	// middleware can write the same RFC 9457 problem body every other
 	// endpoint does. huma hands the API to Register and to nothing else, and a

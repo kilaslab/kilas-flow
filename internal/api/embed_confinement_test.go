@@ -174,10 +174,13 @@ func TestAnEmbedSessionMaySaveWhatItsOwnPublishedRevisionReferences(t *testing.T
 	handler, _, workflowID := embedServer(t)
 
 	// The owner authors a revision that uses one credential, and publishes it.
-	// That revision is the session's whole authority — nothing else.
-	referenced := storeCredential(t, handler, "Workspace", "httpHeaderAuth", map[string]string{
+	// That revision is the session's whole authority — nothing else. The
+	// credential is scoped to the host the node calls: an unscoped one is
+	// refused to a session whatever its grant (see
+	// TestAnEmbedGuestCannotRePointAGrantedUnscopedCredential).
+	referenced := storeScopedCredential(t, handler, "Workspace", "httpHeaderAuth", map[string]string{
 		"name": "X-Api-Key", "value": "owner-secret",
-	})
+	}, "partner.test")
 	ownerDocument := documentReferencing("Embeddable", embedWorkflowNode("collect", referenced.ID))
 	requestJSON[workflowResource](t, handler, http.MethodPut, "/api/v1/workflows/"+workflowID,
 		workflowDraft(ownerDocument), http.StatusOK)

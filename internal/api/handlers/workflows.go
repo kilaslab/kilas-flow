@@ -50,6 +50,10 @@ type Workflows struct {
 	// execution. Optional: a nil service refuses a request that carries an
 	// Idempotency-Key rather than running it unprotected.
 	idempotency *idempotency.Service
+	// credentials reads the scope of each credential a confined caller's
+	// document attaches. Without it such a document is refused rather than
+	// let through unchecked; see confinedDocumentProblem.
+	credentials repository.CredentialRepository
 }
 
 // SessionForgetter drops a workflow's retained agent conversations. It is a
@@ -458,6 +462,12 @@ func (handler *Workflows) Create(ctx context.Context, input *createWorkflowInput
 		return nil, err
 	}
 	document := input.Body.document("")
+	// An embed session cannot reach this route, but a scoped key that may
+	// write can, and a new workflow is as good a place to aim a credential as
+	// an existing one.
+	if err := handler.confinedDocumentProblem(ctx, document); err != nil {
+		return nil, err
+	}
 	if err := workflow.ValidateDraftWithServerID(document); err != nil {
 		return nil, draftProblem(err)
 	}
@@ -600,7 +610,7 @@ func (handler *Workflows) PublishVersion(ctx context.Context, input *publishVers
 	if err := handler.available(true); err != nil {
 		return nil, err
 	}
-	if err := handler.embedVersionProblem(ctx, input.ID, input.VersionID); err != nil {
+	if err := handler.confinedVersionProblem(ctx, input.ID, input.VersionID); err != nil {
 		return nil, err
 	}
 	// The catalogue is narrowed to the publishing tenant: a revision that
@@ -619,7 +629,7 @@ func (handler *Workflows) RestoreVersion(ctx context.Context, input *publishVers
 	if err := handler.available(false); err != nil {
 		return nil, err
 	}
-	if err := handler.embedVersionProblem(ctx, input.ID, input.VersionID); err != nil {
+	if err := handler.confinedVersionProblem(ctx, input.ID, input.VersionID); err != nil {
 		return nil, err
 	}
 	stored, err := handler.workflows.RestoreVersion(audited(ctx, input.SkillsUsed), handler.tenant(ctx), input.ID, input.VersionID, input.reason())
@@ -671,11 +681,11 @@ func (handler *Workflows) Update(ctx context.Context, input *updateWorkflowInput
 		}
 	}
 	document := input.Body.document(input.ID)
-	// An embed session is refused before the compiler is consulted: what it may
-	// put in the document is a question about its authority, and answering it
-	// first keeps a refusal from arriving as a graph error the guest cannot
+	// A confined caller is refused before the compiler is consulted: what it
+	// may put in the document is a question about its authority, and answering
+	// it first keeps a refusal from arriving as a graph error the guest cannot
 	// act on.
-	if err := embedDocumentProblem(ctx, document); err != nil {
+	if err := handler.confinedDocumentProblem(ctx, document); err != nil {
 		return nil, err
 	}
 	if err := workflow.ValidateDraft(document); err != nil {
@@ -868,10 +878,10 @@ func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*ru
 	// it follows the revision the call names: a pinned run is checked against
 	// that revision, an ordinary one against the latest.
 	if versionID == "" {
-		if err := handler.embedStoredProblem(ctx, input.ID); err != nil {
+		if err := handler.confinedStoredProblem(ctx, input.ID); err != nil {
 			return nil, err
 		}
-	} else if err := handler.embedVersionProblem(ctx, input.ID, versionID); err != nil {
+	} else if err := handler.confinedVersionProblem(ctx, input.ID, versionID); err != nil {
 		return nil, err
 	}
 	// queue is the side effect, and it wakes a worker exactly once: a replay
@@ -1137,5 +1147,12 @@ func (handler *Workflows) WithTriggers(coordinator TriggerCoordinator) *Workflow
 // unprotected.
 func (handler *Workflows) WithIdempotency(service *idempotency.Service) *Workflows {
 	handler.idempotency = service
+	return handler
+}
+
+// WithCredentials gives the handler the credential store a confined caller's
+// document is checked against.
+func (handler *Workflows) WithCredentials(store repository.CredentialRepository) *Workflows {
+	handler.credentials = store
 	return handler
 }

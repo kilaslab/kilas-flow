@@ -49,10 +49,11 @@ Changing a name therefore never blanks a password, a JWT private key, or the
 refresh token Connect stored. To clear a field, send it as an empty string.
 
 The scope follows the same rule. An update that leaves `allowedDomains` out
-keeps the stored scope; only an explicit empty list makes the credential
-unrestricted (a Google credential then gets the Google hosts, as it does at
-create). Reading an omitted scope as "unrestricted" would let any rename widen
-where the secret may be sent.
+keeps the stored scope; only an explicit empty list resets it to the type's
+default — unrestricted for a generic HTTP type, the provider's hosts for a
+fixed-host type, as at create (see [where a credential may be
+sent](#where-a-credential-may-be-sent)). Reading an omitted scope as "reset"
+would let any rename widen where the secret may be sent.
 
 Creating a credential refuses the redaction placeholder as a value. There is no
 stored value for it to stand for, so storing it would make eight bullet
@@ -86,8 +87,38 @@ every operation rather than falling back to storing plaintext.
 
 ## Where a credential may be sent
 
-Every credential carries `allowedDomains`. An empty list means unrestricted,
-which the API surfaces explicitly rather than leaving to be inferred.
+Every credential carries `allowedDomains`. What an empty list means depends on
+the type:
+
+| Type | An empty list means |
+| --- | --- |
+| `openAiApi` | `api.openai.com` only |
+| `openRouterApi` | `openrouter.ai` only |
+| `googleDriveOAuth2Api`, `gmailOAuth2` | the Google API and sign-in hosts |
+| `telegramApi` | the host of the credential's own **Base URL** — `api.telegram.org` by default, or your local Bot API server |
+| `wahaApi` | the host of the credential's own **Base URL** |
+| `httpBasicAuth`, `httpHeaderAuth`, `httpBearerAuth`, `httpQueryAuth`, `httpCustomAuth`, and any pack type with no default | any host |
+
+A type whose service lives at one address declares it, and an empty list on that
+type means that address rather than everywhere. Without it, anyone who could
+edit a workflow could point an OpenAI key at a server they run and read it off
+the wire. A list you type always **replaces** the default rather than adding to
+it: to reach OpenAI through a gateway, list the gateway's host.
+
+The default is resolved **wherever the scope is checked**, not written into
+stored rows, so a credential saved before its type had a default is held to it
+from the moment the server upgrades. A fixed list is also stored when a
+credential is saved with none, the way the Google types always did, so the row
+and the form show it. A default derived from a field is never stored: a stored
+copy would keep naming the old host after you moved the Base URL. The API reads
+every credential back with the scope it enforces, default included, and
+`GET /api/v1/credential-types` carries each type's `defaultDomains` or
+`defaultDomainsFrom` so an editor can say what leaving the field empty means.
+
+Upgrading changes one behaviour on purpose. An existing OpenAI or OpenRouter
+credential that a chat model node sends to a gateway or proxy through its
+**Base URL**, with no allowed domains saved, is now refused at that host. Add the
+gateway's host to the credential's allowed domains.
 
 What it is compared against is the **host of the outbound request that is about
 to carry the secret** — not the workflow, not the credential's own base URL. The
@@ -119,9 +150,11 @@ so without this an `X-Api-Key`, a WAHA key or a custom template's headers would
 follow a redirect anywhere. Two more rules apply while a credential is
 attached:
 
-- **A credential with an empty domain list stays on the first host.**
-  Unrestricted means "wherever the node sends it", not "wherever a server
-  redirects it", so a redirect may only go to the hostname of the first
+- **A credential that names no domains stays on the first host.** "Names no
+  domains" is asked of the effective scope: an OpenAI key with an empty list is
+  held to its default, `api.openai.com`, across a redirect as on the first
+  request. For a generic type with an empty list, unrestricted means "wherever
+  the node sends it", not "wherever a server redirects it", so a redirect may only go to the hostname of the first
   request. The port is not compared, as the domain check does not compare it, so
   a service moving between ports on the same host keeps working. A credential
   that names its domains is held to those instead, and a redirect to another
@@ -150,6 +183,19 @@ This is a **narrowing on top of** the instance-wide egress policy, never a
 replacement for it. A credential allowed to reach `example.com` still cannot
 reach it if the deployment's outbound policy refuses the resolved address. See
 [safety boundaries](/concepts/safety-boundaries/).
+
+### A node carries only the credential types it declares
+
+A node definition declares the credential types it uses — the HTTP Request node
+the five generic HTTP types, a chat model node its provider's type. The compiler
+refuses a node that attaches any other type, naming the node, the type and what
+the node accepts. The runtime resolves whatever a node attaches and checks it
+only against the key it was attached under, so without this an HTTP Request node
+carrying `{"openAiApi": "…"}` would sign its request with the OpenAI key and send
+it to whatever URL the node names. The refusal is at compile time, which gates
+activation and every run; a draft still saves, so a document that carries a
+stray key can be opened and fixed. A disabled node is exempt, because nothing it
+carries is ever applied.
 
 ## Authentication placement is data
 
@@ -245,7 +291,8 @@ that from becoming a way to read a stored secret:
   credential is saved: otherwise the stored password would go to whatever host
   the caller just typed.
 - **The stored scope applies.** Once a stored secret is in the payload, the
-  probe runs under the intersection of the stored `allowedDomains` and the
+  probe runs under the intersection of the stored credential's effective scope
+  (its `allowedDomains`, or its type's default when none were saved) and the
   scope the request sends, so the request can narrow the scope but never widen
   it. Two scopes that share no host are refused rather than read as
   unrestricted. A payload with nothing taken from storage is the caller's own
@@ -345,6 +392,15 @@ composition root: it is a package-level singleton built in a variable
 initialiser, which panics if the built-in types are invalid, and nothing in
 startup registers a credential type. A pack cannot contribute one today.
 
+A type states what an empty `allowedDomains` means for it. `DefaultDomains` is a
+fixed list, for a service at one address (`openAiApi`, `openRouterApi`, the
+Google types). `DefaultDomainsFrom` names a field whose URL host is the default,
+for a type that carries its own address (`telegramApi` and `wahaApi` name
+`baseUrl`). `NeverSentOverHTTP` marks a type the host never places on a request
+whose URL a node chooses — the database types, SQLite and `jwtAuth` — so it is
+never counted as unscoped. A type that sets none of them has no default, and an
+empty list means any host.
+
 There is one masking subtlety worth knowing if you author a type. Whether a field
 is *secret* — never returned by the API — is a separate flag from whether the
 editor *masks* it. Conflating them would make a masked-but-readable field start
@@ -397,12 +453,27 @@ uses.
 
 An [embed session](/concepts/tenancy-and-embedding/) may read the credential
 list — an editor has to offer a picker — and may do nothing else with
-credentials.
+credentials. The list it reads holds only the credentials its session was
+granted, and they are chosen in the query before the page is cut, so neither the
+rows nor the paging cursor name any other credential.
+
+An embed session and a scoped API key may not save or run a workflow that
+attaches an **unscoped** credential: one that would be sent over HTTP and has no
+allowed domains of its own or from its type. Either caller may edit where a
+request goes, so such a credential would, in their hands, be a way to read its
+secret. Scope the credential and the refusal goes away. Database, SQLite and JWT
+credentials are never unscoped in this sense: they are not placed on a request
+whose URL a node chooses. Nor is a credential a Webhook or Form trigger uses to
+verify the requests arriving at it, which it never sends, nor one on a disabled
+node, which never runs. See
+[what a session may actually do](/concepts/tenancy-and-embedding/#credentials-in-a-confined-callers-document).
 
 ## Source
 
 `internal/credentials/credentials.go` (`Split`, `Cipher`, `AllowsHost`,
-`KeyFromEnvironment`), `internal/credentials/registry.go` (`Placement`,
+`KeyFromEnvironment`), `internal/credentials/scope.go` (`EffectiveDomains`,
+`DefaultDomains`, `Unscoped`), `internal/workflow/compiler.go`
+(`undeclaredCredentials`), `internal/credentials/registry.go` (`Placement`,
 `Authentication`, `ApplyAuthentication`, `RunTest`),
 `internal/credentials/builtin.go` (the built-in types, including Google Drive and Gmail OAuth2),
 `internal/repository/credentials.go` (the storage split and `Resolve`),

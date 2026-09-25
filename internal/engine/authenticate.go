@@ -116,8 +116,19 @@ func (credential Credential) ScopeRequest(httpRequest *http.Request) error {
 
 // RedirectScope is the bound this credential places on a redirect chain; see
 // credentials.Record.RedirectScope.
+//
+// Built from the whole record, not the list alone: a credential whose domains
+// come from its type's default is bounded by that default, not unbounded.
 func (credential Credential) RedirectScope() safehttp.CredentialScope {
-	return credentials.Record{AllowedDomains: credential.AllowedDomains}.RedirectScope()
+	return credential.record().RedirectScope()
+}
+
+// record is the credential in the shape the scope rules read: its type and
+// fields travel with its list, because an empty list means the type's default.
+func (credential Credential) record() credentials.Record {
+	return credentials.Record{
+		Type: credential.Type, Fields: credential.Fields, AllowedDomains: credential.AllowedDomains,
+	}
 }
 
 // CheckType reports a credential that is not of the type its caller declared.
@@ -139,8 +150,12 @@ func (credential Credential) CheckType(want string) error {
 // *http.Request — a chat model, which signs its own call inside the provider
 // adapter — checks the domain scope through the same rule Authenticate uses
 // instead of reimplementing the wildcard matching a second time.
+//
+// The type and fields go along with the list because an empty list is not
+// always "any host": a type with a default scope — OpenAI, OpenRouter, Telegram
+// and the rest — is held to it, and a resolver hands back the row as stored.
 func (credential Credential) AllowsHost(host string) bool {
-	return credentials.Record{AllowedDomains: credential.AllowedDomains}.AllowsHost(host)
+	return credential.record().AllowsHost(host)
 }
 
 // ResolveNodeCredential resolves the one credential a node names and checks it

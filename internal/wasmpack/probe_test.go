@@ -407,7 +407,9 @@ func TestAuthenticationIsAppliedByTheHostNotTheGuest(t *testing.T) {
 	defer server.Close()
 
 	host := wasmpack.NewHost(wasmpack.HostDeps{Policy: loopbackPolicy(t, server), Modules: testModules()})
-	resolver := &countingResolver{credential: wahaCredential()}
+	// Scoped to the loopback endpoint explicitly: the fixture's own base URL
+	// names another host, and a WAHA key is now held to its instance by default.
+	resolver := &countingResolver{credential: wahaCredential("127.0.0.1")}
 	report, outcome, _, err := runProbe(t, host,
 		probeInvocation(
 			withNode(wahaNode()),
