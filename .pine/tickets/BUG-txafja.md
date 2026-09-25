@@ -1,7 +1,7 @@
 ---
 id: BUG-txafja
 title: Pasting n8n JSON onto the canvas bypasses the importer (placeholders, JS silently lost, '=' expressions literal)
-status: todo
+status: doing
 priority: high
 labels:
     - editor
@@ -9,7 +9,7 @@ labels:
     - clipboard
 parent: EPIC-8rbys7
 created: "2026-09-23T01:48:14Z"
-updated: "2026-09-23T01:48:14Z"
+updated: "2026-09-25T11:04:46Z"
 ---
 
 # Description
