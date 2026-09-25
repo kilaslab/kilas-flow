@@ -98,6 +98,7 @@ func RegisterAll(registry *Registry) error {
 			Secrets: []string{"secret", "privateKey"},
 			// No Authenticate descriptor: this credential verifies callers
 			// arriving at us, it does not sign our outbound requests.
+			NeverSentOverHTTP: true,
 		},
 		{
 			ID: "httpQueryAuth", DisplayName: "HTTP Query Auth",
@@ -143,6 +144,7 @@ func RegisterAll(registry *Registry) error {
 			// No Authenticate descriptor: a database credential does not sign
 			// an HTTP request, and refusing by absence is a better error than a
 			// default branch.
+			NeverSentOverHTTP: true,
 		},
 		{
 			ID: "mysql", DisplayName: "MySQL",
@@ -158,7 +160,8 @@ func RegisterAll(registry *Registry) error {
 				},
 				{Key: "tls", Label: "TLS", Kind: property.KindString, Description: "true, skip-verify, preferred, or a registered config name."},
 			},
-			Secrets: []string{"password"},
+			Secrets:           []string{"password"},
+			NeverSentOverHTTP: true,
 		},
 		{
 			ID: "telegramApi", DisplayName: "Telegram",
@@ -182,6 +185,11 @@ func RegisterAll(registry *Registry) error {
 			// what distinguishes it from a credential that cannot sign an HTTP
 			// request at all, which is still refused.
 			Authenticate: &Authentication{Placement: PlacementPath},
+			// The token goes wherever baseUrl says, so the default scope is
+			// that host rather than api.telegram.org: a local Bot API server
+			// keeps working with no domains typed, and the token still cannot
+			// be aimed at a host the owner never configured.
+			DefaultDomainsFrom: "baseUrl",
 		},
 		{
 			ID: "wahaApi", DisplayName: "WAHA",
@@ -204,6 +212,9 @@ func RegisterAll(registry *Registry) error {
 			Authenticate: &Authentication{
 				Placement: PlacementHeader, Name: "X-Api-Key", Value: "{{ apiKey }}",
 			},
+			// Self-hosted, so there is no fixed address; the instance the
+			// owner named is the one place its key belongs.
+			DefaultDomainsFrom: "baseUrl",
 		},
 		{
 			ID: "openAiApi", DisplayName: "OpenAI",
@@ -222,6 +233,9 @@ func RegisterAll(registry *Registry) error {
 			// same type, and a stored payload of one must read as the other.
 			Authenticate: &Authentication{Placement: PlacementBearer, Value: "{{ apiKey }}"},
 			Test:         &TestRequest{URL: "https://api.openai.com/v1/models"},
+			// An owner who reaches OpenAI through a gateway lists the gateway;
+			// an empty list means OpenAI itself and nowhere else.
+			DefaultDomains: []string{"api.openai.com"},
 		},
 		{
 			ID: "openRouterApi", DisplayName: "OpenRouter",
@@ -239,7 +253,8 @@ func RegisterAll(registry *Registry) error {
 			// model catalogue unauthenticated, so /models answers 200 for a key
 			// that is expired or revoked and the test would pass on a
 			// credential that cannot complete anything.
-			Test: &TestRequest{URL: "https://openrouter.ai/api/v1/key"},
+			Test:           &TestRequest{URL: "https://openrouter.ai/api/v1/key"},
+			DefaultDomains: []string{"openrouter.ai"},
 		},
 		googleOAuthType("googleDriveOAuth2Api", "Google Drive OAuth2",
 			"Connects to Google Drive. Client ID and secret can be from your Google Cloud project or the platform app.",
@@ -253,6 +268,7 @@ func RegisterAll(registry *Registry) error {
 			Properties: []property.PropertyDefinition{
 				{Key: "path", Label: "File path", Kind: property.KindString, Required: true, Description: "Absolute path to the database file."},
 			},
+			NeverSentOverHTTP: true,
 		},
 	} {
 		if err := registry.Register(credentialType); err != nil {

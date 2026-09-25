@@ -108,8 +108,14 @@ func applyResolved(ir workflow.IRNode, resolved Credential, httpRequest *http.Re
 // *http.Request — a chat model, which signs its own call inside the provider
 // adapter — checks the domain scope through the same rule Authenticate uses
 // instead of reimplementing the wildcard matching a second time.
+//
+// The type and fields go along with the list because an empty list is not
+// always "any host": a type with a default scope — OpenAI, OpenRouter, Telegram
+// and the rest — is held to it, and a resolver hands back the row as stored.
 func (credential Credential) AllowsHost(host string) bool {
-	return credentials.Record{AllowedDomains: credential.AllowedDomains}.AllowsHost(host)
+	return credentials.Record{
+		Type: credential.Type, Fields: credential.Fields, AllowedDomains: credential.AllowedDomains,
+	}.AllowsHost(host)
 }
 
 // ResolveNodeCredential resolves the one credential a node names and checks it

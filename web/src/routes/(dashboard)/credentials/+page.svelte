@@ -18,6 +18,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
+	import { defaultScope } from '$lib/dashboard/credential-scope';
 	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
 	import { RequestGuard } from '$lib/dashboard/request-guard';
 	import * as m from '$lib/paraglide/messages.js';
@@ -95,6 +96,16 @@
 	const GOOGLE_HIDDEN_FIELDS = new Set(['access_token', 'refresh_token', 'expiry']);
 
 	const definition = $derived((types.data ?? []).find((candidate) => candidate.id === typeID) ?? null);
+	// What leaving the allowed hosts empty means for the chosen type: a
+	// provider key is confined to its provider even then.
+	const scope = $derived(defaultScope(definition));
+	const hostsHint = $derived(
+		scope.kind === 'hosts'
+			? m.credentials_allowed_hosts_hint_default({ hosts: scope.hosts.join(', ') })
+			: scope.kind === 'derived'
+				? m.credentials_allowed_hosts_hint_field({ field: scope.field })
+				: m.credentials_allowed_hosts_hint()
+	);
 
 	const REDACTED = '••••••••';
 
@@ -393,8 +404,12 @@
 				{/if}
 				<div class="grid gap-2">
 					<label for="credential-domains" class="text-sm font-medium">{m.credentials_allowed_hosts()}</label>
-					<Input id="credential-domains" bind:value={domains} placeholder={m.credentials_allowed_hosts_placeholder()} />
-					<p class="text-xs leading-5 text-muted-foreground">{m.credentials_allowed_hosts_hint()}</p>
+					<Input
+						id="credential-domains"
+						bind:value={domains}
+						placeholder={scope.kind === 'hosts' ? scope.hosts.join(', ') : m.credentials_allowed_hosts_placeholder()}
+					/>
+					<p class="text-xs leading-5 text-muted-foreground">{hostsHint}</p>
 				</div>
 				{#if testResult}
 					<p role="status" class={`text-sm ${testResult.ok ? 'text-success' : 'text-destructive'}`}>{testResult.ok ? (testResult.detail ? m.credentials_test_connected_detail({ detail: testResult.detail }) : m.credentials_test_connected()) : m.credentials_test_failed({ detail: testResult.detail })}</p>

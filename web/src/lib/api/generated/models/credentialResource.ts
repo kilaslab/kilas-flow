@@ -10,7 +10,10 @@ import type { CredentialResourceFields } from './credentialResourceFields';
 export interface CredentialResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
+  /**
+     * Hosts this credential may be sent to, including its type's default when none were saved. Empty means any host.
+     * @nullable
+     */
   allowedDomains: string[] | null;
   createdAt: string;
   fields: CredentialResourceFields;

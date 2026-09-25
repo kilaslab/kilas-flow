@@ -519,7 +519,7 @@ export interface CredentialBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
-     * Hosts this credential may be sent to. Empty means unrestricted.
+     * Hosts this credential may be sent to. Empty means the type's default scope, or any host for a type that has none.
      * @nullable
      */
   allowedDomains?: string[] | null;
@@ -551,7 +551,10 @@ export type CredentialResourceFields = {[key: string]: string};
 export interface CredentialResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @nullable */
+  /**
+     * Hosts this credential may be sent to, including its type's default when none were saved. Empty means any host.
+     * @nullable
+     */
   allowedDomains: string[] | null;
   createdAt: string;
   fields: CredentialResourceFields;
@@ -571,6 +574,13 @@ export interface Field {
 }
 
 export interface CredentialTypeResource {
+  /**
+     * Hosts a credential of this type is confined to when it is saved with no allowed domains
+     * @nullable
+     */
+  defaultDomains?: string[] | null;
+  /** Field whose URL host is the default scope when the credential is saved with no allowed domains */
+  defaultDomainsFrom?: string;
   description?: string;
   displayName: string;
   /** @nullable */
@@ -1618,7 +1628,7 @@ export interface TestPayloadBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
-     * Hosts this credential may be sent to. Empty means unrestricted.
+     * Hosts this credential may be sent to. Empty means the type's default scope, or any host for a type that has none.
      * @nullable
      */
   allowedDomains?: string[] | null;

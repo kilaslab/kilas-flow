@@ -169,7 +169,7 @@ func TestEmbeddingsExecutorCallsTheProviderThroughThePolicy(t *testing.T) {
 
 	resolver := &stubCredentials{credential: engine.Credential{
 		ID: "cred-emb", Name: "Embeddings key", Type: "openAiApi",
-		Fields: map[string]string{"apiKey": "secret-key"},
+		Fields: map[string]string{"apiKey": "secret-key"}, AllowedDomains: []string{"127.0.0.1"},
 	}}
 	ir := vectorRequest(nodes.EmbeddingsNodeType, map[string]any{
 		"model": "text-embedding-3-small", "baseUrl": provider.URL,
@@ -215,7 +215,7 @@ func TestEmbeddingsExecutorRefusesAPrivateProviderUnderTheDefaultPolicy(t *testi
 	executor := nodes.NewEmbeddingsExecutor(safehttp.DefaultPolicy(), availableVectorStub{})
 	resolver := &stubCredentials{credential: engine.Credential{
 		ID: "cred-emb", Name: "Embeddings key", Type: "openAiApi",
-		Fields: map[string]string{"apiKey": "secret-key"},
+		Fields: map[string]string{"apiKey": "secret-key"}, AllowedDomains: []string{"127.0.0.1"},
 	}}
 	ir := vectorRequest(nodes.EmbeddingsNodeType, map[string]any{
 		"model": "text-embedding-3-small", "baseUrl": provider.URL,

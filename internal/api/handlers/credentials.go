@@ -24,6 +24,12 @@ type CredentialTypeResource struct {
 	DisplayName string              `json:"displayName"`
 	Description string              `json:"description,omitempty"`
 	Fields      []credentials.Field `json:"fields"`
+	// DefaultDomains is the host scope an empty allowed-domains list means for
+	// this type. Absent for a type with no fixed home.
+	DefaultDomains []string `json:"defaultDomains,omitempty" doc:"Hosts a credential of this type is confined to when it is saved with no allowed domains"`
+	// DefaultDomainsFrom names the field whose URL host is the default scope,
+	// for a type whose address is part of the credential.
+	DefaultDomainsFrom string `json:"defaultDomainsFrom,omitempty" doc:"Field whose URL host is the default scope when the credential is saved with no allowed domains"`
 }
 
 // CredentialResource is one stored credential.
@@ -31,12 +37,17 @@ type CredentialTypeResource struct {
 // Fields carries non-secret values as stored and a set/unset marker for secret
 // ones. A secret is never returned after it is written, not even to the client
 // that wrote it.
+//
+// AllowedDomains is the scope the server enforces, not only the list the author
+// typed: a credential saved with none reads back with its type's default, so a
+// row stored before that default existed does not claim "any host" while
+// being held to one.
 type CredentialResource struct {
 	ID             string            `json:"id"`
 	Name           string            `json:"name"`
 	Type           string            `json:"type"`
 	Fields         map[string]string `json:"fields"`
-	AllowedDomains []string          `json:"allowedDomains"`
+	AllowedDomains []string          `json:"allowedDomains" doc:"Hosts this credential may be sent to, including its type's default when none were saved. Empty means any host."`
 	CreatedAt      time.Time         `json:"createdAt"`
 	UpdatedAt      time.Time         `json:"updatedAt"`
 }
@@ -99,7 +110,7 @@ type credentialBody struct {
 	Name           string            `json:"name" minLength:"1" doc:"Display name"`
 	Type           string            `json:"type,omitempty" doc:"Credential type ID; immutable after creation"`
 	Fields         map[string]string `json:"fields" doc:"Field values for the credential type. Send the redaction placeholder to keep a stored secret."`
-	AllowedDomains []string          `json:"allowedDomains,omitempty" doc:"Hosts this credential may be sent to. Empty means unrestricted."`
+	AllowedDomains []string          `json:"allowedDomains,omitempty" doc:"Hosts this credential may be sent to. Empty means the type's default scope, or any host for a type that has none."`
 }
 
 type createCredentialInput struct {
@@ -212,6 +223,7 @@ func (handler *Credentials) ListTypes(context.Context, *struct{}) (*credentialTy
 		resources = append(resources, CredentialTypeResource{
 			ID: definition.ID, DisplayName: definition.DisplayName,
 			Description: definition.Description, Fields: definition.Fields,
+			DefaultDomains: definition.DefaultDomains, DefaultDomainsFrom: definition.DefaultDomainsFrom,
 		})
 	}
 	return &credentialTypeListOutput{Body: resources}, nil
@@ -279,7 +291,9 @@ func (handler *Credentials) Create(ctx context.Context, input *createCredentialI
 		Name: input.Body.Name, Type: input.Body.Type,
 		Fields: input.Body.Fields, AllowedDomains: input.Body.AllowedDomains,
 	}
-	credentials.ApplyGoogleDefaults(&record)
+	// A fixed-host type saved with no scope stores its default, the way the
+	// Google types always have, so the row says what bounds it.
+	credentials.ApplyDefaultDomains(&record)
 	created, err := handler.store.Create(ctx, handler.tenants.Resolve(ctx), record)
 	if err != nil {
 		return nil, handler.problem(ctx, err)
@@ -308,27 +322,38 @@ func (handler *Credentials) Update(ctx context.Context, input *updateCredentialI
 		return nil, huma.Error503ServiceUnavailable("credential storage unavailable")
 	}
 	credentialType := input.Body.Type
-	if credentialType == "" && len(input.Body.AllowedDomains) > 0 {
-		// The type is immutable after creation, so an update may omit it.
-		// The stored type decides: a scope added to a SQLite credential
-		// through a typeless update is the same defect as one set at create.
+	domains := input.Body.AllowedDomains
+	if len(domains) > 0 {
 		stored, err := handler.store.Get(ctx, handler.tenants.Resolve(ctx), input.ID)
 		if err != nil {
 			return nil, handler.problem(ctx, err)
 		}
-		credentialType = stored.Type
+		// The type is immutable after creation, so an update may omit it.
+		// The stored type decides: a scope added to a SQLite credential
+		// through a typeless update is the same defect as one set at create.
+		if credentialType == "" {
+			credentialType = stored.Type
+		}
+		// The form sends back the scope it was shown, and what it was shown
+		// includes a default the author never typed. Storing that copy would
+		// pin a scope derived from the base URL to the old host, so the
+		// credential would be refused the very server its owner just pointed
+		// it at. A list equal to the stored row's default is the default.
+		if sameDomains(domains, credentials.DefaultDomains(stored)) {
+			domains = nil
+		}
 	}
-	if err := rejectSQLiteScope(credentialType, input.Body.AllowedDomains); err != nil {
+	if err := rejectSQLiteScope(credentialType, domains); err != nil {
 		return nil, err
 	}
 	update := credentials.Record{
 		Name: input.Body.Name, Type: input.Body.Type,
-		Fields: input.Body.Fields, AllowedDomains: input.Body.AllowedDomains,
+		Fields: input.Body.Fields, AllowedDomains: domains,
 	}
 	if update.Type == "" {
 		update.Type = credentialType
 	}
-	credentials.ApplyGoogleDefaults(&update)
+	credentials.ApplyDefaultDomains(&update)
 	record, err := handler.store.Update(ctx, handler.tenants.Resolve(ctx), input.ID, update)
 	if err != nil {
 		return nil, handler.problem(ctx, err)
@@ -362,8 +387,36 @@ func (handler *Credentials) problem(ctx context.Context, err error) error {
 	return huma.Error422UnprocessableEntity(err.Error())
 }
 
+// sameDomains reports whether two host lists name the same hosts, compared the
+// way the store normalises them: case, surrounding space and blank entries do
+// not count, and neither does order.
+func sameDomains(left, right []string) bool {
+	normalise := func(domains []string) []string {
+		out := make([]string, 0, len(domains))
+		for _, domain := range domains {
+			if domain = strings.ToLower(strings.TrimSpace(domain)); domain != "" {
+				out = append(out, domain)
+			}
+		}
+		sort.Strings(out)
+		return out
+	}
+	a, b := normalise(left), normalise(right)
+	if len(a) == 0 || len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if a[index] != b[index] {
+			return false
+		}
+	}
+	return true
+}
+
 func credentialResource(record credentials.Record) CredentialResource {
-	domains := record.AllowedDomains
+	// The enforced scope, default included: an empty list on a type with a
+	// default would otherwise read as "any host" while being held to one.
+	domains := record.EffectiveDomains()
 	if domains == nil {
 		domains = []string{}
 	}
@@ -392,7 +445,7 @@ type testPayloadBody struct {
 	// Without it a placeholder has nothing to resolve against, and the test
 	// would authenticate with eight bullet characters.
 	CredentialID   string   `json:"credentialId,omitempty" doc:"Stored credential the redaction placeholder resolves against"`
-	AllowedDomains []string `json:"allowedDomains,omitempty" doc:"Hosts this credential may be sent to. Empty means unrestricted."`
+	AllowedDomains []string `json:"allowedDomains,omitempty" doc:"Hosts this credential may be sent to. Empty means the type's default scope, or any host for a type that has none."`
 }
 
 // TestCredentialResource reports whether a credential actually works.

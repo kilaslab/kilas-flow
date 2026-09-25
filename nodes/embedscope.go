@@ -6,8 +6,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/kilaslab/kilas-flow/internal/credentials"
 	"github.com/kilaslab/kilas-flow/internal/datastore"
 	"github.com/kilaslab/kilas-flow/internal/embed"
+	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
@@ -96,6 +98,93 @@ func EmbedScopeIssues(document workflow.Document, confinement embed.Confinement)
 	}
 	return issues
 }
+
+// CredentialLookup reads one stored credential — its type and its scope, never
+// its secret — by id. found is false for an id the caller may not see or that no
+// longer exists; err is for a store that could not answer.
+type CredentialLookup func(credentialID string) (record credentials.Record, found bool, err error)
+
+// UnscopedCredentialIssues reports every node that attaches a credential which
+// could be sent to any host: one whose secret travels on a request whose URL a
+// node chooses, and whose author and type named no scope for it.
+//
+// It is the confinement rule for a caller who may edit a document but must not
+// be able to read a secret — an embed session and a scoped API key. Checking
+// which credential ids a document attaches is not enough for them: a granted id
+// on an HTTP node whose URL they typed, or on a model node whose base URL they
+// set, sends the key wherever they like. The rule is deliberately the simplest
+// sound one. It does not try to prove which host each node will reach, which an
+// expression in a URL makes unknowable before the run; it asks instead that
+// every credential such a caller's document carries be bounded by a scope, and
+// the scope is enforced wherever the credential is applied, whatever the URL
+// turns out to be. A credential with a default scope — OpenAI, OpenRouter,
+// Telegram, WAHA, Google — passes; so does a database credential, which dials
+// the host its own fields name, and so does a credential a Webhook or Form
+// trigger uses only to verify requests arriving at it.
+//
+// One line per offending node. The credential is named by its id, which is what
+// the document attached, and not by its name, which the caller may not be
+// entitled to. A lookup failure is returned rather than read as "nothing to
+// check", so the caller fails closed.
+func UnscopedCredentialIssues(document workflow.Document, lookup CredentialLookup) ([]string, error) {
+	var issues []string
+	for _, node := range document.Nodes {
+		for _, credentialID := range sendableCredentialIDs(node) {
+			record, found, err := lookup(credentialID)
+			if err != nil {
+				return nil, err
+			}
+			if !found || !record.Unscoped() {
+				continue
+			}
+			issues = append(issues, fmt.Sprintf(
+				"node %s attaches credential %s, which has no allowed domains and could be sent to any host; "+
+					"its owner must scope it to the hosts it is for before this document can use it",
+				embedNodeLabel(node), credentialID))
+		}
+	}
+	return issues, nil
+}
+
+// sendableCredentialIDs lists the credential ids a node attaches that it could
+// place on an outbound request, sorted like credentialIDs.
+//
+// A Webhook or Form trigger uses its credential only to check the requests that
+// arrive at it — the header, the basic-auth pair, the JWT key — and never sends
+// it anywhere, so an unscoped one there is no way to read the secret. It is the
+// documented way to protect an embedded workflow's trigger, and refusing it
+// would refuse the guest editor every save. The same credential moved onto a
+// node that does call out is caught on that node.
+func sendableCredentialIDs(node workflow.Node) []string {
+	inbound := inboundCredentialTypes[node.Type]
+	ids := make([]string, 0, len(node.Credentials))
+	for credentialType, id := range node.Credentials {
+		if inbound[credentialType] {
+			continue
+		}
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			ids = append(ids, trimmed)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// inboundCredentialTypes maps each trigger that verifies arriving requests to
+// the credential types it verifies them with. Read off the two definitions
+// rather than restated, so a mode added to either trigger is covered here
+// without a second list to keep in step.
+var inboundCredentialTypes = func() map[string]map[string]bool {
+	triggers := map[string]map[string]bool{}
+	for _, definition := range []node.Definition{webhookTrigger(), formTrigger()} {
+		types := map[string]bool{}
+		for _, requirement := range definition.Credentials {
+			types[requirement.Type] = true
+		}
+		triggers[definition.Type] = types
+	}
+	return triggers
+}()
 
 // datastoreOperationIssues refuses the table operations no embed session may
 // perform, whatever its confinement names.

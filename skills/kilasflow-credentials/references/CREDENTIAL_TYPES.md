@@ -104,8 +104,11 @@ credentials: {"httpBearerAuth": "<credentialId>"}
 The compiler resolves each credential the node type declares — `httpBasicAuth`,
 `httpHeaderAuth`, `httpBearerAuth`, `httpQueryAuth` and `httpCustomAuth` for
 `kilasflow.httpRequest` — and reports `config.required` at
-`/nodes/N/credentials/<type>` when the entry is missing or empty. Nothing in
-the document is the value: the runtime resolves the payload at the moment it
+`/nodes/N/credentials/<type>` when the entry is missing or empty. A credential
+attached under a type the node does not declare — `openAiApi` on an HTTP
+Request node — is refused as `config.invalid` at the same path, naming the types
+the node accepts (`internal/workflow/compiler.go`, `undeclaredCredentials`); a
+draft still saves. Nothing in the document is the value: the runtime resolves the payload at the moment it
 authenticates, after the host scope check and before the secret touches the
 request (`internal/repository/credentials.go`, `Resolve`;
 `internal/engine/authenticate.go`).

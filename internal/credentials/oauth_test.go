@@ -96,7 +96,7 @@ func TestExchangeGoogleCodeRefusesANilClient(t *testing.T) {
 func TestGoogleDefaultsFillAnEmptyAllowlist(t *testing.T) {
 	t.Parallel()
 	record := credentials.Record{Type: credentials.GoogleDriveOAuthType}
-	credentials.ApplyGoogleDefaults(&record)
+	credentials.ApplyDefaultDomains(&record)
 	if len(record.AllowedDomains) == 0 {
 		t.Fatal("Google credentials must default to googleapis hosts")
 	}

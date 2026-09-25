@@ -32,8 +32,9 @@ type Record struct {
 	Name     string
 	Type     string
 	Fields   map[string]string
-	// AllowedDomains scopes where this credential may be sent. An empty list
-	// means unrestricted, which the API surfaces explicitly.
+	// AllowedDomains scopes where this credential may be sent, as its author
+	// saved it. An empty list means the type's default scope, which is
+	// unrestricted only for a type that has none — see EffectiveDomains.
 	AllowedDomains []string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -42,12 +43,18 @@ type Record struct {
 // AllowsHost reports whether this credential may be sent to a host. A leading
 // `*.` matches any subdomain but never the bare parent domain, so scoping to
 // `*.internal.test` does not silently authorize `internal.test` itself.
+//
+// The scope checked is the effective one, so a credential saved with no list
+// is still held to its type's default. Every place a credential is applied
+// asks this method, which is why the default is resolved here rather than in
+// each of them.
 func (record Record) AllowsHost(host string) bool {
-	if len(record.AllowedDomains) == 0 {
+	domains := record.EffectiveDomains()
+	if len(domains) == 0 {
 		return true
 	}
 	host = strings.ToLower(strings.TrimSuffix(hostWithoutPort(host), "."))
-	for _, domain := range record.AllowedDomains {
+	for _, domain := range domains {
 		domain = strings.ToLower(strings.TrimSpace(domain))
 		if domain == "" {
 			continue
@@ -96,6 +103,10 @@ type Definition struct {
 	DisplayName string  `json:"displayName"`
 	Description string  `json:"description,omitempty"`
 	Fields      []Field `json:"fields"`
+	// DefaultDomains and DefaultDomainsFrom tell an editor what an empty
+	// allowed-domains list means for this type; see Type.
+	DefaultDomains     []string `json:"defaultDomains,omitempty"`
+	DefaultDomainsFrom string   `json:"defaultDomainsFrom,omitempty"`
 }
 
 // Lookup returns one credential type definition.

@@ -235,10 +235,15 @@ func (c seedCatalog) HasType(nodeType string) bool {
 func seedNodeCatalog() seedCatalog {
 	main := workflow.Port{Name: "main", Kind: workflow.ConnectionMain}
 	return seedCatalog{
-		"kilasflow.manual":       {Type: "kilasflow.manual", Version: workflow.V(1), Outputs: []workflow.Port{main}},
-		"kilasflow.webhook":      {Type: "kilasflow.webhook", Version: workflow.V(1), Outputs: []workflow.Port{main}},
-		"kilasflow.schedule":     {Type: "kilasflow.schedule", Version: workflow.V(1), Outputs: []workflow.Port{main}},
-		"kilasflow.gmailTrigger": {Type: "kilasflow.gmailTrigger", Version: workflow.V(1), Outputs: []workflow.Port{main}},
+		"kilasflow.manual":   {Type: "kilasflow.manual", Version: workflow.V(1), Outputs: []workflow.Port{main}},
+		"kilasflow.webhook":  {Type: "kilasflow.webhook", Version: workflow.V(1), Outputs: []workflow.Port{main}},
+		"kilasflow.schedule": {Type: "kilasflow.schedule", Version: workflow.V(1), Outputs: []workflow.Port{main}},
+		"kilasflow.gmailTrigger": {
+			Type: "kilasflow.gmailTrigger", Version: workflow.V(1), Outputs: []workflow.Port{main},
+			// Declared as the real node declares it: a node may carry only a
+			// credential type it uses.
+			CredentialTypes: []string{"gmailOAuth2"},
+		},
 	}
 }
 

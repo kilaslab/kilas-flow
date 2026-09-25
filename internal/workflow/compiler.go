@@ -55,8 +55,15 @@ type NodeDefinition struct {
 	// a credential compiles, activates, and fails at its first outbound call
 	// with an error about a URL rather than about a missing credential.
 	RequiredCredentials []string
-	ExecutorID          string
-	Validate            ConfigValidator
+	// CredentialTypes are every credential type the node declares, required or
+	// optional. A node may attach nothing else: the runtime resolves whatever
+	// is attached and checks it only against the key it sits under, so an
+	// undeclared type — an OpenAI key on an HTTP Request node — would sign a
+	// request whose URL the editor chose. RequiredCredentials count as declared
+	// whether or not they are repeated here.
+	CredentialTypes []string
+	ExecutorID      string
+	Validate        ConfigValidator
 	// WebhookPathParameter is the parameter key holding this trigger's route
 	// label, when it declares an inbound webhook.
 	//
@@ -314,6 +321,9 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 					Message: fmt.Sprintf("node %q requires a %s credential", node.ID, credentialType),
 				})
 			}
+		}
+		for _, issue := range undeclaredCredentials(index, node, definition) {
+			issues.add(issue)
 		}
 		if definition.Validate != nil {
 			if err := definition.Validate(node); err != nil {
@@ -664,9 +674,68 @@ func cloneNodeDefinition(definition NodeDefinition) NodeDefinition {
 		RequiredFor:         definition.RequiredFor,
 		PortsFor:            definition.PortsFor,
 		RequiredCredentials: append([]string(nil), definition.RequiredCredentials...),
+		CredentialTypes:     append([]string(nil), definition.CredentialTypes...),
 		ExecutorID:          definition.ExecutorID,
 		Validate:            definition.Validate,
 	}
+}
+
+// undeclaredCredentials refuses every credential a node attaches under a type
+// its definition does not declare.
+//
+// The attachment key is the credential's type as far as the runtime is
+// concerned: it resolves the id, checks the stored type matches the key, and
+// applies it. Nothing there asks whether the *node* uses that type, so without
+// this an HTTP Request node could carry an OpenAI key and send it to any URL,
+// and a node that declares no credential at all could carry one for a pack or
+// a Code step to reach. Checked here because the compiler gates activation and
+// every run; a draft still saves, so an imported or hand-built document that
+// carries a stray key can be opened and fixed rather than lost.
+//
+// An empty reference is no attachment, the rule the required check above
+// applies too. The issues come out in key order, so a message that names
+// several reads the same on every run.
+func undeclaredCredentials(index int, node Node, definition NodeDefinition) []ValidationError {
+	if len(node.Credentials) == 0 {
+		return nil
+	}
+	declared := make(map[string]struct{}, len(definition.CredentialTypes)+len(definition.RequiredCredentials))
+	for _, credentialType := range definition.CredentialTypes {
+		declared[credentialType] = struct{}{}
+	}
+	for _, credentialType := range definition.RequiredCredentials {
+		declared[credentialType] = struct{}{}
+	}
+	accepted := make([]string, 0, len(declared))
+	for credentialType := range declared {
+		accepted = append(accepted, credentialType)
+	}
+	sort.Strings(accepted)
+	offered := "it accepts no credential"
+	if len(accepted) > 0 {
+		offered = "it accepts " + strings.Join(accepted, ", ")
+	}
+
+	attached := make([]string, 0, len(node.Credentials))
+	for credentialType, id := range node.Credentials {
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		if _, known := declared[credentialType]; !known {
+			attached = append(attached, credentialType)
+		}
+	}
+	sort.Strings(attached)
+	issues := make([]ValidationError, 0, len(attached))
+	for _, credentialType := range attached {
+		issues = append(issues, ValidationError{
+			Code: ErrorInvalidConfig, Path: fmt.Sprintf("/nodes/%d/credentials/%s", index, credentialType),
+			NodeID: node.ID,
+			Message: fmt.Sprintf("node %q attaches a credential of type %s, which node type %s does not use (%s): remove it or attach a credential of an accepted type",
+				node.ID, credentialType, node.Type, offered),
+		})
+	}
+	return issues
 }
 
 func cloneAnyMap(source map[string]any) map[string]any {

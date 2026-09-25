@@ -118,6 +118,16 @@ await tenant.client.activateWorkflow(workflowId);
 Activation is an owner action on purpose: it publishes a deployment-wide
 endpoint, so no embed scope grants it. Only the backend key may call it.
 
+The webhook credential above needs no allowed domains: the trigger only checks
+it against arriving requests. A credential a node *sends* is different. If the
+workflow an end user edits calls out — an HTTP Request node, a chat model —
+scope every credential it sends to the hosts it is for, with `allowedDomains`
+on `createCredential`. An embed session may not save or run a document that
+attaches an unscoped credential to a node that calls out, because a guest who
+may edit the URL could otherwise aim the secret at a host of their own. OpenAI,
+OpenRouter, Google, Telegram and WAHA credentials are scoped by default. See
+[credentials in a confined caller's document](/concepts/tenancy-and-embedding/#credentials-in-a-confined-callers-document).
+
 ### 3. Mint an embed session for the end user
 
 The page holds no key. It asks its own backend, and the backend decides —

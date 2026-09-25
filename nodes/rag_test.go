@@ -156,7 +156,7 @@ func TestVectorStoreClusterInsertEmbedsDocuments(t *testing.T) {
 	}, nil)
 	resolver := &stubCredentials{credential: engine.Credential{
 		ID: "cred-emb", Name: "Embeddings key", Type: "openAiApi",
-		Fields: map[string]string{"apiKey": "secret-key"},
+		Fields: map[string]string{"apiKey": "secret-key"}, AllowedDomains: []string{"127.0.0.1"},
 	}}
 	output, err := executor.Execute(context.Background(), ir, workflow.NodeInput{
 		"document": {{JSON: map[string]any{
@@ -209,7 +209,7 @@ func TestVectorStoreInsertEmitsOneItemPerDriveFile(t *testing.T) {
 	}, nil)
 	resolver := &stubCredentials{credential: engine.Credential{
 		ID: "cred-emb", Name: "Embeddings key", Type: "openAiApi",
-		Fields: map[string]string{"apiKey": "secret-key"},
+		Fields: map[string]string{"apiKey": "secret-key"}, AllowedDomains: []string{"127.0.0.1"},
 	}}
 	driveMeta := map[string]any{"id": "file-1", "name": "manual.pdf", "parents": []any{"folder-1"}}
 	output, err := executor.Execute(context.Background(), ir, workflow.NodeInput{
@@ -259,7 +259,7 @@ func TestAgentVectorStoreToolReturnsMatches(t *testing.T) {
 		"embeddings": map[string]any{"kind": "embeddings", "model": "text-embedding-3-small", "baseUrl": provider.URL, "credentialId": "cred-emb"},
 	}, vectorTenantRequest(&stubCredentials{credential: engine.Credential{
 		ID: "cred-emb", Name: "Embeddings key", Type: "openAiApi",
-		Fields: map[string]string{"apiKey": "secret-key"},
+		Fields: map[string]string{"apiKey": "secret-key"}, AllowedDomains: []string{"127.0.0.1"},
 	}}))
 	if err != nil {
 		t.Fatalf("toolFrom = %v", err)

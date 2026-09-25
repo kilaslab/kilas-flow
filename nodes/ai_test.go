@@ -612,7 +612,7 @@ func TestATemperatureOfZeroReachesTheProvider(t *testing.T) {
 	provider := answerOnce(&received, 0)
 	defer provider.Close()
 
-	resolver := openAICredential()
+	resolver := openAICredential("127.0.0.1")
 	descriptor := runProviderModel(t, nodes.OpenAIChatModelNodeType, nodes.OpenAIChatModelExecutorID,
 		nodes.OpenAICredentialType, map[string]any{
 			"model": modelLocator("gpt-test"), "baseUrl": provider.URL, "stream": false,
@@ -641,7 +641,7 @@ func TestAnOptionTheUserNeverAddedIsNotSentAtAll(t *testing.T) {
 
 	resolver := &stubCredentials{credential: engine.Credential{
 		ID: "cred-key", Name: "OpenRouter", Type: nodes.OpenRouterCredentialType,
-		Fields: map[string]string{"apiKey": "sk-or-secret"},
+		Fields: map[string]string{"apiKey": "sk-or-secret"}, AllowedDomains: []string{"127.0.0.1"},
 	}}
 	descriptor := runProviderModel(t, nodes.OpenRouterChatModelNodeType, nodes.OpenRouterChatModelExecutorID,
 		nodes.OpenRouterCredentialType, map[string]any{
@@ -679,7 +679,7 @@ func TestAModelCallMayOutlastTheDeploymentsOutboundTimeout(t *testing.T) {
 	policy := localPolicy()
 	policy.Timeout = 100 * time.Millisecond
 
-	resolver := openAICredential()
+	resolver := openAICredential("127.0.0.1")
 	descriptor := runProviderModel(t, nodes.OpenAIChatModelNodeType, nodes.OpenAIChatModelExecutorID,
 		nodes.OpenAICredentialType, map[string]any{
 			"model": modelLocator("gpt-test"), "baseUrl": provider.URL, "stream": false,
@@ -707,7 +707,7 @@ func TestAModelTimeoutAboveTheCeilingIsRefusedRatherThanClamped(t *testing.T) {
 	provider := answerOnce(&received, 0)
 	defer provider.Close()
 
-	resolver := openAICredential()
+	resolver := openAICredential("127.0.0.1")
 	descriptor := runProviderModel(t, nodes.OpenAIChatModelNodeType, nodes.OpenAIChatModelExecutorID,
 		nodes.OpenAICredentialType, map[string]any{
 			"model": modelLocator("gpt-test"), "baseUrl": provider.URL, "stream": false,
@@ -770,7 +770,7 @@ func TestAModelCallToAPrivateAddressIsRefused(t *testing.T) {
 	provider := answerOnce(&received, 0)
 	defer provider.Close()
 
-	resolver := openAICredential()
+	resolver := openAICredential("127.0.0.1")
 	descriptor := runProviderModel(t, nodes.OpenAIChatModelNodeType, nodes.OpenAIChatModelExecutorID,
 		nodes.OpenAICredentialType, map[string]any{
 			"model": modelLocator("gpt-test"), "baseUrl": provider.URL, "stream": false,
@@ -814,7 +814,7 @@ func TestAModelCallReachesTheOneLoopbackEndpointTheDeploymentNamed(t *testing.T)
 	policy := safehttp.DefaultPolicy()
 	policy.AllowedPrivateEndpoints = []string{address.Host}
 
-	resolver := openAICredential()
+	resolver := openAICredential("127.0.0.1")
 	descriptor := runProviderModel(t, nodes.OpenAIChatModelNodeType, nodes.OpenAIChatModelExecutorID,
 		nodes.OpenAICredentialType, map[string]any{
 			"model": modelLocator("gpt-test"), "baseUrl": provider.URL, "stream": false,
@@ -895,7 +895,7 @@ func TestAStreamedRunReportsTheProvidersOwnTokenUsage(t *testing.T) {
 	}))
 	defer provider.Close()
 
-	resolver := openAICredential()
+	resolver := openAICredential("127.0.0.1")
 	descriptor := runProviderModel(t, nodes.OpenAIChatModelNodeType, nodes.OpenAIChatModelExecutorID,
 		nodes.OpenAICredentialType, map[string]any{
 			"model": modelLocator("gpt-test"), "baseUrl": provider.URL, "stream": true,

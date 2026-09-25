@@ -465,6 +465,7 @@ func (registry *Registry) Lookup(nodeType string, version workflow.TypeVersion) 
 		},
 		PortsFor:             definition.PortsFor,
 		RequiredCredentials:  requiredCredentials(definition),
+		CredentialTypes:      declaredCredentials(definition),
 		ExecutorID:           definition.ExecutorID,
 		Validate:             definition.Validate,
 		WebhookPathParameter: webhookPathParameter(definition),
@@ -483,6 +484,21 @@ func requiredCredentials(definition Definition) []string {
 		return nil
 	}
 	return required
+}
+
+// declaredCredentials lists every credential type a node declares, whatever
+// its visibility condition: a requirement hidden by the node's current mode is
+// still a type the node knows how to use, and the compiler refuses only a type
+// the node never declared at all.
+func declaredCredentials(definition Definition) []string {
+	if len(definition.Credentials) == 0 {
+		return nil
+	}
+	declared := make([]string, 0, len(definition.Credentials))
+	for _, requirement := range definition.Credentials {
+		declared = append(declared, requirement.Type)
+	}
+	return declared
 }
 
 func webhookPathParameter(definition Definition) string {

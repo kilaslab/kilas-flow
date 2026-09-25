@@ -414,6 +414,31 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Security
 
+- An embedded guest editor or a narrowed agent token can no longer send a
+  credential it may use to a host of its own and read the secret. Three rules
+  close it:
+  - OpenAI and OpenRouter credentials saved with no allowed domains are held to
+    `api.openai.com` and `openrouter.ai`. Telegram and WAHA credentials are held
+    to the host of their own base URL, so a local Bot API server keeps working.
+    Google credentials keep their Google hosts. The default applies to
+    credentials stored before this release too. The API reads each credential
+    back with the scope it enforces, and the credential form says what leaving
+    the field empty means. **Behaviour change:** an existing OpenAI or OpenRouter
+    credential that a chat model node sends to a gateway or proxy through its
+    base URL, with no allowed domains saved, is now refused there. Add the
+    gateway's host to the credential's allowed domains.
+  - A node may carry only a credential type it declares. A workflow that
+    attaches another type, such as an OpenAI key on an HTTP Request node, no
+    longer runs or activates, and the problem names the node, the type and the
+    types the node accepts. The draft still saves.
+  - An embed session and a scoped API key may not save, run or retry a workflow
+    that attaches an unscoped credential to a node that calls out. An unscoped
+    credential is one that has no allowed domains of its own or from its type.
+    Scoping the credential lifts the refusal. Database, SQLite and JWT
+    credentials, and credentials a Webhook or Form trigger only verifies
+    against, are not affected. The tenant's own keys and the dashboard are
+    unaffected.
+
 - A JavaScript worker process runs one tenant's Code-node and Sort-comparator
   scripts and never another's, so code that escaped the engine and stayed in a
   worker cannot see a later tenant's jobs. A script whose tenant has no idle

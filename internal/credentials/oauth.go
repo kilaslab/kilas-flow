@@ -24,7 +24,8 @@ const (
 
 // GoogleDefaultDomains is the host allowlist every Google credential gets when
 // the author saved none. A Drive or Gmail call without this fails the credential
-// host check against googleapis.com.
+// host check against googleapis.com. It is both Google types' DefaultDomains,
+// the mechanism every fixed-host type now shares.
 var GoogleDefaultDomains = []string{
 	"googleapis.com",
 	"*.googleapis.com",
@@ -52,25 +53,16 @@ func googleOAuthType(id, display, description, scope string) Type {
 				Description: "RFC3339 timestamp written by Connect."},
 			{Key: "scope", Label: "Scope", Kind: property.KindString, Default: scope},
 		},
-		Secrets:      []string{"clientSecret", "access_token", "refresh_token"},
-		Authenticate: &Authentication{Placement: PlacementBearer, Value: "{{ access_token }}"},
-		Test:         &TestRequest{URL: "https://www.googleapis.com/oauth2/v3/userinfo"},
+		Secrets:        []string{"clientSecret", "access_token", "refresh_token"},
+		Authenticate:   &Authentication{Placement: PlacementBearer, Value: "{{ access_token }}"},
+		Test:           &TestRequest{URL: "https://www.googleapis.com/oauth2/v3/userinfo"},
+		DefaultDomains: GoogleDefaultDomains,
 	}
 }
 
 // IsGoogleOAuth reports whether a stored credential type talks to Google.
 func IsGoogleOAuth(typeID string) bool {
 	return typeID == GoogleDriveOAuthType || typeID == GmailOAuthType
-}
-
-// ApplyGoogleDefaults fills an empty host allowlist for Google credentials.
-func ApplyGoogleDefaults(record *Record) {
-	if record == nil || !IsGoogleOAuth(record.Type) {
-		return
-	}
-	if len(record.AllowedDomains) == 0 {
-		record.AllowedDomains = append([]string{}, GoogleDefaultDomains...)
-	}
 }
 
 // OAuthState is the CSRF payload the Connect popup round-trips through Google.

@@ -11,7 +11,7 @@ export interface CredentialBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
-     * Hosts this credential may be sent to. Empty means unrestricted.
+     * Hosts this credential may be sent to. Empty means the type's default scope, or any host for a type that has none.
      * @nullable
      */
   allowedDomains?: string[] | null;

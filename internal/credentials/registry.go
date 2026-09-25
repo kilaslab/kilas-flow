@@ -103,6 +103,26 @@ type Type struct {
 	Authenticate *Authentication `json:"authenticate,omitempty"`
 	// Test is an optional probe.
 	Test *TestRequest `json:"test,omitempty"`
+	// DefaultDomains is the host scope a credential of this type carries when
+	// its author saved none. It is for a type whose service lives at one known
+	// address: without it, an empty list lets the key go anywhere a workflow
+	// editor points it. See EffectiveDomains.
+	DefaultDomains []string `json:"defaultDomains,omitempty"`
+	// DefaultDomainsFrom names a field holding a URL whose host is the default
+	// scope, for a type whose address is part of the credential itself — a
+	// self-hosted instance, or a Bot API server that may be Telegram's own or a
+	// local one. The credential's owner sets that field, and an embedded guest
+	// or an agent token cannot edit a credential, so the host it names is one
+	// the owner chose. Ignored when DefaultDomains is set.
+	DefaultDomainsFrom string `json:"defaultDomainsFrom,omitempty"`
+	// NeverSentOverHTTP marks a type whose secret the host never places on an
+	// outbound HTTP request whose URL a node chooses: a database credential
+	// dials the host its own fields name, a file credential names a path, and a
+	// JWT credential verifies requests arriving here. Such a credential has no
+	// request to re-point, so it is never Unscoped. It defaults to false, so a
+	// type a pack registers without saying is treated as one that is sent —
+	// the safe reading.
+	NeverSentOverHTTP bool `json:"neverSentOverHttp,omitempty"`
 }
 
 // Registry holds the credential types this installation supports.
@@ -179,6 +199,7 @@ func (registry *Registry) List() []Type {
 func cloneType(credentialType Type) Type {
 	credentialType.Properties = append([]property.PropertyDefinition(nil), credentialType.Properties...)
 	credentialType.Secrets = append([]string(nil), credentialType.Secrets...)
+	credentialType.DefaultDomains = append([]string(nil), credentialType.DefaultDomains...)
 	if credentialType.Authenticate != nil {
 		authentication := *credentialType.Authenticate
 		credentialType.Authenticate = &authentication
@@ -335,6 +356,8 @@ func (credentialType Type) Definition() Definition {
 	return Definition{
 		ID: credentialType.ID, DisplayName: credentialType.DisplayName,
 		Description: credentialType.Description, Fields: credentialType.Fields(),
+		DefaultDomains:     append([]string(nil), credentialType.DefaultDomains...),
+		DefaultDomainsFrom: credentialType.DefaultDomainsFrom,
 	}
 }
 
