@@ -1,13 +1,13 @@
 ---
 id: BUG-0592hz
 title: 'Code node: TextDecoder fatal mode does not throw on a UTF-16 lone surrogate'
-status: testing
+status: done
 priority: low
 labels:
     - code-node
     - javascript
 created: "2026-09-25T02:10:44Z"
-updated: "2026-09-25T02:10:44Z"
+updated: "2026-09-25T09:51:03Z"
 ---
 
 Left by the BUG-46g75c review. `TextDecoder` with `fatal: true` throws when the decode contains U+FFFD and Go's `utf8.Valid` rejects the bytes. That matches Node for UTF-8. A lone surrogate under `utf-16le` does not throw, and Node does. Pre-existing, outside the UTF-8 ticket, and not an EPIC-tjnr1z acceptance item.
@@ -43,3 +43,20 @@ Done, awaiting review.
 - `Buffer#toString('utf16le')` is unchanged. It still drops an odd trailing byte, as Node's Buffer does.
 - Test: `TestTextDecoderFatalModeRefusesMalformedUTF16` in `internal/jsrun/web_test.go` covers the five malformed shapes under both labels, fatal and lenient, plus a valid pair in fatal mode and the UTF-8 message. RED showed that fatal mode never threw and that lenient mode dropped the odd byte. It is GREEN now, and the surface test still passes: the script surface is unchanged because natives are not on it.
 - Seen and left alone: `TextEncoder#encodeInto` reports `read` wrongly. For `'hié'` it gives 2 where Node gives 3, because it decodes the written UTF-8 bytes as UTF-16LE to count them. This is pre-existing and outside this ticket.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-25.
+
+- Base: `70797515` (last commit at or before ticket created 2026-09-25)
+- Commits (1):
+  - `96ca220a` — BUG-0592hz: TextDecoder's fatal mode refuses malformed UTF-16LE, and its lenient mode puts U+FFFD where Node does
+- Files changed (the ticket's own commits, 17b6d38..96ca220):
+
+```
+ .pine/tickets/BUG-0592hz.md      | 32 ++++++++++++++++++++++++++-
+ internal/jsrun/codec.go          | 70 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ internal/jsrun/js/modules/web.js |  8 ++++---
+ internal/jsrun/web_test.go       | 44 ++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 150 insertions(+), 4 deletions(-)
+```
