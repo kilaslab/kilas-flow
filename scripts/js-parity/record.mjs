@@ -585,8 +585,8 @@ function zonesDiffering(zones, base) {
 
 // utf8LeadClasses is one representative lead byte per distinct boundary pair
 // the WHATWG decoder checks for the byte right after a lead: the standard
-// continuation range 0x80-0xBF, and the three special-cased ranges (E0's
-// lower bound, ED's upper bound, F0's lower bound, F4's upper bound).
+// continuation range 0x80-0xBF, and the four special-cased ones (E0's lower
+// bound, ED's upper bound, F0's lower bound, F4's upper bound).
 const utf8LeadClasses = [
 	{ lead: 0xc2, mid: 0x80 }, // 2-byte, standard bounds
 	{ lead: 0xe0, mid: 0xa0 }, // 3-byte, lower bound raised to 0xa0

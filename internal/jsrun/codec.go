@@ -206,34 +206,34 @@ func decodeUTF8WHATWG(data []byte) string {
 	lower, upper := byte(0x80), byte(0xbf)
 
 	for index := 0; index < len(data); {
-		b := data[index]
+		value := data[index]
 		if bytesNeeded == 0 {
 			switch {
-			case b <= 0x7f:
-				out.WriteByte(b)
-			case b >= 0xc2 && b <= 0xdf:
-				bytesNeeded, codePoint = 1, rune(b&0x1f)
-			case b >= 0xe0 && b <= 0xef:
-				if b == 0xe0 {
+			case value <= 0x7f:
+				out.WriteByte(value)
+			case value >= 0xc2 && value <= 0xdf:
+				bytesNeeded, codePoint = 1, rune(value&0x1f)
+			case value >= 0xe0 && value <= 0xef:
+				if value == 0xe0 {
 					lower = 0xa0
-				} else if b == 0xed {
+				} else if value == 0xed {
 					upper = 0x9f
 				}
-				bytesNeeded, codePoint = 2, rune(b&0x0f)
-			case b >= 0xf0 && b <= 0xf4:
-				if b == 0xf0 {
+				bytesNeeded, codePoint = 2, rune(value&0x0f)
+			case value >= 0xf0 && value <= 0xf4:
+				if value == 0xf0 {
 					lower = 0x90
-				} else if b == 0xf4 {
+				} else if value == 0xf4 {
 					upper = 0x8f
 				}
-				bytesNeeded, codePoint = 3, rune(b&0x07)
+				bytesNeeded, codePoint = 3, rune(value&0x07)
 			default:
 				out.WriteRune(utf8.RuneError) // a continuation byte, or 0xc0/0xc1/0xf5-0xff, with no lead of its own
 			}
 			index++
 			continue
 		}
-		if b < lower || b > upper {
+		if value < lower || value > upper {
 			// This byte cannot continue the sequence in progress: the
 			// sequence so far becomes one U+FFFD, and the byte is
 			// reprocessed as the possible start of its own sequence,
@@ -244,7 +244,7 @@ func decodeUTF8WHATWG(data []byte) string {
 			continue
 		}
 		lower, upper = 0x80, 0xbf // only the byte right after certain leads is narrowed
-		codePoint = codePoint<<6 | rune(b&0x3f)
+		codePoint = codePoint<<6 | rune(value&0x3f)
 		bytesSeen++
 		index++
 		if bytesSeen != bytesNeeded {

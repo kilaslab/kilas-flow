@@ -1,7 +1,7 @@
 ---
 id: BUG-46g75c
 title: 'Code node: Buffer decodes invalid UTF-8 to fewer replacement characters than Node'
-status: doing
+status: testing
 priority: low
 labels:
     - code-node
@@ -31,7 +31,7 @@ return [{ json: { text: s.toString(), length: s.toString().length } }]
 
 # Acceptance Criteria
 
-- [ ] `Buffer#toString('utf8')` (and TextDecoder, if it shares the path) replaces invalid bytes as Node does, pinned by a golden recorded from Node 24 that covers lone continuation bytes, truncated sequences, overlong forms and surrogate encodings.
+- [x] `Buffer#toString('utf8')` (and TextDecoder, if it shares the path) replaces invalid bytes as Node does, pinned by a golden recorded from Node 24 that covers lone continuation bytes, truncated sequences, overlong forms and surrogate encodings.
 
 # Notes
 
@@ -76,3 +76,49 @@ Decision: `decodeString`'s `toWellFormed` (JS string -> bytes, lone-surrogate
 replacement) is a different problem (a UTF-16 JS string can hold a lone
 surrogate; UTF-8 cannot) and is out of scope for this ticket, which is about
 bytes -> string.
+
+## Progress 2026-09-25 (done, status testing)
+
+The plan above is implemented. `encodeBytes`'s `utf8` case now calls
+`decodeUTF8WHATWG` in `internal/jsrun/codec.go`, a state machine written from
+the Encoding Standard's own UTF-8 decoder algorithm: it tracks how many
+continuation bytes the sequence still needs and the narrowed [lower, upper]
+range the byte after E0, ED, F0 and F4 must fall in, emits one U+FFFD per byte
+that can neither start nor continue a sequence (reprocessing that byte as a
+possible lead, as the spec's "prepend" step says), and one U+FFFD for a valid
+prefix truncated at the end of the buffer.
+
+`codec.encode` is the one native every bytes -> string utf8 path reaches, so
+the single change covers `Buffer#toString('utf8')`, `Buffer.from(..).toString()`,
+`TextDecoder` non-fatal (web.js calls the same native) and
+`getBinaryDataBuffer(..).toString()` (it returns a Buffer). `atob`/`btoa` ask
+for `latin1`, which has no invalid byte, so they are unaffected, as expected.
+No other Go-side byte -> string conversion feeds a JS string:
+`strings.ToValidUTF8` survives only in `toWellFormed`, which is the
+string -> bytes direction and out of scope (see the decision above).
+
+Decisions taken unattended, both matching Node 24:
+
+- `TextDecoder`'s `fatal: true` needed no change. web.js already throws the
+  `ERR_ENCODING_INVALID_ENCODED_DATA` TypeError when `codec.validUTF8` says the
+  bytes are not valid UTF-8, and Go's `utf8.Valid` rejects exactly what WHATWG
+  rejects (overlongs, surrogates, past U+10FFFF). Checked against Node 24 over
+  all 2593 golden cases: Node's `TextDecoder` output equals its
+  `Buffer#toString('utf8')` output in every case, and `fatal: true` throws in
+  exactly the cases whose decode contains a U+FFFD. So one golden recorded from
+  Buffer pins both decoders.
+- The golden sweeps each lead byte's *second* byte over the whole 0x00-0xFF
+  range for one representative of each of the seven distinct boundary classes
+  (C2, E0, E1, ED, F0, F1, F4) rather than every lead byte, which keeps
+  `testdata/parity/utf8.json` to 2593 cases while still covering every boundary
+  the decoder checks.
+
+The corpus baseline is unchanged on purpose: it records a body's outcome
+(`threw: SyntaxError` for 1534/8 and the other two), not the text the error
+quotes, and the outcome does not move — only the quoted `"����"` now matches
+Node.
+
+Verified: `go build ./...`, `go vet ./...`, `go test ./...` all clean;
+`go test -race -count=1 ./internal/jsrun/...` ok; `node
+scripts/js-parity/record.mjs --check` reports no drift against Node v24.16.0.
+Rebased onto local `main`.
