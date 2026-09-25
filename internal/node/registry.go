@@ -615,6 +615,9 @@ func validateProperties(nodeType, group string, properties []PropertyDefinition)
 		if err := propertypkg.ValidateMapper(declared.Kind, declared.Mapper); err != nil {
 			return fmt.Errorf("node definition %q %s %q: %w", nodeType, group, declared.Key, err)
 		}
+		if err := propertypkg.ValidateEditor(declared.Kind, declared.TypeOptions); err != nil {
+			return fmt.Errorf("node definition %q %s %q: %w", nodeType, group, declared.Key, err)
+		}
 		if err := validateProperties(nodeType, group+"."+declared.Key, declared.Fields); err != nil {
 			return err
 		}
@@ -879,11 +882,14 @@ func validateSubtitle(nodeType, subtitle string) error {
 // other. These aliases keep every existing call site — and every generated
 // client field name — exactly as it was.
 type (
-	PropertyKind        = propertypkg.Kind
-	PropertyOption      = propertypkg.PropertyOption
-	PropertyDefinition  = propertypkg.PropertyDefinition
-	PropertyGroup       = propertypkg.PropertyGroup
-	TypeOptions         = propertypkg.TypeOptions
+	PropertyKind       = propertypkg.Kind
+	PropertyOption     = propertypkg.PropertyOption
+	PropertyDefinition = propertypkg.PropertyDefinition
+	PropertyGroup      = propertypkg.PropertyGroup
+	TypeOptions        = propertypkg.TypeOptions
+	// Editor and EditorLanguage are a string field's code-editor request.
+	Editor              = propertypkg.Editor
+	EditorLanguage      = propertypkg.EditorLanguage
 	VisibilityCondition = propertypkg.VisibilityCondition
 	// Visibility is the full display rule — show and hide groups, several
 	// accepted values per key.
@@ -920,6 +926,15 @@ const (
 	PropertyAssignments     = propertypkg.KindAssignmentCollection
 	PropertyResourceLocator = propertypkg.KindResourceLocator
 	PropertyResourceMapper  = propertypkg.KindResourceMapper
+)
+
+// The code editor a string field may ask for through its TypeOptions.
+const (
+	EditorCode               = propertypkg.EditorCode
+	EditorLanguageJavaScript = propertypkg.EditorLanguageJavaScript
+	EditorLanguageGo         = propertypkg.EditorLanguageGo
+	EditorLanguagePython     = propertypkg.EditorLanguagePython
+	EditorLanguageJSON       = propertypkg.EditorLanguageJSON
 )
 
 // KnownPropertyKinds is the closed set, in a stable order.

@@ -65,6 +65,54 @@ func TestCodeNodeIsRegisteredWithAnEditorForm(t *testing.T) {
 	}
 }
 
+// TestSourceFieldsAskForACodeEditor pins BUG-ngt25j: a code field whose
+// default is one line rendered as a one-line input, where Enter did nothing
+// and a pasted body lost its newlines. Every field that holds a program asks
+// for the code editor in its own language, and a sticky note's markdown is
+// multi-line.
+func TestSourceFieldsAskForACodeEditor(t *testing.T) {
+	t.Parallel()
+
+	registry := node.NewRegistry()
+	if err := nodes.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	find := func(nodeType, key string) node.PropertyDefinition {
+		t.Helper()
+		for _, definition := range registry.List() {
+			if definition.Type != nodeType {
+				continue
+			}
+			for _, parameter := range definition.Parameters {
+				if parameter.Key == key {
+					return parameter
+				}
+			}
+		}
+		t.Fatalf("%s has no parameter %q", nodeType, key)
+		return node.PropertyDefinition{}
+	}
+
+	for _, tc := range []struct {
+		nodeType, key string
+		language      node.EditorLanguage
+	}{
+		{nodes.CodeNodeType, "code", node.EditorLanguageGo},
+		{nodes.JSCodeNodeType, "jsCode", node.EditorLanguageJavaScript},
+		{nodes.ForeignCodeNodeType, "jsCode", node.EditorLanguageJavaScript},
+		{nodes.ForeignCodeNodeType, "pythonCode", node.EditorLanguagePython},
+		{nodes.SortNodeType, "code", node.EditorLanguageJavaScript},
+	} {
+		options := find(tc.nodeType, tc.key).TypeOptions
+		if options == nil || options.Editor != node.EditorCode || options.EditorLanguage != tc.language {
+			t.Errorf("%s.%s type options = %+v, want the code editor in %q", tc.nodeType, tc.key, options, tc.language)
+		}
+	}
+	if options := find(nodes.StickyNoteNodeType, "content").TypeOptions; options == nil || options.Rows < 2 {
+		t.Errorf("sticky note content type options = %+v, want a multi-line field", options)
+	}
+}
+
 func TestCodeNodeValidatesSourceAtSaveTimeWithoutCompiling(t *testing.T) {
 	t.Parallel()
 

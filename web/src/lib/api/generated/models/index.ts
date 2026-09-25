@@ -154,6 +154,8 @@ export * from './testCredentialResource';
 export * from './testPayloadBody';
 export * from './testPayloadBodyFields';
 export * from './typeOptions';
+export * from './typeOptionsEditor';
+export * from './typeOptionsEditorLanguage';
 export * from './updateRowsInputBody';
 export * from './updateRowsInputBodyValues';
 export * from './updateRowsOutputBody';

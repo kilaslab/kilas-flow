@@ -86,7 +86,7 @@
 	} from '$lib/workflow-editor/document';
 	import { copySelection, pasteInto, readClipboard } from '$lib/workflow-editor/clipboard';
 	import { emptyHistory, record as recordHistory, redo as redoHistory, undo as undoHistory, type History as DocumentHistory } from '$lib/workflow-editor/history';
-	import { SHORTCUT_REFERENCE, CANVAS_DELETE_KEYS, canvasShortcut, controlOwnsKey } from '$lib/workflow-editor/shortcuts';
+	import { SHORTCUT_REFERENCE, CANVAS_DELETE_KEYS, canvasShortcut, controlOwnsKey, isTypingTarget } from '$lib/workflow-editor/shortcuts';
 	import { tidyDocument } from '$lib/workflow-editor/layout';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
 	import { isAnnotation } from '$lib/workflow-editor/node-visual';
@@ -833,6 +833,9 @@
 
 	function onPaste(event: ClipboardEvent) {
 		if (locked) return;
+		// A paste into a field is the field's: JSON pasted into a code editor
+		// or a JSON parameter is text for that field, not nodes for the canvas.
+		if (event.defaultPrevented || isTypingTarget(event.target)) return;
 		const text = event.clipboardData?.getData('text/plain') ?? '';
 		if (text !== '' && pasteText(text)) event.preventDefault();
 	}

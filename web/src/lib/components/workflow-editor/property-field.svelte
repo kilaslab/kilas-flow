@@ -72,6 +72,7 @@ import { assistKey, completionInsertion, expressionCompletions, previewStep, typ
 		unreadable
 	} from '$lib/workflow-editor/collection';
 import { asExpression, asFixed, expressionTemplate, isExpression, needsMultiline } from '$lib/workflow-editor/parameter';
+	import CodeEditor from './code-editor.svelte';
 import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 	import * as m from '$lib/paraglide/messages.js';
 
@@ -110,11 +111,12 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 	} = $props();
 
 	// Every free-text control can carry an expression; only a checkbox and a
-	// nested collection lack a surface to show a template in. Selects,
+	// nested collection lack a surface to show a template in, and a code
+	// editor holds a program, where `{{ }}` or a leading `=` is program text. Selects,
 	// locators, key-value rows, assignment rows and condition operands all get
 	// the toggle — n8n reaches the same shape through noDataExpression.
 	const expressionCapable = $derived(
-		property.kind === 'string' ||
+		(property.kind === 'string' && property.typeOptions?.editor !== 'code') ||
 			property.kind === 'number' ||
 			property.kind === 'json' ||
 			property.kind === 'dateTime' ||
@@ -133,6 +135,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 	]);
 
 	const typeOptions = $derived(property.typeOptions ?? {});
+	const codeEditor = $derived(property.kind === 'string' && typeOptions.editor === 'code' && !!typeOptions.editorLanguage);
 
 	/**
 	 * A unique suffix for this field's controls.
@@ -159,7 +162,9 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		json: true,
 		resourceLocator: true
 	};
-	const labelTarget = $derived(CONTROL_KINDS[property.kind] ? `property-${fieldID}` : null);
+	// A code editor's surface is a contenteditable, which a <label for> cannot
+	// name; it carries the label as its own aria-label instead.
+	const labelTarget = $derived(CONTROL_KINDS[property.kind] && !codeEditor ? `property-${fieldID}` : null);
 
 	/** The one group of a repeatable fixedCollection, when the property is one. */
 	const group = $derived(repeatedGroup(property));
@@ -1017,6 +1022,8 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 				<Plus aria-hidden="true" class="size-3" />{m.properties_add_condition()}
 			</button>
 		</div>
+{:else if codeEditor && typeOptions.editorLanguage}
+	<CodeEditor value={stringValue} language={typeOptions.editorLanguage} label={property.label} rows={typeOptions.rows ?? 12} nodeNames={upstreamNodeNames ?? []} onChange={(text) => onChange(text)} />
 {:else if RENDERED.has(property.kind) && needsMultiline(value, typeOptions.rows)}
 	<!-- Multi-line is a different element, not an attribute: rows has no
 	     meaning on an input, and an input strips the newlines of a value

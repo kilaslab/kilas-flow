@@ -633,7 +633,26 @@ export interface PropertyOption {
   value: string;
 }
 
+export type TypeOptionsEditor = typeof TypeOptionsEditor[keyof typeof TypeOptionsEditor];
+
+
+export const TypeOptionsEditor = {
+  code: 'code',
+} as const;
+
+export type TypeOptionsEditorLanguage = typeof TypeOptionsEditorLanguage[keyof typeof TypeOptionsEditorLanguage];
+
+
+export const TypeOptionsEditorLanguage = {
+  javaScript: 'javaScript',
+  go: 'go',
+  python: 'python',
+  json: 'json',
+} as const;
+
 export interface TypeOptions {
+  editor?: TypeOptionsEditor;
+  editorLanguage?: TypeOptionsEditorLanguage;
   maxValue?: number;
   minValue?: number;
   multipleValueButtonText?: string;

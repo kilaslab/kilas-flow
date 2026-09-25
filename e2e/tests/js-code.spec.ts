@@ -678,9 +678,13 @@ test('Code (JavaScript) is picked from the palette, written, saved and run from 
 	await expect(panel).toBeVisible();
 	await panel.getByRole('tab', { name: 'Parameters' }).click();
 	const code = panel.getByRole('textbox', { name: 'JavaScript', exact: true });
-	// The node starts with a working example, in a multi-line code field.
-	await expect(code).toHaveValue(/for \(const item of items\) \{\n {2}item\.json\.checked = true;\n\}\nreturn items;/);
-	expect(await code.evaluate((element) => element.tagName)).toBe('TEXTAREA');
+	// The node starts with a working example, in the code editor (BUG-ngt25j):
+	// a contenteditable with line numbers, not a text box.
+	await expect(panel.locator('[data-code-editor="javaScript"]')).toBeVisible();
+	await expect(panel.locator('[data-code-editor="javaScript"] .cm-lineNumbers')).toBeVisible();
+	expect(await code.evaluate((element) => (element as HTMLElement).innerText)).toMatch(
+		/for \(const item of items\) \{\n {2}item\.json\.checked = true;\n\}\nreturn items;/
+	);
 	await code.fill("const _ = require('lodash')\nreturn [{ json: { fromEditor: true, count: items.length, words: _.words('written in the editor') } }]");
 
 	const save = page.getByRole('button', { name: 'Save', exact: true });

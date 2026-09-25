@@ -39,7 +39,8 @@ func codeNode() node.Definition {
 		Parameters: []node.PropertyDefinition{
 			{
 				Key: "code", Label: "Go code", Kind: node.PropertyString, Required: true,
-				Default: "return items, nil",
+				Default:     "return items, nil",
+				TypeOptions: &node.TypeOptions{Rows: 12, Editor: node.EditorCode, EditorLanguage: node.EditorLanguageGo},
 				Description: "The body of func run(items []Item) ([]Item, error). " +
 					"The standard library is available; the filesystem, network, and environment are not.",
 			},

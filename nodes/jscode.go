@@ -71,7 +71,7 @@ func jsCodeNode() node.Definition {
 			{
 				Key: "jsCode", Label: "JavaScript", Kind: node.PropertyString, Required: true,
 				Default:     defaultJSCode,
-				TypeOptions: &node.TypeOptions{Rows: 16},
+				TypeOptions: &node.TypeOptions{Rows: 16, Editor: node.EditorCode, EditorLanguage: node.EditorLanguageJavaScript},
 				Description: "The body of an async function: `await` works, and what it returns becomes the node's items. " +
 					"require() offers crypto, lodash, luxon, util, buffer and url; there is no npm, filesystem or Node.js process. " +
 					"this.helpers.httpRequest is sent by the server under its egress policy.",
@@ -288,12 +288,12 @@ func foreignCodeNode() node.Definition {
 			},
 			{
 				Key: "jsCode", Label: "JavaScript", Kind: node.PropertyString,
-				TypeOptions: &node.TypeOptions{Rows: 12},
+				TypeOptions: &node.TypeOptions{Rows: 12, Editor: node.EditorCode, EditorLanguage: node.EditorLanguageJavaScript},
 				Description: "The original JavaScript, kept exactly as it arrived. It runs.",
 			},
 			{
 				Key: "pythonCode", Label: "Python", Kind: node.PropertyString,
-				TypeOptions: &node.TypeOptions{Rows: 12},
+				TypeOptions: &node.TypeOptions{Rows: 12, Editor: node.EditorCode, EditorLanguage: node.EditorLanguagePython},
 				Description: "The original Python, kept exactly as it arrived. It is not run.",
 			},
 			{

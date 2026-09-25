@@ -40,6 +40,7 @@ func stickyNoteNode() node.Definition {
 				Key: "content", Label: "Content", Kind: node.PropertyString,
 				Description: "Markdown shown on the canvas.",
 				Default:     "## Note",
+				TypeOptions: &node.TypeOptions{Rows: 6},
 			},
 			{Key: "width", Label: "Width", Kind: node.PropertyNumber, Default: 240},
 			{Key: "height", Label: "Height", Kind: node.PropertyNumber, Default: 160},

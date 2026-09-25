@@ -79,3 +79,53 @@ describe('an options property', () => {
 		expect(markup).toContain('<option value="sendMessage" selected="">sendMessage</option>');
 	});
 });
+
+describe('a code property', () => {
+	const GO_CODE: PropertyDefinition = {
+		key: 'code',
+		label: 'Go code',
+		kind: 'string',
+		required: true,
+		default: 'return items, nil',
+		typeOptions: { rows: 12, editor: 'code', editorLanguage: 'go' }
+	};
+
+	it('renders a code editor rather than a one-line input, even for a one-line body', () => {
+		// The default is one line, which is exactly the value that used to pick
+		// <input type=text>: Enter did nothing and a pasted body lost its newlines.
+		const markup = html(GO_CODE, 'return items, nil');
+
+		expect(markup).toContain('data-code-editor="go"');
+		expect(markup).not.toContain('<input');
+		expect(markup).not.toContain('<textarea');
+	});
+
+	it('offers no expression toggle, since a template marker in a program is program text', () => {
+		const markup = html(GO_CODE, 'return items, nil');
+
+		expect(markup).not.toContain('role="switch"');
+	});
+
+	it('names the editor with a plain label, because a <label for> cannot name a contenteditable', () => {
+		const markup = html(GO_CODE, 'return items, nil');
+
+		expect(markup).not.toContain('<label');
+		expect(markup).toContain('Go code');
+	});
+
+	it('a string with rows but no editor is still a textarea, as a sticky note content is', () => {
+		const content: PropertyDefinition = {
+			key: 'content',
+			label: 'Content',
+			kind: 'string',
+			required: false,
+			default: '## Note',
+			typeOptions: { rows: 6 }
+		};
+
+		const markup = html(content, '## Note');
+
+		expect(markup).toContain('<textarea');
+		expect(markup).not.toContain('data-code-editor');
+	});
+});

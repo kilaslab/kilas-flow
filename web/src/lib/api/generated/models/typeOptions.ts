@@ -5,8 +5,12 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
+import type { TypeOptionsEditor } from './typeOptionsEditor';
+import type { TypeOptionsEditorLanguage } from './typeOptionsEditorLanguage';
 
 export interface TypeOptions {
+  editor?: TypeOptionsEditor;
+  editorLanguage?: TypeOptionsEditorLanguage;
   maxValue?: number;
   minValue?: number;
   multipleValueButtonText?: string;

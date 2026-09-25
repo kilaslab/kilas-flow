@@ -300,6 +300,13 @@ type TypeOptions struct {
 	Password bool `json:"password,omitempty"`
 	// Rows makes a string field multi-line. Zero is single-line.
 	Rows int `json:"rows,omitempty"`
+	// Editor asks for a dedicated editor instead of a text box. "code" is a
+	// source editor: monospace, line numbers, indentation that Tab and Enter
+	// keep, and highlighting for EditorLanguage. A code field is never an
+	// expression, since a template marker there is part of the program.
+	Editor Editor `json:"editor,omitempty" enum:"code"`
+	// EditorLanguage is the language a code editor highlights and completes.
+	EditorLanguage EditorLanguage `json:"editorLanguage,omitempty" enum:"javaScript,go,python,json"`
 	// MinValue and MaxValue bound a number.
 	MinValue *float64 `json:"minValue,omitempty"`
 	MaxValue *float64 `json:"maxValue,omitempty"`
@@ -315,6 +322,51 @@ type TypeOptions struct {
 	MultipleValues bool `json:"multipleValues,omitempty"`
 	// MultipleValueButtonText labels the add button.
 	MultipleValueButtonText string `json:"multipleValueButtonText,omitempty"`
+}
+
+// Editor names a dedicated editor a string field asks for.
+type Editor string
+
+// EditorCode is a source editor.
+const EditorCode Editor = "code"
+
+// EditorLanguage is the language a code editor treats its text as.
+type EditorLanguage string
+
+// The languages a code editor knows. javaScript is spelt as n8n spells its
+// editorLanguage, so a converted pack's declaration reads the same here.
+const (
+	EditorLanguageJavaScript EditorLanguage = "javaScript"
+	EditorLanguageGo         EditorLanguage = "go"
+	EditorLanguagePython     EditorLanguage = "python"
+	EditorLanguageJSON       EditorLanguage = "json"
+)
+
+// ValidateEditor checks a field's editor request.
+//
+// A language without an editor is refused rather than ignored: it would be
+// a declaration that promises highlighting and renders a plain text box.
+func ValidateEditor(kind Kind, options *TypeOptions) error {
+	if options == nil || (options.Editor == "" && options.EditorLanguage == "") {
+		return nil
+	}
+	if options.Editor != EditorCode {
+		if options.Editor == "" {
+			return fmt.Errorf("editorLanguage %q needs editor %q", options.EditorLanguage, EditorCode)
+		}
+		return fmt.Errorf("unknown editor %q; the only editor is %q", options.Editor, EditorCode)
+	}
+	if kind != KindString {
+		return fmt.Errorf("a code editor holds text, so only a string field may ask for one")
+	}
+	switch options.EditorLanguage {
+	case EditorLanguageJavaScript, EditorLanguageGo, EditorLanguagePython, EditorLanguageJSON:
+		return nil
+	case "":
+		return fmt.Errorf("a code editor needs an editorLanguage")
+	default:
+		return fmt.Errorf("unknown editorLanguage %q", options.EditorLanguage)
+	}
 }
 
 // PropertyOption is one selectable value for a PropertySelect control.

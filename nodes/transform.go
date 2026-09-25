@@ -320,7 +320,7 @@ func sortNode() node.Definition {
 			{
 				Key: "code", Label: "Comparator", Kind: node.PropertyString,
 				Default:     defaultSortComparator,
-				TypeOptions: &node.TypeOptions{Rows: 10},
+				TypeOptions: &node.TypeOptions{Rows: 10, Editor: node.EditorCode, EditorLanguage: node.EditorLanguageJavaScript},
 				Description: "The body of a function of two items, a and b, that returns a number: below 0 puts a first, above 0 puts b first, " +
 					"0 keeps their order. `items` is the whole list. It runs as a Code (JavaScript) node's code does, with the same limits. " +
 					"Left out, the default sorts by `myField`, as n8n's does.",

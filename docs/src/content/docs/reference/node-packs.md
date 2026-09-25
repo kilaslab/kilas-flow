@@ -72,6 +72,14 @@ Property kinds are a closed set: `string`, `number`, `boolean`, `options`,
 `resourceLocator`, `resourceMapper`, `keyValue`, `conditions`,
 `assignmentCollection`.
 
+`typeOptions` accepts `password`, `rows`, `minValue`, `maxValue`,
+`numberPrecision`, `multipleValues`, `multipleValueButtonText`, `editor` and
+`editorLanguage`; any other key is refused. `"editor": "code"` renders a
+`string` parameter as a source editor with line numbers, indentation and
+highlighting, and needs `editorLanguage`: one of `javaScript`, `go`,
+`python` or `json`. A code parameter never switches to expression mode,
+because a `{{ }}` or a leading `=` in a program is part of the program.
+
 ## Install and distribution
 
 Each immediate subdirectory of the packs directory (`packs.dir`,

@@ -135,6 +135,15 @@
 	--node-ai: oklch(0.74 0.15 305);
 	--node-data: oklch(0.74 0.12 240);
 	--node-imported: oklch(0.7 0.17 27);
+	/* Syntax colours for the code editor. Hues are kept apart from the jade
+	   brand so a keyword never reads as a button. */
+	--code-keyword: oklch(0.76 0.13 305);
+	--code-string: oklch(0.8 0.12 140);
+	--code-number: oklch(0.8 0.13 60);
+	--code-comment: oklch(0.62 0.02 170);
+	--code-function: oklch(0.78 0.11 230);
+	--code-type: oklch(0.8 0.1 190);
+	--code-property: oklch(0.86 0.04 170);
 }
 
 [data-theme='light'],
@@ -181,6 +190,13 @@
 	--node-ai: oklch(0.53 0.16 305);
 	--node-data: oklch(0.52 0.13 240);
 	--node-imported: oklch(0.55 0.19 27);
+	--code-keyword: oklch(0.48 0.17 305);
+	--code-string: oklch(0.47 0.13 145);
+	--code-number: oklch(0.52 0.14 55);
+	--code-comment: oklch(0.55 0.02 170);
+	--code-function: oklch(0.47 0.14 250);
+	--code-type: oklch(0.47 0.1 200);
+	--code-property: oklch(0.36 0.03 170);
 }
 
 /* Svelte Flow ships light-only defaults for its chrome. Bind them to the
