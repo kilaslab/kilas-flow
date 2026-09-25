@@ -88,7 +88,16 @@ func (executor *TelegramTriggerExecutor) download(ctx context.Context, ir workfl
 		return fmt.Errorf("node %q: this trigger needs a Telegram credential to download files", ir.Name)
 	}
 
-	contents, remoteName, err := executor.files.Fetch(ctx, TelegramBaseURL(resolved.Fields["baseUrl"]), token, fileID)
+	// The token rides in every download URL's path, so the credential's domain
+	// bound is checked against the host it is about to be sent to, and its
+	// redirect scope rides on the context each request is built from — the
+	// same two checks the engine applies to a node's own request.
+	baseURL := TelegramBaseURL(resolved.Fields["baseUrl"])
+	if base, parseErr := url.Parse(baseURL); parseErr == nil && !resolved.AllowsHost(base.Host) {
+		return fmt.Errorf("node %q: credential %q is not allowed for host %q", ir.Name, resolved.Name, base.Hostname())
+	}
+	ctx = safehttp.WithCredentialScope(ctx, resolved.RedirectScope())
+	contents, remoteName, err := executor.files.Fetch(ctx, baseURL, token, fileID)
 	if err != nil {
 		return fmt.Errorf("node %q: %w", ir.Name, err)
 	}

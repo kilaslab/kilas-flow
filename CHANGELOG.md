@@ -423,6 +423,18 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   node's error and error items are scrubbed of the secret values of every
   credential the node resolved before they are stored or passed on.
 
+- A credential's header no longer follows a redirect to another host. Go
+  drops only `Authorization` and `Cookie` across hosts, and a credential with
+  an empty domain list allowed every host, so an `X-Api-Key` (`httpHeaderAuth`,
+  `wahaApi`) or a custom template's headers reached whatever host a redirect
+  named. While a credential is attached, a redirect now stays on the first
+  request's host when the credential names no domains, stays inside its
+  domains when it names some, and never steps down from `https` to `http`.
+  Trigger lifecycle requests (pack registration templates and the Telegram
+  trigger's registration and polling calls) and Telegram file downloads now
+  check the credential's type and domains and bind the same redirect scope a
+  node's request does.
+
 - A JavaScript worker process runs one tenant's Code-node and Sort-comparator
   scripts and never another's, so code that escaped the engine and stayed in a
   worker cannot see a later tenant's jobs. A script whose tenant has no idle

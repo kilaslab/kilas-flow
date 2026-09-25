@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
 	"github.com/kilaslab/kilas-flow/internal/webhook"
@@ -47,11 +48,11 @@ func (lifecycle TelegramLifecycle) CheckExists(ctx context.Context, lifecycleCon
 	if telegramPolling(lifecycleContext) {
 		return false, nil
 	}
-	token, baseURL, err := telegramCredentialFor(ctx, lifecycleContext)
+	bot, err := telegramCredentialFor(ctx, lifecycleContext)
 	if err != nil {
 		return false, err
 	}
-	body, err := telegramCall(ctx, lifecycleContext.HTTP, baseURL, token, "getWebhookInfo", nil)
+	body, err := telegramCall(ctx, lifecycleContext.HTTP, bot, "getWebhookInfo", nil)
 	if err != nil {
 		return false, err
 	}
@@ -68,7 +69,7 @@ func (lifecycle TelegramLifecycle) CheckExists(ctx context.Context, lifecycleCon
 
 // Create registers the webhook, or starts the poller.
 func (lifecycle TelegramLifecycle) Create(ctx context.Context, lifecycleContext webhook.LifecycleContext) error {
-	token, baseURL, err := telegramCredentialFor(ctx, lifecycleContext)
+	bot, err := telegramCredentialFor(ctx, lifecycleContext)
 	if err != nil {
 		return err
 	}
@@ -79,10 +80,10 @@ func (lifecycle TelegramLifecycle) Create(ctx context.Context, lifecycleContext 
 		// Telegram refuses getUpdates while a webhook is set, and the resulting
 		// error names neither cause nor cure — so the webhook is removed first,
 		// every time, rather than only when we think one exists.
-		if _, err := telegramCall(ctx, lifecycleContext.HTTP, baseURL, token, "deleteWebhook", nil); err != nil {
+		if _, err := telegramCall(ctx, lifecycleContext.HTTP, bot, "deleteWebhook", nil); err != nil {
 			return fmt.Errorf("could not clear the existing webhook before polling: %w", err)
 		}
-		return lifecycle.pollers.Start(lifecycleContext, token, baseURL)
+		return lifecycle.pollers.Start(lifecycleContext, bot.credential)
 	}
 
 	if !strings.HasPrefix(lifecycleContext.PublicURL, "https://") {
@@ -93,12 +94,12 @@ func (lifecycle TelegramLifecycle) Create(ctx context.Context, lifecycleContext 
 	}
 	arguments := map[string]any{
 		"url":          lifecycleContext.PublicURL,
-		"secret_token": TelegramSecret(token, lifecycleContext.Binding.Route),
+		"secret_token": TelegramSecret(bot.token, lifecycleContext.Binding.Route),
 	}
 	if allowed := TelegramAllowedUpdates(lifecycleContext.Binding.Parameters); len(allowed) > 0 {
 		arguments["allowed_updates"] = allowed
 	}
-	_, err = telegramCall(ctx, lifecycleContext.HTTP, baseURL, token, "setWebhook", arguments)
+	_, err = telegramCall(ctx, lifecycleContext.HTTP, bot, "setWebhook", arguments)
 	return err
 }
 
@@ -110,11 +111,11 @@ func (lifecycle TelegramLifecycle) Delete(ctx context.Context, lifecycleContext 
 	if telegramPolling(lifecycleContext) {
 		return nil
 	}
-	token, baseURL, err := telegramCredentialFor(ctx, lifecycleContext)
+	bot, err := telegramCredentialFor(ctx, lifecycleContext)
 	if err != nil {
 		return err
 	}
-	_, err = telegramCall(ctx, lifecycleContext.HTTP, baseURL, token, "deleteWebhook", nil)
+	_, err = telegramCall(ctx, lifecycleContext.HTTP, bot, "deleteWebhook", nil)
 	return err
 }
 
@@ -123,29 +124,51 @@ func telegramPolling(lifecycleContext webhook.LifecycleContext) bool {
 	return mode == "polling"
 }
 
-func telegramCredentialFor(ctx context.Context, lifecycleContext webhook.LifecycleContext) (token, baseURL string, err error) {
+// telegramBot is what a Bot API call needs from its credential: the token and
+// the address, and the credential itself, whose domain bound every call is
+// checked against.
+type telegramBot struct {
+	token      string
+	baseURL    string
+	credential engine.Credential
+}
+
+// telegramCredentialFor resolves the trigger's Telegram credential.
+//
+// The type is checked as the engine checks a node's credential: a credential
+// of another type bound here would have its secret sent to the Bot API as a
+// token.
+func telegramCredentialFor(ctx context.Context, lifecycleContext webhook.LifecycleContext) (telegramBot, error) {
 	if lifecycleContext.Credentials == nil {
-		return "", "", fmt.Errorf("credentials are not available to this trigger")
+		return telegramBot{}, fmt.Errorf("credentials are not available to this trigger")
 	}
 	references, _ := lifecycleContext.Binding.Parameters["$credentials"].(map[string]any)
 	id, _ := references[TelegramCredentialType].(string)
 	if strings.TrimSpace(id) == "" {
-		return "", "", fmt.Errorf("this trigger needs a %s credential to register itself", TelegramCredentialType)
+		return telegramBot{}, fmt.Errorf("this trigger needs a %s credential to register itself", TelegramCredentialType)
 	}
 	credential, err := lifecycleContext.Credentials.ResolveCredential(ctx, id)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve the Telegram credential: %w", err)
+		return telegramBot{}, fmt.Errorf("resolve the Telegram credential: %w", err)
 	}
-	token = strings.TrimSpace(credential.Fields["accessToken"])
+	if err := credential.CheckType(TelegramCredentialType); err != nil {
+		return telegramBot{}, err
+	}
+	return telegramBotFrom(credential)
+}
+
+// telegramBotFrom reads the token and address out of a Telegram credential.
+func telegramBotFrom(credential engine.Credential) (telegramBot, error) {
+	token := strings.TrimSpace(credential.Fields["accessToken"])
 	if token == "" {
-		return "", "", fmt.Errorf("the Telegram credential has no access token")
+		return telegramBot{}, fmt.Errorf("the Telegram credential has no access token")
 	}
-	return token, TelegramBaseURL(credential.Fields["baseUrl"]), nil
+	return telegramBot{token: token, baseURL: TelegramBaseURL(credential.Fields["baseUrl"]), credential: credential}, nil
 }
 
 // telegramCall makes one Bot API call through the egress policy.
-func telegramCall(ctx context.Context, policy safehttp.Policy, baseURL, token, method string, arguments map[string]any) ([]byte, error) {
-	target, err := telegramEndpoint(baseURL, "/bot"+token+"/"+method)
+func telegramCall(ctx context.Context, policy safehttp.Policy, bot telegramBot, method string, arguments map[string]any) ([]byte, error) {
+	target, err := telegramEndpoint(bot.baseURL, "/bot"+bot.token+"/"+method)
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +190,13 @@ func telegramCall(ctx context.Context, policy safehttp.Policy, baseURL, token, m
 	}
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
+	}
+	// The token rides in the path, so the credential's domain bound is checked
+	// against the host it is about to be sent to, and its redirect scope is
+	// bound to the request: the same checks the engine applies to a node's
+	// own request, rather than a copy of them.
+	if err := bot.credential.ScopeRequest(request); err != nil {
+		return nil, err
 	}
 	response, err := safehttp.NewClient(policy).Do(request)
 	if err != nil {
@@ -220,10 +250,17 @@ func NewTelegramPollers(root context.Context, policy safehttp.Policy, runner web
 	return &TelegramPollers{policy: policy, runner: runner, root: root, running: map[string]context.CancelFunc{}}
 }
 
-// Start begins polling for one binding, replacing any existing loop for it.
-func (pollers *TelegramPollers) Start(lifecycleContext webhook.LifecycleContext, token, baseURL string) error {
+// Start begins polling for one binding with its Telegram credential,
+// replacing any existing loop for it. The credential rather than its token is
+// handed over, so every poll is checked against its domain bound as the
+// registration calls are.
+func (pollers *TelegramPollers) Start(lifecycleContext webhook.LifecycleContext, credential engine.Credential) error {
 	if pollers == nil || pollers.runner == nil {
 		return fmt.Errorf("this deployment cannot poll Telegram; use webhook delivery")
+	}
+	bot, err := telegramBotFrom(credential)
+	if err != nil {
+		return err
 	}
 	pollers.Stop(lifecycleContext.Binding.Route)
 
@@ -232,7 +269,7 @@ func (pollers *TelegramPollers) Start(lifecycleContext webhook.LifecycleContext,
 	pollers.running[lifecycleContext.Binding.Route] = cancel
 	pollers.mu.Unlock()
 
-	go pollers.loop(ctx, lifecycleContext.Binding, token, baseURL)
+	go pollers.loop(ctx, lifecycleContext.Binding, bot)
 	return nil
 }
 
@@ -269,7 +306,7 @@ func (pollers *TelegramPollers) Running() []string {
 // Long polling rather than a timer: `timeout` holds the connection open until
 // an update arrives, so an idle bot costs one open request rather than a
 // request a second, and a message is delivered as soon as it exists.
-func (pollers *TelegramPollers) loop(ctx context.Context, binding repository.WebhookBinding, token, baseURL string) {
+func (pollers *TelegramPollers) loop(ctx context.Context, binding repository.WebhookBinding, bot telegramBot) {
 	logger := slog.Default().With("route", binding.Route, "workflow", binding.WorkflowID, "node", binding.NodeID)
 	logger.Info("polling Telegram for updates")
 	defer logger.Info("stopped polling Telegram")
@@ -280,7 +317,7 @@ func (pollers *TelegramPollers) loop(ctx context.Context, binding repository.Web
 		if ctx.Err() != nil {
 			return
 		}
-		updates, err := pollers.fetch(ctx, binding, token, baseURL, offset)
+		updates, err := pollers.fetch(ctx, binding, bot, offset)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -333,7 +370,7 @@ func (pollers *TelegramPollers) accepts(binding repository.WebhookBinding, updat
 	return accepted
 }
 
-func (pollers *TelegramPollers) fetch(ctx context.Context, binding repository.WebhookBinding, token, baseURL string, offset int) ([]map[string]any, error) {
+func (pollers *TelegramPollers) fetch(ctx context.Context, binding repository.WebhookBinding, bot telegramBot, offset int) ([]map[string]any, error) {
 	arguments := map[string]any{"timeout": telegramPollSeconds, "offset": offset}
 	if allowed := TelegramAllowedUpdates(binding.Parameters); len(allowed) > 0 {
 		arguments["allowed_updates"] = allowed
@@ -344,7 +381,7 @@ func (pollers *TelegramPollers) fetch(ctx context.Context, binding repository.We
 	if policy.Timeout > 0 && policy.Timeout < telegramPollTimeout {
 		policy.Timeout = telegramPollTimeout
 	}
-	body, err := telegramCall(ctx, policy, baseURL, token, "getUpdates", arguments)
+	body, err := telegramCall(ctx, policy, bot, "getUpdates", arguments)
 	if err != nil {
 		return nil, err
 	}

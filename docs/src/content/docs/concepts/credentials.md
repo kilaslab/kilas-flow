@@ -82,10 +82,36 @@ port is stripped, the host is lowercased, a trailing dot is trimmed, and:
   domain**, so scoping to `*.internal.test` does not silently authorize
   `internal.test` itself.
 
-The check runs in four places, and in every one it happens **before the secret
-touches the request**: the runtime's `Request.Authenticate`, used by both the
-hand-written HTTP node and the declarative routing interpreter; the AI chat model
-call; edit-time option loading; and the credential test endpoint.
+The check runs everywhere a credential is placed on a request, and in every one
+it happens **before the secret touches the request**: the runtime's
+`Request.Authenticate`, used by both the hand-written HTTP node and the
+declarative routing interpreter; the AI chat model call; edit-time option
+loading; the credential test endpoint; Telegram file downloads; and every
+trigger lifecycle request — a pack's registration templates and the Telegram
+trigger's registration and polling calls. A lifecycle request goes through the
+runtime's own `Credential.CheckType` and `Credential.ScopeRequest` rather than a
+copy, so it checks the credential's type, its domains against the target host,
+and binds the redirect scope below, exactly as a node's request does.
+
+### Redirects
+
+The bound follows the request through redirects. Each hop is checked against the
+credential's `allowedDomains` again, and a hop that fails stops the chain with
+the last in-scope response rather than failing the call — the node sees the
+`30x`. Go drops only `Authorization` and `Cookie` when a redirect changes host,
+so without this an `X-Api-Key`, a WAHA key or a custom template's headers would
+follow a redirect anywhere. Two more rules apply while a credential is
+attached:
+
+- **A credential with an empty domain list stays on the first host.**
+  Unrestricted means "wherever the node sends it", not "wherever a server
+  redirects it", so a redirect may only go to the hostname of the first
+  request. The port is not compared, as the domain check does not compare it, so
+  a service moving between ports on the same host keeps working. A credential
+  that names its domains is held to those instead, and a redirect to another
+  host it names is followed.
+- **No step down from `https` to `http`.** The secret would cross the network in
+  the clear on the next hop.
 
 That single shared implementation is deliberate. The check used to live beside
 one node, and the comment on it now says why it moved: with two callers, a second

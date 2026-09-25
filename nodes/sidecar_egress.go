@@ -93,15 +93,26 @@ func (egress *sidecarEgress) HTTP(ctx context.Context, call sidecar.HTTPRequest)
 	}
 
 	// The same conjunction on the context, so a redirect outside the scope
-	// stops the chain instead of following it with the secret in hand.
-	scoped := safehttp.WithCredentialScope(ctx, safehttp.CredentialScope{AllowsHost: func(host string) bool {
+	// stops the chain instead of following it with the secret in hand. A
+	// held credential that names no domains holds the whole chain to the
+	// first request's host, since the host cannot know whether that is the
+	// secret the package put in a header. A run holding no credential
+	// attaches no scope and redirects exactly as an unauthenticated request.
+	scoped := ctx
+	if len(egress.held) > 0 {
+		unbounded := false
 		for _, credential := range egress.held {
-			if !credential.AllowsHost(host) {
-				return false
-			}
+			unbounded = unbounded || len(credential.AllowedDomains) == 0
 		}
-		return true
-	}})
+		scoped = safehttp.WithCredentialScope(ctx, safehttp.CredentialScope{AllowsHost: func(host string) bool {
+			for _, credential := range egress.held {
+				if !credential.AllowsHost(host) {
+					return false
+				}
+			}
+			return true
+		}, Unbounded: unbounded})
+	}
 
 	// The package's own timeout may only shorten the deployment's, never
 	// lengthen it.

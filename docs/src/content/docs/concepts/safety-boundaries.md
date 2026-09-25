@@ -59,7 +59,11 @@ IPv4-mapped IPv6 forms are refused too, so `::ffff:127.0.0.1` does not slip past
 **On every redirect hop.** A redirect can point anywhere, so the destination gets
 the same scheme and allowlist check the original URL did — and because each hop
 re-enters the dialer, the address check runs again as well. After five hops the
-request fails.
+request fails. A request carrying a credential is held tighter still: each hop
+must stay inside the credential's `allowedDomains`, a credential with an empty
+list may only stay on the first request's hostname, and no hop may step down
+from `https` to `http`. A hop that breaks one of those stops the chain with the
+last in-scope response; see [redirects](/concepts/credentials/#redirects).
 
 ### The levers do not consult each other
 
@@ -118,8 +122,8 @@ lives, and it is worth re-reading whenever a section is added to the policy.
 ### Credentials narrow it further
 
 A [credential's](/concepts/credentials/) own `allowedDomains` is checked against
-the target host **before the secret touches the request**, in all four places a
-credential can be applied. It is a narrowing on top of the policy above, never a
+the target host **before the secret touches the request**, everywhere a
+credential can be applied, trigger lifecycle requests included. It is a narrowing on top of the policy above, never a
 replacement: a credential permitted to reach `example.com` still cannot reach it
 if the deployment's outbound policy refuses the resolved address.
 
