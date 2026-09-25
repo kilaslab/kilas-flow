@@ -275,10 +275,15 @@ when the node runs, as a `SyntaxError` with its line, not when it is saved.
   that is not an item: that item goes to the error output with its own
   fields beside the error (or on as an error item in its place, under
   *Continue*), and the other items pass through. Either way the error item's
-  `error` is the error's message, such as `Error: out of stock [line 3]`, as
-  n8n's Code node writes it, so `{{ $json.error }}` reads that text. Other
-  nodes' error items carry an object with `message` and `node` instead. A
-  tolerated failure is the node's answer and is not retried.
+  `error` is the text n8n's Code node writes: the error's message and the
+  line it was thrown on, such as `out of stock [line 3]` or
+  `Cannot read properties of undefined (reading 'id') [line 2]`, without the
+  error's type or the item, so `{{ $json.error }}` reads that text. (The
+  run's own error, on the node's row, still names both.) Other nodes' error
+  items carry an object with `message` and `node` instead. A failure of the
+  code itself is the node's answer and is not retried; the server failing to
+  run the code at all (a worker that crashed or could not start) is retried
+  and tolerated as any node's failure is, one error item per input item.
 - **Most error messages match V8's; a few don't.** The errors code usually
   meets carry Node's wording: `JSON.parse` on text that is not JSON, reading a
   property of `undefined`, and calling something that is not a function

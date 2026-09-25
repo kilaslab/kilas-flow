@@ -426,9 +426,9 @@ test('lineage survives a Code node that filters, reorders and rebuilds items', a
 // n8n's item loop does: that item goes to the error output (or on as an error
 // item in its place) and the others pass through. All-items mode is one call
 // over the whole batch, so there the node fails as a whole, with one error
-// item, as in n8n. Either way `error` is the message, as n8n's Code node
-// writes it.
-test('a throwing item goes to the error output alone, naming its line and item, and keeps what it printed', async ({ page, server }) => {
+// item, as in n8n. Either way `error` is n8n's text: the message and the line,
+// without the error's type or the item.
+test('a throwing item goes to the error output alone, naming its line, and keeps what it printed', async ({ page, server }) => {
 	const emit = "return [{ json: { raw: '{\"n\":1}' } }, { json: { raw: '{broken' } }, { json: { raw: '{\"n\":3}' } }]";
 	const parse = "console.log('parsing item', $itemIndex, $json.raw)\nconst parsed = JSON.parse($json.raw)\nreturn { json: { n: parsed.n } }";
 
@@ -447,8 +447,7 @@ test('a throwing item goes to the error output alone, naming its line and item, 
 	const record = await runToSuccess(server.baseURL, branchId);
 	const failed = items(record, 'failed');
 	expect(failed.map((item) => item.raw)).toEqual(['{broken']);
-	expect(failed[0].why).toContain('SyntaxError');
-	expect(failed[0].why).toContain('[line 2, for item 1]');
+	expect(failed[0].why).toBe("Expected property name or '}' in JSON at position 1 (line 1 column 2) [line 2]");
 	expect(items(record, 'ok').map((item) => item.n)).toEqual([1, 3]);
 	// Every item ran, and what each printed is kept with the node's run.
 	expect(consoleTexts(record, 'parse')).toEqual(['parsing item 0 {"n":1}', 'parsing item 1 {broken', 'parsing item 2 {"n":3}']);
@@ -469,7 +468,7 @@ test('a throwing item goes to the error output alone, naming its line and item, 
 	);
 	const whole = await runToSuccess(server.baseURL, wholeId);
 	expect(items(whole, 'failed')).toHaveLength(1);
-	expect(items(whole, 'failed')[0].why).toContain('SyntaxError');
+	expect(items(whole, 'failed')[0].why).toBe("Expected property name or '}' in JSON at position 1 (line 1 column 2) [line 1]");
 	expect(nodeRun(whole, 'ok').status).toBe('skipped');
 
 	// continueRegularOutput passes the error items on the main output instead.
@@ -486,7 +485,7 @@ test('a throwing item goes to the error output alone, naming its line and item, 
 	);
 	const regular = await runToSuccess(server.baseURL, regularId);
 	expect(items(regular, 'after')).toHaveLength(3);
-	expect(items(regular, 'after')[1].why).toContain('[line 2, for item 1]');
+	expect(items(regular, 'after')[1].why).toContain('[line 2]');
 
 	// The execution page shows the node's console on its own Console tab
 	// (FEAT-x9gq0s), offered only for a Code node.

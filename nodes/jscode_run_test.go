@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -280,9 +281,9 @@ func TestAnAllItemsCodeNodeToleratesAThrowWithOneErrorItem(t *testing.T) {
 			t.Fatalf("%s: output %#v, want one error item on port %d", onError, output, port)
 		}
 		failed := output[port][0].JSON
-		// The message is the error's own text, as n8n's is: the node's name
-		// the run's error starts with is not part of it.
-		if failed[engine.ErrorItemKey] != "Error: the batch broke [line 1]" || len(failed) != 1 {
+		// The text is n8n's: the error's message and its line, with neither
+		// the node's name the run's error starts with nor the error's type.
+		if failed[engine.ErrorItemKey] != "the batch broke [line 1]" || len(failed) != 1 {
 			t.Errorf("%s: the error item = %#v, want the message alone under %q", onError, failed, engine.ErrorItemKey)
 		}
 		if port == 1 && len(output[0]) != 0 {
@@ -291,16 +292,70 @@ func TestAnAllItemsCodeNodeToleratesAThrowWithOneErrorItem(t *testing.T) {
 	}
 }
 
+// An error item's text is what n8n's Code node writes: the message and the
+// line the code failed on, whatever the error's type, and "Unknown error"
+// for an error with no message.
+func TestACodeNodesErrorItemReadsAsN8nsDoes(t *testing.T) {
+	for source, want := range map[string]string{
+		"const order = undefined\nreturn [{ json: { id: order.id } }]": "Cannot read properties of undefined (reading 'id') [line 2]",
+		"JSON.parse('{broken')": "Expected property name or '}' in JSON at position 1 (line 1 column 2) [line 1]",
+		"throw new Error()":     "Unknown error [line 1]",
+	} {
+		output := runToleratedCode(t, nodes.CodeModeAllItems, source, "continueRegularOutput")
+		if len(output[0]) != 1 || output[0][0].JSON[engine.ErrorItemKey] != want {
+			t.Errorf("%q: error items %#v, want one reading %q", source, output[0], want)
+		}
+	}
+}
+
 // In "Run Once for Each Item" mode each item that threw is an error item of
-// its own, and `error` is the message there too; on the error output the
-// input item's fields sit beside it, as n8n merges them.
+// its own, and `error` is the message there too, with the line but not the
+// item, as n8n writes it; on the error output the input item's fields sit
+// beside it, as n8n merges them.
 func TestAnEachItemCodeNodesErrorItemsCarryTheMessage(t *testing.T) {
 	output := runToleratedCode(t, nodes.CodeModeEachItem, "if ($json.n === 2) throw new Error('two broke')\nreturn { json: { n: $json.n } }", "continueErrorOutput")
 	if len(output) < 2 || len(output[0]) != 2 || len(output[1]) != 1 {
 		t.Fatalf("output %#v, want two items on main and one on the error output", output)
 	}
 	failed := output[1][0].JSON
-	if message, ok := failed[engine.ErrorItemKey].(string); !ok || !strings.Contains(message, "two broke") || failed["n"] != float64(2) {
+	if failed[engine.ErrorItemKey] != "two broke [line 1]" || failed["n"] != float64(2) {
 		t.Errorf("the error item = %#v, want the message beside n = 2", failed)
+	}
+}
+
+// failingEngine is a runtime whose every run fails with err.
+type failingEngine struct{ err error }
+
+func (runtime failingEngine) Run(context.Context, jsrun.Task) (jsrun.Result, error) {
+	return jsrun.Result{}, runtime.err
+}
+
+// Only a failure of the code itself — a throw, code that does not parse, one
+// of the code's limits — is the batch's, and so one error item under
+// continue-on-fail and no retry. A failure of the server to run the code at
+// all (a worker that crashed or could not start, a closed pool, the engine's
+// own fault) is an ordinary node failure, which the runner retries and
+// tolerates as it would any node's, as n8n's engine does.
+func TestOnlyTheCodesOwnFailureIsTheBatchs(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		err   error
+		batch bool
+	}{
+		{"a throw", &jsrun.ScriptError{Name: "Error", Message: "boom", Line: 1, ItemIndex: -1}, true},
+		{"code that does not parse", &jsrun.SyntaxError{Message: "Unexpected token", Line: 1, Column: 3}, true},
+		{"the time limit", &jsrun.LimitError{Detail: "code exceeded its 10s time limit", Cause: jsrun.ErrTimeLimit}, true},
+		{"an invalid return", &jsrun.LimitError{Detail: "code returned a number", Cause: jsrun.ErrInvalidReturn}, true},
+		{"the engine's fault", &jsrun.LimitError{Detail: "the JavaScript engine failed", Cause: jsrun.ErrEngineFault}, false},
+		{"a closed pool", errors.New("the JavaScript worker pool is closed"), false},
+		{"a worker that could not start", fmt.Errorf("start a JavaScript worker: %w", errors.New("exec format error")), false},
+	} {
+		executor := jsExecutor(t, nodes.JSCodeExecutorID, nodes.WithJSRunner(failingEngine{err: testCase.err}))
+		_, err := executor.Execute(context.Background(), jsNode(nodes.JSCodeNodeType, map[string]any{"jsCode": "return items"}), threeItems(),
+			engine.Request{TolerateItemFailures: true})
+		var batch *engine.BatchFailure
+		if errors.As(err, &batch) != testCase.batch || !errors.Is(err, testCase.err) {
+			t.Errorf("%s: Execute() error = %#v, want a batch failure: %v, wrapping the runtime's error", testCase.name, err, testCase.batch)
+		}
 	}
 }

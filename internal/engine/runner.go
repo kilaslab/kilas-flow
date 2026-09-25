@@ -1595,9 +1595,8 @@ func withErrorPort(node workflow.IRNode, output workflow.NodeOutput) workflow.No
 // imported check such as `{{ $json.error }}` matches.
 //
 // The error is the {message, node} object, or the message alone for a node
-// whose definition says n8n's writes it that way (the Code node). The message
-// alone leaves out the node's name the run's error starts with, since n8n's
-// does not carry it and the object is where the name has its own field.
+// whose definition says n8n's writes it that way (the Code node); see
+// itemMessageOf for that text.
 //
 // Its lineage is left to the runner, which stamps it exactly as it stamps the
 // item that would have succeeded in its place. Copying the input item's own
@@ -1611,7 +1610,7 @@ func errorItem(node workflow.IRNode, item workflow.Item, cause error, withInput 
 		}
 	}
 	if node.Definition.ErrorAsMessage {
-		fields[ErrorItemKey] = strings.TrimPrefix(cause.Error(), fmt.Sprintf("node %q: ", node.Name))
+		fields[ErrorItemKey] = itemMessageOf(node, cause)
 	} else {
 		fields[ErrorItemKey] = map[string]any{
 			"message": cause.Error(),
@@ -1619,6 +1618,25 @@ func errorItem(node workflow.IRNode, item workflow.Item, cause error, withInput 
 		}
 	}
 	return workflow.Item{JSON: fields, Binary: item.Binary}
+}
+
+// itemMessage is an error that knows the text its error item carries when
+// that is the message alone. The JavaScript runtime's errors do: n8n's Code
+// node writes the message and the line, without the error's type, which the
+// run's own error text keeps.
+type itemMessage interface {
+	ItemMessage() string
+}
+
+// itemMessageOf is the message-alone text of a tolerated failure: what the
+// error says its item carries, or else its text without the node's name the
+// run's error starts with.
+func itemMessageOf(node workflow.IRNode, cause error) string {
+	var described itemMessage
+	if errors.As(cause, &described) {
+		return described.ItemMessage()
+	}
+	return strings.TrimPrefix(cause.Error(), fmt.Sprintf("node %q: ", node.Name))
 }
 
 // toleratedOutput is a node-level tolerated failure: one error item per input

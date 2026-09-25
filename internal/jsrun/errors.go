@@ -142,6 +142,19 @@ func (e *ScriptError) Error() string {
 	return text.String()
 }
 
+// ItemMessage is the text a tolerated failure's error item carries, as n8n's
+// Code node writes it: the error's message and the line it was thrown on,
+// without the error's type, without the item (n8n's error item already
+// stands for it) and without "Uncaught". An error with no message reads
+// "Unknown error", as n8n's does.
+func (e *ScriptError) ItemMessage() string {
+	message := e.Message
+	if message == "" {
+		message = "Unknown error"
+	}
+	return message + location(e.Line, -1)
+}
+
 // location renders where a failure happened, in the user's terms.
 func location(line, item int) string {
 	switch {
@@ -166,6 +179,12 @@ func (e *SyntaxError) Error() string {
 		return "SyntaxError: " + e.Message
 	}
 	return fmt.Sprintf("SyntaxError: %s [line %d, column %d]", e.Message, e.Line, e.Column)
+}
+
+// ItemMessage is the text a tolerated failure's error item carries: the
+// message and the line, without the type, as ScriptError's is.
+func (e *SyntaxError) ItemMessage() string {
+	return e.Message + location(e.Line, -1)
 }
 
 // Unsupported is one construct the runtime refuses, and where it is.

@@ -144,9 +144,9 @@ As described above.
   return, so a tolerated batch timeout still records `node.timeout`.
   Pre-run refusals (empty code, disabled runtime) stay plain errors.
 - `ErrorAsMessage` on node.Definition / workflow.NodeDefinition, set on the
-  Code (JavaScript) and imported Code nodes: `error` is the message string,
-  with the `node "X": ` prefix of the run's error left out (n8n's text is
-  e.g. `Error: boom [line 1]`). Every other node keeps `{message, node}`;
+  Code (JavaScript) and imported Code nodes: `error` is the message string.
+  (Superseded by the review fix below: the text is n8n's `boom [line 1]`,
+  not `Error: boom [line 1]`.) Every other node keeps `{message, node}`;
   Postgres and Data store build their own error items and are untouched.
 - `connectedOutputs` (internal/engine/node_branches.go) implements the
   upstream walk; the runner caches it per node per run and sets
@@ -166,6 +166,32 @@ As described above.
   eval_test.go (debugger); nodes jscode_run_test.go, jscode_lineage_test.go;
   jsrun roots_test.go updated to the new default; e2e js-code.spec.ts
   updated and run green.
+
+## Review fixes 2026-09-25
+
+- **Error item text is n8n's exactly.** n8n's task runner (secure mode, the
+  default) turns what the code threw into an execution error whose message
+  is the details from the stack's header row followed by `[line N]`: no error
+  type (that goes to a separate description) and, since the runner builds it
+  without an item index, no "for item". An empty message reads "Unknown
+  error". So `throw new Error('boom')` gives `boom [line 1]`, a TypeError
+  `Cannot read properties of undefined (reading 'id') [line 2]`, and a
+  JSON.parse SyntaxError `Expected property name or '}' in JSON at position 1
+  (line 1 column 2) [line 2]`, in both modes. jsrun's ScriptError and
+  SyntaxError now answer `ItemMessage()` with that text, and the runner's
+  errorItem prefers it for a message-shaped node. A code-level SyntaxError
+  (code that does not parse) gives its message and line; it is refused at
+  validate, so it rarely reaches a run. The run's own error text (the node's
+  row) is unchanged and still names the type and item.
+- **Only the code's own failure is a BatchFailure.** nodes/jscode.go
+  `failedInTheCode`: a ScriptError, a SyntaxError or one of the code's limits
+  (time, memory, output, host calls, call depth, invalid return, never
+  settles, file, response, static data). The engine's fault, a closed pool, a
+  worker that crashed or could not start, and input too large are plain
+  errors, so retryOnFail retries them and continue-on-fail tolerates them per
+  input item, as n8n's engine does for failures outside the runner's try.
+- Follow-ups filed: expressions' `.all/.first/.last(branch, run)`, and the
+  walk order of edges into one input.
 
 # Related Files
 

@@ -334,10 +334,12 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 - A Code node in "Run Once for All Items" mode that continues on failure
   answers a throw with one error item, as n8n's does, not one per input item,
   so the node after it runs once; the item carries no input item's fields, and
-  the failure is not retried. A Code node's error items carry `error` as the
-  message, as n8n writes it, so `{{ $json.error }}` reads the text and
-  `{{ $json.error.message }}` is empty, as in n8n. Other nodes' error items
-  keep the `{ message, node }` object.
+  the failure is not retried (a worker that crashed or could not start is
+  still an ordinary failure, retried and tolerated per item). A Code node's
+  error items carry `error` as n8n's text, the message and the line, such as
+  `boom [line 1]`, without the error's type or the item, so
+  `{{ $json.error }}` reads the text and `{{ $json.error.message }}` is empty,
+  as in n8n. Other nodes' error items keep the `{ message, node }` object.
 - A chat model node that never set "Stream output" now streams, as the editor
   already showed. An absent `stream` key used to mean off.
 - An agent ended by the workflow's own execution timeout says so, and names

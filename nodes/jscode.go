@@ -169,9 +169,9 @@ func (executor *JSCodeExecutor) Execute(ctx context.Context, ir workflow.IRNode,
 	}
 	if err != nil {
 		err = fmt.Errorf("node %q: %w", ir.Name, err)
-		if mode != jsrun.ModeEachItem {
-			// The code ran once over the whole batch, so a failure it
-			// tolerates is one error item, as n8n's is, not one per item.
+		if mode != jsrun.ModeEachItem && failedInTheCode(err) {
+			// The code ran once over the whole batch, so a failure of its own
+			// is one error item, as n8n's is, not one per item.
 			return nil, &engine.BatchFailure{Err: err}
 		}
 		return nil, err
@@ -184,6 +184,34 @@ func (executor *JSCodeExecutor) Execute(ctx context.Context, ir workflow.IRNode,
 		items = []workflow.Item{}
 	}
 	return workflow.NodeOutput{items}, nil
+}
+
+// codeLimits are the limits a script runs into by what its code does, as
+// opposed to what it was handed or what the server could not do.
+var codeLimits = []error{
+	jsrun.ErrTimeLimit, jsrun.ErrMemoryLimit, jsrun.ErrOutputLimit, jsrun.ErrHostCallLimit, jsrun.ErrCallDepth,
+	jsrun.ErrInvalidReturn, jsrun.ErrNeverSettles, jsrun.ErrFileLimit, jsrun.ErrResponseLimit, jsrun.ErrStaticDataLimit,
+}
+
+// failedInTheCode reports that the code itself failed: it threw, did not
+// parse, or ran into one of its limits. That is the failure n8n's Code node
+// catches inside its task and answers with an error item. Anything else — a
+// worker that crashed or could not start, a closed pool, the engine's own
+// fault, input too large to hand over — is the server failing to run the
+// code, which n8n's engine sees as the node failing: it is retried, and
+// tolerated as any node's failure is.
+func failedInTheCode(err error) bool {
+	var script *jsrun.ScriptError
+	var syntax *jsrun.SyntaxError
+	if errors.As(err, &script) || errors.As(err, &syntax) {
+		return true
+	}
+	for _, limit := range codeLimits {
+		if errors.Is(err, limit) {
+			return true
+		}
+	}
+	return false
 }
 
 // failedItemOutcomes turns the per-item outcomes of a run that went on past
