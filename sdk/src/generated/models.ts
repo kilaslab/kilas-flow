@@ -1618,11 +1618,11 @@ export interface TestPayloadBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
-     * Hosts this credential may be sent to. Empty means unrestricted.
+     * Hosts the probe may reach. Empty means unrestricted, unless a stored secret was used: the stored credential's allowedDomains then apply, narrowed by these.
      * @nullable
      */
   allowedDomains?: string[] | null;
-  /** Stored credential the redaction placeholder resolves against */
+  /** Stored credential the redaction placeholder resolves against. It must name a credential of this type in the caller's tenant. */
   credentialId?: string;
   /** Field values to test. Send the redaction placeholder to use a stored secret. */
   fields: TestPayloadBodyFields;
@@ -2612,7 +2612,7 @@ export const getTestCredentialPayloadUrl = (type: string,) => {
 }
 
 /**
- * Runs a credential type's probe against a payload that has not been saved. Send credentialId alongside the redaction placeholder to test an edit against stored secrets.
+ * Runs a credential type's probe against a payload that has not been saved. Send credentialId alongside the redaction placeholder to test an edit against stored secrets. A placeholder is filled only while host, port, baseUrl and url match the stored values, and a test that uses a stored secret runs under the stored allowedDomains narrowed by the ones sent. A tenant runs at most four tests at once; one more is answered 429.
  * @summary Test an unsaved credential
  */
 export const testCredentialPayload = async (type: string,

@@ -76,6 +76,70 @@ func (record Record) AllowsHost(host string) bool {
 	return false
 }
 
+// IntersectDomains returns the scope that admits exactly the hosts both scopes
+// admit. An empty scope is unrestricted, so it yields the other one unchanged.
+//
+// Two non-empty scopes that share no host yield ok false, never an empty
+// list: an empty list means unrestricted, and returning one would turn "no
+// host is allowed by both" into "every host is".
+func IntersectDomains(first, second []string) (scope []string, ok bool) {
+	first, second = scopeEntries(first), scopeEntries(second)
+	if len(first) == 0 {
+		return second, true
+	}
+	if len(second) == 0 {
+		return first, true
+	}
+	seen := map[string]struct{}{}
+	for _, left := range first {
+		for _, right := range second {
+			entry, overlaps := intersectEntry(left, right)
+			if !overlaps {
+				continue
+			}
+			if _, duplicate := seen[entry]; duplicate {
+				continue
+			}
+			seen[entry] = struct{}{}
+			scope = append(scope, entry)
+		}
+	}
+	return scope, len(scope) > 0
+}
+
+// scopeEntries normalises a scope the way AllowsHost reads it.
+func scopeEntries(domains []string) []string {
+	entries := make([]string, 0, len(domains))
+	for _, domain := range domains {
+		domain = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), ".")
+		if domain != "" {
+			entries = append(entries, domain)
+		}
+	}
+	return entries
+}
+
+// intersectEntry is the overlap of two scope entries: an exact host when one
+// side names it and the other admits it, the narrower wildcard when one
+// wildcard's domain sits under the other's.
+func intersectEntry(left, right string) (string, bool) {
+	leftSuffix, leftWildcard := strings.CutPrefix(left, "*.")
+	rightSuffix, rightWildcard := strings.CutPrefix(right, "*.")
+	switch {
+	case !leftWildcard && !rightWildcard:
+		return left, left == right
+	case !leftWildcard:
+		return left, strings.HasSuffix(left, "."+rightSuffix)
+	case !rightWildcard:
+		return right, strings.HasSuffix(right, "."+leftSuffix)
+	case leftSuffix == rightSuffix || strings.HasSuffix(leftSuffix, "."+rightSuffix):
+		return left, true
+	case strings.HasSuffix(rightSuffix, "."+leftSuffix):
+		return right, true
+	}
+	return "", false
+}
+
 func hostWithoutPort(host string) string {
 	if index := strings.LastIndex(host, ":"); index > 0 && !strings.Contains(host[index:], "]") {
 		return host[:index]

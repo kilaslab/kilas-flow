@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -58,8 +59,12 @@ type Credentials struct {
 	// and never answers otherwise holds the request for the server's window.
 	timeout time.Duration
 	// inFlight holds the tests currently running, keyed by tenant and subject,
-	// so a client cannot fan a loop of concurrent probes out of one instance.
-	inFlight sync.Map
+	// and tenantTests counts them per tenant, so a client cannot fan a loop of
+	// concurrent probes out of one instance. testMu guards both: the two have
+	// to change together or the count drifts from the set.
+	testMu      sync.Mutex
+	inFlight    map[string]struct{}
+	tenantTests map[string]int
 	// oauthSigningKey HMAC-signs the Connect popup's state. Empty disables start.
 	oauthSigningKey    []byte
 	oauthPublicURL     string
@@ -180,7 +185,10 @@ func (handler *Credentials) Register(api huma.API) {
 		OperationID: "test-credential-payload", Method: http.MethodPost, Path: "/credential-types/{type}/test",
 		Summary: "Test an unsaved credential",
 		Description: "Runs a credential type's probe against a payload that has not been saved. " +
-			"Send credentialId alongside the redaction placeholder to test an edit against stored secrets.",
+			"Send credentialId alongside the redaction placeholder to test an edit against stored secrets. " +
+			"A placeholder is filled only while host, port, baseUrl and url match the stored values, and a test " +
+			"that uses a stored secret runs under the stored allowedDomains narrowed by the ones sent. " +
+			"A tenant runs at most four tests at once; one more is answered 429.",
 		Tags:     []string{"Credentials"},
 		Metadata: sensitiveBody(),
 	}, handler.TestPayload)
@@ -398,8 +406,8 @@ type testPayloadBody struct {
 	// CredentialID names the stored credential a redacted field is taken from.
 	// Without it a placeholder has nothing to resolve against, and the test
 	// would authenticate with eight bullet characters.
-	CredentialID   string   `json:"credentialId,omitempty" doc:"Stored credential the redaction placeholder resolves against"`
-	AllowedDomains []string `json:"allowedDomains,omitempty" doc:"Hosts this credential may be sent to. Empty means unrestricted."`
+	CredentialID   string   `json:"credentialId,omitempty" doc:"Stored credential the redaction placeholder resolves against. It must name a credential of this type in the caller's tenant."`
+	AllowedDomains []string `json:"allowedDomains,omitempty" doc:"Hosts the probe may reach. Empty means unrestricted, unless a stored secret was used: the stored credential's allowedDomains then apply, narrowed by these."`
 }
 
 // TestCredentialResource reports whether a credential actually works.
@@ -471,12 +479,23 @@ func (handler *Credentials) TestPayload(ctx context.Context, input *testPayloadI
 	}
 
 	tenant := handler.tenants.Resolve(ctx)
-	fields, fromStorage, err := handler.mergeStoredSecrets(ctx, tenant, input)
+	// A named credential is checked before anything else uses the name: it is
+	// the claim key below, and an unchecked one let a random id per request
+	// buy a fresh slot per request.
+	stored, err := handler.storedForTest(ctx, tenant, input)
+	if err != nil {
+		return nil, err
+	}
+	fields, fromStorage, err := handler.mergeStoredSecrets(ctx, tenant, input, stored)
 	if err != nil {
 		return nil, err
 	}
 	if err := credentials.Validate(input.Type, fields); err != nil {
 		return nil, huma.Error422UnprocessableEntity(err.Error())
+	}
+	scope, err := payloadTestScope(stored, fromStorage, input.Body.AllowedDomains)
+	if err != nil {
+		return nil, err
 	}
 
 	subject := input.CredentialIDOrType()
@@ -490,7 +509,7 @@ func (handler *Credentials) TestPayload(ctx context.Context, input *testPayloadI
 	defer cancel()
 	record := credentials.Record{
 		ID: input.Body.CredentialID, Type: input.Type,
-		Fields: fields, AllowedDomains: input.Body.AllowedDomains,
+		Fields: fields, AllowedDomains: scope,
 	}
 	return handler.probe(ctx, record, fields, fromStorage), nil
 }
@@ -511,6 +530,32 @@ func (input *testPayloadInput) CredentialIDOrType() string {
 	return "type:" + input.Type
 }
 
+// storedForTest reads the credential a payload test names, in the caller's
+// tenant, and refuses one of another type. It returns nil when none is named.
+func (handler *Credentials) storedForTest(ctx context.Context, tenant repository.TenantScope, input *testPayloadInput) (*credentials.Record, error) {
+	if input.Body.CredentialID == "" {
+		return nil, nil
+	}
+	if handler.store == nil {
+		return nil, huma.Error503ServiceUnavailable("credential storage unavailable")
+	}
+	stored, err := handler.store.Get(ctx, tenant, input.Body.CredentialID)
+	if err != nil {
+		return nil, handler.problem(ctx, err)
+	}
+	if stored.Type != input.Type {
+		return nil, huma.Error422UnprocessableEntity(
+			"credential " + input.Body.CredentialID + " is a " + stored.Type + " credential, not " + input.Type)
+	}
+	return &stored, nil
+}
+
+// targetFields are the fields that say where a credential's secret goes. A
+// stored secret was entrusted to the stored target, so a placeholder is only
+// resolved while every one of them still matches what is stored. The port is
+// among them: a different port on the same host can be a different service.
+var targetFields = []string{"host", "port", "baseUrl", "url"}
+
 // mergeStoredSecrets replaces every redaction placeholder with its stored value.
 //
 // Field by field, the way Update already merges them. Passing the submitted
@@ -518,7 +563,11 @@ func (input *testPayloadInput) CredentialIDOrType() string {
 // report a password failure for a credential that is perfectly good; falling
 // back to the whole stored record whenever anything is redacted is worse, and
 // reports success for an edit that was never tested.
-func (handler *Credentials) mergeStoredSecrets(ctx context.Context, tenant repository.TenantScope, input *testPayloadInput) (map[string]string, []string, error) {
+//
+// A placeholder is refused when the edit moves the target. Merging it there
+// would send the stored password to a host the caller just typed, which is a
+// way to read any stored secret without ever being shown it.
+func (handler *Credentials) mergeStoredSecrets(ctx context.Context, tenant repository.TenantScope, input *testPayloadInput, stored *credentials.Record) (map[string]string, []string, error) {
 	fields := make(map[string]string, len(input.Body.Fields))
 	redacted := make([]string, 0, len(input.Body.Fields))
 	for key, value := range input.Body.Fields {
@@ -531,20 +580,20 @@ func (handler *Credentials) mergeStoredSecrets(ctx context.Context, tenant repos
 	if len(redacted) == 0 {
 		return fields, nil, nil
 	}
-	if input.Body.CredentialID == "" {
+	if stored == nil {
 		return nil, nil, huma.Error422UnprocessableEntity(
 			"a redacted field needs credentialId, naming the stored credential its value comes from")
 	}
-	if handler.store == nil {
-		return nil, nil, huma.Error503ServiceUnavailable("credential storage unavailable")
-	}
-	stored, storedFields, err := handler.store.Resolve(ctx, tenant, input.Body.CredentialID)
+	_, storedFields, err := handler.store.Resolve(ctx, tenant, stored.ID)
 	if err != nil {
 		return nil, nil, handler.problem(ctx, err)
 	}
-	if stored.Type != input.Type {
-		return nil, nil, huma.Error422UnprocessableEntity(
-			"credential " + input.Body.CredentialID + " is a " + stored.Type + " credential, not " + input.Type)
+	for _, key := range targetFields {
+		if strings.TrimSpace(fields[key]) != strings.TrimSpace(storedFields[key]) {
+			return nil, nil, huma.Error422UnprocessableEntity(
+				"this edit changes " + key + ", so a stored secret cannot be used to test it: " +
+					"type the secret again, or save the credential and test it")
+		}
 	}
 	sort.Strings(redacted)
 	resolved := make([]string, 0, len(redacted))
@@ -559,6 +608,26 @@ func (handler *Credentials) mergeStoredSecrets(ctx context.Context, tenant repos
 		resolved = append(resolved, key)
 	}
 	return fields, resolved, nil
+}
+
+// payloadTestScope is the scope a payload test runs under.
+//
+// Once a stored secret is in the payload, the stored scope is where it may go,
+// and the body's scope can narrow it but never widen it — so the test runs
+// under their intersection. With nothing taken from storage, the payload is
+// the caller's own and its scope is the body's, exactly as for a credential
+// that was never saved.
+func payloadTestScope(stored *credentials.Record, fromStorage []string, requested []string) ([]string, error) {
+	if stored == nil || len(fromStorage) == 0 {
+		return requested, nil
+	}
+	scope, ok := credentials.IntersectDomains(stored.AllowedDomains, requested)
+	if !ok {
+		return nil, huma.Error422UnprocessableEntity(
+			"the allowed domains sent share no host with the stored credential's, " +
+				"so its stored secret cannot be tested under them")
+	}
+	return scope, nil
 }
 
 // probe runs whichever kind of test the credential type declares.
@@ -618,19 +687,46 @@ func (handler *Credentials) bounded(ctx context.Context) (context.Context, conte
 	return context.WithTimeout(ctx, timeout)
 }
 
-// claim admits one test at a time per credential.
+// claim admits one test at a time per credential, and a few at a time per
+// tenant.
 //
 // Not a rate limit: sequential tests are the normal way to fix a credential.
 // What this stops is fan-out — without it, anyone who can reach the API can aim
-// a few hundred concurrent probes at a network from a single stored credential
-// and read the results off the timing.
+// a few hundred concurrent probes at a network and read the results off the
+// timing. The per-credential slot alone does not bound that, because a caller
+// can name as many subjects as it has credentials and types; the tenant cap
+// does, whatever the subjects are called.
 func (handler *Credentials) claim(tenant repository.TenantScope, subject string) (func(), error) {
+	handler.testMu.Lock()
+	defer handler.testMu.Unlock()
+	if handler.inFlight == nil {
+		handler.inFlight = map[string]struct{}{}
+		handler.tenantTests = map[string]int{}
+	}
 	key := tenant.ID + "\x00" + subject
-	if _, running := handler.inFlight.LoadOrStore(key, struct{}{}); running {
+	if _, running := handler.inFlight[key]; running {
 		return nil, huma.Error409Conflict("a test of this credential is already running")
 	}
-	return func() { handler.inFlight.Delete(key) }, nil
+	if handler.tenantTests[tenant.ID] >= maxConcurrentTestsPerTenant {
+		return nil, huma.NewError(http.StatusTooManyRequests, fmt.Sprintf(
+			"%d credential tests are already running for this tenant: wait for one to finish", maxConcurrentTestsPerTenant))
+	}
+	handler.inFlight[key] = struct{}{}
+	handler.tenantTests[tenant.ID]++
+	return func() {
+		handler.testMu.Lock()
+		defer handler.testMu.Unlock()
+		delete(handler.inFlight, key)
+		if handler.tenantTests[tenant.ID]--; handler.tenantTests[tenant.ID] <= 0 {
+			delete(handler.tenantTests, tenant.ID)
+		}
+	}, nil
 }
+
+// maxConcurrentTestsPerTenant bounds how many credential tests one tenant can
+// have running at once, across every credential and type. Enough for a person
+// fixing a few credentials side by side; far too few to scan a network with.
+const maxConcurrentTestsPerTenant = 4
 
 // defaultCredentialTestTimeout bounds a test when nothing is configured.
 const defaultCredentialTestTimeout = 10 * time.Second

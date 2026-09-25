@@ -175,13 +175,14 @@ func TestAnUnsavedEditIsTestedAgainstItsStoredSecrets(t *testing.T) {
 	})
 
 	// The editor only ever saw the placeholder, so an edit that changes the
-	// host sends it straight back. Passing it through would authenticate with
-	// eight bullet characters and blame the password.
+	// database sends it straight back. Passing it through would authenticate
+	// with eight bullet characters and blame the password. (An edit that moves
+	// the host is refused instead: see credentials_probe_scope_test.go.)
 	verdict := requestJSON[testCredentialResource](t, handler, http.MethodPost,
 		"/api/v1/credential-types/postgres/test", map[string]any{
 			"credentialId": stored.ID,
 			"fields": map[string]string{
-				"host": "127.0.0.2", "port": "1", "database": "app",
+				"host": "127.0.0.1", "port": "1", "database": "reporting",
 				"user": "ada", "password": credentials.RedactedValue, "sslMode": "disable",
 			},
 		}, http.StatusOK)

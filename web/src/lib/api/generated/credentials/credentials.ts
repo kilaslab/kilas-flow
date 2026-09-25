@@ -198,7 +198,7 @@ export const getTestCredentialPayloadUrl = (type: string,) => {
 }
 
 /**
- * Runs a credential type's probe against a payload that has not been saved. Send credentialId alongside the redaction placeholder to test an edit against stored secrets.
+ * Runs a credential type's probe against a payload that has not been saved. Send credentialId alongside the redaction placeholder to test an edit against stored secrets. A placeholder is filled only while host, port, baseUrl and url match the stored values, and a test that uses a stored secret runs under the stored allowedDomains narrowed by the ones sent. A tenant runs at most four tests at once; one more is answered 429.
  * @summary Test an unsaved credential
  */
 export const testCredentialPayload = async (type: string,

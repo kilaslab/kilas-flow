@@ -11,11 +11,11 @@ export interface TestPayloadBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /**
-     * Hosts this credential may be sent to. Empty means unrestricted.
+     * Hosts the probe may reach. Empty means unrestricted, unless a stored secret was used: the stored credential's allowedDomains then apply, narrowed by these.
      * @nullable
      */
   allowedDomains?: string[] | null;
-  /** Stored credential the redaction placeholder resolves against */
+  /** Stored credential the redaction placeholder resolves against. It must name a credential of this type in the caller's tenant. */
   credentialId?: string;
   /** Field values to test. Send the redaction placeholder to use a stored secret. */
   fields: TestPayloadBodyFields;

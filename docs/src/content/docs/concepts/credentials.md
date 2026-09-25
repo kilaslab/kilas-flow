@@ -167,6 +167,31 @@ which the answer counts as success (default `GET` and 400). The response body is
 drained and discarded, because returning it would turn a pass/fail probe into a
 general-purpose fetch.
 
+An edit can be tested before it is saved. The form sends the redaction
+placeholder for a secret it was never shown, together with `credentialId`, and
+the server fills the placeholder from the stored credential. Three rules keep
+that from becoming a way to read a stored secret:
+
+- **The target must not move.** A placeholder is filled only while the edit's
+  `host`, `port`, `baseUrl` and `url` match the stored values. An edit that
+  changes one is refused with a 422 until the secret is typed again or the
+  credential is saved: otherwise the stored password would go to whatever host
+  the caller just typed.
+- **The stored scope applies.** Once a stored secret is in the payload, the
+  probe runs under the intersection of the stored `allowedDomains` and the
+  scope the request sends, so the request can narrow the scope but never widen
+  it. Two scopes that share no host are refused rather than read as
+  unrestricted. A payload with nothing taken from storage is the caller's own
+  and runs under the scope it sends.
+- **The credential is checked first.** `credentialId` must name a credential of
+  the same type in the caller's tenant before anything uses it. It is also the
+  key for the one-test-at-a-time slot, and an unchecked id let a random name
+  per request buy a fresh slot per request.
+
+Tests are also capped per tenant: at most four run at once across every
+credential and type, and one more is answered `429`. The per-credential slot
+answers `409` as before.
+
 The tests that exist are chosen carefully. OpenRouter is probed at `/key` rather
 than `/models`, because OpenRouter serves its model catalogue unauthenticated —
 so `/models` answers 200 for a key that is expired or revoked, and the test would

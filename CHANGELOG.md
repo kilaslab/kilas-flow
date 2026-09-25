@@ -414,6 +414,17 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Security
 
+- Testing an unsaved edit of a credential can no longer send its stored
+  secret to a host of the caller's choosing. A redaction placeholder is filled
+  from storage only while the edit keeps the stored host, port, base URL and
+  URL; otherwise the test is refused with a 422. A test that uses a stored
+  secret runs under the stored `allowedDomains`, narrowed by any scope the
+  request sends, instead of under the request's scope alone. `credentialId` is
+  checked against the caller's tenant before it is used. A tenant can run at
+  most four credential tests at once (a fifth is answered `429`), so random
+  credential ids no longer buy unlimited parallel probes. The dashboard now
+  sends the form's scope with a test.
+
 - Updating a credential keeps every field and the scope the request leaves
   out. An update used to clear any field it did not send, so a rename silently
   dropped a JWT private key or the refresh token Connect stored. It also read a

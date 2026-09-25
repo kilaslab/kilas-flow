@@ -73,6 +73,13 @@ that leaves a credential's `allowedDomains` out keeps the stored scope, so a
 client that only renames a credential cannot widen where its secret may go;
 only an explicit empty list makes it unrestricted.
 
+**Testing an edit never moves a stored secret.** The unsaved-credential test
+fills a redaction placeholder from storage only while the edit keeps the stored
+host, port and base URL. It holds the probe to the stored scope, which the
+request can narrow but never widen, and checks the named credential against the
+caller's tenant before using it. No more than four credential tests run at once
+per tenant, so the test endpoint cannot be fanned out into a scanner.
+
 **The master key can come from a manager, and credential fields can point at
 one.** A stored credential field may hold an `ext://<binding>/<key>`
 reference instead of a sealed secret. The reference is sealed into the row

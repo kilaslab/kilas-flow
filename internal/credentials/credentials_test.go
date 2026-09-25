@@ -298,6 +298,41 @@ func TestRedactedRecordMasksOnlyTheSecretsTheStoreRecordedAsSet(t *testing.T) {
 	}
 }
 
+func TestIntersectDomainsAdmitsOnlyWhatBothScopesAdmit(t *testing.T) {
+	t.Parallel()
+
+	for name, testCase := range map[string]struct {
+		first, second []string
+		want          []string
+		ok            bool
+	}{
+		"unrestricted first":      {nil, []string{"api.test"}, []string{"api.test"}, true},
+		"unrestricted second":     {[]string{"API.test."}, []string{" "}, []string{"api.test"}, true},
+		"both unrestricted":       {nil, nil, []string{}, true},
+		"same exact host":         {[]string{"db.corp.test"}, []string{"db.corp.test"}, []string{"db.corp.test"}, true},
+		"exact under a wildcard":  {[]string{"*.corp.test"}, []string{"db.corp.test"}, []string{"db.corp.test"}, true},
+		"wildcard over the exact": {[]string{"db.corp.test"}, []string{"*.corp.test"}, []string{"db.corp.test"}, true},
+		"narrower wildcard wins":  {[]string{"*.corp.test"}, []string{"*.eu.corp.test"}, []string{"*.eu.corp.test"}, true},
+		"bare parent is not a subdomain": {
+			[]string{"*.corp.test"}, []string{"corp.test"}, nil, false,
+		},
+		"disjoint": {[]string{"db.corp.test"}, []string{"attacker.test"}, nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, ok := credentials.IntersectDomains(testCase.first, testCase.second)
+			if ok != testCase.ok {
+				t.Fatalf("IntersectDomains() ok = %v, want %v (scope %#v)", ok, testCase.ok, got)
+			}
+			if !ok {
+				return
+			}
+			if strings.Join(got, ",") != strings.Join(testCase.want, ",") {
+				t.Fatalf("IntersectDomains() = %#v, want %#v", got, testCase.want)
+			}
+		})
+	}
+}
+
 func TestARegisteredFieldCannotCollideWithTheStoresBookkeeping(t *testing.T) {
 	t.Parallel()
 

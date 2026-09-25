@@ -287,7 +287,15 @@
 		if (!typeID) return;
 		testing = true;
 		try {
-			const payload = { fields: saveFields(), ...(editing ? { credentialId: editing.id } : {}) };
+			// The scope in the form goes with the test, so the probe is held to
+			// the hosts this credential will be saved with. For an edit that
+			// reuses a stored secret, the server narrows it further to the
+			// stored scope.
+			const payload = {
+				fields: saveFields(),
+				allowedDomains: credentialBody().allowedDomains,
+				...(editing ? { credentialId: editing.id } : {})
+			};
 			const response = await testCredentialPayload(typeID, payload);
 			if (response.status !== 200) throw new Error(m.credentials_error_test());
 			testResult = { ok: response.data.ok, detail: response.data.detail ?? '' };
