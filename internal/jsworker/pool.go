@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -82,9 +83,13 @@ type Pool struct {
 	logger      *slog.Logger
 	slots       chan struct{}
 
-	mu     sync.Mutex
-	idle   []*worker
-	closed bool
+	// idle are the workers waiting for a job, the longest idle first, and
+	// workers how many are alive or starting, idle or not: what the cap
+	// counts when a job's tenant has no idle worker of its own.
+	mu      sync.Mutex
+	idle    []*worker
+	workers int
+	closed  bool
 
 	// profiles are the ways to start a worker, strongest first; profileAt
 	// is the one the kernel has not refused, refusal why the one before it
@@ -107,6 +112,10 @@ type Pool struct {
 	readyTimeout      time.Duration
 	confinementLogged string
 	workerConfinement confinement
+
+	// took, when a test sets it, hears of every worker handed to a job and
+	// the tenant the job runs for.
+	took func(w *worker, tenant string)
 }
 
 var _ jsrun.Engine = (*Pool)(nil)
@@ -167,11 +176,14 @@ func New(options Options) *Pool {
 }
 
 // Start starts one worker now, rather than for the first job, and keeps it
-// for that job. It says why a worker could not start: the server calls it
-// at boot when a worker user is configured, so a user it cannot start
-// workers as stops the boot instead of failing every JavaScript run.
+// for that job, whichever tenant it runs for. It says why a worker could
+// not start: the server calls it at boot when a worker user is configured,
+// so a user it cannot start workers as stops the boot instead of failing
+// every JavaScript run.
 func (pool *Pool) Start() error {
-	w, err := pool.take(context.Background())
+	pool.slots <- struct{}{}
+	defer func() { <-pool.slots }()
+	w, err := pool.take(context.Background(), "")
 	if err != nil {
 		return err
 	}
@@ -182,9 +194,10 @@ func (pool *Pool) Start() error {
 // Limits reports the pool's ceiling, after defaults.
 func (pool *Pool) Limits() jsrun.Limits { return pool.limits }
 
-// Run executes one node's code in a worker. It fails as jsrun.Runner.Run
-// does, with the same errors, and with the time-limit, memory-limit or
-// engine-fault error when the worker had to be killed or died.
+// Run executes one node's code in a worker of the task's tenant. It fails as
+// jsrun.Runner.Run does, with the same errors, and with the time-limit,
+// memory-limit or engine-fault error when the worker had to be killed or
+// died.
 func (pool *Pool) Run(ctx context.Context, task jsrun.Task) (jsrun.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return jsrun.Result{}, err
@@ -199,13 +212,16 @@ func (pool *Pool) Run(ctx context.Context, task jsrun.Task) (jsrun.Result, error
 		return jsrun.Result{}, ctx.Err()
 	}
 	defer func() { <-pool.slots }()
-	w, err := pool.take(ctx)
+	w, err := pool.take(ctx, task.Tenant)
 	if err != nil && ctx.Err() != nil {
 		return jsrun.Result{}, context.Cause(ctx)
 	}
 	if err != nil {
 		pool.logger.Error("a JavaScript worker could not start", "error", err)
 		return jsrun.Result{}, jsrun.EngineFaultError("its worker process could not start: " + err.Error())
+	}
+	if pool.took != nil {
+		pool.took(w, task.Tenant)
 	}
 	result, err := pool.run(ctx, w, job, host)
 	pool.put(w)
@@ -219,6 +235,7 @@ func (pool *Pool) Close() {
 	pool.closed = true
 	idle := pool.idle
 	pool.idle = nil
+	pool.workers -= len(idle)
 	pool.mu.Unlock()
 	for _, w := range idle {
 		w.idleTimer.Stop()
@@ -226,35 +243,66 @@ func (pool *Pool) Close() {
 	}
 }
 
-func (pool *Pool) take(ctx context.Context) (*worker, error) {
+// take finds a worker for a job of tenant, which holds a slot. A worker runs
+// only one tenant's jobs, so that code which escaped the engine and stayed
+// in a worker never sees another tenant's: the most recently idle worker of
+// the tenant is reused, or one that has run nothing yet, which becomes the
+// tenant's. With none, a fresh worker starts, and at the cap it takes the
+// place of the worker that has been idle longest, another tenant's, which
+// is stopped. There is always one: every worker the cap counts is either
+// idle or held by a job with a slot, and this job holds a slot and no
+// worker.
+func (pool *Pool) take(ctx context.Context, tenant string) (*worker, error) {
 	pool.mu.Lock()
-	for len(pool.idle) > 0 {
-		w := pool.idle[len(pool.idle)-1]
-		pool.idle = pool.idle[:len(pool.idle)-1]
+	for index := len(pool.idle) - 1; index >= 0; index-- {
+		w := pool.idle[index]
+		if w.tenant != tenant && w.runs > 0 {
+			continue
+		}
+		pool.idle = slices.Delete(pool.idle, index, index+1)
 		w.idleTimer.Stop()
 		if w.alive() {
+			w.tenant = tenant
 			pool.mu.Unlock()
 			return w, nil
 		}
 		// It died while idle, perhaps at the kernel's hand.
+		pool.workers--
 		w.stop()
 	}
-	closed := pool.closed
-	pool.mu.Unlock()
-	if closed {
+	if pool.closed {
+		pool.mu.Unlock()
 		return nil, errors.New("the JavaScript worker pool is closed")
 	}
-	return pool.start(ctx)
+	var evicted *worker
+	if pool.workers >= cap(pool.slots) && len(pool.idle) > 0 {
+		// The fresh worker takes its place in the count.
+		evicted = pool.idle[0]
+		pool.idle = slices.Delete(pool.idle, 0, 1)
+		evicted.idleTimer.Stop()
+	} else {
+		pool.workers++
+	}
+	pool.mu.Unlock()
+	if evicted != nil {
+		evicted.stop()
+	}
+	w, err := pool.start(ctx)
+	if err != nil {
+		pool.mu.Lock()
+		pool.workers--
+		pool.mu.Unlock()
+		return nil, err
+	}
+	w.tenant = tenant
+	return w, nil
 }
 
 func (pool *Pool) put(w *worker) {
-	if !w.healthy || w.runs >= pool.maxRuns || !w.alive() {
-		w.stop()
-		return
-	}
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
-	if pool.closed {
+	if !w.healthy || w.runs >= pool.maxRuns || !w.alive() || pool.closed {
+		pool.workers--
 		w.stop()
 		return
 	}
@@ -265,15 +313,12 @@ func (pool *Pool) put(w *worker) {
 // retire stops a worker that stayed idle too long, unless a job took it.
 func (pool *Pool) retire(w *worker) {
 	pool.mu.Lock()
-	for index, candidate := range pool.idle {
-		if candidate == w {
-			pool.idle = append(pool.idle[:index], pool.idle[index+1:]...)
-			pool.mu.Unlock()
-			w.stop()
-			return
-		}
+	defer pool.mu.Unlock()
+	if index := slices.Index(pool.idle, w); index >= 0 {
+		pool.idle = slices.Delete(pool.idle, index, index+1)
+		pool.workers--
+		w.stop()
 	}
-	pool.mu.Unlock()
 }
 
 // worker is one worker process and the server's ends of its pipes.
@@ -287,6 +332,8 @@ type worker struct {
 	// exited closes when the process has been reaped; state is set before.
 	exited chan struct{}
 	state  *os.ProcessState
+	// tenant is whose jobs it runs, set when it is handed its first.
+	tenant string
 	// runs counts the jobs it finished; healthy turns false for good when
 	// anything went wrong in one.
 	runs      int

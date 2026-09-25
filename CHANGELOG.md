@@ -371,6 +371,13 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Security
 
+- A JavaScript worker process runs one tenant's Code-node and Sort-comparator
+  scripts and never another's, so code that escaped the engine and stayed in a
+  worker cannot see a later tenant's jobs. A script whose tenant has no idle
+  worker starts a fresh one, which costs one cold start (about 8 ms); at
+  `code.javascript_max_concurrent` workers, the worker idle longest, another
+  tenant's, is stopped to make room.
+
 - A refused request's problem document no longer echoes the request back. A
   missing or unexpected property, or a body that does not parse, used to answer
   with the whole body, a credential's secrets included; on an operation that

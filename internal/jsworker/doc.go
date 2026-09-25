@@ -12,7 +12,10 @@
 //
 // A Pool holds at most MaxConcurrent workers, starts them when needed and
 // reuses them; each runs one job at a time, on a fresh VM, as the in-process
-// runner does. The server prepares the job (jsrun.Runner.Prepare: the input
+// runner does, and only ever the jobs of one tenant (jsrun.Task.Tenant), so
+// code that escaped the engine and stayed in a worker never sees another
+// tenant's. A job whose tenant has no idle worker gets a fresh one, and at
+// the cap the worker idle longest, another tenant's, is stopped for it. The server prepares the job (jsrun.Runner.Prepare: the input
 // is encoded and checked against its cap, and nothing is compiled or run in
 // the server), hands it to a worker over the worker's stdin, and answers the
 // questions the code asks while it runs over the same pipes: $('Node') and

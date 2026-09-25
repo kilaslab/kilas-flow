@@ -161,6 +161,12 @@ type Task struct {
 	// outcome in Result.Outcomes. A limit (time, memory, output) still ends
 	// the whole run.
 	ContinueOnItemError bool
+	// Tenant is who the task runs for: the tenant its execution belongs to,
+	// empty in a deployment that has none. A worker pool runs one tenant's
+	// tasks on a worker and never another's, and treats the empty tenant as
+	// a tenant of its own; the in-process Runner has no workers and ignores
+	// it. It never reaches the code.
+	Tenant string
 }
 
 // Result is what one run produced.

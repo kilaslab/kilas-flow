@@ -296,6 +296,11 @@ fresh engine.
 - The server keeps at most `code.javascript_max_concurrent` workers, starts
   them when a script needs one, reuses them, retires one that has been idle for
   five minutes, and replaces each after a thousand runs.
+- A worker runs one tenant's scripts and never another's. A script whose
+  tenant has no idle worker gets a fresh one, and when the server already
+  keeps as many workers as it may, the worker that has been idle longest,
+  another tenant's, is stopped to make room. A deployment without tenants is
+  one group.
 - The server prepares every job itself — the input is encoded and checked
   against its cap before a worker sees it — and nothing is run in the server.
   Validation parses a node's code there, and compiles it only to see that it
@@ -353,7 +358,9 @@ questions a script asks and the helpers the server carries out for it
 (`this.helpers.httpRequest` is made by the server, never by the worker) are
 unaffected. A worker's cold start is about 8 ms with every layer in place, a
 quarter of a millisecond more than without the namespaces, and a worker is
-reused for up to a thousand jobs.
+reused for up to a thousand jobs of the same tenant, so code that escaped the
+engine and stayed in a worker never sees another tenant's jobs. A tenant's
+script that finds no worker of its own pays that cold start once.
 
 **What the kernel will not grant costs that layer and nothing else.** The server
 asks for the strongest start first and falls back when the kernel refuses it —

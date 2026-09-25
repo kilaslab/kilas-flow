@@ -8,12 +8,13 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/jsrun"
 )
 
-// A worker runs jobs for every tenant in turn, each on a fresh VM, so what
-// one job changes of the built-ins, the global object, a library or a
-// module is gone in the next, whoever it runs for. The worker process keeps
-// only compiled programs and the runtime's own tables, which no script can
-// write to (FEAT-vjjs8t; internal/jsrun's security tests prove the same in
-// process).
+// A worker runs one tenant's jobs in turn (a deployment without tenants is
+// one), each on a fresh VM, so what one job changes of the built-ins, the
+// global object, a library or a module is gone in the next, whatever
+// workflow it runs for. Two tenants never share a worker at all
+// (tenants_test.go). The worker process keeps only compiled programs and the
+// runtime's own tables, which no script can write to (FEAT-vjjs8t;
+// internal/jsrun's security tests prove the same in process).
 func TestOneTenantsJobCannotReachTheNextOnTheSameWorker(t *testing.T) {
 	pool := newTestPool(t, Options{MaxConcurrent: 1})
 	tenantA := jsrun.Roots{Workflow: jsrun.WorkflowInfo{ID: "wf_tenant_a", Name: "Tenant A"}, Env: map[string]string{"SECRET_OF_A": "a"}}

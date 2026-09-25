@@ -188,3 +188,30 @@ func TestConsoleIsEmittedEvenWhenTheCodeFails(t *testing.T) {
 		t.Fatalf("console detail = %s", events[0].Detail)
 	}
 }
+
+// tenantEngine is a runtime that records the tenant each task runs for.
+type tenantEngine struct{ tenants []string }
+
+func (engine *tenantEngine) Run(_ context.Context, task jsrun.Task) (jsrun.Result, error) {
+	engine.tenants = append(engine.tenants, task.Tenant)
+	return jsrun.Result{Order: []int{0, 1, 2}}, nil
+}
+
+// The runtime is told whose execution a task belongs to, so that a worker
+// pool can keep each tenant's code on workers of its own: the Code node's
+// and the Sort node's comparator alike.
+func TestTheRuntimeIsToldTheExecutionsTenant(t *testing.T) {
+	runtime := &tenantEngine{}
+	request := engine.Request{Execution: engine.ExecutionContext{ID: "exe_1", TenantID: "tenant-a"}}
+	if _, err := jsExecutor(t, nodes.JSCodeExecutorID, nodes.WithJSRunner(runtime)).Execute(context.Background(),
+		jsNode(nodes.JSCodeNodeType, map[string]any{"jsCode": "return items"}), threeItems(), request); err != nil {
+		t.Fatalf("Code: Execute() error = %v", err)
+	}
+	if _, err := jsExecutor(t, nodes.SortExecutorID, nodes.WithJSRunner(runtime)).Execute(context.Background(),
+		jsNode(nodes.SortNodeType, map[string]any{"type": "code", "code": "return a.json.n - b.json.n"}), threeItems(), request); err != nil {
+		t.Fatalf("Sort: Execute() error = %v", err)
+	}
+	if got := strings.Join(runtime.tenants, ","); got != "tenant-a,tenant-a" {
+		t.Fatalf("the runtime was told tenants %q, want tenant-a for both", got)
+	}
+}

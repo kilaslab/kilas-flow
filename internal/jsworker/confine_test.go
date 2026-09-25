@@ -124,8 +124,8 @@ func TestTheDefaultCommandStartsAWorker(t *testing.T) {
 }
 
 // BenchmarkAJobOnAFreshWorker measures a worker's cold start, confinement
-// included: every job runs on a worker started for it. Keeping workers per
-// tenant would cost this each time a worker changed hands.
+// included: every job runs on a worker started for it. A job whose tenant
+// has no worker of its own costs this.
 func BenchmarkAJobOnAFreshWorker(b *testing.B) {
 	pool := New(Options{MaxRuns: 1})
 	b.Cleanup(pool.Close)
@@ -142,6 +142,22 @@ func BenchmarkAJobOnAWarmWorker(b *testing.B) {
 	b.Cleanup(pool.Close)
 	for b.Loop() {
 		if _, err := pool.Run(context.Background(), jsrun.Task{Source: "return items"}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkAJobForTheOtherTenantAtTheCap is the worst case of keeping
+// workers per tenant: two tenants take turns under a cap of one worker, so
+// every job stops the other tenant's idle worker and starts one of its own.
+func BenchmarkAJobForTheOtherTenantAtTheCap(b *testing.B) {
+	pool := New(Options{MaxConcurrent: 1})
+	b.Cleanup(pool.Close)
+	tenants := [2]string{"tenant-a", "tenant-b"}
+	turn := 0
+	for b.Loop() {
+		turn++
+		if _, err := pool.Run(context.Background(), jsrun.Task{Source: "return items", Tenant: tenants[turn%2]}); err != nil {
 			b.Fatal(err)
 		}
 	}
