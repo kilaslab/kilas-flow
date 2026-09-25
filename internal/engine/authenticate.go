@@ -180,9 +180,10 @@ func (request Request) ExpressionContext(item workflow.Item, input workflow.Node
 		// the one place every executor's expression context is built: an
 		// executor that forgot it would read `$('X').item` and the legacy
 		// `$node["X"].json` from the wrong item, silently.
-		NodeItems: PairNodeItems(request.NodeItems, item, index),
-		Workflow:  request.Workflow,
-		Env:       request.Env,
+		NodeItems:    PairNodeItems(request.NodeItems, item, index),
+		NodeBranches: request.NodeBranches,
+		Workflow:     request.Workflow,
+		Env:          request.Env,
 		Execution: expression.ExecutionContext{
 			ID:   request.Execution.ID,
 			Mode: request.Execution.Mode,

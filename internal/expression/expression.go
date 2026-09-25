@@ -37,6 +37,11 @@ type Context struct {
 	// NodeItems is every completed node's output with its `json` wrapper,
 	// backing `$('Name')` and `$node["Name"].json.…`.
 	NodeItems map[string]NodeItem
+	// NodeBranches is, by name, the output of each node in NodeItems that the
+	// node being evaluated is connected to. `$('Name').all()`, `.first()` and
+	// `.last()` read that output, as n8n's do; a node missing from it is read
+	// at its first output.
+	NodeBranches map[string]int
 	// Workflow is the `$workflow` root, including the timezone the clock reads.
 	Workflow WorkflowContext
 	// ItemIndex is the current item's position, `$itemIndex`.

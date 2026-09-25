@@ -424,8 +424,8 @@ func nodeRoots() jsrun.Roots {
 	nodes := map[string]jsrun.NodeView{
 		"Webhook": {Items: []map[string]any{{"v": "a"}, {"v": "b"}, {"v": "c"}}, Params: map[string]any{"path": "hook"}},
 		// An IF node on its third run: two items went out on true, one on
-		// false.
-		"IF": {Items: []map[string]any{{"v": "t1"}, {"v": "t2"}, {"v": "f1"}}, Outputs: []int{2, 1}, RunIndex: 2},
+		// false. The running node hangs off false.
+		"IF": {Items: []map[string]any{{"v": "t1"}, {"v": "t2"}, {"v": "f1"}}, Outputs: []int{2, 1}, Branch: 1, RunIndex: 2},
 	}
 	return jsrun.Roots{
 		Workflow:  jsrun.WorkflowInfo{ID: "wf-1", Name: "Orders", Active: true},
@@ -499,9 +499,9 @@ func TestItemMatchingPairsTheNamedInputItem(t *testing.T) {
 // node's latest run, the only run kept, as n8n reads them: named by its
 // number or as n8n's -1, the latest run is read; an earlier one is refused
 // rather than answered with the latest, and a run or output the node does
-// not have is an error. $items reads output 0 by default; .all() with no
-// branch reads every output, since the runtime cannot tell which one feeds
-// this node.
+// not have is an error. $items reads output 0 by default; .all(), .first()
+// and .last() with no branch read the output the running node is connected
+// to, as n8n's do, and take the same branch and run otherwise.
 func TestAllAndItemsReadOneOutputOfTheLatestRun(t *testing.T) {
 	roots := nodeRoots()
 	roots.RunIndex = 2
@@ -510,11 +510,13 @@ func TestAllAndItemsReadOneOutputOfTheLatestRun(t *testing.T) {
 		"return [{ json: {",
 		"  items: values($items('IF')), second: values($items('IF', 1)), lockstep: values($items('IF', 1, $runIndex)), last: values($items('IF', null, -1)),",
 		"  all: values($('IF').all()), branch: values($('IF').all(1)), latest: values($('IF').all(0, 2)), same: $items('IF', 1) === $('IF').all(1, -1),",
+		"  first: $('IF').first().json.v, lastItem: $('IF').last().json.v, firstTrue: $('IF').first(0).json.v, lastTrue: $('IF').last(0, -1).json.v,",
 		"} }]",
 	}, "\n")})
 	got := result.Items[0].JSON
 	for key, want := range map[string]any{
-		"items": "t1,t2", "second": "f1", "lockstep": "f1", "last": "t1,t2", "all": "t1,t2,f1", "branch": "f1", "latest": "t1,t2", "same": true,
+		"items": "t1,t2", "second": "f1", "lockstep": "f1", "last": "t1,t2", "all": "f1", "branch": "f1", "latest": "t1,t2", "same": true,
+		"first": "f1", "lastItem": "f1", "firstTrue": "t1", "lastTrue": "t2",
 	} {
 		if got[key] != want {
 			t.Errorf("%s = %#v, want %#v", key, got[key], want)
@@ -528,6 +530,8 @@ func TestAllAndItemsReadOneOutputOfTheLatestRun(t *testing.T) {
 		"return $items('IF', 0, null)":   `$items() names run null of node "IF", which has no such run`,
 		"return $items('IF', 2)":         `$items() names output 2 of node "IF", which has no such output`,
 		"return $('IF').all(2)":          `$("IF").all() names output 2 of node "IF", which has no such output`,
+		"return $('IF').last(2)":         `$("IF").last() names output 2 of node "IF", which has no such output`,
+		"return $('IF').first(0, 1)":     `this node's code reads run 1 of node "IF", but only its latest run, 2, is kept, which this server does not run`,
 		"return $('Webhook').all(1)":     `$("Webhook").all() names output 1 of node "Webhook", which has no such output`,
 		"return $items('Webhook', 0, 1)": `$items() names run 1 of node "Webhook", which has no such run`,
 		"return $('Nope').first()":       `node "Nope" has not run in this execution`,

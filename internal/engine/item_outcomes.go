@@ -20,6 +20,23 @@ import (
 // failure, which is also what the error's text and Unwrap are.
 type ItemOutcomes []ItemOutcome
 
+// BatchFailure is what a node that ran its whole batch as one call returns
+// when that call failed: the JavaScript Code node's "Run once for all items"
+// mode is one. No input item failed on its own, so a node that tolerates
+// failures continues with one error item for the batch, as n8n's Code node
+// does, rather than one per input item: a node after it runs once. The item
+// carries no input item's fields, on either output.
+//
+// A node that does not tolerate failures fails with Err, which is also what
+// the error's text and Unwrap are.
+type BatchFailure struct {
+	Err error
+}
+
+func (failure *BatchFailure) Error() string { return failure.Err.Error() }
+
+func (failure *BatchFailure) Unwrap() error { return failure.Err }
+
 // ItemOutcome is one input item's result.
 type ItemOutcome struct {
 	// Items are what the item produced on the node's first output.

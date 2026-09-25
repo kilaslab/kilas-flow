@@ -63,6 +63,9 @@ type NodeView struct {
 	// so a read of one output (.all(branch), $items(name, output)) takes
 	// only its items. Empty reads as one output holding every item.
 	Outputs []int `json:"outputs,omitempty"`
+	// Branch is the output the running node is connected to, which .all(),
+	// .first() and .last() read when not told another, as n8n's do.
+	Branch int `json:"branch,omitempty"`
 	// RunIndex is which run of the node Items are: its latest, the only one
 	// kept. A read may name that run, and no earlier one.
 	RunIndex int `json:"runIndex"`

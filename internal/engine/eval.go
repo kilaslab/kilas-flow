@@ -213,8 +213,29 @@ func (service *Service) traceExpressionContext(record execution.Record, document
 			roots.JSON = entry.JSON
 		}
 		roots.Input = inputs[nodeID]
+		roots.NodeBranches = service.traceBranches(record, document, nodeID)
 	}
 	return roots, traced
+}
+
+// traceBranches is which output of each earlier node the named node is
+// connected to, the one `$('X').all()` read in the run, worked out from the
+// revision as the runner works it out. A revision that no longer compiles
+// (a node type since removed) has no connections to go by, and its nodes
+// are read at their first output.
+func (service *Service) traceBranches(record execution.Record, document workflow.Document, nodeID string) map[string]int {
+	if service.catalog == nil {
+		return nil
+	}
+	ir, err := service.compile(record, document)
+	if err != nil {
+		return nil
+	}
+	graph, err := prepareGraph(ir, "")
+	if err != nil {
+		return nil
+	}
+	return connectedOutputs(graph, nodeID)
 }
 
 // evaluationWorkflowContext is `$workflow` for an evaluation, including the

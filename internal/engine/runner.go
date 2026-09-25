@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/kilaslab/kilas-flow/internal/expression"
@@ -254,6 +255,11 @@ type Request struct {
 	// alongside NodeOutputs rather than replacing it, so an expression written
 	// either way resolves.
 	NodeItems map[string]expression.NodeItem
+	// NodeBranches is, by name, the output of each earlier node that the node
+	// being executed is connected to, which `$('Name').all()`, `.first()` and
+	// `.last()` read when not told another: n8n's default. A node missing
+	// from it reads its first output. The runner sets it per invocation.
+	NodeBranches map[string]int
 	// Workflow identifies the workflow, backing `$workflow`.
 	Workflow expression.WorkflowContext
 	// NodeState is per-node memory the runner owns for the whole execution,
@@ -559,6 +565,8 @@ type runState struct {
 	// pending is the execution stack, newest first. The branch the run is
 	// already on sits on top, which is what makes the order depth-first.
 	pending []pendingInvocation
+	// branches caches connectedOutputs by node ID.
+	branches map[string]map[string]int
 }
 
 // newRunState allocates the live state of one pass and seeds the execution
@@ -1204,7 +1212,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 	}
 
 	capture := &responseCapture{}
-	output, cause, code, attempt, suspended, err := runner.invoke(ctx, node, input, request, state, policy, capture)
+	output, cause, code, attempt, suspended, err := runner.invoke(ctx, graph, node, input, request, state, policy, capture)
 	if err != nil {
 		return nil, err
 	}
@@ -1277,7 +1285,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 // (suspendWithCheckpoint), because the stack a checkpoint carries is the
 // caller's. A node that suspends one item at a time still owes the items after
 // it, and only the loop that ran them knows which ones those are.
-func (runner *Runner) invoke(ctx context.Context, node workflow.IRNode, input workflow.NodeInput, request *Request, state *runState, policy retry, capture *responseCapture) (workflow.NodeOutput, error, string, int, *SuspendError, error) {
+func (runner *Runner) invoke(ctx context.Context, graph preparedGraph, node workflow.IRNode, input workflow.NodeInput, request *Request, state *runState, policy retry, capture *responseCapture) (workflow.NodeOutput, error, string, int, *SuspendError, error) {
 	executor, _ := runner.executors.Lookup(node.Definition.ExecutorID)
 	var (
 		output  workflow.NodeOutput
@@ -1301,6 +1309,9 @@ func (runner *Runner) invoke(ctx context.Context, node workflow.IRNode, input wo
 		// skipped branch recorded, so the two differ after a skip.
 		execution.RunIndex = state.executions[node.ID]
 		execution.TolerateItemFailures = policy.onError != errorStop
+		// Which output of each earlier node `$('X').all()` reads is this
+		// node's, so it is set here rather than kept on the shared request.
+		execution.NodeBranches = state.connectedOutputsFor(graph, node.ID)
 		// The node's events are wrapped so an answer it produces is captured
 		// for its trace row. A nil capture (a caller that wants none) leaves
 		// the sink exactly as it was.
@@ -1328,6 +1339,13 @@ func (runner *Runner) invoke(ctx context.Context, node workflow.IRNode, input wo
 			code = "node.timeout"
 		} else if timeout == 0 && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			code = "execution.timeout"
+		}
+		// A batch that failed as a whole while the node continues on failure
+		// is its answer too: n8n's Code node catches that failure itself. It
+		// keeps its code, so a tolerated timeout still reads as one.
+		var batch *BatchFailure
+		if policy.onError != errorStop && errors.As(err, &batch) {
+			return output, cause, code, attempt, nil, nil
 		}
 		// A failed attempt is a row of its own, so a reader can see that a node
 		// succeeded on its third try rather than only that it succeeded.
@@ -1371,7 +1389,7 @@ func (runner *Runner) runPerItem(ctx context.Context, graph preparedGraph, reque
 		}
 
 		itemInput := singleItemInput(input, item)
-		output, cause, _, attempt, suspended, err := runner.invoke(ctx, node, itemInput, request, state, policy, capture)
+		output, cause, _, attempt, suspended, err := runner.invoke(ctx, graph, node, itemInput, request, state, policy, capture)
 		if err != nil {
 			return nil, err
 		}
@@ -1576,6 +1594,11 @@ func withErrorPort(node workflow.IRNode, output workflow.NodeOutput) workflow.No
 // main output, and the input item plus the error on the error output, so an
 // imported check such as `{{ $json.error }}` matches.
 //
+// The error is the {message, node} object, or the message alone for a node
+// whose definition says n8n's writes it that way (the Code node). The message
+// alone leaves out the node's name the run's error starts with, since n8n's
+// does not carry it and the object is where the name has its own field.
+//
 // Its lineage is left to the runner, which stamps it exactly as it stamps the
 // item that would have succeeded in its place. Copying the input item's own
 // stamp carried a lost one along, which said the error item had no lineage
@@ -1587,24 +1610,32 @@ func errorItem(node workflow.IRNode, item workflow.Item, cause error, withInput 
 			fields[key] = cloneValue(value)
 		}
 	}
-	fields[ErrorItemKey] = map[string]any{
-		"message": cause.Error(),
-		"node":    node.Name,
+	if node.Definition.ErrorAsMessage {
+		fields[ErrorItemKey] = strings.TrimPrefix(cause.Error(), fmt.Sprintf("node %q: ", node.Name))
+	} else {
+		fields[ErrorItemKey] = map[string]any{
+			"message": cause.Error(),
+			"node":    node.Name,
+		}
 	}
 	return workflow.Item{JSON: fields, Binary: item.Binary}
 }
 
 // toleratedOutput is a node-level tolerated failure: one error item per input
 // item, so downstream item counts and paired-item lineage survive, and a single
-// item when the node had no input to pair against.
+// item when the node had no input to pair against or failed as a whole batch
+// (a BatchFailure), which no one input item did.
 func toleratedOutput(node workflow.IRNode, input workflow.NodeInput, cause error, mode errorMode) workflow.NodeOutput {
 	output := make(workflow.NodeOutput, len(node.Definition.Outputs))
 	for index := range output {
 		output[index] = []workflow.Item{}
 	}
 	items := make([]workflow.Item, 0, len(input[mainPortName]))
-	for _, item := range input[mainPortName] {
-		items = append(items, errorItem(node, item, cause, mode == errorBranch))
+	var batch *BatchFailure
+	if !errors.As(cause, &batch) {
+		for _, item := range input[mainPortName] {
+			items = append(items, errorItem(node, item, cause, mode == errorBranch))
+		}
 	}
 	if len(items) == 0 {
 		items = []workflow.Item{errorItem(node, workflow.Item{JSON: map[string]any{}}, cause, mode == errorBranch)}

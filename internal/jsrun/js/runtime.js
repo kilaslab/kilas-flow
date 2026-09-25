@@ -1405,6 +1405,9 @@
     // readers read one output of a node's latest run, by name, for .all()
     // and $items.
     var readers = new Map();
+    // joined is every output's items of a node, one after another, by name,
+    // which is what a pairing position counts through.
+    var joined = new Map();
     function nodeView(name) {
       name = String(name);
       var cached = views.get(name);
@@ -1430,6 +1433,11 @@
       // says how many each has. A node that says nothing has one output.
       var lengths = data && isArray(data.outputs) && data.outputs.length > 0 ? data.outputs : null;
       var latest = data && typeof data.runIndex === 'number' ? data.runIndex : 0;
+      // branch is the output this node is connected to, which .all(),
+      // .first() and .last() read when they name none, as n8n's do. A node
+      // whose outputs were not recorded, or that has no such output, is
+      // read whole, as an expression reads it.
+      var branch = data && typeof data.branch === 'number' ? data.branch : 0;
       var outputs = [];
       // read is one output of the node's latest run, the only run kept, as
       // a read of output and run asks for it: the latest run is read when
@@ -1447,7 +1455,10 @@
           }
           throw new Error(label + ' names run ' + StringType(run) + ' of node "' + name + '", which has no such run');
         }
-        if (output === undefined) return items;
+        if (output === undefined) {
+          if (lengths === null || branch >= lengths.length) return items;
+          output = branch;
+        }
         if (lengths === null ? output !== 0 : output >= lengths.length) {
           throw new Error(label + ' names output ' + output + ' of node "' + name + '", which has no such output');
         }
@@ -1460,14 +1471,20 @@
         return outputs[output];
       }
       readers.set(name, read);
+      joined.set(name, items);
       var view = {
-        // With no branch every output is read: which of the node's outputs
-        // feeds this one, n8n's default, is not known here.
+        // With no branch, the output this node is connected to is read.
         all: function (branchIndex, runIndex) {
           return read('$("' + name + '").all()', branchIndex === null ? undefined : branchIndex, runIndex);
         },
-        first: function () { executed(); return items[0]; },
-        last: function () { executed(); return items[items.length - 1]; },
+        first: function (branchIndex, runIndex) {
+          var list = read('$("' + name + '").first()', branchIndex === null ? undefined : branchIndex, runIndex);
+          return list[0];
+        },
+        last: function (branchIndex, runIndex) {
+          var list = read('$("' + name + '").last()', branchIndex === null ? undefined : branchIndex, runIndex);
+          return list[list.length - 1];
+        },
         itemMatching: function (itemIndex) { return paired(itemIndex); },
         params: data ? data.params : undefined,
         isExecuted: !!data,
@@ -1498,8 +1515,10 @@
         var view = nodeView(name);
         if (!view.isExecuted) return undefined;
         var chosen;
+        // The pairing answers with a position among every output's items,
+        // so it is read against all of them, not the connected branch.
         var answer = host.pair(name, current);
-        var all = view.all();
+        var all = joined.get(String(name));
         chosen = typeof answer === 'number' ? all[answer] : (all[current] || all[0]);
         return { json: chosen ? chosen.json : {}, parameter: view.params, params: view.params, isExecuted: true };
       },

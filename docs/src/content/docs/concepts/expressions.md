@@ -73,9 +73,9 @@ same list at `GET /api/v1/expression-grammar`.
 | `$input` | every item on each input port, plus `.item`, `.first()`, `.last()`, `.all()` and `.isExecuted` |
 | `$node["Name"].json.field` | that node's item corresponding to the current one (the paired item, else the same position) |
 | `$('Name').item` | that node's single item, when its provenance is intact |
-| `$('Name').first()` | its first item |
-| `$('Name').last()` | its last item |
-| `$('Name').all()` | all of its items |
+| `$('Name').first()` | its first item, on the output this node is connected to |
+| `$('Name').last()` | its last item, on the output this node is connected to |
+| `$('Name').all()` | all of its items on the output this node is connected to |
 | `$env.KEY` | the allowlisted environment |
 | `$execution.id` | this execution's identity |
 | `$workflow.name` | this workflow's identity |
@@ -90,6 +90,12 @@ as ISO 8601 with milliseconds and an offset rather than as a locale string.
 `$vars`, `$runIndex` and `$items('Name')` are also available; the
 [grammar reference](/reference/expression-grammar/) lists every root with what
 each one supports.
+
+For a node with several outputs, `.all()`, `.first()` and `.last()` read the
+one this node is connected to, as n8n does, however many nodes sit in between:
+a node after an IF's `false` branch reads the false items, never both branches
+joined. A node this one is not connected to is read at its first output.
+`$items('Name', output)` names the output instead, and starts from 0.
 
 `$fromAI` is gated: it is only meaningful in a parameter an AI agent fills, and
 anywhere else it is a clear error rather than a value. Without that gate an

@@ -35,7 +35,7 @@
 //	$items('Name')            another node's items
 //	$node["Name"].json.field  another node's corresponding output item
 //	$('Name').item            the item of that node this one descends from
-//	$('Name').first()/last()/all()
+//	$('Name').first()/last()/all()  its items on the output this node is connected to
 //	$('Name').params          that node's own configuration
 //	$env.KEY                  the allowlisted environment
 //	$execution.id             this execution's identity

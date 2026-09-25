@@ -122,9 +122,9 @@ port, the n8n accessors read the first port in name order.
 | `$node["Name"].field` | the same value, unwrapped |
 | `$node["Name"].binary` | its attachments |
 | `$('Name').item` | the item this one descends from, or a refusal |
-| `$('Name').first()` | its first item |
-| `$('Name').last()` | its last item |
-| `$('Name').all()` | all of its items |
+| `$('Name').first()` | its first item on the output this node is connected to |
+| `$('Name').last()` | its last item on the output this node is connected to |
+| `$('Name').all()` | all of its items on the output this node is connected to (found upstream through any nodes in between, as n8n finds it; the first output when this node is not connected to it) |
 | `$('Name').params` | that node's own resolved configuration |
 | `$('Name').isExecuted` | boolean |
 

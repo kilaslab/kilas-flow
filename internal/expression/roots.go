@@ -370,7 +370,7 @@ func nodeRootValue(name string, ctx Context) (any, error) {
 		// what the author meant, so it fails rather than resolving to nothing.
 		return nil, fmt.Errorf("$('%s') names a node that has not produced output in this run", name)
 	}
-	return nodeWrapper(item, ctx), nil
+	return nodeWrapper(item, ctx, ctx.NodeBranches[name]), nil
 }
 
 // legacyItems resolves `$items(name?, outputIndex?, runIndex?)`: the current
@@ -401,12 +401,20 @@ func legacyItems(ctx Context, args []any) (any, error) {
 			return nil, fmt.Errorf("$items() %s", message)
 		}
 	}
-	all, _ := nodeWrapper(item, ctx)[nodeItemsKey].([]any)
-	start, count, ok := outputSlice(item.OutputLengths, len(all), output)
+	start, count, ok := outputSlice(item.OutputLengths, len(item.Items), output)
 	if !ok {
 		return nil, fmt.Errorf("$items() %s", noOutputMessage(name, strconv.Itoa(output)))
 	}
-	return all[start : start+count], nil
+	return wrapItems(item.Items[start : start+count]), nil
+}
+
+// wrapItems is items as the grammar sees them, each with its `json` wrapper.
+func wrapItems(items []map[string]any) []any {
+	wrapped := make([]any, 0, len(items))
+	for _, entry := range items {
+		wrapped = append(wrapped, itemWrapper(entry, nil))
+	}
+	return wrapped
 }
 
 // wholeIndex reads a number that can index a list: a whole number, not
@@ -466,7 +474,7 @@ func runMessage(name string, run any, latest int) string {
 func nodeRootMap(ctx Context) map[string]any {
 	nodes := make(map[string]any, len(ctx.NodeItems)+len(ctx.Nodes))
 	for name, item := range ctx.NodeItems {
-		nodes[name] = nodeWrapper(item, ctx)
+		nodes[name] = nodeWrapper(item, ctx, ctx.NodeBranches[name])
 	}
 	for name, item := range ctx.Nodes {
 		if _, already := nodes[name]; already {
@@ -489,7 +497,13 @@ func nodeRootMap(ctx Context) map[string]any {
 // `.item` reads the paired-item lineage and refuses to fall back to the first
 // item: returning the first item when lineage is unknown is correct only when
 // every node processed exactly one item.
-func nodeWrapper(item NodeItem, ctx Context) map[string]any {
+//
+// `.all()`, `.first()` and `.last()` read one output, branch: the one the node
+// being evaluated is connected to, as n8n reads it. They used to read every
+// output joined, so after an IF `.last()` could answer with the other branch's
+// item. A node recorded without its output lengths (a checkpoint written
+// before they existed) cannot be split, and is read whole as it always was.
+func nodeWrapper(item NodeItem, ctx Context, branch int) map[string]any {
 	current := item.JSON
 	switch {
 	case item.Paired != nil:
@@ -497,13 +511,13 @@ func nodeWrapper(item NodeItem, ctx Context) map[string]any {
 	case ctx.ItemIndex >= 0 && ctx.ItemIndex < len(item.Items):
 		current = item.Items[ctx.ItemIndex]
 	}
-	all := make([]any, 0, len(item.Items))
-	for _, entry := range item.Items {
-		all = append(all, itemWrapper(entry, nil))
+	read := item.Items
+	if start, count, ok := outputSlice(item.OutputLengths, len(item.Items), branch); ok {
+		read = item.Items[start : start+count]
 	}
 	value := itemWrapper(anyMap(current), nil)
 	value["binary"] = item.Binary
-	value[nodeItemsKey] = all
+	value[nodeItemsKey] = wrapItems(read)
 	if item.Paired != nil {
 		value["item"] = itemWrapper(item.Paired, nil)
 	} else {

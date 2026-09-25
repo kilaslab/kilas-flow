@@ -425,7 +425,9 @@ test('lineage survives a Code node that filters, reorders and rebuilds items', a
 // Under an onError setting, per-item mode goes on past the item that threw, as
 // n8n's item loop does: that item goes to the error output (or on as an error
 // item in its place) and the others pass through. All-items mode is one call
-// over the whole batch, so there the node fails as a whole, as in n8n.
+// over the whole batch, so there the node fails as a whole, with one error
+// item, as in n8n. Either way `error` is the message, as n8n's Code node
+// writes it.
 test('a throwing item goes to the error output alone, naming its line and item, and keeps what it printed', async ({ page, server }) => {
 	const emit = "return [{ json: { raw: '{\"n\":1}' } }, { json: { raw: '{broken' } }, { json: { raw: '{\"n\":3}' } }]";
 	const parse = "console.log('parsing item', $itemIndex, $json.raw)\nconst parsed = JSON.parse($json.raw)\nreturn { json: { n: parsed.n } }";
@@ -438,7 +440,7 @@ test('a throwing item goes to the error output alone, naming its line and item, 
 			js('emit', 'Emit', emit),
 			js('parse', 'Parse', parse, { mode: 'runOnceForEachItem', settings: { onError: 'continueErrorOutput' } }),
 			node('ok', 'Parsed', 'kilasflow.noOp'),
-			node('failed', 'Failed', 'kilasflow.set', { assignments: { raw: expression('{{ $json.raw }}'), why: expression('{{ $json.error.message }}') } })
+			node('failed', 'Failed', 'kilasflow.set', { assignments: { raw: expression('{{ $json.raw }}'), why: expression('{{ $json.error }}') } })
 		],
 		[...chain('manual', 'emit', 'parse'), conn('ok', 'parse', 'ok'), conn('err', 'parse', 'failed', 'error')]
 	);
@@ -451,7 +453,8 @@ test('a throwing item goes to the error output alone, naming its line and item, 
 	// Every item ran, and what each printed is kept with the node's run.
 	expect(consoleTexts(record, 'parse')).toEqual(['parsing item 0 {"n":1}', 'parsing item 1 {broken', 'parsing item 2 {"n":3}']);
 
-	// All-items mode is one call over the batch: a throw fails every item.
+	// All-items mode is one call over the batch: a throw is one error item,
+	// with no one input item's fields, so the node after it runs once.
 	const wholeId = await createWorkflow(
 		server.baseURL,
 		'JS Error Whole Batch',
@@ -460,12 +463,13 @@ test('a throwing item goes to the error output alone, naming its line and item, 
 			js('emit', 'Emit', emit),
 			js('parse', 'Parse', 'return items.map((item) => ({ json: JSON.parse(item.json.raw) }))', { settings: { onError: 'continueErrorOutput' } }),
 			node('ok', 'Parsed', 'kilasflow.noOp'),
-			node('failed', 'Failed', 'kilasflow.set', { assignments: { raw: expression('{{ $json.raw }}') } })
+			node('failed', 'Failed', 'kilasflow.set', { assignments: { why: expression('{{ $json.error }}') } })
 		],
 		[...chain('manual', 'emit', 'parse'), conn('ok', 'parse', 'ok'), conn('err', 'parse', 'failed', 'error')]
 	);
 	const whole = await runToSuccess(server.baseURL, wholeId);
-	expect(items(whole, 'failed').map((item) => item.raw)).toEqual(['{"n":1}', '{broken', '{"n":3}']);
+	expect(items(whole, 'failed')).toHaveLength(1);
+	expect(items(whole, 'failed')[0].why).toContain('SyntaxError');
 	expect(nodeRun(whole, 'ok').status).toBe('skipped');
 
 	// continueRegularOutput passes the error items on the main output instead.
@@ -476,7 +480,7 @@ test('a throwing item goes to the error output alone, naming its line and item, 
 			manual(),
 			js('emit', 'Emit', emit),
 			js('parse', 'Parse', parse, { mode: 'runOnceForEachItem', settings: { onError: 'continueRegularOutput' } }),
-			node('after', 'After', 'kilasflow.set', { assignments: { why: expression('{{ $json.error.message }}') } })
+			node('after', 'After', 'kilasflow.set', { assignments: { why: expression('{{ $json.error }}') } })
 		],
 		chain('manual', 'emit', 'parse', 'after')
 	);

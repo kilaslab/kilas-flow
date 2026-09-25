@@ -204,6 +204,13 @@ deliberately *not* passed through unchanged — a downstream node has to be able
 tell a tolerated failure from a success, and identical items would make that
 impossible.
 
+A node that ran its whole batch as one call — the Code node in **Run Once for
+All Items** mode — emits a single error item for that call instead, as n8n's
+Code node does, so the node after it runs once; the item carries no input
+item's fields. Such a failure is the node's answer and is not retried. An
+error item's `error` is an object with `message` and `node`, except the Code
+node's, which is the message alone, as n8n writes it.
+
 An untolerated failure ends the execution. The record's status becomes `failed`
 with a structured error carrying a code: `execution.failed`, or
 `execution.timeout` if a node reported hitting the deadline, or

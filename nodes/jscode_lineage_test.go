@@ -148,7 +148,10 @@ func TestACodeNodeThatFansOutPairsEachItemItMade(t *testing.T) {
 
 // The runner records how many items each of a node's outputs produced, so a
 // Code node after an IF reads one branch with $items or .all(branch): three
-// of the four orders were paid (the true branch), one was not.
+// of the four orders were paid (the true branch), one was not. With no
+// branch, $('IF').all(), .first() and .last() read the branch the Code node
+// is connected to, as n8n's do, even through a node in between: Code hangs
+// off true, and Behind sits behind a No Op on false.
 func TestACodeNodeReadsOneBranchOfAnIF(t *testing.T) {
 	catalog := node.NewRegistry()
 	if err := nodes.RegisterAll(catalog); err != nil {
@@ -168,10 +171,17 @@ func TestACodeNodeReadsOneBranchOfAnIF(t *testing.T) {
 			}}},
 			{ID: "code", Name: "Code", Type: nodes.JSCodeNodeType, TypeVersion: workflow.V(1), Parameters: map[string]any{"jsCode": strings.Join([]string{
 				"const ids = (list) => list.map((order) => order.json.id).join()",
-				"return [{ json: { paid: ids($items('IF')), unpaid: ids($items('IF', 1, -1)), branch: ids($('IF').all(1)), every: $('IF').all().length } }]",
+				"return [{ json: { paid: ids($items('IF')), unpaid: ids($items('IF', 1, -1)), branch: ids($('IF').all(1)), connected: ids($('IF').all()) } }]",
+			}, "\n")}},
+			{ID: "noop", Name: "No Op", Type: "kilasflow.noOp", TypeVersion: workflow.V(1)},
+			{ID: "behind", Name: "Behind", Type: nodes.JSCodeNodeType, TypeVersion: workflow.V(1), Parameters: map[string]any{"jsCode": strings.Join([]string{
+				"const ids = (list) => list.map((order) => order.json.id).join()",
+				"return [{ json: { connected: ids($('IF').all()), first: $('IF').first().json.id, last: $('IF').last().json.id,",
+				"  firstTrue: $('IF').first(0).json.id, lastTrue: $('IF').last(0, -1).json.id, allTrue: ids($('IF').all(0)) } }]",
 			}, "\n")}},
 		},
-		Connections: []workflow.Connection{link("c1", "manual", "main", "split"), link("c2", "split", "main", "if"), link("c3", "if", "true", "code")},
+		Connections: []workflow.Connection{link("c1", "manual", "main", "split"), link("c2", "split", "main", "if"), link("c3", "if", "true", "code"),
+			link("c4", "if", "false", "noop"), link("c5", "noop", "main", "behind")},
 	}
 	ir, err := workflow.Compile(document, catalog)
 	if err != nil {
@@ -186,7 +196,12 @@ func TestACodeNodeReadsOneBranchOfAnIF(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	got := result.Output["code"][0][0].JSON
-	if got["paid"] != "o1,o2,o4" || got["unpaid"] != "o3" || got["branch"] != "o3" || got["every"] != float64(4) {
-		t.Fatalf("code read %#v, want each branch on its own", got)
+	if got["paid"] != "o1,o2,o4" || got["unpaid"] != "o3" || got["branch"] != "o3" || got["connected"] != "o1,o2,o4" {
+		t.Errorf("code read %#v, want each branch on its own and the true branch by default", got)
+	}
+	behind := result.Output["behind"][0][0].JSON
+	if behind["connected"] != "o3" || behind["first"] != "o3" || behind["last"] != "o3" ||
+		behind["firstTrue"] != "o1" || behind["lastTrue"] != "o4" || behind["allTrue"] != "o1,o2,o4" {
+		t.Errorf("behind the No Op read %#v, want the false branch by default and the true one when named", behind)
 	}
 }

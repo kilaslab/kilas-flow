@@ -324,6 +324,20 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   until the execution timed out. As in n8n, the setting only adds the empty
   item when the node did run and returned nothing. A run resumed after a Wait
   likewise no longer runs a sibling branch that had been sent no items.
+- `$('Name').all()`, `.first()` and `.last()` read the output of that node the
+  current node is connected to, as n8n does, in expressions and in Code alike,
+  and in the expression debugger. They used to read every output joined, so
+  after an IF `.all()` held both branches and `.last()` could be the other
+  branch's item. A node the current one is not connected to is read at its
+  first output. In Code, `.first(branch, run)` and `.last(branch, run)` take
+  the arguments `.all()` already took.
+- A Code node in "Run Once for All Items" mode that continues on failure
+  answers a throw with one error item, as n8n's does, not one per input item,
+  so the node after it runs once; the item carries no input item's fields, and
+  the failure is not retried. A Code node's error items carry `error` as the
+  message, as n8n writes it, so `{{ $json.error }}` reads the text and
+  `{{ $json.error.message }}` is empty, as in n8n. Other nodes' error items
+  keep the `{ message, node }` object.
 - A chat model node that never set "Stream output" now streams, as the editor
   already showed. An absent `stream` key used to mean off.
 - An agent ended by the workflow's own execution timeout says so, and names

@@ -1,6 +1,10 @@
 package engine
 
-import "time"
+import (
+	"time"
+
+	"github.com/kilaslab/kilas-flow/internal/workflow"
+)
 
 // NewEvaluationServiceForTest builds a service holding only what the read-only
 // evaluator reads: the run budget, the instance's clock zone and the
@@ -15,6 +19,13 @@ func NewEvaluationServiceForTest(defaultTimeout time.Duration, timezone string, 
 		exposed[key] = value
 	}
 	return &Service{defaultTimeout: defaultTimeout, defaultTimezone: timezone, environment: exposed}
+}
+
+// SetCatalogForTest gives an evaluation service the catalogue it compiles a
+// revision under, which is how it knows which output of a node another is
+// connected to.
+func (service *Service) SetCatalogForTest(catalog workflow.Catalog) {
+	service.catalog = catalog
 }
 
 // SetClockForTest redirects the service's clock to now. The wait deadline is

@@ -145,7 +145,11 @@ item's own origin, the nearest fan-outs and the root are kept.
 
 A node that tolerates its own failure emits one error item per input item for
 exactly this reason: downstream item counts and lineage survive a tolerated
-failure, so an expression reaching back past it still resolves.
+failure, so an expression reaching back past it still resolves. The exception
+is a node that failed as one call over its whole batch (the Code node in
+**Run Once for All Items** mode): its one error item descends from its one
+input item when there was one, and its lineage is lost when there were
+several, as for any node that changes the item count.
 
 ### What reads it, and how far that has got
 

@@ -42,9 +42,13 @@ The rest of n8n's Code-node globals are there, reading the same data an
 - `$('Name')` and `$node['Name']` read a node that ran earlier: `.first()`,
   `.last()`, `.all()`, `.item`, `.itemMatching(index)` and `.params`. `.item`
   follows the paired-item lineage and fails with the reason when it cannot be
-  established, as it does in an expression. `.all(branch, run)` reads one
-  output of a node with several, such as an IF's `false` branch as `.all(1)`;
-  with no branch it reads every output. n8n's older
+  established, as it does in an expression. `.all()`, `.first()` and
+  `.last()` read the output of the named node that this node is connected
+  to, as n8n's do, however many nodes sit in between: after an IF's `false`
+  branch they read the false items. A node this one is not connected to is
+  read at its first output. `.all(branch, run)`, `.first(branch, run)` and
+  `.last(branch, run)` read another output, such as the `true` branch as
+  `.all(0)`. n8n's older
   `$items('Name', output, run)` reads output 0 unless told otherwise, and
   `$items()` the node's own input, as in an expression. Only a node's latest
   run is kept, numbered as `$runIndex` numbers runs: a run argument may name
@@ -264,10 +268,17 @@ when the node runs, as a `SyntaxError` with its line, not when it is saved.
   batch.** Other nodes that continue on failure are run once per item so one
   bad item fails alone. The Code node always sees its whole batch, so an
   all-items body that sums its items sums all of them, and a throw there fails
-  the batch, as in n8n. In **Run Once for Each Item** mode the node goes on
-  past an item whose code threw or returned something that is not an item:
-  that item goes to the error output (or on as an error item in its place,
-  under *Continue*), and the other items pass through.
+  the batch, as in n8n: the node answers with **one** error item, whatever
+  the number of input items, so the node after it runs once. That item holds
+  no input item's fields, on either output. In **Run Once for Each Item**
+  mode the node goes on past an item whose code threw or returned something
+  that is not an item: that item goes to the error output with its own
+  fields beside the error (or on as an error item in its place, under
+  *Continue*), and the other items pass through. Either way the error item's
+  `error` is the error's message, such as `Error: out of stock [line 3]`, as
+  n8n's Code node writes it, so `{{ $json.error }}` reads that text. Other
+  nodes' error items carry an object with `message` and `node` instead. A
+  tolerated failure is the node's answer and is not retried.
 - **Most error messages match V8's; a few don't.** The errors code usually
   meets carry Node's wording: `JSON.parse` on text that is not JSON, reading a
   property of `undefined`, and calling something that is not a function

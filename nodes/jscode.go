@@ -87,6 +87,9 @@ func jsCodeNode() node.Definition {
 		// The body sees its whole batch, so the runner must never split it
 		// into one-item calls, not even to tolerate failures item by item.
 		WholeBatch: true,
+		// n8n's Code node writes a tolerated failure's `error` as the
+		// message, so `{{ $json.error }}` reads the same text here.
+		ErrorAsMessage: true,
 	}
 }
 
@@ -165,7 +168,13 @@ func (executor *JSCodeExecutor) Execute(ctx context.Context, ir workflow.IRNode,
 		err = keepStaticData(ctx, request, ir.Name, result.StaticData)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+		err = fmt.Errorf("node %q: %w", ir.Name, err)
+		if mode != jsrun.ModeEachItem {
+			// The code ran once over the whole batch, so a failure it
+			// tolerates is one error item, as n8n's is, not one per item.
+			return nil, &engine.BatchFailure{Err: err}
+		}
+		return nil, err
 	}
 	if outcomes := failedItemOutcomes(ir, result.Outcomes); outcomes != nil {
 		return nil, outcomes
@@ -268,6 +277,9 @@ func foreignCodeNode() node.Definition {
 		ExecutorID:     ForeignCodeExecutorID,
 		Validate:       validateForeignCodeConfiguration,
 		WholeBatch:     true,
+		// It runs JavaScript as the Code (JavaScript) node does, and fails
+		// in the same shape.
+		ErrorAsMessage: true,
 	}
 }
 

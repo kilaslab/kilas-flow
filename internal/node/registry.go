@@ -23,7 +23,12 @@ type Definition struct {
 	// a Code node whose body sums or groups its items. The runner then never
 	// splits it into one-item calls, not even to tolerate a failure item by
 	// item: a failure fails the whole call, which onError handles as usual.
-	WholeBatch     bool                     `json:"-"`
+	WholeBatch bool `json:"-"`
+	// ErrorAsMessage marks a node whose tolerated failures carry `error` as
+	// the message alone, which is what n8n's Code node writes. Other nodes
+	// carry the {message, node} object; n8n's own shape differs from node to
+	// node, and the HTTP Request node, for one, writes an object.
+	ErrorAsMessage bool                     `json:"-"`
 	DisplayName    string                   `json:"displayName"`
 	Description    string                   `json:"description,omitempty"`
 	Category       string                   `json:"category"`
@@ -449,6 +454,7 @@ func (registry *Registry) Lookup(nodeType string, version workflow.TypeVersion) 
 		Version:            definition.Version,
 		LoopEntry:          definition.LoopEntry,
 		WholeBatch:         definition.WholeBatch,
+		ErrorAsMessage:     definition.ErrorAsMessage,
 		Inputs:             append([]workflow.Port(nil), definition.Inputs...),
 		Outputs:            append([]workflow.Port(nil), definition.Outputs...),
 		RequiredParameters: requiredParameters(definition.Parameters),

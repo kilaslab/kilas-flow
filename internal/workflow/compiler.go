@@ -75,6 +75,9 @@ type NodeDefinition struct {
 	// WholeBatch marks a node the runner must never split into one-item
 	// calls; see node.Definition.
 	WholeBatch bool
+	// ErrorAsMessage marks a node whose tolerated failures carry `error` as
+	// the message alone; see node.Definition.
+	ErrorAsMessage bool
 }
 
 // ConfigValidator validates a node's server-owned configuration during
@@ -654,6 +657,7 @@ func cloneNodeDefinition(definition NodeDefinition) NodeDefinition {
 		Version:             definition.Version,
 		LoopEntry:           definition.LoopEntry,
 		WholeBatch:          definition.WholeBatch,
+		ErrorAsMessage:      definition.ErrorAsMessage,
 		Inputs:              append([]Port(nil), definition.Inputs...),
 		Outputs:             append([]Port(nil), definition.Outputs...),
 		RequiredParameters:  append([]string(nil), definition.RequiredParameters...),

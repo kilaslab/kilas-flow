@@ -215,3 +215,92 @@ func TestTheRuntimeIsToldTheExecutionsTenant(t *testing.T) {
 		t.Fatalf("the runtime was told tenants %q, want tenant-a for both", got)
 	}
 }
+
+// runToleratedCode runs Manual → Emit (three items, each with its n) → Code
+// (the given mode and body, under the given onError) and answers Code's
+// output. Under continueErrorOutput a No Op hangs off each output, so both
+// are real.
+func runToleratedCode(t *testing.T, mode, source, onError string) workflow.NodeOutput {
+	t.Helper()
+	catalog := node.NewRegistry()
+	if err := nodes.RegisterAll(catalog); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	link := func(id, source, port, target string) workflow.Connection {
+		return workflow.Connection{ID: id, Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: source, Port: port}, Target: workflow.Endpoint{NodeID: target, Port: "main"}}
+	}
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion, ID: "wf_js_tolerated", Name: "Code node tolerates a failure", Settings: map[string]any{},
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "emit", Name: "Emit", Type: nodes.JSCodeNodeType, TypeVersion: workflow.V(1), Parameters: map[string]any{
+				"jsCode": "return [1, 2, 3].map((n) => ({ json: { n } }))"}},
+			{ID: "code", Name: "Code", Type: nodes.JSCodeNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"mode": mode, "jsCode": source}, Settings: map[string]any{"onError": onError}},
+			{ID: "ok", Name: "OK", Type: nodes.NoOpNodeType, TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{link("c1", "manual", "main", "emit"), link("c2", "emit", "main", "code"), link("c3", "code", "main", "ok")},
+	}
+	if onError == "continueErrorOutput" {
+		document.Nodes = append(document.Nodes, workflow.Node{ID: "failed", Name: "Failed", Type: nodes.NoOpNodeType, TypeVersion: workflow.V(1)})
+		document.Connections = append(document.Connections, link("c4", "code", "error", "failed"))
+	}
+	ir, err := workflow.Compile(document, catalog)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, safehttp.DefaultPolicy(), sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	result, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	for _, run := range result.NodeRuns {
+		if run.NodeID == "code" {
+			return run.Output
+		}
+	}
+	t.Fatal("Code has no trace row")
+	return nil
+}
+
+// In "Run Once for All Items" mode the code ran once over the whole batch, so
+// a throw it tolerates is one error item, as in n8n: a node after it runs
+// once, not once per input item. The item holds the error's message alone,
+// under `error`, on the error output under continueErrorOutput and in the
+// items' place otherwise.
+func TestAnAllItemsCodeNodeToleratesAThrowWithOneErrorItem(t *testing.T) {
+	for _, onError := range []string{"continueRegularOutput", "continueErrorOutput"} {
+		output := runToleratedCode(t, nodes.CodeModeAllItems, "throw new Error('the batch broke')", onError)
+		port := map[string]int{"continueRegularOutput": 0, "continueErrorOutput": 1}[onError]
+		if len(output) <= port || len(output[port]) != 1 {
+			t.Fatalf("%s: output %#v, want one error item on port %d", onError, output, port)
+		}
+		failed := output[port][0].JSON
+		// The message is the error's own text, as n8n's is: the node's name
+		// the run's error starts with is not part of it.
+		if failed[engine.ErrorItemKey] != "Error: the batch broke [line 1]" || len(failed) != 1 {
+			t.Errorf("%s: the error item = %#v, want the message alone under %q", onError, failed, engine.ErrorItemKey)
+		}
+		if port == 1 && len(output[0]) != 0 {
+			t.Errorf("%s: main = %#v, want it empty", onError, output[0])
+		}
+	}
+}
+
+// In "Run Once for Each Item" mode each item that threw is an error item of
+// its own, and `error` is the message there too; on the error output the
+// input item's fields sit beside it, as n8n merges them.
+func TestAnEachItemCodeNodesErrorItemsCarryTheMessage(t *testing.T) {
+	output := runToleratedCode(t, nodes.CodeModeEachItem, "if ($json.n === 2) throw new Error('two broke')\nreturn { json: { n: $json.n } }", "continueErrorOutput")
+	if len(output) < 2 || len(output[0]) != 2 || len(output[1]) != 1 {
+		t.Fatalf("output %#v, want two items on main and one on the error output", output)
+	}
+	failed := output[1][0].JSON
+	if message, ok := failed[engine.ErrorItemKey].(string); !ok || !strings.Contains(message, "two broke") || failed["n"] != float64(2) {
+		t.Errorf("the error item = %#v, want the message beside n = 2", failed)
+	}
+}

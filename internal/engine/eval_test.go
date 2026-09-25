@@ -170,3 +170,43 @@ func TestEvaluateExpressionReadsTheNodesOwnTimeout(t *testing.T) {
 		t.Fatal("EvaluateExpression(malformed node timeout) = nil error, want the revision's own bound to be read")
 	}
 }
+
+// `$('IF').all()` answers what it answered in the run: the branch the named
+// node is connected to, here IF's false branch through a No Op, and IF's
+// first output for a node IF does not feed.
+func TestEvaluateExpressionReadsTheBranchTheNodeIsConnectedTo(t *testing.T) {
+	t.Parallel()
+
+	link := func(id, source, port, target string) workflow.Connection {
+		return workflow.Connection{ID: id, Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: source, Port: port}, Target: workflow.Endpoint{NodeID: target, Port: "main"}}
+	}
+	document := workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion, ID: "wf_branch", Name: "Branches", Settings: map[string]any{},
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: workflow.V(1), Parameters: map[string]any{"conditions": []any{
+				map[string]any{"field": "paid", "operator": "equals", "value": "yes"},
+			}}},
+			{ID: "noop", Name: "No Op", Type: "kilasflow.noOp", TypeVersion: workflow.V(1)},
+			{ID: "unpaid", Name: "Unpaid", Type: "kilasflow.noOp", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{link("c1", "manual", "main", "if"), link("c2", "if", "false", "noop"), link("c3", "noop", "main", "unpaid")},
+	}
+	record := execution.Record{
+		ID: "exec_branch", Trigger: execution.TriggerManual,
+		NodeRuns: []execution.NodeRun{
+			{NodeID: "if", Status: execution.StatusSucceeded, Output: json.RawMessage(`[[{"json":{"id":"o1"}},{"json":{"id":"o2"}}],[{"json":{"id":"o3"}}]]`)},
+			{NodeID: "noop", Status: execution.StatusSucceeded, Output: json.RawMessage(`[[{"json":{"id":"o3"}}]]`)},
+			{NodeID: "unpaid", Status: execution.StatusSucceeded, Output: json.RawMessage(`[[{"json":{"id":"o3"}}]]`)},
+		},
+	}
+	service := engine.NewEvaluationServiceForTest(time.Minute, "", nil)
+	service.SetCatalogForTest(testCatalog(t))
+	for nodeID, want := range map[string]string{"unpaid": `"o3"`, "": `"o1,o2"`} {
+		result, err := service.EvaluateExpression(t.Context(), record, document, "{{ $('IF').all().map(i => i.json.id).join() }}", nodeID)
+		if err != nil || string(result.Value) != want {
+			t.Errorf("at %q: $('IF').all() = %s, %v; want %s", nodeID, result.Value, err, want)
+		}
+	}
+}
