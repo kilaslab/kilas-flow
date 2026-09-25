@@ -53,6 +53,13 @@ Related (from the audit): none
 - Found on the way: the editor's `onPaste` took any workflow JSON pasted anywhere, including into a field. A paste into a typing target now stays in that field.
 - Tests: `internal/property/editor_test.go`, `nodes/code_test.go` TestSourceFieldsAskForACodeEditor, `code-editor.test.ts`, `property-field.test.ts`, e2e `code-editor.spec.ts` (paste a Go body, Enter, save, run, stored source), `js-code.spec.ts` updated for the editor.
 
+## Review (2026-09-25)
+
+Three rounds of review → fix after the close:
+- Round 1: the panel reuses a field across nodes that share a parameter key (Go Code `code` and the Sort comparator `code`), so the editor kept the first node's language and label, and its prop sync sat on the undo stack — Ctrl-Z after switching wrote one node's source into the other. Fixed in b2191fa: remount per node (`ownerKey`), compartment reconfigure by value, prop sync out of history; upstream node names now actually reach the field (they were never passed). Regression e2e proven to fail on the old code.
+- Round 2: with names now flowing, the expression assist's `$('Name')` candidate was unescaped. Fixed in f38c933 with one shared `nodeReference` helper; nested fields get the upstream names too.
+- Round 3: clean (escaped form confirmed to parse back in internal/expression/parser.go).
+
 # Related Files
 
 SD/27-code-ndv.png, SD/28-after-run.png, SD/codepaste.js output (`INPUT | "out := []Item{} for …"`), SD/42-sticky-click.png. Code: property-field.svelte:1020-1026 picks `<textarea>` only when `needsMultiline(value, typeOptions.rows)`. nodes/code.go:41 (`code`) and nodes/annotation.go:40 (`content`) declare no `rows`/editor typeOption, and their defaults are one line.
