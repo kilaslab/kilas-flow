@@ -73,6 +73,14 @@ that leaves a credential's `allowedDomains` out keeps the stored scope, so a
 client that only renames a credential cannot widen where its secret may go;
 only an explicit empty list makes it unrestricted.
 
+**Google Connect is bound to the browser that started it.** Starting Connect
+sets an HttpOnly, SameSite=Lax nonce cookie, and the signed state carries only
+the nonce's hash. The callback completes only in a browser holding the nonce,
+only once (the used state is recorded in the database, so a replay is refused
+on every replica), and only with the PKCE verifier derived from that nonce. An
+authorize URL sent to someone else cannot put their Google account into the
+sender's credential. See [Google Connect](/concepts/credentials/#google-connect).
+
 **Testing an edit never moves a stored secret.** The unsaved-credential test
 fills a redaction placeholder from storage only while the edit keeps the stored
 host, port and base URL. It holds the probe to the stored scope, which the

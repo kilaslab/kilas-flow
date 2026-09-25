@@ -44,6 +44,34 @@ test('Connect with Google opens a popup, not an iframe', async ({ page, server }
 	expect(opened.url).toContain('tenant-cid.apps.googleusercontent.com');
 	expect(opened.features).toContain('popup=yes');
 	await expect(page.locator('iframe')).toHaveCount(0);
+
+	// The sign-in is PKCE-protected and bound to this browser: the start
+	// response left an HttpOnly, SameSite=Lax nonce cookie that only the
+	// callback path receives, and the nonce is not in the URL.
+	const authorize = new URL(opened.url);
+	expect(authorize.searchParams.get('code_challenge_method')).toBe('S256');
+	expect(authorize.searchParams.get('code_challenge')).toBeTruthy();
+	const nonceCookies = (await page.context().cookies()).filter((cookie) =>
+		cookie.name.startsWith('kilasflow_oauth_')
+	);
+	expect(nonceCookies).toHaveLength(1);
+	expect(nonceCookies[0].httpOnly).toBe(true);
+	expect(nonceCookies[0].sameSite).toBe('Lax');
+	expect(nonceCookies[0].path).toBe('/oauth/callback');
+	expect(opened.url).not.toContain(nonceCookies[0].value);
+	expect(await page.evaluate(() => document.cookie)).not.toContain('kilasflow_oauth_');
+
+	// A callback arriving without the cookie — the authorize URL opened in
+	// another browser — is refused before any code is exchanged.
+	const stranger = await page.context().browser()!.newContext();
+	try {
+		const strangerPage = await stranger.newPage();
+		const state = authorize.searchParams.get('state') ?? '';
+		await strangerPage.goto(`${server.baseURL}/oauth/callback?code=stolen&state=${encodeURIComponent(state)}`);
+		await expect(strangerPage.getByText('not started in this browser')).toBeVisible();
+	} finally {
+		await stranger.close();
+	}
 });
 
 test('the node picker offers Drive, Gmail, and PGVector', async ({ page, server }) => {

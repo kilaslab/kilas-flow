@@ -178,7 +178,7 @@ Embed: Deny — listing workflows, minting sessions, schedules, credential write
 
 `POST /api/v1/credentials/{id}/oauth/start`
 
-Returns the Google authorization URL for this credential. Open it in a popup (window.open), not an iframe: Google blocks OAuth inside frames.
+Returns the Google authorization URL for this credential. Open it in a popup (window.open), not an iframe: Google blocks OAuth inside frames. The response also sets an HttpOnly cookie that binds the sign-in to this browser: the callback completes only in the browser that made this request, and only once. The authorization request uses PKCE (S256).
 
 Parameters:
 

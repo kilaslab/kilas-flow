@@ -2,7 +2,9 @@ package credentials
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -74,11 +76,68 @@ func ApplyGoogleDefaults(record *Record) {
 }
 
 // OAuthState is the CSRF payload the Connect popup round-trips through Google.
+//
+// The signature proves the server minted it; it does not prove who is holding
+// it. NonceHash is what does: the start response sets the nonce as an HttpOnly
+// cookie in the browser that asked, and the callback accepts the state only
+// from a browser presenting that nonce. Without it, a state is a bearer token —
+// anyone could send their authorize URL to someone else, and the victim's
+// Google tokens would be stored in the sender's credential.
+//
+// The state carries the nonce's hash, not the nonce, because the state travels
+// in URLs (Google's, the browser history, a proxy log) and the cookie value
+// must not.
 type OAuthState struct {
 	TenantID     string `json:"tenantId"`
 	CredentialID string `json:"credentialId"`
 	Origin       string `json:"origin,omitempty"`
+	NonceHash    string `json:"nonce,omitempty"`
 	Expiry       int64  `json:"exp"`
+}
+
+// OAuthStateTTL is how long a Connect popup has to come back.
+const OAuthStateTTL = 10 * time.Minute
+
+// NewOAuthNonce returns a fresh random nonce for one Connect popup.
+func NewOAuthNonce() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("oauth nonce: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// OAuthNonceHash is what a state carries in place of its nonce.
+func OAuthNonceHash(nonce string) string {
+	sum := sha256.Sum256([]byte(nonce))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// MatchesNonce reports whether nonce is the one this state was signed with.
+func (state OAuthState) MatchesNonce(nonce string) bool {
+	if nonce == "" || state.NonceHash == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(OAuthNonceHash(nonce)), []byte(state.NonceHash)) == 1
+}
+
+// PKCEVerifier derives the RFC 7636 code verifier for one Connect popup.
+//
+// It is derived rather than stored: HMAC of the browser's nonce under the
+// server key, so the callback can recompute it from the cookie it is handed,
+// nothing has to be kept between start and callback, and neither the nonce
+// alone nor anything in a URL is enough to compute it. The label keeps this
+// use of the key apart from the state signature.
+func PKCEVerifier(secret []byte, nonce string) string {
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte("kilasflow-oauth-pkce\x00" + nonce))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// PKCEChallenge is the S256 transform of a verifier.
+func PKCEChallenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 func SignOAuthState(secret []byte, state OAuthState) (string, error) {
@@ -86,7 +145,7 @@ func SignOAuthState(secret []byte, state OAuthState) (string, error) {
 		return "", fmt.Errorf("oauth signing key is not configured")
 	}
 	if state.Expiry == 0 {
-		state.Expiry = time.Now().Add(10 * time.Minute).Unix()
+		state.Expiry = time.Now().Add(OAuthStateTTL).Unix()
 	}
 	payload, err := json.Marshal(state)
 	if err != nil {
@@ -121,10 +180,18 @@ func ParseOAuthState(secret []byte, raw string) (OAuthState, error) {
 	if time.Now().Unix() > state.Expiry {
 		return OAuthState{}, fmt.Errorf("oauth state has expired")
 	}
+	if state.NonceHash == "" {
+		// Minted before the browser binding existed, or by something that is
+		// not this server's start: either way there is nothing to bind it to.
+		return OAuthState{}, fmt.Errorf("oauth state is not bound to a browser: start Connect again")
+	}
 	return state, nil
 }
 
-func GoogleAuthorizeURL(clientID, redirectURI, scope, state string) string {
+// GoogleAuthorizeURL builds the consent URL. codeChallenge is the S256 PKCE
+// challenge; Google then refuses to exchange the code without its verifier, so
+// a code lifted from the redirect is useless to anyone but this server.
+func GoogleAuthorizeURL(clientID, redirectURI, scope, state, codeChallenge string) string {
 	values := url.Values{}
 	values.Set("client_id", clientID)
 	values.Set("redirect_uri", redirectURI)
@@ -134,6 +201,8 @@ func GoogleAuthorizeURL(clientID, redirectURI, scope, state string) string {
 	values.Set("include_granted_scopes", "true")
 	values.Set("scope", scope)
 	values.Set("state", state)
+	values.Set("code_challenge", codeChallenge)
+	values.Set("code_challenge_method", "S256")
 	return googleAuthURL + "?" + values.Encode()
 }
 
@@ -145,13 +214,20 @@ type googleTokenResponse struct {
 	Scope        string `json:"scope"`
 }
 
-func ExchangeGoogleCode(ctxClient *http.Client, tokenURL, clientID, clientSecret, redirectURI, code string) (map[string]string, error) {
+// ExchangeGoogleCode trades an authorization code for tokens. codeVerifier is
+// the PKCE verifier the authorize URL's challenge was made from, and it is
+// required: every code this server asks for was requested with a challenge.
+func ExchangeGoogleCode(ctxClient *http.Client, tokenURL, clientID, clientSecret, redirectURI, code, codeVerifier string) (map[string]string, error) {
+	if strings.TrimSpace(codeVerifier) == "" {
+		return nil, fmt.Errorf("google code exchange needs the PKCE code verifier")
+	}
 	return postGoogleToken(ctxClient, tokenURL, url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
 		"client_id":     {clientID},
 		"client_secret": {clientSecret},
 		"redirect_uri":  {redirectURI},
+		"code_verifier": {codeVerifier},
 	})
 }
 

@@ -262,6 +262,39 @@ for the Connect popup (`window.open`, never an iframe). The browser lands on
 `/oauth/callback`, which stores the tokens and posts a message to the opener.
 See the [HTTP API reference](/reference/api/).
 
+## Google Connect
+
+The popup's `state` is signed, but a signature only proves the server minted
+it, not who is holding it. On its own, a state works for anyone who has the
+link. Someone could start Connect on their own credential and send the
+authorize URL to a victim, and the victim's consent would store the victim's
+Google tokens in the sender's credential. Three things close that:
+
+- **The state is bound to the browser that started it.** The start response
+  sets a fresh random nonce as a cookie named `kilasflow_oauth_…`. The cookie is
+  `HttpOnly`, `SameSite=Lax`, scoped to the callback path, `Secure` when the
+  callback is served over https, and lives as long as the state (ten minutes).
+  The state carries the nonce's hash, never the nonce, because the state
+  travels in URLs. The callback completes only when the browser presents the
+  matching nonce. `Lax` is the strictest mode that works here: the callback is
+  a top-level navigation arriving from Google, which `Lax` sends the cookie on
+  and `Strict` does not.
+- **A state is used once.** The callback records the state before it exchanges
+  the code, and a second callback with the same state is refused. The record is
+  kept in the database, in the table that already backs `Idempotency-Key`,
+  under a key that no request header can spell. A replay that reaches another
+  replica is refused there too, and the record expires with the state.
+- **The code needs PKCE.** The authorize URL carries an S256
+  `code_challenge`, and the exchange sends the matching `code_verifier`. The
+  verifier is derived from the browser's nonce under the server key, so nothing
+  is stored between start and callback, and a code lifted from a redirect
+  cannot be exchanged without the cookie.
+
+The start request and the callback have to reach the same host, or the browser
+will not send the cookie back. Behind a proxy that rewrites `Host` (the web dev
+server's proxy does this), set `server.public_url` to the address the browser
+uses.
+
 An [embed session](/concepts/tenancy-and-embedding/) may read the credential
 list — an editor has to offer a picker — and may do nothing else with
 credentials.

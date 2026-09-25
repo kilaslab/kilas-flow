@@ -72,6 +72,10 @@ type Credentials struct {
 	oauthTokenURL      string
 	googleClientID     string
 	googleClientSecret string
+	// oauthStates records used Connect states so each callback runs once. Set
+	// through WithOAuthStateLedger, and defaulted lazily to an in-process one.
+	oauthStates     OAuthStateLedger
+	oauthStatesOnce sync.Once
 }
 
 // WithHTTPPolicy sets the egress policy credential tests run under.

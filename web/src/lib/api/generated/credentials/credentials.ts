@@ -789,7 +789,7 @@ export const getStartCredentialOauthUrl = (id: string,) => {
 }
 
 /**
- * Returns the Google authorization URL for this credential. Open it in a popup (window.open), not an iframe: Google blocks OAuth inside frames.
+ * Returns the Google authorization URL for this credential. Open it in a popup (window.open), not an iframe: Google blocks OAuth inside frames. The response also sets an HttpOnly cookie that binds the sign-in to this browser: the callback completes only in the browser that made this request, and only once. The authorization request uses PKCE (S256).
  * @summary Start Google OAuth
  */
 export const startCredentialOauth = async (id: string, options?: Parameters<typeof apiFetch>[1]): Promise<startCredentialOauthResponse> => {

@@ -414,6 +414,21 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Security
 
+- Google Connect is bound to the browser that started it, is single-use, and
+  uses PKCE. The state used to be a bearer token for ten minutes: someone could
+  send their authorize URL to a victim, and the victim's consent stored the
+  victim's Google tokens in the sender's credential. Starting Connect now sets
+  an HttpOnly, SameSite=Lax nonce cookie whose hash is signed into the state,
+  and the callback refuses a browser without it. A used state is recorded in
+  the database, so a replayed callback is refused on every replica. The code is
+  exchanged with an S256 PKCE verifier derived from the nonce. A Connect popup
+  opened before the upgrade has to be started again. The start request must now
+  come from the browser that will open the popup, as the dashboard's does: a
+  backend that calls it with an API key and hands the URL to a browser is the
+  shape of the attack, and its callback is refused. Behind a proxy that
+  rewrites `Host`, set `server.public_url` so the callback reaches the host
+  that set the cookie.
+
 - Testing an unsaved edit of a credential can no longer send its stored
   secret to a host of the caller's choosing. A redaction placeholder is filled
   from storage only while the edit keeps the stored host, port, base URL and
