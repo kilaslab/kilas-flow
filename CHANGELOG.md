@@ -344,6 +344,18 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   `application/problem+json` for every method. It used to answer the editor's
   page with `200 text/html`, which a script or an agent read as success and then
   failed parsing.
+- An agent's HTTP Request Tool hands the model the whole response, as n8n's
+  does. A JSON array used to reach the model as its first element alone, so an
+  agent asked how many customers an endpoint listed answered one, and the run
+  stayed green. Several items now arrive as a JSON array, and a response past
+  256 KiB is cut with a note saying how much is missing.
+- Boot no longer logs that `KILASFLOW_ENCRYPTION_KEY`, `KILASFLOW_EMBED_SIGNING_KEY`
+  and the other secret variables were ignored. A variable that a `*_env`
+  setting names is used, so it is not reported, and the warning for a variable
+  that really matches nothing names the variable and only suggests a key it is
+  close to.
+- The links on the root page, the type labels in a data table's header and the
+  Failed badge on the executions list read at 4.5:1 or better in both themes.
 - A chat model node that never set "Stream output" now streams, as the editor
   already showed. An absent `stream` key used to mean off.
 - An agent ended by the workflow's own execution timeout says so, and names
