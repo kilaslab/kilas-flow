@@ -6,10 +6,12 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"reflect"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -1126,13 +1128,28 @@ func load(path string, mustExist bool) (Config, error) {
 		}
 	}
 
+	// Read before the environment is merged, so a key left over in the tree
+	// afterwards is known to come from the file and not from a variable that
+	// happens to land on the same path.
+	fileKeys := k.Keys()
+
 	// ProviderWithValue rather than Provider so a list-valued key can come from
 	// the environment at all: the default decoder turns one string into a
 	// one-element slice, which is why outbound.allowed_hosts,
 	// outbound.allowed_private_endpoints and embed.allowed_origins used to
 	// accept at most one entry from an environment variable — while the
 	// generated reference documented an Env var for each of them.
-	if err := k.Load(env.ProviderWithValue(EnvPrefix, ".", envValue), nil); err != nil {
+	//
+	// The variable behind each path is kept for the unknown-key warning, which
+	// has to name it and has to tell a variable the process reads itself from a
+	// typo.
+	suppliedBy := map[string]string{}
+	provider := env.ProviderWithValue(EnvPrefix, ".", func(name, value string) (string, any) {
+		path, parsed := envValue(name, value)
+		suppliedBy[path] = name
+		return path, parsed
+	})
+	if err := k.Load(provider, nil); err != nil {
 		return Config{}, fmt.Errorf("load environment: %w", err)
 	}
 
@@ -1150,7 +1167,7 @@ func load(path string, mustExist bool) (Config, error) {
 		return Config{}, err
 	}
 
-	warnUnknownKeys(k, path, fileRead)
+	warnUnknownKeys(cfg, fileKeys, suppliedBy, path, fileRead)
 	return cfg, nil
 }
 
@@ -1194,23 +1211,109 @@ func splitList(value string) []string {
 // first entry — the exact defect this exists to remove.
 var listPaths = sliceFieldPaths()
 
-// warnUnknownKeys reports every merged key that matches no field, with the
-// nearest key that does.
+// warnUnknownKeys reports every key that matches no field, with the nearest key
+// that does when one is close enough to be a plausible correction.
 //
 // Both a YAML typo and a misspelled KILASFLOW_* variable land here, because
 // both reach the merged tree as a path nothing reads: koanf drops what no field
 // claims, and the operator is left believing a security setting is in force.
-func warnUnknownKeys(k *koanf.Koanf, path string, fileRead bool) {
+//
+// The file's keys and the environment's are checked separately so each warning
+// says where its key came from, and names the variable when there is one.
+func warnUnknownKeys(cfg Config, fileKeys []string, suppliedBy map[string]string, path string, fileRead bool) {
 	known := fieldPaths()
 	logger := warningLogger()
-	for _, key := range k.Keys() {
-		if known[key] {
+	for _, key := range fileKeys {
+		if !known[key] {
+			warnUnknownKey(logger, key, configSource(path, fileRead), "", known)
+		}
+	}
+
+	named := variablesNamedByConfig(cfg)
+	for _, key := range slices.Sorted(maps.Keys(suppliedBy)) {
+		variable := suppliedBy[key]
+		if known[key] || readDirectly(variable, named) {
 			continue
 		}
-		logger.Warn("configuration key matches nothing and was ignored",
-			"key", key,
-			"source", configSource(path, fileRead),
-			"did_you_mean", nearestKey(key, known))
+		warnUnknownKey(logger, key, "environment", variable, known)
+	}
+}
+
+// warnUnknownKey logs one unmatched key. The variable is left out for a key
+// from the file, and the suggestion is left out when nothing is near enough to
+// be a correction rather than a coincidence of length.
+func warnUnknownKey(logger *slog.Logger, key, source, variable string, known map[string]bool) {
+	attrs := []any{"key", key, "source", source}
+	if variable != "" {
+		attrs = append(attrs, "variable", variable)
+	}
+	if nearest := nearestKey(key, known); nearest != "" {
+		attrs = append(attrs, "did_you_mean", nearest)
+	}
+	logger.Warn("configuration key matches nothing and was ignored", attrs...)
+}
+
+// Variables under the KILASFLOW_ prefix that the process reads itself, outside
+// the configuration tree, and so are not keys that matched nothing.
+const (
+	// workflowEnvPrefix opens the allowlist behind the $env expression root;
+	// workflowEnvironment in cmd/kilasflow reads it.
+	workflowEnvPrefix = "KILASFLOW_WORKFLOW_ENV_"
+	// cliURLVar and cliTokenVar are what the kilasflow CLI reads instead of a
+	// flag (internal/cli). It is the same binary as the server, so a shell or a
+	// container that configures both sets them in the server's environment too.
+	cliURLVar   = "KILASFLOW_URL"
+	cliTokenVar = "KILASFLOW_TOKEN"
+)
+
+// readDirectly reports whether the process reads an environment variable itself
+// instead of through the configuration tree: one a *_env setting names, a
+// workflow variable, or one of the CLI's two.
+//
+// Only what is read is exempt. A variable a setting used to name and no longer
+// does — the setting was pointed elsewhere — is ignored now, and says so.
+func readDirectly(variable string, named map[string]bool) bool {
+	return named[variable] ||
+		strings.HasPrefix(variable, workflowEnvPrefix) ||
+		variable == cliURLVar || variable == cliTokenVar
+}
+
+// variablesNamedByConfig returns the environment variables the configuration
+// names rather than holds: the current value of every *_env setting.
+//
+// The default names come from the same place as a renamed one, so
+// KILASFLOW_ENCRYPTION_KEY is covered while security.encryption_key_env is
+// untouched and KILASFLOW_MASTER_KEY is covered once it points there. Derived
+// from the struct by its koanf tags, like listPaths, because a hand-written
+// list is one more thing to forget when a secret is added, and the failure is a
+// boot that tells an operator their key was ignored.
+func variablesNamedByConfig(cfg Config) map[string]bool {
+	names := map[string]bool{}
+	collectNamedVariables(reflect.ValueOf(cfg), names)
+	return names
+}
+
+// collectNamedVariables walks the configuration struct the way
+// collectFieldPaths does and records the value of each string field whose key
+// ends in _env.
+func collectNamedVariables(value reflect.Value, into map[string]bool) {
+	for index := range value.NumField() {
+		name, tagged := value.Type().Field(index).Tag.Lookup("koanf")
+		if !tagged || name == "" || name == "-" {
+			continue
+		}
+		field := value.Field(index)
+		for field.Kind() == reflect.Pointer && !field.IsNil() {
+			field = field.Elem()
+		}
+		switch {
+		case field.Kind() == reflect.Struct:
+			collectNamedVariables(field, into)
+		case field.Kind() == reflect.String && strings.HasSuffix(name, "_env"):
+			if variable := field.String(); variable != "" {
+				into[variable] = true
+			}
+		}
 	}
 }
 
@@ -1234,25 +1337,25 @@ func warningLogger() *slog.Logger {
 	return slog.Default()
 }
 
-// configSource names where the merged value came from, for a warning's benefit.
+// configSource names the file a key came from, for a warning's benefit.
 func configSource(path string, fileRead bool) string {
-	switch {
-	case path == "":
-		return "environment"
-	case fileRead:
+	if fileRead {
 		return path
-	default:
-		return path + " (not found)"
 	}
+	return path + " (not found)"
 }
 
+// maxSuggestionDistance is how far a suggestion may be from the key it answers.
+// Past it the nearest key is a coincidence of length, and offering it sends an
+// operator to a setting that has nothing to do with theirs.
+const maxSuggestionDistance = 3
+
 // nearestKey finds the configured key closest to an unknown one, so a warning
-// names the key the operator probably meant.
+// names the key the operator probably meant. It returns "" when none is close.
 func nearestKey(unknown string, known map[string]bool) string {
-	best, bestDistance := "", -1
+	best, bestDistance := "", maxSuggestionDistance+1
 	for candidate := range known {
-		distance := editDistance(unknown, candidate)
-		if bestDistance < 0 || distance < bestDistance {
+		if distance := editDistance(unknown, candidate); distance < bestDistance {
 			best, bestDistance = candidate, distance
 		}
 	}

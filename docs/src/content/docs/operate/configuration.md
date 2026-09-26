@@ -38,6 +38,15 @@ nothing and would be silently ignored. This is also why every section name is
 a single word (`outbound`, not `outbound_http`): a two-word section could
 never be reached from the environment.
 
+A variable, or a key in the file, that matches no setting is reported at boot
+instead of being dropped in silence. The warning names the variable and where
+it came from, and suggests the nearest key only when one is close enough to be
+a typo. Three kinds of variable are read by the process itself and are never
+reported: the one a `*_env` setting names (`KILASFLOW_ENCRYPTION_KEY` unless
+`security.encryption_key_env` points somewhere else, and likewise for the
+other secret-holding settings), the `KILASFLOW_WORKFLOW_ENV_` allowlist, and
+the CLI's `KILASFLOW_URL` and `KILASFLOW_TOKEN`.
+
 ## Workflow expressions cannot read secrets
 
 `$env` inside a workflow does **not** see the process environment. Only

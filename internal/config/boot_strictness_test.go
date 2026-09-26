@@ -142,6 +142,194 @@ func TestAKnownKeyIsNeverReportedAsUnknown(t *testing.T) {
 	}
 }
 
+// warningLine returns the captured warning that is about key, or "".
+func warningLine(warnings, key string) string {
+	for line := range strings.SplitSeq(warnings, "\n") {
+		if strings.Contains(line, " key="+key+" ") {
+			return line
+		}
+	}
+	return ""
+}
+
+func TestTheSecretVariablesTheProductDocumentsAreNotReportedAsUnknown(t *testing.T) {
+	// Every one of these is read out of band — credentials.KeyFromEnvironment
+	// and its siblings — and every one used to be reported at boot as a key
+	// that "matches nothing and was ignored", with a did_you_mean pointing at
+	// an unrelated section. An operator read that as their encryption key being
+	// ignored, and renamed the embed key to the variable the suggestion named.
+	documented := []string{
+		"KILASFLOW_ENCRYPTION_KEY",
+		"KILASFLOW_AUTH_SIGNING_KEY",
+		"KILASFLOW_EMBED_SIGNING_KEY",
+		"KILASFLOW_BOOTSTRAP_PASSWORD",
+		"KILASFLOW_AUTH_OPERATOR_KEY",
+		"KILASFLOW_GOOGLE_CLIENT_SECRET",
+	}
+	for _, variable := range documented {
+		t.Setenv(variable, "a-secret-value")
+	}
+
+	warnings := captureWarnings(t, func() {
+		if _, err := Load(filepath.Join(t.TempDir(), "absent.yaml")); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+	})
+	if strings.TrimSpace(warnings) != "" {
+		t.Errorf("a documented secret variable was warned about:\n%s", warnings)
+	}
+}
+
+func TestARenamedSecretVariableIsExemptAndTheOldDefaultIsNot(t *testing.T) {
+	// The setting's current value is what the process reads, so that is the
+	// name the mapper has to leave alone. The default is no longer read once
+	// the setting points elsewhere, and a key left in its old variable is
+	// exactly the mistake worth a warning.
+	t.Setenv("KILASFLOW_SECURITY_ENCRYPTION_KEY_ENV", "KILASFLOW_VAULT_KEY")
+	t.Setenv("KILASFLOW_VAULT_KEY", "a-secret-value")
+	t.Setenv("KILASFLOW_EMBED_SIGNING_KEY_ENV", "KILASFLOW_HOST_EMBED_KEY")
+	t.Setenv("KILASFLOW_HOST_EMBED_KEY", "a-secret-value")
+	t.Setenv("KILASFLOW_ENCRYPTION_KEY", "left-behind")
+
+	warnings := captureWarnings(t, func() {
+		if _, err := Load(filepath.Join(t.TempDir(), "absent.yaml")); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+	})
+	for _, renamed := range []string{"vault.key", "host.embed_key"} {
+		if warningLine(warnings, renamed) != "" {
+			t.Errorf("the renamed variable behind %s was warned about:\n%s", renamed, warnings)
+		}
+	}
+	if line := warningLine(warnings, "encryption.key"); !strings.Contains(line, "variable=KILASFLOW_ENCRYPTION_KEY") {
+		t.Errorf("the variable no setting names any more was not reported; warnings were:\n%s", warnings)
+	}
+}
+
+func TestEverySettingThatNamesAVariableExemptsIt(t *testing.T) {
+	// Walked from the struct, so the *_env field someone adds next is covered
+	// here without anyone remembering to list it: it is set to a variable of its
+	// own, the variable is set, and nothing may be reported.
+	var settings []string
+	for path := range fieldPaths() {
+		leaf := path[strings.LastIndex(path, ".")+1:]
+		if strings.HasSuffix(leaf, "_env") {
+			settings = append(settings, path)
+		} else if strings.Contains(leaf, "env") {
+			t.Errorf("%s looks like it names an environment variable but does not end in _env, so the variable it names would be reported as ignored", path)
+		}
+	}
+	if len(settings) == 0 {
+		t.Fatal("no *_env setting found: the walk is broken")
+	}
+	for _, path := range settings {
+		name := strings.ToUpper(strings.ReplaceAll(path, ".", "_"))
+		sentinel := "KILASFLOW_SENTINEL_" + name
+		t.Setenv(EnvPrefix+name, sentinel)
+		t.Setenv(sentinel, "a-secret-value")
+	}
+	// A secrets manager is all or nothing, and the token setting is one of the
+	// settings above.
+	t.Setenv("KILASFLOW_SECRETS_MANAGER_ADDR", "https://vault.example:8200")
+	t.Setenv("KILASFLOW_SECRETS_MASTER_KEY", "prod/master-key")
+
+	warnings := captureWarnings(t, func() {
+		if _, err := Load(filepath.Join(t.TempDir(), "absent.yaml")); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+	})
+	if strings.TrimSpace(warnings) != "" {
+		t.Errorf("a variable named by a *_env setting was warned about:\n%s", warnings)
+	}
+}
+
+func TestVariablesTheProcessReadsItselfAreNotReportedAsUnknown(t *testing.T) {
+	// The $env allowlist and the CLI's two variables never reach the
+	// configuration tree by design; the last one is a variable of the same
+	// shape that nothing reads.
+	t.Setenv("KILASFLOW_WORKFLOW_ENV_GREETING", "hello")
+	t.Setenv("KILASFLOW_URL", "http://127.0.0.1:8080")
+	t.Setenv("KILASFLOW_TOKEN", "a-secret-value")
+	t.Setenv("KILASFLOW_URLS", "http://127.0.0.1:8080")
+
+	warnings := captureWarnings(t, func() {
+		if _, err := Load(filepath.Join(t.TempDir(), "absent.yaml")); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+	})
+	for _, exempt := range []string{"workflow.env_greeting", "url", "token"} {
+		if warningLine(warnings, exempt) != "" {
+			t.Errorf("the variable behind %s was warned about:\n%s", exempt, warnings)
+		}
+	}
+	if warningLine(warnings, "urls") == "" {
+		t.Errorf("a variable nothing reads was not reported; warnings were:\n%s", warnings)
+	}
+}
+
+func TestAGenuinelyUnknownVariableStillWarnsWhenTheSecretsAreSet(t *testing.T) {
+	// Exempting the secret variables must not turn the check off: it is the only
+	// thing that tells an operator a misspelled setting was dropped.
+	t.Setenv("KILASFLOW_ENCRYPTION_KEY", "a-secret-value")
+	t.Setenv("KILASFLOW_EMBED_SIGNING_KEY", "a-secret-value")
+	t.Setenv("KILASFLOW_SERVR_PORT", "9090")
+	t.Setenv("KILASFLOW_QUARTERLY_REVENUE_FORECAST_MODEL", "x")
+
+	warnings := captureWarnings(t, func() {
+		if _, err := Load(filepath.Join(t.TempDir(), "absent.yaml")); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+	})
+
+	typo := warningLine(warnings, "servr.port")
+	for _, want := range []string{"source=environment", "variable=KILASFLOW_SERVR_PORT", "did_you_mean=server.port"} {
+		if !strings.Contains(typo, want) {
+			t.Errorf("the misspelled variable's warning lacks %q; warnings were:\n%s", want, warnings)
+		}
+	}
+	// Nothing is near enough to be a correction, so none is offered.
+	far := warningLine(warnings, "quarterly.revenue_forecast_model")
+	if far == "" {
+		t.Fatalf("an unrelated unknown variable was not reported; warnings were:\n%s", warnings)
+	}
+	if strings.Contains(far, "did_you_mean") {
+		t.Errorf("a suggestion was offered for a key nothing is close to:\n%s", far)
+	}
+	for _, secret := range []string{"encryption.key", "embed.signing_key"} {
+		if warningLine(warnings, secret) != "" {
+			t.Errorf("the secret variable behind %s was warned about:\n%s", secret, warnings)
+		}
+	}
+}
+
+func TestAnUnknownKeyNamesWhereItCameFrom(t *testing.T) {
+	// The file's typo and the environment's used to be labelled with the file's
+	// name, "(not found)" included when the file was absent, so a mistyped
+	// variable read as a problem with a file that was never there.
+	path := filepath.Join(t.TempDir(), "typo.yaml")
+	if err := os.WriteFile(path, []byte("binary:\n  rootdir: ./data/binary\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KILASFLOW_OUTBOUND_ALLOW_PRIVATE_NETWORK", "true")
+
+	warnings := captureWarnings(t, func() {
+		if _, err := Load(path); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+	})
+
+	fromFile := warningLine(warnings, "binary.rootdir")
+	if !strings.Contains(fromFile, "source="+path) || strings.Contains(fromFile, "variable=") {
+		t.Errorf("the file's key should name the file and no variable:\n%s", fromFile)
+	}
+	fromEnvironment := warningLine(warnings, "outbound.allow_private_network")
+	for _, want := range []string{"source=environment", "variable=KILASFLOW_OUTBOUND_ALLOW_PRIVATE_NETWORK"} {
+		if !strings.Contains(fromEnvironment, want) {
+			t.Errorf("the variable's warning lacks %q:\n%s", want, fromEnvironment)
+		}
+	}
+}
+
 func TestAnExplicitlyNamedConfigFileMustExist(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "does-not-exist.yaml")
 
