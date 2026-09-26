@@ -236,13 +236,21 @@ export function formatTimestamp(value: string | undefined): string {
 	return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-/** Tailwind classes per status, so list rows and canvas badges agree. */
+/**
+ * Tailwind classes per status, so list rows and canvas badges agree.
+ *
+ * The failed text is the destructive token pulled a fifth of the way toward
+ * the foreground (BUG-namghh): plain `text-destructive` on its own 15% tint is
+ * 4.35:1 in dark and 4.40:1 in light at 12px, under AA. Mixing toward the
+ * foreground lightens it in dark and darkens it in light, so one class serves
+ * both themes without a new token.
+ */
 export function statusTone(status: string): string {
 	switch (status) {
 		case 'succeeded':
 			return 'bg-success/15 text-success border-success/30';
 		case 'failed':
-			return 'bg-destructive/15 text-destructive border-destructive/30';
+			return 'bg-destructive/15 text-[color-mix(in_oklab,var(--destructive)_80%,var(--foreground))] border-destructive/30';
 		case 'cancelled':
 		case 'cancelling':
 			return 'bg-warning/15 text-warning border-warning/30';

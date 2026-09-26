@@ -151,9 +151,9 @@
 	{/if}
 
 	<nav class="flex flex-wrap gap-x-5 gap-y-2 text-sm">
-		<a class="text-(--color-accent) hover:underline" href="/docs">{m.home_link_api_reference()}</a>
-		<a class="text-(--color-accent) hover:underline" href="/api/openapi.json">{m.home_link_openapi_json()}</a>
-		<a class="text-(--color-accent) hover:underline" href="/api/openapi.yaml">{m.home_link_openapi_yaml()}</a>
+		<a class="text-primary hover:underline" href="/docs">{m.home_link_api_reference()}</a>
+		<a class="text-primary hover:underline" href="/api/openapi.json">{m.home_link_openapi_json()}</a>
+		<a class="text-primary hover:underline" href="/api/openapi.yaml">{m.home_link_openapi_yaml()}</a>
 	</nav>
 
 	<footer class="text-xs text-(--color-ink-muted)">
