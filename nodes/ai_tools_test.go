@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/kilaslab/kilas-flow/internal/ai"
 	"github.com/kilaslab/kilas-flow/internal/engine"
@@ -322,6 +323,142 @@ func TestHTTPToolDerivesSchemaFromFromAIAndSubstitutes(t *testing.T) {
 	// And the model's argument replaced the call at invoke time.
 	if toolPath != "/weather/Utrecht" {
 		t.Errorf("tool called %q, want the model's argument substituted", toolPath)
+	}
+}
+
+// observedByModel runs an agent that calls one HTTP tool once against upstream,
+// and returns what the model was handed back for that call: the tool message in
+// the request the provider received for its second turn. Asserting there, not
+// on the tool's own return value, is what pins what the model can see.
+func observedByModel(t *testing.T, upstream http.HandlerFunc) string {
+	t.Helper()
+
+	server := httptest.NewServer(upstream)
+	defer server.Close()
+
+	var mu sync.Mutex
+	turn := 0
+	var observation string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		var request struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		for _, message := range request.Messages {
+			if message.Role == "tool" {
+				observation = message.Content
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		turn++
+		if turn == 1 {
+			_, _ = w.Write([]byte(assistantToolCalls(`{"name":"list_users","arguments":"{}"}`)))
+			return
+		}
+		_, _ = w.Write([]byte(assistantAnswer("done")))
+	}))
+	defer provider.Close()
+
+	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil)
+	if _, err := executor.Execute(context.Background(), agentIR(t, map[string]any{"prompt": "How many users?"}), workflow.NodeInput{
+		"main":  {{JSON: map[string]any{}}},
+		"model": {modelItem(provider.URL)},
+		"tools": {toolItem(map[string]any{
+			"kind": "tool", "name": "list_users", "description": "List every user.", "nodeName": "List users",
+			"parameters":  map[string]any{"method": "GET", "url": server.URL + "/users"},
+			"credentials": map[string]any{},
+		})},
+	}, engine.Request{
+		Credentials: agentCredentials(), Execution: agentExecution(),
+		Events: func(event engine.NodeEvent) {},
+	}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if observation == "" {
+		t.Fatal("the model was never handed a tool result")
+	}
+	return observation
+}
+
+func TestHTTPToolHandsTheModelEveryElementOfAnArrayResponse(t *testing.T) {
+	t.Parallel()
+
+	// The request node makes one item per array element; the tool used to keep
+	// the first, so an agent asked how many users there were answered one.
+	observation := observedByModel(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[
+			{"id":1,"name":"Rina Wijaya","plan":"pro"},
+			{"id":2,"name":"Budi Santoso","plan":"free"},
+			{"id":3,"name":"Sari Lestari","plan":"pro"}
+		]`))
+	})
+
+	var users []map[string]any
+	if err := json.Unmarshal([]byte(observation), &users); err != nil {
+		t.Fatalf("observation = %q, want a JSON array of the users: %v", observation, err)
+	}
+	if len(users) != 3 {
+		t.Fatalf("observation = %s, want all 3 users", observation)
+	}
+	for index, name := range []string{"Rina Wijaya", "Budi Santoso", "Sari Lestari"} {
+		if users[index]["name"] != name {
+			t.Errorf("user %d = %#v, want %q, in the order the endpoint sent them", index, users[index], name)
+		}
+	}
+}
+
+func TestHTTPToolHandsTheModelASingleObjectResponseUnchanged(t *testing.T) {
+	t.Parallel()
+
+	observation := observedByModel(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":1,"name":"Rina Wijaya","plan":"pro"}`))
+	})
+
+	if observation != `{"id":1,"name":"Rina Wijaya","plan":"pro"}` {
+		t.Fatalf("observation = %q, want the one object, not wrapped in an array", observation)
+	}
+}
+
+// TestHTTPToolCutsAnOversizeResponseAndSaysSo: the cap keeps an endpoint's whole
+// payload out of the model's context, and the note is what stops the cut from
+// being a silent one — a model that reads 200 rows out of 3000 must know it.
+func TestHTTPToolCutsAnOversizeResponseAndSaysSo(t *testing.T) {
+	t.Parallel()
+
+	// 12 rows of 30 KiB is 360 KiB of JSON, past the 256 KiB cap.
+	observation := observedByModel(t, func(w http.ResponseWriter, _ *http.Request) {
+		rows := make([]map[string]any, 12)
+		for index := range rows {
+			rows[index] = map[string]any{"id": index + 1, "note": strings.Repeat("é", 15*1024)}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(rows)
+	})
+
+	shown, note, found := strings.Cut(observation, "\n[truncated: ")
+	if !found {
+		t.Fatalf("an oversize response reached the model with no truncation note (%d bytes)", len(observation))
+	}
+	if len(shown) > 256*1024 {
+		t.Errorf("the model was handed %d bytes of response, want at most the 262144-byte cap", len(shown))
+	}
+	if !utf8.ValidString(shown) {
+		t.Error("the cut split a multi-byte character")
+	}
+	if !strings.HasPrefix(shown, `[{"id":1,`) {
+		t.Errorf("the kept part starts %q, want the start of the array", shown[:20])
+	}
+	for _, want := range []string{"12 items", "only the first", "bytes are omitted", "partial result"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("truncation note = %q, want it to say %q", note, want)
+		}
 	}
 }
 
