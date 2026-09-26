@@ -5,21 +5,27 @@
 	import { createListCredentialTypes } from '$lib/api/generated/credentials/credentials';
 	import { loadNodePropertyOptions, loadNodePropertySchema } from '$lib/api/generated/nodes/nodes';
 	import { testCredential } from '$lib/api/generated/credentials/credentials';
+	import { createListWorkflowWebhooks, getListWorkflowWebhooksQueryKey } from '$lib/api/generated/workflows/workflows';
 	import { propertyVisible, withDefaults } from '$lib/workflow-editor/visibility';
-	import type { CredentialResource, CredentialTypeResource, Definition, Node, PropertyDefinition } from '$lib/api/generated/models';
+	import type { CredentialResource, CredentialTypeResource, Definition, Node, PropertyDefinition, WebhookRouteResource } from '$lib/api/generated/models';
 	import type { PropertyScope } from '$lib/workflow-editor/document';
 	import { credentialTypesFor, requiresCredential } from '$lib/workflow-editor/credentials';
+	import { savedNodeBinds, webhookAddress } from '$lib/workflow-editor/webhook-address';
 	import { Button } from '$lib/components/ui/button';
 	import * as m from '$lib/paraglide/messages.js';
 
 	import NodeIcon from './node-icon.svelte';
 	import PropertyField from './property-field.svelte';
+	import WebhookAddress from './webhook-address.svelte';
 
 	let {
 		node,
 		definition,
 		credentials = [],
 		readOnly = false,
+		workflowID,
+		savedNode = null,
+		active = false,
 		upstreamNodeNames = [],
 		onChange,
 		onRename,
@@ -29,6 +35,12 @@
 		definition: Definition;
 		credentials?: CredentialResource[];
 		readOnly?: boolean;
+		/** The workflow being edited, which is what a webhook node's address is looked up under. */
+		workflowID?: string;
+		/** This node as the last saved revision holds it, or null when that revision lacks it. */
+		savedNode?: Node | null;
+		/** Whether the workflow is active, which is when a webhook address starts answering. */
+		active?: boolean;
 		/** Names of the nodes that run before this one, for `$('Name')` completions. */
 		upstreamNodeNames?: string[];
 		onChange: (scope: PropertyScope, key: string, value: unknown) => void;
@@ -88,6 +100,39 @@
 			testingCredentialID = null;
 		}
 	}
+	// A webhook node's address comes from the server and nowhere else: the route
+	// is minted, so the path on the canvas is not part of it. The lookup waits for
+	// a saved node that can bind, because the answer for anything else is empty and
+	// the panel already knows why.
+	const webhooks = createListWorkflowWebhooks<WebhookRouteResource[]>(() => workflowID ?? '', () => ({
+		query: {
+			enabled: Boolean(workflowID && definition.webhook && savedNodeBinds(definition.webhook, savedNode)),
+			// Keyed by node and never fresh. The route is stable once minted, but a
+			// node saved after an earlier answer is not in that answer, and the
+			// 30-second default would keep offering the old one.
+			queryKey: [...getListWorkflowWebhooksQueryKey(workflowID ?? ''), node.id],
+			staleTime: 0,
+			select: (response) => {
+				if (response.status !== 200) throw new Error(m.properties_webhook_unavailable());
+				return response.data ?? [];
+			}
+		}
+	}));
+	const webhookView = $derived(
+		definition.webhook
+			? webhookAddress({
+					declaration: definition.webhook,
+					node,
+					saved: savedNode,
+					bindings: webhooks.data,
+					failed: webhooks.isError,
+					// The origin the editor was served from is the one address known to
+					// reach this instance; production serves the API and /webhook there.
+					origin: globalThis.location?.origin ?? '',
+					active
+				})
+			: null
+	);
 	const activeTab = $derived(tab === 'parameters' && (definition.parameters?.length ?? 0) === 0 ? 'settings' : tab);
 	const properties = $derived(activeTab === 'parameters' ? definition.parameters ?? [] : definition.sharedSettings ?? []);
 	const values = $derived((activeTab === 'parameters' ? node.parameters : node.settings) ?? {});
@@ -187,66 +232,60 @@
 	</div>
 
 	<!-- `inert` rather than a pointer-events class: a keyboard user could tab
-	     into a read-only field and type text that was silently discarded. The
-	     tabpanel still announces why it is inert. -->
-	<div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-2.5" inert={readOnly} class:opacity-70={readOnly} role="tabpanel" id="node-tabpanel" aria-labelledby={`node-tab-${activeTab}`}>
-		{#if activeTab === 'parameters' && definition.webhook}
-			{@const pathParam = definition.webhook.pathParameter ? String((node.parameters as Record<string, unknown> | undefined)?.[definition.webhook.pathParameter] ?? '') : definition.webhook.staticPath ?? ''}
-			<div class="grid gap-1.5 rounded-lg border border-border bg-background/40 p-2">
-				<p class="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">{m.properties_webhook_url()}</p>
-				{#if pathParam}
-					<code class="truncate rounded border border-border bg-muted/40 px-1.5 py-1 font-mono text-[0.6875rem] select-all" title={`/webhook/${pathParam}`}>{`/webhook/${pathParam}`}</code>
-					<p class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_webhook_full_address()}</p>
-				{:else}
-					<p class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_webhook_set_path()}</p>
-				{/if}
-			</div>
+	     into a read-only field and type text that was silently discarded. It
+	     covers the editable fields only. The webhook address is something to
+	     read and copy, and a read-only viewer needs it as much as an editor. -->
+	<div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-2.5" role="tabpanel" id="node-tabpanel" aria-labelledby={`node-tab-${activeTab}`}>
+		{#if activeTab === 'parameters' && webhookView}
+			<WebhookAddress address={webhookView} onRetry={() => void webhooks.refetch()} />
 		{/if}
-		{#if activeTab === 'parameters' && applicableCredentialTypes.length > 0 && onCredentialChange}
-			<div class="grid gap-1.5 rounded-lg border border-border bg-background/40 p-2">
-				<p class="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">
-					{m.properties_credential()}{#if credentialRequired}<span class="text-destructive" aria-hidden="true">*</span><span class="sr-only">{m.properties_credential_required()}</span>{/if}
-				</p>
-				{#if credentialRequired && !Object.keys(node.credentials ?? {}).length}
-					<p class="text-[0.6875rem] leading-4 text-destructive">{m.properties_credential_needed()}</p>
-				{/if}
-				{#each applicableCredentialTypes as typeID (typeID)}
-					{@const matching = credentials.filter((candidate) => candidate.type === typeID)}
-					<label class="text-[0.6875rem] font-medium" for={`credential-${typeID}`}>{credentialTypeName(typeID)}</label>
-					<div class="flex items-center gap-1.5">
-						<select
-							id={`credential-${typeID}`}
-							value={selectedCredential(typeID)}
-							class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1.5 text-xs"
-							onchange={(event) => onCredentialChange?.(typeID, event.currentTarget.value)}
-						>
-							<option value="">{m.properties_credential_none()}</option>
-							{#each matching as candidate (candidate.id)}
-								<option value={candidate.id}>{candidate.name}</option>
-							{/each}
-						</select>
-						{#if selectedCredential(typeID)}
-							<Button variant="outline" size="sm" class="h-7 shrink-0 px-2 text-[0.6875rem]" disabled={testingCredentialID !== null} onclick={() => void testSelectedCredential(typeID)}>
-								{testingCredentialID ? m.credentials_testing() : m.credentials_test()}
-							</Button>
-						{/if}
-					</div>
-					{#if matching.length === 0}
-						<p class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_no_credential_yet({ type: credentialTypeName(typeID) })}<button type="button" class="underline underline-offset-2" onclick={() => void goto('/credentials')}>{m.properties_add_one_under_credentials()}</button>.</p>
-					{:else if credentialTestResult && credentialTestResult.id === selectedCredential(typeID)}
-						<p role="status" class={`text-[0.625rem] leading-4 ${credentialTestResult.ok ? 'text-success' : 'text-destructive'}`}>{credentialTestResult.ok ? (credentialTestResult.detail ? m.credentials_test_connected_detail({ detail: credentialTestResult.detail }) : m.credentials_test_connected()) : m.credentials_test_failed({ detail: credentialTestResult.detail })}</p>
+		<div class="space-y-3" inert={readOnly} class:opacity-70={readOnly}>
+			{#if activeTab === 'parameters' && applicableCredentialTypes.length > 0 && onCredentialChange}
+				<div class="grid gap-1.5 rounded-lg border border-border bg-background/40 p-2">
+					<p class="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">
+						{m.properties_credential()}{#if credentialRequired}<span class="text-destructive" aria-hidden="true">*</span><span class="sr-only">{m.properties_credential_required()}</span>{/if}
+					</p>
+					{#if credentialRequired && !Object.keys(node.credentials ?? {}).length}
+						<p class="text-[0.6875rem] leading-4 text-destructive">{m.properties_credential_needed()}</p>
 					{/if}
+					{#each applicableCredentialTypes as typeID (typeID)}
+						{@const matching = credentials.filter((candidate) => candidate.type === typeID)}
+						<label class="text-[0.6875rem] font-medium" for={`credential-${typeID}`}>{credentialTypeName(typeID)}</label>
+						<div class="flex items-center gap-1.5">
+							<select
+								id={`credential-${typeID}`}
+								value={selectedCredential(typeID)}
+								class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1.5 text-xs"
+								onchange={(event) => onCredentialChange?.(typeID, event.currentTarget.value)}
+							>
+								<option value="">{m.properties_credential_none()}</option>
+								{#each matching as candidate (candidate.id)}
+									<option value={candidate.id}>{candidate.name}</option>
+								{/each}
+							</select>
+							{#if selectedCredential(typeID)}
+								<Button variant="outline" size="sm" class="h-7 shrink-0 px-2 text-[0.6875rem]" disabled={testingCredentialID !== null} onclick={() => void testSelectedCredential(typeID)}>
+									{testingCredentialID ? m.credentials_testing() : m.credentials_test()}
+								</Button>
+							{/if}
+						</div>
+						{#if matching.length === 0}
+							<p class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_no_credential_yet({ type: credentialTypeName(typeID) })}<button type="button" class="underline underline-offset-2" onclick={() => void goto('/credentials')}>{m.properties_add_one_under_credentials()}</button>.</p>
+						{:else if credentialTestResult && credentialTestResult.id === selectedCredential(typeID)}
+							<p role="status" class={`text-[0.625rem] leading-4 ${credentialTestResult.ok ? 'text-success' : 'text-destructive'}`}>{credentialTestResult.ok ? (credentialTestResult.detail ? m.credentials_test_connected_detail({ detail: credentialTestResult.detail }) : m.credentials_test_connected()) : m.credentials_test_failed({ detail: credentialTestResult.detail })}</p>
+						{/if}
+					{/each}
+					<p class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_credential_reference_note()}</p>
+				</div>
+			{/if}
+			{#if visibleProperties.length === 0}
+				<p class="text-xs leading-5 text-muted-foreground">{activeTab === 'parameters' ? m.properties_no_parameters_to_configure() : m.properties_no_settings_to_configure()}</p>
+			{:else}
+				{#each visibleProperties as property (property.key)}
+					<PropertyField {property} value={values[property.key] ?? property.default} siblings={values} contextKey={loaderContext} ownerKey={node.id} {upstreamNodeNames} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} loadSchema={activeTab === 'parameters' ? loadSchema : undefined} />
 				{/each}
-				<p class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_credential_reference_note()}</p>
-			</div>
-		{/if}
-		{#if visibleProperties.length === 0}
-			<p class="text-xs leading-5 text-muted-foreground">{activeTab === 'parameters' ? m.properties_no_parameters_to_configure() : m.properties_no_settings_to_configure()}</p>
-		{:else}
-			{#each visibleProperties as property (property.key)}
-				<PropertyField {property} value={values[property.key] ?? property.default} siblings={values} contextKey={loaderContext} ownerKey={node.id} {upstreamNodeNames} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} loadSchema={activeTab === 'parameters' ? loadSchema : undefined} />
-			{/each}
-		{/if}
+			{/if}
+		</div>
 	</div>
 	<footer class="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border px-2.5 py-1.5 text-[0.625rem] leading-4 text-muted-foreground">
 		<span class="truncate">{m.properties_footer_version({ name: definition.displayName, version: definition.version })}</span>
