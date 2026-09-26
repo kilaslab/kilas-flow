@@ -1,13 +1,13 @@
 ---
 id: BUG-v8ksv8
 title: Unknown /api/* paths return 200 with the SPA HTML instead of a JSON 404
-status: todo
+status: done
 priority: medium
 labels:
     - api
 parent: EPIC-8rbys7
 created: "2026-09-23T01:34:44Z"
-updated: "2026-09-23T01:34:44Z"
+updated: "2026-09-26T16:43:55Z"
 ---
 
 # Description
@@ -53,3 +53,27 @@ Related (from the audit): none
 curl output in this report; the SPA fallback in internal/web.
 
 # Attachments
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-26. Rewritten on 2026-09-26 to list only this ticket's own commit (`git log --grep BUG-v8ksv8`) and the files exactly that commit changed. The chore(pine) commit that records this closing changes only this ticket file.
+
+- Commits (1):
+  - `ee185c8a` — BUG-v8ksv8: an unknown /api path answers a 404 problem document instead of the editor's page
+- Files changed by that commit:
+
+```
+ .pine/tickets/BUG-v8ksv8.md            | 10 +++-
+ CHANGELOG.md                           |  4 ++
+ docs/src/content/docs/reference/cli.md | 15 +++---
+ internal/cli/command_test.go           |  4 +-
+ internal/cli/openapi.go                | 16 +++---
+ internal/cli/openapi_contract_test.go  | 33 ++++++------
+ internal/cli/verbs_api_test.go         | 12 +++--
+ internal/cli/verbs_datastore.go        |  5 +-
+ internal/cli/verbs_workflow.go         |  4 +-
+ internal/web/embed.go                  | 43 +++++++++++++--
+ internal/web/embed_test.go             | 95 ++++++++++++++++++++++++++++++++++
+ scripts/smoke-cli.sh                   | 10 ++--
+ 12 files changed, 199 insertions(+), 52 deletions(-)
+```
