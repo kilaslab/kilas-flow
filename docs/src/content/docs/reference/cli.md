@@ -162,9 +162,10 @@ kilasflow api export-datastore-rows --path id=ds_1 --out rows.csv
   call does make is the `/api/openapi.json` read that resolves the operation, so
   with the server unreachable there is nothing to resolve against and the call
   fails as `network_error` instead of reaching the refusal. It has to be refused
-  here: the substituted path is a real-looking route the SPA answers with
-  `200 text/html`, so no status code can report it. A `--path` the operation
-  does not use is ignored.
+  here: the substituted path is a real-looking route the server answers with a
+  `404`, which reads as a resource that does not exist rather than as a request
+  that should never have been sent. A `--path` the operation does not use is
+  ignored.
 - `--query name=value` and `--header name=value` add query parameters and
   request headers.
 - `--body` takes JSON, `@<file>`, or `-` for stdin; `--body-file <path>` reads a
@@ -180,10 +181,10 @@ kilasflow api export-datastore-rows --path id=ds_1 --out rows.csv
   pipe into the next command. A response without one (a listing, a 204) prints
   nothing rather than a guess.
 - **An unknown operation id is refused with exit 2 before the operation is
-  called.** It has to be: an unknown `/api/v1` path falls through to the SPA,
-  which answers `200 text/html`, so a status code cannot tell a wrong path from
-  a right one. The only request such a refusal makes is the `/api/openapi.json`
-  read that makes the refusal possible.
+  called.** It has to be: an unknown `/api/v1` path answers a `404`
+  `application/problem+json`, the same status a missing resource gets, so a
+  status code cannot tell a wrong path from a right one. The only request such a
+  refusal makes is the `/api/openapi.json` read that makes the refusal possible.
 - **A guarded operation is guarded by id, not only by name.** If the operation
   id names one of the operations a guarded verb wraps (`activate-workflow`,
   `deactivate-workflow`, `delete-workflow`, `create/update/delete-credential`,

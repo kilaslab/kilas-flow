@@ -197,9 +197,8 @@ func runDatastoreRows(ctx *Context, args []string) error {
 // runDatastoreExport streams the CSV, or writes it where --out asked.
 //
 // The path is the tree's `/datastores/{id}/rows/export`, not the shorter
-// `/datastores/{id}/export` the ticket cited: the shorter one is answered by the
-// SPA catch-all with 200 HTML, which no exit code can distinguish from an
-// export.
+// `/datastores/{id}/export` the ticket cited: the shorter one is no route, and
+// its 404 reads as a datastore that does not exist.
 func runDatastoreExport(ctx *Context, args []string) error {
 	id, err := requireOneID(args, "datastore id")
 	if err != nil {

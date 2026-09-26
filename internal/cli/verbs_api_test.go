@@ -576,9 +576,10 @@ func TestAPIMissingPathParameterIsAUsageError(t *testing.T) {
 
 // An empty --path value is the shape `--path id=$WF_ID` takes when WF_ID is
 // unset, and it is the mistake the escape hatch cannot detect afterwards: the
-// substituted path is a real-looking route that the SPA catch-all answers with
-// 200 text/html, so neither the status code nor the body says anything is
-// wrong. It is refused before the request, exactly as a missing --path is.
+// substituted path is a real-looking route that the server answers with a 404
+// problem document, which reads as a workflow that does not exist rather than
+// as a request nobody should have sent. It is refused before the request,
+// exactly as a missing --path is.
 func TestAPIEmptyPathParameterIsAUsageError(t *testing.T) {
 	for _, value := range []string{"id=", "id=   "} {
 		t.Run(value, func(t *testing.T) {
@@ -590,8 +591,9 @@ func TestAPIEmptyPathParameterIsAUsageError(t *testing.T) {
 				// What `/api/v1/workflows/` actually answers on a real server.
 				"/api/v1/workflows/": func(w http.ResponseWriter, _ *http.Request) {
 					requests++
-					w.Header().Set("Content-Type", "text/html; charset=utf-8")
-					_, _ = io.WriteString(w, "<!doctype html><html>the SPA</html>")
+					w.Header().Set("Content-Type", "application/problem+json")
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = io.WriteString(w, `{"title":"Not Found","status":404,"detail":"No API route matches this method and path."}`)
 				},
 			})
 

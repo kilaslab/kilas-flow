@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"io"
 	"io/fs"
 	"net/http"
@@ -130,6 +131,100 @@ func TestHandlerAnswersMissingAssetsWithNotFound(t *testing.T) {
 		if strings.Contains(rec.Body.String(), "<!doctype html>") {
 			t.Errorf("GET %s was served the SPA document", path)
 		}
+	}
+}
+
+// An unknown /api path used to fall through to the SPA and answer 200 text/html,
+// which a script or an agent takes for success and then fails parsing. Every
+// method gets the problem document: a POST to a path nothing serves is the same
+// mistake, and the SPA's "405, allow GET" would misdirect it.
+func TestHandlerAnswersUnknownAPIPathsWithAProblem(t *testing.T) {
+	handler := newHandler(spaTree(), placeholderHTML)
+
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/v1/nonexistent"},
+		{http.MethodGet, "/api/v2/foo"},
+		{http.MethodGet, "/api/v1/schedules/sched_x"},
+		{http.MethodGet, "/api"},
+		{http.MethodGet, "/api/"},
+		{http.MethodGet, "//api/v1/nonexistent"},
+		{http.MethodHead, "/api/v1/nonexistent"},
+		{http.MethodPost, "/api/v1/nonexistent"},
+		{http.MethodDelete, "/api/v2/foo"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.method+" "+testCase.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(testCase.method, testCase.path, nil))
+
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404", rec.Code)
+			}
+			if got := rec.Header().Get("Content-Type"); got != "application/problem+json" {
+				t.Errorf("Content-Type = %q, want application/problem+json", got)
+			}
+			if got := rec.Header().Get("Allow"); got != "" {
+				t.Errorf("Allow = %q, want none: no method is allowed on a path nothing serves", got)
+			}
+			if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+				t.Errorf("X-Content-Type-Options = %q, want the hardening headers kept", got)
+			}
+			if got := rec.Header().Get("Content-Security-Policy"); got == "" {
+				t.Error("no Content-Security-Policy on the problem response")
+			}
+			if testCase.method == http.MethodHead {
+				return
+			}
+
+			var problem struct {
+				Title  string `json:"title"`
+				Status int    `json:"status"`
+				Detail string `json:"detail"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+				t.Fatalf("the body is not JSON: %v (%q)", err, rec.Body.String())
+			}
+			if problem.Title != "Not Found" || problem.Status != http.StatusNotFound || problem.Detail == "" {
+				t.Errorf("problem = %+v, want title Not Found, status 404 and a detail", problem)
+			}
+		})
+	}
+}
+
+// The API's prefix is claimed as a path segment, not as a string prefix: a
+// client route or an asset that merely starts with the letters keeps its old
+// answer, as does everything the API rule sits in front of.
+func TestHandlerKeepsTheSPAAnswersOutsideTheAPIPrefix(t *testing.T) {
+	handler := newHandler(spaTree(), placeholderHTML)
+
+	for _, path := range []string{"/workflows", "/apiary", "/apis/v1", "/app/workflows/wf_1", "/embed/wf_1"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200 via SPA fallback", path, rec.Code)
+		}
+		if got := rec.Header().Get("Content-Type"); got != htmlContentType {
+			t.Errorf("GET %s Content-Type = %q, want %q", path, got, htmlContentType)
+		}
+		if !strings.Contains(rec.Body.String(), "spa-document") {
+			t.Errorf("GET %s did not serve the SPA document", path)
+		}
+	}
+
+	// A missing asset is still a plain 404, not a problem document: it is a
+	// browser's request, and the api rule must not reach it.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/_app/immutable/entry/gone.js", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("missing .js = %d, want 404", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); strings.Contains(got, "problem+json") {
+		t.Errorf("missing .js Content-Type = %q, want the plain 404", got)
 	}
 }
 

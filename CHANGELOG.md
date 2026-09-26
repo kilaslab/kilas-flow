@@ -293,6 +293,10 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Fixed
 
+- A path under `/api/` that no route serves answers `404` with
+  `application/problem+json` for every method. It used to answer the editor's
+  page with `200 text/html`, which a script or an agent read as success and then
+  failed parsing.
 - A chat model node that never set "Stream output" now streams, as the editor
   already showed. An absent `stream` key used to mean off.
 - An agent ended by the workflow's own execution timeout says so, and names

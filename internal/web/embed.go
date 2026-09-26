@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"encoding/json"
 	"io/fs"
 	"mime"
 	"net/http"
@@ -133,7 +134,8 @@ func FS() (fs.FS, error) {
 //
 // Requests for files that exist are served directly; anything else falls back
 // to the SPA document so client-side routes such as /app/workflows/:id survive
-// a hard refresh or a deep link.
+// a hard refresh or a deep link. The one exception is the API's own prefix,
+// which is answered with a problem document instead of a page.
 func Handler(options ...HandlerOption) http.Handler {
 	sub, err := FS()
 	if err != nil {
@@ -164,13 +166,21 @@ func newHandler(sub fs.FS, placeholder []byte, options ...HandlerOption) http.Ha
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		security.apply(w.Header(), isEmbedPath(r.URL.Path))
 
+		name := requestName(r.URL.Path)
+
+		// Ahead of the method check as well as the fallback: a POST to an unknown
+		// API path is the same mistake as a GET, and "405, allow GET" would send
+		// the client looking for a page that does not exist.
+		if isAPIName(name) {
+			writeAPINotFound(w)
+			return
+		}
+
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-
-		name := requestName(r.URL.Path)
 
 		entry, err := loadAsset(sub, name)
 		switch {
@@ -266,6 +276,33 @@ func requestName(urlPath string) string {
 		return indexName
 	}
 	return name
+}
+
+// isAPIName reports whether a name belongs to the API's route family.
+//
+// This handler is the router's catch-all, so every real /api route has already
+// been matched before a request gets here: what arrives under the prefix is, by
+// construction, a path or a method the API does not serve. The prefix is not
+// imported from internal/api, which imports this package.
+func isAPIName(name string) bool {
+	return name == "api" || strings.HasPrefix(name, "api/")
+}
+
+// writeAPINotFound answers a request the API has no route for.
+//
+// It is a problem document because the caller is a client, not a browser: the
+// SPA's 200 text/html for an unknown /api path reads as success to a script or
+// an agent, which then fails parsing HTML. The body has the shape of the
+// problems the rest of the server writes by hand, and the detail does not echo
+// the request, since a client prints it.
+func writeAPINotFound(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(http.StatusNotFound)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"title":  http.StatusText(http.StatusNotFound),
+		"status": http.StatusNotFound,
+		"detail": "No API route matches this method and path.",
+	})
 }
 
 // isAssetPath reports whether a name that is not in the tree is asset-like, and

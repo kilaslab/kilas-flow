@@ -159,9 +159,9 @@ func sortedOperations(index map[string]Operation) []string {
 // operation id.
 //
 // An id the index does not hold is a usage error, and it is raised here rather
-// than left to the server: an unknown /api/v1 path falls through to the SPA
-// catch-all and answers 200 HTML, so a status code cannot tell a wrong path
-// from a right one.
+// than left to the server: an unknown /api/v1 path answers a 404 problem
+// document, which reads the same as a resource that does not exist, so a status
+// code cannot tell a wrong path from a right one.
 func resolveOperation(index map[string]Operation, id string, pathParams map[string]string, query url.Values) (string, string, error) {
 	operation, known := index[id]
 	if !known {
@@ -189,14 +189,14 @@ func unknownOperationError(id string) *ExitError {
 //
 // A placeholder with no value is a usage error naming the flag that supplies
 // it, because a request to a template with a literal {name} in it would land
-// on the SPA. Values are path-escaped, so an id carrying a slash cannot
-// silently address a different route than the caller meant.
+// on nothing the server serves. Values are path-escaped, so an id carrying a
+// slash cannot silently address a different route than the caller meant.
 //
 // A value that is empty or whitespace-only counts as missing, which is what
 // `--path id=$WF_ID` means when WF_ID is unset. Substituting it would build
-// `/workflows/`, a path the SPA catch-all answers with 200 text/html, so the
-// caller would be handed an HTML document as a successful fetch and no status
-// code could tell it. requireOneID refuses an empty id for the same reason.
+// `/workflows/`, a path the server answers with a 404 problem document, so the
+// caller would be told a resource is missing when the request was malformed.
+// requireOneID refuses an empty id for the same reason.
 func fillPath(template, id string, params map[string]string) (string, error) {
 	missing := make([]string, 0, 2)
 	target := pathPlaceholder.ReplaceAllStringFunc(template, func(placeholder string) string {
