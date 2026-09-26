@@ -79,10 +79,10 @@ none (the ux-ops agent was asked to confirm the root cause)
 
 
 # Acceptance Criteria
-- [ ] No warning for any KILASFLOW_* variable named by a `*_key_env` field, the KILASFLOW_WORKFLOW_ENV_ prefix, or the CLI's KILASFLOW_URL/TOKEN
+- [x] No warning for any KILASFLOW_* variable named by a `*_key_env` field, the KILASFLOW_WORKFLOW_ENV_ prefix, or the CLI's KILASFLOW_URL/TOKEN
 - [ ] The warning names the variable, says the source is the environment, and uses the configured slog handler
-- [ ] `did_you_mean` appears only within a small edit distance
-- [ ] A boot test sets each documented secret variable and asserts no unknown-key warning
+- [x] `did_you_mean` appears only within a small edit distance
+- [x] A boot test sets each documented secret variable and asserts no unknown-key warning
 
 # Implementation Plan
 
@@ -91,6 +91,12 @@ See each finding's suggested fix above.
 # Notes
 
 Related tickets: BUG-y57cz4
+
+## Progress (2026-09-26, fixed together with BUG-n4e97f)
+
+Done: the exemptions (every `*_env` setting's current value, the `KILASFLOW_WORKFLOW_ENV_` prefix, `KILASFLOW_URL` and `KILASFLOW_TOKEN`); `did_you_mean` only within an edit distance of 3 and omitted otherwise; the warning names the variable (`variable=`) and says `source=environment` for a variable, with the file's name only for a key from the file; tests in `internal/config/boot_strictness_test.go` that set every documented secret variable and a struct walk over every `*_env` field.
+
+Remains, so the ticket stays open: the second criterion's "uses the configured slog handler". The warning fires while the configuration is still being read, before the logger exists. `warningLogger` honours `KILASFLOW_LOG_FORMAT=json` from the environment, but a text-format warning still goes through slog's default handler (`2026/09/26 23:45:59 WARN ...`, unlike every `time=... level=...` line after it), and a `log.format: json` set only in the file is not honoured. Fixing it means either installing the text handler as the default before `config.Load` in `cmd/kilasflow`, or having `Load` return its warnings for the caller to log once the logger is built (which changes `Load`'s signature and the tests that read the warnings from `slog.Default`).
 
 # Related Files
 
