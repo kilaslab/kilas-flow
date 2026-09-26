@@ -64,3 +64,20 @@ Related (from the audit): none
 `case-3-1.execution.json`, `case-3-2.execution.json`, `stub-hits.jsonl`. Code `nodes/ai.go:2037` (`json.Marshal(output[0][0].JSON)`): the HTTP executor splits a top-level array into items and the tool keeps item 0.
 
 # Attachments
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-26. `--evidence` diffs from the commit at the ticket's creation, a bulk audit commit, so its own list is replaced here by this fix's commit alone.
+
+- Commits (1):
+  - `271b136` — BUG-2mes2k: an agent's HTTP Request Tool hands the model the whole response, so a JSON array reads as every element and not just the first
+- Files changed (`git show --stat 271b136`):
+
+```
+ .pine/tickets/BUG-2mes2k.md |  22 +++++--
+ nodes/ai.go                 |  46 ++++++++++++++-
+ nodes/ai_tools_test.go      | 137 ++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 197 insertions(+), 8 deletions(-)
+```
+
+Checks: `go test ./nodes/... ./internal/ai/...` and the whole `go test ./...` pass, and `go vet` and `go build ./...` are clean.
