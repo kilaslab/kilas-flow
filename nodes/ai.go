@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kilaslab/kilas-flow/internal/ai"
 	"github.com/kilaslab/kilas-flow/internal/engine"
@@ -2015,7 +2016,7 @@ func (tool *httpRequestTool) Definition() ai.ToolDefinition {
 
 // Invoke runs the configured HTTP request with the model's arguments exposed
 // as the item, so `{{ $json.city }}` in the URL resolves from what the model
-// supplied.
+// supplied. It returns the whole response, not the first item of it.
 func (tool *httpRequestTool) Invoke(ctx context.Context, arguments json.RawMessage) (string, error) {
 	argsMap := map[string]any{}
 	item := workflow.Item{JSON: map[string]any{}}
@@ -2055,11 +2056,50 @@ func (tool *httpRequestTool) Invoke(ctx context.Context, arguments json.RawMessa
 	if len(output) == 0 || len(output[0]) == 0 {
 		return "", fmt.Errorf("tool returned nothing")
 	}
-	encoded, err := json.Marshal(output[0][0].JSON)
+	return httpToolObservation(output[0])
+}
+
+// httpToolMaxBytes is the most of one response the model is handed. It is the
+// budget a data table tool's result gets (datastoreToolMaxBytes) for the same
+// reason: an endpoint's whole payload must not fill the model's context. Past
+// it the observation is cut and says so; the note is added on top of the cap.
+const httpToolMaxBytes = 256 * 1024
+
+// httpToolObservation is the text the model reads for one HTTP tool call: the
+// whole response, as n8n's tool gives it. The request node turns a top-level
+// array into one item per element, so keeping only the first item answered "how
+// many customers?" with one while the run stayed green. One item is its own
+// object, as before; several are a JSON array of every item's object.
+//
+// Only the first httpToolMaxBytes are kept. The model is told how much is
+// missing, because a silently shortened list is the same wrong answer again.
+func httpToolObservation(items []workflow.Item) (string, error) {
+	var result any = items[0].JSON
+	if len(items) > 1 {
+		bodies := make([]map[string]any, len(items))
+		for index, item := range items {
+			bodies[index] = item.JSON
+		}
+		result = bodies
+	}
+	encoded, err := json.Marshal(result)
 	if err != nil {
 		return "", fmt.Errorf("encode tool result: %w", err)
 	}
-	return string(encoded), nil
+	if len(encoded) <= httpToolMaxBytes {
+		return string(encoded), nil
+	}
+	// Cut on a character boundary, so the model is not handed a broken rune.
+	cut := httpToolMaxBytes
+	for cut > 0 && !utf8.RuneStart(encoded[cut]) {
+		cut--
+	}
+	extent := fmt.Sprintf("%d bytes", len(encoded))
+	if len(items) > 1 {
+		extent = fmt.Sprintf("%d items, %d bytes", len(items), len(encoded))
+	}
+	return fmt.Sprintf("%s\n[truncated: the response is %s and only the first %d bytes are shown; %d bytes are omitted. This is a partial result, so do not count or summarise it as if it were the whole response.]",
+		encoded[:cut], extent, cut, len(encoded)-cut), nil
 }
 
 // boolOr reads a boolean parameter, falling back to the default the node
