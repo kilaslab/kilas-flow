@@ -1,13 +1,13 @@
 ---
 id: BUG-namghh
 title: 'Low-contrast text: root links 1.48:1, datastore type labels and ''Failed'' badge under WCAG AA'
-status: todo
+status: done
 priority: low
 labels:
     - accessibility
 parent: EPIC-8rbys7
 created: "2026-09-23T01:34:44Z"
-updated: "2026-09-23T01:34:44Z"
+updated: "2026-09-26T16:48:06Z"
 ---
 
 # Description
@@ -100,3 +100,19 @@ light execution detail header, which is not one of the audited pages.
 
 Checks: `pnpm test` (52 files, 630 tests) and `pnpm check` (svelte-check, 0
 errors, 0 warnings) pass. No test pinned the old classes.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-09-26. Rewritten on 2026-09-26 to list only this ticket's own commit (`git log --grep "BUG-namghh"`) and the files exactly that commit changed: `--evidence` diffs from the ticket's creation commit, which is the bulk audit commit, so it listed hundreds of files that are not this fix. The status change is committed separately, as `chore(pine): close BUG-namghh with its landing evidence`, and touches only this file.
+
+- Commits (1):
+  - `147595f` — BUG-namghh: the root links, datastore type labels and Failed badge read at 4.5:1 or better in both themes
+- Files changed by that commit (`git show --stat 147595f`):
+
+```
+ .pine/tickets/BUG-namghh.md                        | 56 +++++++++++++++++++++-
+ web/src/lib/workflow-editor/execution.ts           | 12 ++++-
+ .../(dashboard)/datastores/[id]/+page.svelte       |  4 +-
+ web/src/routes/+page.svelte                        |  6 +--
+ 4 files changed, 70 insertions(+), 8 deletions(-)
+```
