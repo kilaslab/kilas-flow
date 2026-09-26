@@ -29,7 +29,7 @@
     "@sveltejs/kit": "2.70.3",
     "@sveltejs/vite-plugin-svelte": "7.3.0",
     "@tailwindcss/vite": "4.3.3",
-    "@types/node": "^24.13.3",
+    "@types/node": "^26.6.1",
     "clsx": "^2.1.1",
     "mode-watcher": "^1.1.0",
     "orval": "^8.27.0",
