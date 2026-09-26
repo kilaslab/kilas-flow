@@ -694,7 +694,7 @@
 											{:else}
 												<span class="font-medium">{column.name}</span>
 												{#if !column.system}
-													<span class="font-normal text-muted-foreground/70">· {displayType(column.type)}</span>
+													<span class="font-normal text-muted-foreground">· {displayType(column.type)}</span>
 													<Button
 														type="button"
 														variant="ghost"
@@ -755,7 +755,7 @@
 													}}
 												/>
 											{:else if isNullCell(row, column)}
-												<button type="button" title={column.system ? m.datastores_cell_readonly_title() : m.datastores_cell_empty_title()} aria-label={cellButtonLabel({ column: column.name, system: column.system, rowID, text: cellText(row, column), empty: isNullCell(row, column) })} class="text-muted-foreground/60 {column.system ? '' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
+												<button type="button" title={column.system ? m.datastores_cell_readonly_title() : m.datastores_cell_empty_title()} aria-label={cellButtonLabel({ column: column.name, system: column.system, rowID, text: cellText(row, column), empty: isNullCell(row, column) })} class="text-muted-foreground {column.system ? '' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
 													<span>{m.datastores_null()}</span>
 												</button>
 											{:else}
