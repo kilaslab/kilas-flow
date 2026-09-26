@@ -167,10 +167,12 @@ func contractPathArgs() []string {
 }
 
 // answeredByTheOperation reports whether a response came from the API rather
-// than from the SPA's catch-all, which answers 200 text/html for an unknown
-// /api/v1 path and 405 text/plain for a non-GET one. A status code alone cannot
-// tell the two apart, which is why the CLI refuses an unknown operation id
-// before it sends anything.
+// than from the SPA's catch-all, which answered 200 text/html for an unknown
+// /api/v1 path before it learned to answer a problem document. A 404 from the
+// catch-all and one from an operation are both problem documents now, so this
+// no longer tells them apart: the walk's check that each row's method and path
+// are the ones the server serves does, and the CLI still refuses an unknown
+// operation id before it sends anything.
 func answeredByTheOperation(doc map[string]any) (bool, string) {
 	if failure, failed := doc["error"].(map[string]any); failed {
 		if detail, present := failure["detail"].(map[string]any); present && detail["problem"] != nil {
@@ -207,11 +209,12 @@ func TestAPIPrefixMatchesTheServerConstant(t *testing.T) {
 	}
 }
 
-// TestTheSPACatchAllAnswersAnUnknownAPIPath is the control for the walk below:
-// it proves that a wrong /api/v1 path is answered by the SPA with HTML and a
-// 200, which is why an unknown operation id has to be refused before the
-// request rather than detected from a status code.
-func TestTheSPACatchAllAnswersAnUnknownAPIPath(t *testing.T) {
+// TestAnUnknownAPIPathAnswersAProblemNotThePage is the control for the walk
+// below: a wrong /api/v1 path is answered with a 404 problem document, not the
+// SPA's 200 text/html it used to get. The CLI still refuses an unknown
+// operation id before it sends anything, which names the mistake and holds
+// against a server that predates the 404.
+func TestAnUnknownAPIPathAnswersAProblemNotThePage(t *testing.T) {
 	srv := bootContractServer(t)
 
 	resp, err := srv.Client().Get(srv.URL + apiPrefix + "/definitely-not-an-operation")
@@ -225,14 +228,14 @@ func TestTheSPACatchAllAnswersAnUnknownAPIPath(t *testing.T) {
 		t.Fatalf("read: %v", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want the SPA's 200: if this changed, the escape hatch's refusal could be relaxed", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
 	}
-	if contentType := resp.Header.Get("Content-Type"); !strings.Contains(contentType, "text/html") {
-		t.Fatalf("Content-Type = %q, want text/html", contentType)
+	if contentType := resp.Header.Get("Content-Type"); contentType != "application/problem+json" {
+		t.Fatalf("Content-Type = %q, want application/problem+json", contentType)
 	}
-	if !strings.Contains(strings.ToLower(string(body)), "<html") {
-		t.Fatalf("body = %q, want the SPA document", body)
+	if strings.Contains(strings.ToLower(string(body)), "<html") {
+		t.Fatalf("body = %q, want a problem document, not the SPA", body)
 	}
 }
 

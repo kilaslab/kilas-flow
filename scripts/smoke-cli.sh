@@ -180,9 +180,8 @@ expect_in "$trace_json" 'execution.completed'
 expect_in "$trace_json" '"terminal":true'
 
 # 3. The read-only families against the real router. This matters more than it
-#    looks: the SPA catch-all answers an unknown /api/v1 path with 200 HTML, so
-#    a fake server cannot tell a right path from a wrong one — only a booted
-#    server can, and these exit codes are what say the paths are real.
+#    looks: a fake server cannot tell a right path from a wrong one — only a
+#    booted server can, and these exit codes are what say the paths are real.
 catalogue_json=$(run_ok "$cli" node list --json)
 expect_in "$catalogue_json" '"operation":"list-node-types"'
 expect_in "$catalogue_json" '"kilasflow.manual"'
@@ -208,8 +207,9 @@ expect_in "$tenant_users_json" '"operation":"list-tenant-users"'
 tenant_one_json=$(run_ok "$cli" tenant get operator --json)
 expect_in "$tenant_one_json" '"id":"operator"'
 
-# The paths that need an id are proven the same way: a missing id that answers
-# 404 is a routed path, while a wrong one lands on the catch-all's 200 HTML.
+# The paths that need an id are exercised with an id nothing holds. A wrong path
+# answers 404 as well now, so these only say the verb reaches the server and
+# maps a 404 to exit 4; the listings above are what prove the paths exist.
 expect_exit 4 "$cli" datastore get 00000000-0000-0000-0000-000000000000 --json
 expect_exit 4 "$cli" datastore rows 00000000-0000-0000-0000-000000000000 --json
 expect_exit 4 "$cli" datastore export 00000000-0000-0000-0000-000000000000 --out "$work_dir/rows.csv"

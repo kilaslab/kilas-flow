@@ -315,8 +315,8 @@ func TestPhaseOneCommandTree(t *testing.T) {
 	}
 
 	// A verb that names an operation must name one the server actually serves:
-	// an id the document does not hold would send the verb to the SPA catch-all,
-	// which answers 200 HTML and no exit code can distinguish from an answer.
+	// an id the document does not hold would send the verb to a path nothing
+	// serves, whose 404 reads as a resource that does not exist.
 	srv := bootContractServer(t)
 	client := &Client{BaseURL: srv.URL, HTTP: &http.Client{Timeout: 30 * time.Second}}
 

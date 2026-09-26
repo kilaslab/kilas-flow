@@ -735,8 +735,8 @@ func humanDeletion(w io.Writer, data any) {
 // requireOneID returns the single identifier a verb needs.
 //
 // An empty identifier is refused rather than sent: `/workflows/` is not a
-// workflow, and the SPA catch-all answers it with 200 HTML, which no exit code
-// can distinguish from an answer.
+// workflow, and the server answers it with a 404 that reads as a workflow that
+// does not exist.
 func requireOneID(args []string, what string) (string, error) {
 	if len(args) == 0 {
 		return "", usageError("no %s: pass one as an argument", what)
