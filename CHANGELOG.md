@@ -312,6 +312,14 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Fixed
 
+- The Webhook node's panel shows the address that answers, with your host and
+  a copy button, instead of `/webhook/<path>`. That path is not a route: the
+  live address carries a minted route, so the URL the panel used to show
+  answered 404. The address is read from `GET /workflows/{id}/webhooks` once
+  the node is saved with a path, and reads "Not live yet" until the workflow
+  is activated; before the first save the panel says the address appears on
+  save rather than showing one. It stays readable and copyable when the
+  editor is read-only.
 - Code (JavaScript): `this.helpers.httpRequest` rejects a status outside 2xx
   as n8n's does: an `AxiosError` reading "Request failed with status code
   404", with `status` and axios's `code`, and with no `response`, since n8n's
