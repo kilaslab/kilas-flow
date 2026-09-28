@@ -1,6 +1,7 @@
 import * as m from '$lib/paraglide/messages.js';
 import type { Connection, Definition, ExecutionNodeRunResource, Node } from '$lib/api/generated/models';
 import { resolveDefinition } from './document';
+import { resolvedPorts } from './ports';
 
 /**
  * `skipped` names a node that did not run, as against one that ran and failed —
@@ -233,7 +234,11 @@ export function edgeItemCounts(
 		const source = nodeByID.get(connection.source.nodeId);
 		if (!source) continue;
 		const definition = resolveDefinition(source.type, source.typeVersion, definitions);
-		const portIndex = (definition?.outputs ?? []).findIndex((port) => port.name === connection.source.port);
+		if (!definition) continue;
+		// resolvedPorts, not the bare definition: the error branch of a node on
+		// "continue using error output" is a port the compiler adds, and the
+		// items it carried belong on the edge just as much as a success run's.
+		const portIndex = resolvedPorts(source, definition).outputs.findIndex((port) => port.name === connection.source.port);
 		if (portIndex < 0) continue;
 
 		const latestAttemptBySequence = new Map<number, ExecutionNodeRunResource>();

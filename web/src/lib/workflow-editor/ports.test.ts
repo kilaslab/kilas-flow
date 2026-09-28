@@ -396,3 +396,40 @@ describe('canConnect through resolved ports', () => {
 		).toBe(false);
 	});
 });
+
+describe('a node on continue-using-error-output', () => {
+	const definition: Definition = {
+		type: 'kilasflow.httpRequest',
+		version: 1,
+		displayName: 'HTTP Request',
+		category: 'Core',
+		group: ['transform'],
+		source: 'builtin',
+		inputs: [{ name: 'main', kind: 'main' }],
+		outputs: [{ name: 'main', kind: 'main' }],
+		parameters: [],
+		sharedSettings: []
+	};
+	const node: Node = { id: 'call', name: 'Call API', type: 'kilasflow.httpRequest', typeVersion: 1, position: { x: 0, y: 0 } };
+
+	it('gains an Error output labelled Success / Error, mirroring the compiler', () => {
+		// The engine routes failed items down an `error` port; a canvas that did
+		// not draw it left the branch invisible and uneditable while the
+		// Settings tab claimed errors stopped the node.
+		const outputs = resolvedPorts({ ...node, settings: { onError: 'continueErrorOutput' } }, definition).outputs;
+
+		expect(outputs.map((port) => port.name)).toEqual(['main', 'error']);
+		expect(outputs.map((port) => port.displayName)).toEqual(['Success', 'Error']);
+	});
+
+	it('keeps the plain shape for every other On Error mode', () => {
+		expect(resolvedPorts(node, definition).outputs.map((port) => port.name)).toEqual(['main']);
+		expect(resolvedPorts({ ...node, settings: { onError: 'continueRegularOutput' } }, definition).outputs.map((port) => port.name)).toEqual(['main']);
+		expect(resolvedPorts({ ...node, settings: { onError: 'stopWorkflow' } }, definition).outputs.map((port) => port.name)).toEqual(['main']);
+	});
+
+	it('never duplicates an error port the document already declares', () => {
+		const withError: Definition = { ...definition, outputs: [{ name: 'main', kind: 'main' }, { name: 'error', kind: 'main' }] };
+		expect(resolvedPorts({ ...node, settings: { onError: 'continueErrorOutput' } }, withError).outputs.map((port) => port.name)).toEqual(['main', 'error']);
+	});
+});

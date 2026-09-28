@@ -118,6 +118,24 @@ function lookupPort(
 	return resolvedPorts(node, definition)[direction].find((port) => port.name === portName);
 }
 
+// The extra output a node declares when its failed items route to their own
+// branch, mirroring the server's `withErrorPort` (internal/workflow/compiler.go):
+// the connection to a node downstream of a failure names this port, and a
+// canvas that does not draw it leaves the error branch invisible and
+// uneditable even though the engine routes items down it.
+const ERROR_PORT_NAME = 'error';
+
+const ERROR_PORT: Port = { name: ERROR_PORT_NAME, kind: 'main', displayName: 'Error' };
+
+function withErrorPort(outputs: Port[], settings: Node['settings']): Port[] {
+	if (settings?.['onError'] !== 'continueErrorOutput') return outputs;
+	if (outputs.some((port) => port.name === ERROR_PORT_NAME)) return outputs;
+	const labelled = outputs.map((port, index) =>
+		index === 0 && port.kind === 'main' && !port.displayName ? { ...port, displayName: 'Success' } : port
+	);
+	return [...labelled, ERROR_PORT];
+}
+
 /** A node's ports as the server resolves them for this configuration. */
 export function resolvedPorts(node: Node, definition: Definition): { inputs: Port[]; outputs: Port[] } {
 	const inputs = definition.inputs ?? [];
@@ -125,13 +143,13 @@ export function resolvedPorts(node: Node, definition: Definition): { inputs: Por
 
 	switch (node.type) {
 		case SWITCH_NODE_TYPE:
-			return { inputs, outputs: switchOutputs(node.parameters) };
+			return { inputs, outputs: withErrorPort(switchOutputs(node.parameters), node.settings) };
 		case MERGE_NODE_TYPE:
-			return { inputs: mergeInputs(node.parameters), outputs };
+			return { inputs: mergeInputs(node.parameters), outputs: withErrorPort(outputs, node.settings) };
 		case DATASTORE_NODE_TYPE:
-			return { inputs, outputs: datastoreOutputs(node.parameters, outputs) };
+			return { inputs, outputs: withErrorPort(datastoreOutputs(node.parameters, outputs), node.settings) };
 		default:
-			return { inputs, outputs };
+			return { inputs, outputs: withErrorPort(outputs, node.settings) };
 	}
 }
 

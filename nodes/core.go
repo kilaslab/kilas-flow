@@ -324,7 +324,20 @@ func timeoutParameter(parameters map[string]any, key string) float64 {
 
 func sharedSettings() []node.PropertyDefinition {
 	return []node.PropertyDefinition{
-		{Key: "continueOnFail", Label: "Continue on Fail", Kind: node.PropertyBoolean, Default: false},
+		{
+			// The selector replaces the old boolean: a Settings tab that said
+			// "Continue on Fail: Disabled" under a node whose failed items were
+			// actually routing to an error branch described the opposite of what
+			// the workflow did. The values are the runner's own mode strings, so
+			// a document saved here reads back identically everywhere.
+			Key: "onError", Label: "On Error", Kind: node.PropertyOptions, Default: "stopWorkflow",
+			Options: []node.PropertyOption{
+				{Label: "Stop Workflow", Value: "stopWorkflow"},
+				{Label: "Continue (regular output)", Value: "continueRegularOutput"},
+				{Label: "Continue (using error output)", Value: "continueErrorOutput"},
+			},
+			Description: "What happens when this node fails: stop the workflow, carry on with an empty item, or route the failed items to this node's Error output.",
+		},
 		{Key: "retryOnFail", Label: "Retry on Fail", Kind: node.PropertyBoolean, Default: false},
 		{Key: "timeoutSeconds", Label: "Timeout (seconds)", Kind: node.PropertyNumber, Default: 0},
 		{
