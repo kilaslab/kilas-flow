@@ -3759,13 +3759,35 @@ func extractFromFileToKilas(node Node) (map[string]any, []Unsupported) {
 	if converted == nil {
 		converted = map[string]any{}
 	}
-	switch strings.ToLower(strings.TrimSpace(fmt.Sprint(converted["operation"]))) {
+	// n8n defaults a missing operation to its CSV reader; fmt.Sprint of an
+	// absent key prints "<nil>", so presence is checked before the text form.
+	raw, present := converted["operation"]
+	if !present {
+		converted["operation"] = "csv"
+		return converted, issues
+	}
+	switch strings.ToLower(strings.TrimSpace(fmt.Sprint(raw))) {
 	case "pdf", "extractfrompdf":
 		converted["operation"] = "pdf"
 	case "text", "fromfile", "extractfromfile":
 		converted["operation"] = "text"
-	case "json", "extractfromjson":
+	case "json", "extractfromjson", "fromjson":
+		// n8n spells the JSON operation `fromJson`; a template such as 3647
+		// uses it and the node runs it.
 		converted["operation"] = "json"
+	case "csv", "xlsx", "binarytoproperty", "binarytopropery":
+		// n8n spells the operation binaryToPropery (one r); both spellings
+		// normalise to the canonical one the node declares.
+		converted["operation"] = "binarytoproperty"
+		if strings.ToLower(strings.TrimSpace(fmt.Sprint(raw))) != "binarytopropery" {
+			converted["operation"] = strings.ToLower(strings.TrimSpace(fmt.Sprint(raw)))
+		}
+	default:
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking,
+			Field:    "operation",
+			Reason: fmt.Sprintf("this Extract From File reads %q, which this server has no reader for; rebuild the step around an operation the node runs (csv, xlsx, json, text, pdf or binaryToProperty) or the run fails", strings.TrimSpace(fmt.Sprint(raw))),
+		})
 	}
 	return converted, issues
 }

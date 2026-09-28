@@ -1,6 +1,7 @@
 package nodes_test
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"fmt"
@@ -121,4 +122,93 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(digits)
+}
+
+func TestExtractFromFileReadsCSVAndXLSXAndBinary(t *testing.T) {
+	t.Parallel()
+
+	store := binaryStore(t)
+	csvRef, err := store.Put("rows.csv", "text/csv", strings.NewReader("name,role\nAda,engineer\nGrace,admiral\n"))
+	if err != nil {
+		t.Fatalf("Put csv = %v", err)
+	}
+	var workbook bytes.Buffer
+	if err := writeXLSXFixture(&workbook); err != nil {
+		t.Fatalf("build xlsx fixture = %v", err)
+	}
+	xlsxRef, err := store.Put("rows.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", &workbook)
+	if err != nil {
+		t.Fatalf("Put xlsx = %v", err)
+	}
+	pdfishRef, err := store.Put("blob.bin", "application/octet-stream", strings.NewReader("raw bytes"))
+	if err != nil {
+		t.Fatalf("Put bin = %v", err)
+	}
+
+	executor := engine.ExecutorFunc(nodes.ExecuteExtractFromFileForTest)
+
+	csvOut, err := executor.Execute(context.Background(), workflow.IRNode{
+		ID: "x", Name: "Extract", Type: nodes.ExtractFromFileNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"operation": "csv", "destinationKey": "text"},
+	}, workflow.NodeInput{"main": {{Binary: map[string]workflow.BinaryRef{"data": csvRef}}}}, engine.Request{Binaries: store})
+	if err != nil {
+		t.Fatalf("csv extract = %v", err)
+	}
+	if len(csvOut[0]) != 2 {
+		t.Fatalf("csv rows = %d items, want 2 (one per row, as n8n emits)", len(csvOut[0]))
+	}
+	if csvOut[0][0].JSON["name"] != "Ada" || csvOut[0][1].JSON["role"] != "admiral" {
+		t.Fatalf("csv rows = %#v", csvOut[0])
+	}
+
+	xlsxOut, err := executor.Execute(context.Background(), workflow.IRNode{
+		ID: "x", Name: "Extract", Type: nodes.ExtractFromFileNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"operation": "xlsx"},
+	}, workflow.NodeInput{"main": {{Binary: map[string]workflow.BinaryRef{"data": xlsxRef}}}}, engine.Request{Binaries: store})
+	if err != nil {
+		t.Fatalf("xlsx extract = %v", err)
+	}
+	if len(xlsxOut[0]) != 1 || xlsxOut[0][0].JSON["name"] != "Ada" {
+		t.Fatalf("xlsx rows = %#v", xlsxOut[0])
+	}
+
+	binaryOut, err := executor.Execute(context.Background(), workflow.IRNode{
+		ID: "x", Name: "Extract", Type: nodes.ExtractFromFileNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"operation": "binaryToProperty", "destinationKey": "payload"},
+	}, workflow.NodeInput{"main": {{Binary: map[string]workflow.BinaryRef{"data": pdfishRef}}}}, engine.Request{Binaries: store})
+	if err != nil {
+		t.Fatalf("binaryToProperty extract = %v", err)
+	}
+	payload, _ := binaryOut[0][0].JSON["payload"].(map[string]any)
+	if payload == nil || payload["dataBase64"] != "cmF3IGJ5dGVz" {
+		t.Fatalf("binaryToProperty = %#v", binaryOut[0][0].JSON["payload"])
+	}
+}
+
+// writeXLSXFixture builds a minimal two-row workbook the way every producer
+// this node has to read lays one out: a zip holding a shared string table and
+// a first worksheet.
+func writeXLSXFixture(buffer *bytes.Buffer) error {
+	archive := zip.NewWriter(buffer)
+	write := func(name, body string) error {
+		entry, err := archive.Create(name)
+		if err != nil {
+			return err
+		}
+		_, err = entry.Write([]byte(body))
+		return err
+	}
+	if err := write("[Content_Types].xml", `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>`); err != nil {
+		return err
+	}
+	if err := write("xl/sharedStrings.xml", `<?xml version="1.0"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>name</t></si><si><t>role</t></si><si><t>Ada</t></si><si><t>engineer</t></si></sst>`); err != nil {
+		return err
+	}
+	if err := write("xl/worksheets/sheet1.xml", `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>`+
+		`<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>`+
+		`<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2" t="s"><v>3</v></c></row>`+
+		`</sheetData></worksheet>`); err != nil {
+		return err
+	}
+	return archive.Close()
 }
