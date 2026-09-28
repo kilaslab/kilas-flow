@@ -46,6 +46,29 @@ describe('latestNodeRuns', () => {
 		expect(latestNodeRuns(null).size).toBe(0);
 		expect(latestNodeRuns(undefined).size).toBe(0);
 	});
+
+	it('does not let a pruned tail row erase a node that ran', () => {
+		// The loop body ran three times and then had its bookkeeping row pruned;
+		// the canvas used to read that skipped tail as "Not reached".
+		const runs = latestNodeRuns([
+			nodeRun({ nodeId: 'tag', sequence: 0, status: 'succeeded' }),
+			nodeRun({ nodeId: 'tag', sequence: 1, status: 'succeeded' }),
+			nodeRun({ nodeId: 'tag', sequence: 2, status: 'succeeded' }),
+			nodeRun({ nodeId: 'tag', sequence: 3, status: 'skipped' })
+		]);
+
+		expect(runs.get('tag')?.status).toBe('succeeded');
+		expect(runs.get('tag')?.sequence).toBe(2);
+	});
+
+	it('still shows the deciding attempt of a retried run', () => {
+		const runs = latestNodeRuns([
+			nodeRun({ nodeId: 'a', attempt: 1, sequence: 1, status: 'succeeded' }),
+			nodeRun({ nodeId: 'a', attempt: 2, sequence: 1, status: 'failed' })
+		]);
+
+		expect(runs.get('a')?.status).toBe('failed');
+	});
 });
 
 describe('nodeRunStatus', () => {
@@ -107,26 +130,48 @@ describe('edgeItemCounts', () => {
 	];
 
 	it('counts the items each branch actually carried', () => {
-		const runs = latestNodeRuns([
+		const counts = edgeItemCounts(connections, nodes, definitions, [
 			nodeRun({ nodeId: 'if', output: [[{ json: { a: 1 } }, { json: { a: 2 } }], [{ json: { a: 3 } }]] })
 		]);
-
-		const counts = edgeItemCounts(connections, nodes, definitions, runs);
 
 		expect(counts.get('c-true')).toBe(2);
 		expect(counts.get('c-false')).toBe(1);
 	});
 
+	it('sums a loop body’s iterations instead of reading the last one', () => {
+		// Tag ran three times for 2, 2 and 1 items, then the runner pruned a
+		// bookkeeping row: the edge used to read "0 items" off that tail.
+		const counts = edgeItemCounts(connections, nodes, definitions, [
+			nodeRun({ nodeId: 'if', sequence: 0, output: [[{ json: { n: 1 } }, { json: { n: 2 } }], []] }),
+			nodeRun({ nodeId: 'if', sequence: 1, output: [[{ json: { n: 3 } }, { json: { n: 4 } }], []] }),
+			nodeRun({ nodeId: 'if', sequence: 2, output: [[{ json: { n: 5 } }], []] }),
+			nodeRun({ nodeId: 'if', sequence: 3, status: 'skipped' })
+		]);
+
+		expect(counts.get('c-true')).toBe(5);
+		expect(counts.get('c-false')).toBe(0);
+	});
+
+	it('counts a retried sequence once, by its latest attempt', () => {
+		// A retry replaces its attempt; it does not add another iteration.
+		const counts = edgeItemCounts(connections, nodes, definitions, [
+			nodeRun({ nodeId: 'if', sequence: 0, attempt: 1, output: [[{ json: { a: 1 } }], []] }),
+			nodeRun({ nodeId: 'if', sequence: 0, attempt: 2, output: [[{ json: { a: 1 } }, { json: { a: 2 } }], []] })
+		]);
+
+		expect(counts.get('c-true')).toBe(2);
+	});
+
 	it('omits a count when the source node produced no recorded output', () => {
-		const counts = edgeItemCounts(connections, nodes, definitions, latestNodeRuns([]));
+		const counts = edgeItemCounts(connections, nodes, definitions, []);
 
 		expect(counts.has('c-true')).toBe(false);
 	});
 
 	it('reports an empty branch as zero rather than unknown', () => {
-		const runs = latestNodeRuns([nodeRun({ nodeId: 'if', output: [[], [{ json: {} }]] })]);
-
-		const counts = edgeItemCounts(connections, nodes, definitions, runs);
+		const counts = edgeItemCounts(connections, nodes, definitions, [
+			nodeRun({ nodeId: 'if', output: [[], [{ json: {} }]] })
+		]);
 
 		expect(counts.get('c-true')).toBe(0);
 		expect(counts.get('c-false')).toBe(1);
@@ -138,11 +183,9 @@ describe('edgeItemCounts', () => {
 			{ id: 'yes', name: 'Yes', type: 'kilasflow.set', typeVersion: 3.4, position: { x: 0, y: 0 } },
 			{ id: 'no', name: 'No', type: 'kilasflow.set', typeVersion: 3.4, position: { x: 0, y: 0 } }
 		];
-		const runs = latestNodeRuns([
+		const counts = edgeItemCounts(connections, imported, definitions, [
 			nodeRun({ nodeId: 'if', output: [[{ json: { a: 1 } }], [{ json: { a: 2 } }, { json: { a: 3 } }]] })
 		]);
-
-		const counts = edgeItemCounts(connections, imported, definitions, runs);
 
 		expect(counts.get('c-true')).toBe(1);
 		expect(counts.get('c-false')).toBe(2);

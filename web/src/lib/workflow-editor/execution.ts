@@ -96,7 +96,46 @@ export function formatBytes(size: number | undefined): string {
 }
 
 /**
- * Reduces a node-run trace to the final attempt per node.
+ * Groups a node-run trace by node, each list in execution order.
+ *
+ * Every run is kept: a node inside a loop ran once per iteration, and collapsing
+ * them to one row is what left those iterations unreachable in the UI — the
+ * inspector showed a pruned tail row ("Not reached") over iterations that held
+ * the data. Attempts of the same sequence sort after earlier ones, so a retry
+ * stays with the run it retried.
+ */
+export function nodeRunsByNode(
+	nodeRuns: ExecutionNodeRunResource[] | null | undefined
+): Map<string, ExecutionNodeRunResource[]> {
+	const groups = new Map<string, ExecutionNodeRunResource[]>();
+	for (const run of nodeRuns ?? []) {
+		const group = groups.get(run.nodeId);
+		if (group) group.push(run);
+		else groups.set(run.nodeId, [run]);
+	}
+	for (const group of groups.values()) {
+		group.sort((left, right) => left.sequence - right.sequence || left.attempt - right.attempt || left.startedAt.localeCompare(right.startedAt));
+	}
+	return groups;
+}
+
+/**
+ * The run of a node whose data the inspector should show: the latest that
+ * actually has one. A runner-pruned tail row (status `skipped`) decides
+ * nothing — a node that ran three times and then had its bookkeeping row pruned
+ * must not read "Not reached" — while a genuine retry (a later attempt that
+ * failed or succeeded) still wins, because it is what decided the run.
+ */
+export function preferredNodeRun(group: ExecutionNodeRunResource[]): ExecutionNodeRunResource | null {
+	for (let index = group.length - 1; index >= 0; index--) {
+		if (group[index].status !== 'skipped') return group[index];
+	}
+	return group.length > 0 ? group[group.length - 1] : null;
+}
+
+/**
+ * Reduces a node-run trace to the run that decides each node's status: the
+ * latest attempt that is not a pruned `skipped` bookkeeping row.
  *
  * Retries append attempts rather than replacing them, so the canvas must show
  * the outcome that actually decided the run, not the first try.
@@ -105,11 +144,9 @@ export function latestNodeRuns(
 	nodeRuns: ExecutionNodeRunResource[] | null | undefined
 ): Map<string, ExecutionNodeRunResource> {
 	const latest = new Map<string, ExecutionNodeRunResource>();
-	for (const run of nodeRuns ?? []) {
-		const current = latest.get(run.nodeId);
-		if (!current || run.attempt > current.attempt || (run.attempt === current.attempt && run.sequence > current.sequence)) {
-			latest.set(run.nodeId, run);
-		}
+	for (const [nodeId, group] of nodeRunsByNode(nodeRuns)) {
+		const preferred = preferredNodeRun(group);
+		if (preferred) latest.set(nodeId, preferred);
 	}
 	return latest;
 }
@@ -171,34 +208,50 @@ export function consoleTone(level: string): string {
 }
 
 /**
- * Counts the items each connection carried.
+ * Counts the items each connection carried, summed across a source node's runs.
  *
  * A node run's output is an array of port slots in the definition's declared
  * output order, so a connection's count is the length of the slot matching its
- * source port. Connections whose source never recorded an output are left out
- * entirely: "no data yet" must not read as "zero items".
+ * source port. A node inside a loop produced one run per iteration, and showing
+ * only the last iteration's slot read as "0 items" over a loop that carried
+ * five — so every iteration counts. Within one sequence the latest attempt
+ * wins (a retry replaces its attempt, it does not add to it). Connections whose
+ * source never recorded an output are left out entirely: "no data yet" must not
+ * read as "zero items".
  */
 export function edgeItemCounts(
 	connections: Connection[] | null | undefined,
 	nodes: Node[] | null | undefined,
 	definitions: Definition[],
-	runs: Map<string, ExecutionNodeRunResource>
+	nodeRuns: ExecutionNodeRunResource[] | null | undefined
 ): Map<string, number> {
 	const nodeByID = new Map((nodes ?? []).map((node) => [node.id, node]));
 	const counts = new Map<string, number>();
+	const groups = nodeRunsByNode(nodeRuns);
 
 	for (const connection of connections ?? []) {
 		const source = nodeByID.get(connection.source.nodeId);
 		if (!source) continue;
-	const definition = resolveDefinition(source.type, source.typeVersion, definitions);
+		const definition = resolveDefinition(source.type, source.typeVersion, definitions);
 		const portIndex = (definition?.outputs ?? []).findIndex((port) => port.name === connection.source.port);
 		if (portIndex < 0) continue;
 
-		const output = runs.get(connection.source.nodeId)?.output;
-		if (!Array.isArray(output)) continue;
-		const slot = output[portIndex];
-		if (!Array.isArray(slot)) continue;
-		counts.set(connection.id, (slot as OutputItem[]).length);
+		const latestAttemptBySequence = new Map<number, ExecutionNodeRunResource>();
+		for (const run of groups.get(connection.source.nodeId) ?? []) {
+			const current = latestAttemptBySequence.get(run.sequence);
+			if (!current || run.attempt > current.attempt) latestAttemptBySequence.set(run.sequence, run);
+		}
+
+		let total = 0;
+		let recorded = false;
+		for (const run of latestAttemptBySequence.values()) {
+			if (!Array.isArray(run.output)) continue;
+			const slot = run.output[portIndex];
+			if (!Array.isArray(slot)) continue;
+			total += (slot as OutputItem[]).length;
+			recorded = true;
+		}
+		if (recorded) counts.set(connection.id, total);
 	}
 	return counts;
 }

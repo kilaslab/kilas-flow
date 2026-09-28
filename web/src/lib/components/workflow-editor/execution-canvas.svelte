@@ -13,12 +13,16 @@
 		document,
 		definitions,
 		runs,
+		/** The whole durable trace, every run of every node: edge counts sum
+		     across a loop node's iterations rather than reading the last one. */
+		nodeRuns = null,
 		statuses,
 		selectedNodeID = $bindable(null)
 	}: {
 		document: Document;
 		definitions: Definition[];
 		runs: Map<string, ExecutionNodeRunResource>;
+		nodeRuns?: ExecutionNodeRunResource[] | null;
 		// Node statuses folded from the durable trace plus any live events, so
 		// the canvas has one source rather than two that can disagree.
 		statuses?: Map<string, string>;
@@ -26,7 +30,7 @@
 	} = $props();
 
 	const nodeTypes = { workflow: ExecutionCanvasNode };
-	const counts = $derived(edgeItemCounts(document.connections, document.nodes, definitions, runs));
+	const counts = $derived(edgeItemCounts(document.connections, document.nodes, definitions, nodeRuns));
 	const projection = $derived(documentFromCanvas(document, definitions));
 
 	// Svelte Flow needs to own these arrays, but the execution view never writes

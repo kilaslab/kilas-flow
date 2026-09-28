@@ -3,6 +3,8 @@
 
 	import { page } from '$app/state';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
+	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Paperclip from '@lucide/svelte/icons/paperclip';
 
 	import { message } from '$lib/api/http';
@@ -23,7 +25,9 @@
 		formatDuration,
 		formatTimestamp,
 		latestNodeRuns,
+		nodeRunsByNode,
 		parseConsole,
+		preferredNodeRun,
 		statusLabel,
 		statusTone
 	} from '$lib/workflow-editor/execution';
@@ -91,10 +95,26 @@
 
 	const runs = $derived(latestNodeRuns(execution.data?.nodeRuns));
 	const nodeStatuses = $derived(applyEvents(runs, live.events));
+	// Every run of every node, kept: a loop body ran once per iteration, and
+	// the inspector offers them all through a Run N of M selector instead of
+	// pinning the tile to whatever the last row happened to be.
+	const runGroups = $derived(nodeRunsByNode(execution.data?.nodeRuns));
 	const liveStatus = $derived(latestExecutionStatus(live.events));
 	const status = $derived(liveStatus ?? execution.data?.status ?? 'queued');
 	const stoppable = $derived(status === 'running' || status === 'queued' || status === 'waiting' || status === 'cancelling');
-	const selectedRun = $derived(selectedNodeID ? (runs.get(selectedNodeID) ?? null) : null);
+	const selectedNodeRuns = $derived(selectedNodeID ? (runGroups.get(selectedNodeID) ?? []) : []);
+	// null = the default (the latest run that has data); picking from the
+	// selector pins a specific iteration until another node is chosen.
+	let selectedRunIndex = $state<number | null>(null);
+	$effect(() => {
+		// A new selection is a new node's history: the pinned index meant
+		// nothing there.
+		void selectedNodeID;
+		selectedRunIndex = null;
+	});
+	const defaultRunIndex = $derived(selectedNodeRuns.length === 0 ? 0 : selectedNodeRuns.indexOf(preferredNodeRun(selectedNodeRuns) ?? selectedNodeRuns.at(-1)!));
+	const activeRunIndex = $derived(Math.min(selectedRunIndex ?? defaultRunIndex, selectedNodeRuns.length - 1));
+	const selectedRun = $derived(selectedNodeRuns.length > 0 ? (selectedNodeRuns[activeRunIndex] ?? null) : null);
 	// Payloads never leave the server's binary store, so the inspector lists
 	// what an attachment *is* — name, type, size — and never tries to render
 	// one. There is nothing to render: the API serves the reference only.
@@ -348,7 +368,7 @@
 				{#if version.isPending}
 					<p aria-live="polite" class="grid h-full place-items-center text-sm text-muted-foreground">{m.executions_loading_graph()}</p>
 				{:else if version.data && nodeTypes.data}
-					<ExecutionCanvas document={version.data.document} definitions={nodeTypes.data} {runs} statuses={nodeStatuses} bind:selectedNodeID />
+					<ExecutionCanvas document={version.data.document} definitions={nodeTypes.data} {runs} nodeRuns={execution.data?.nodeRuns} statuses={nodeStatuses} bind:selectedNodeID />
 				{:else if version.isError || nodeTypes.isError}
 					<div class="grid h-full place-items-center p-6 text-center">
 						<div class="max-w-sm">
@@ -439,6 +459,31 @@
 						<div class="border-b border-border px-4 py-3">
 							<p class="text-xs font-medium text-muted-foreground">{m.executions_node()}</p>
 							<h2 class="mt-0.5 truncate text-base font-semibold">{selectedNode?.name ?? selectedNodeID}</h2>
+							{#if selectedNodeRuns.length > 1}
+								<!-- A loop body ran once per iteration; this selector is the
+								     only way back to what the earlier ones carried. -->
+								<div class="mt-1.5 flex items-center gap-1" role="group" aria-label={m.executions_run_selector_aria({ name: selectedNode?.name ?? selectedNodeID })}>
+									<button
+										type="button"
+										class="grid size-6 place-items-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-40"
+										aria-label={m.executions_previous_run()}
+										disabled={activeRunIndex <= 0}
+										onclick={() => (selectedRunIndex = Math.max(0, activeRunIndex - 1))}
+									>
+										<ChevronLeft aria-hidden="true" class="size-3.5" />
+									</button>
+									<span class="min-w-24 text-center text-xs text-muted-foreground">{m.executions_run_of({ n: activeRunIndex + 1, total: selectedNodeRuns.length })}</span>
+									<button
+										type="button"
+										class="grid size-6 place-items-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-40"
+										aria-label={m.executions_next_run()}
+										disabled={activeRunIndex >= selectedNodeRuns.length - 1}
+										onclick={() => (selectedRunIndex = Math.min(selectedNodeRuns.length - 1, activeRunIndex + 1))}
+									>
+										<ChevronRight aria-hidden="true" class="size-3.5" />
+									</button>
+								</div>
+							{/if}
 							<p class="mt-2">
 								<span class={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusTone(selectedStatus)}`}>{statusLabel(selectedStatus)}</span>
 								{#if selectedRun && selectedRun.attempt > 1}
