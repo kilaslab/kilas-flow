@@ -7,6 +7,7 @@
 	import * as m from '$lib/paraglide/messages.js';
 
 	import { catalogEntries, searchCatalog } from '$lib/workflow-editor/catalog';
+	import { buildPickerRows } from '$lib/workflow-editor/picker-rows';
 
 	import NodeIcon from './node-icon.svelte';
 
@@ -45,27 +46,8 @@
 	// four arities of the import placeholder, none of which can be activated.
 	const catalog = $derived(catalogEntries(definitions, { triggersOnly, acceptsMain: connecting, providesKind: providesKind ?? undefined }));
 	const ranked = $derived(searchCatalog(catalog, query));
-	const rows = $derived(buildRows(ranked));
+	const rows = $derived(buildPickerRows(ranked));
 	const active = $derived(rows.flat[activeIndex] ?? null);
-
-	type PickerRow = { definition: Definition; id: string; index: number; heading?: string };
-
-	function buildRows(entries: Definition[]): { flat: PickerRow[]; groups: { category: string; rows: PickerRow[] }[] } {
-		const flat: PickerRow[] = [];
-		const groups: { category: string; rows: PickerRow[] }[] = [];
-		for (const definition of entries) {
-			const row: PickerRow = { definition, id: `node-option-${definition.type}@${definition.version}`, index: flat.length };
-			flat.push(row);
-			const group = groups.at(-1);
-			if (group && group.category === definition.category) {
-				group.rows.push(row);
-				continue;
-			}
-			groups.push({ category: definition.category, rows: [row] });
-			row.heading = `${definition.category}-heading`;
-		}
-		return { flat, groups };
-	}
 
 	$effect(() => {
 		if (open && !wasOpen) {
