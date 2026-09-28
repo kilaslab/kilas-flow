@@ -1249,6 +1249,9 @@
 		<!-- tabindex makes this a place focus can land after a node is deleted; -1
 		     keeps it out of the tab sequence. -->
 		<div bind:this={canvasRegion} tabindex="-1" class="relative min-h-0 flex-1 overflow-hidden outline-none" data-testid="workflow-canvas">
+			<!-- Selection must not reorder the canvas: a sticky note selected with
+			     the default elevation jumped above the steps it groups and hid
+			     them, and its own ring is visible without the lift. -->
 			<SvelteFlow
 				bind:nodes
 				bind:edges
@@ -1257,6 +1260,7 @@
 				fitView
 				fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
 				minZoom={0.1}
+				elevateNodesOnSelect={false}
 				onlyRenderVisibleElements
 				nodesDraggable={!locked}
 				nodesConnectable={!locked}

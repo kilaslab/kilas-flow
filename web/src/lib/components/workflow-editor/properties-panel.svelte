@@ -16,6 +16,8 @@
 
 	import NodeIcon from './node-icon.svelte';
 	import PropertyField from './property-field.svelte';
+	import { isAnnotation } from '$lib/workflow-editor/node-visual';
+	import { STICKY_SWATCHES } from '$lib/workflow-editor/sticky';
 	import WebhookAddress from './webhook-address.svelte';
 
 	let {
@@ -282,7 +284,29 @@
 				<p class="text-xs leading-5 text-muted-foreground">{activeTab === 'parameters' ? m.properties_no_parameters_to_configure() : m.properties_no_settings_to_configure()}</p>
 			{:else}
 				{#each visibleProperties as property (property.key)}
-					<PropertyField {property} value={values[property.key] ?? property.default} siblings={values} contextKey={loaderContext} ownerKey={node.id} {upstreamNodeNames} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} loadSchema={activeTab === 'parameters' ? loadSchema : undefined} />
+					{#if isAnnotation(definition) && activeTab === 'parameters' && property.key === 'color'}
+						<!-- The sticky colour is a choice of seven, not a number: the
+						     free field used to accept "0", "99" or "-1" — values with no
+						     fill behind them. -->
+						<div class="space-y-1" role="radiogroup" aria-label={property.label || 'Colour'}>
+							<p class="text-xs font-medium">{property.label || 'Colour'}</p>
+							<div class="flex flex-wrap gap-1.5">
+								{#each STICKY_SWATCHES as swatch, index (index)}
+									<button
+										type="button"
+										role="radio"
+										aria-checked={Number(values.color ?? property.default ?? 1) === index + 1}
+										aria-label={`${property.label || 'Colour'} ${index + 1}`}
+										class="size-6 rounded-md border-2 transition-transform {Number(values.color ?? property.default ?? 1) === index + 1 ? 'scale-110 ring-2 ring-ring ring-offset-2 ring-offset-popover' : 'hover:scale-105'}"
+										style={`background: ${swatch.fill}; border-color: ${swatch.border}`}
+										onclick={() => onChange('parameters', 'color', index + 1)}
+									></button>
+								{/each}
+							</div>
+						</div>
+					{:else}
+						<PropertyField {property} value={values[property.key] ?? property.default} siblings={values} contextKey={loaderContext} ownerKey={node.id} {upstreamNodeNames} onChange={(value) => onChange(activeTab, property.key, value)} loadOptions={activeTab === 'parameters' ? loadOptions : undefined} loadSchema={activeTab === 'parameters' ? loadSchema : undefined} />
+					{/if}
 				{/each}
 			{/if}
 		</div>

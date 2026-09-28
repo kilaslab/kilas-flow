@@ -150,8 +150,20 @@
 		role="note"
 		ondblclick={() => actions?.rename(node.id)}
 	>
-		<p class="whitespace-pre-wrap break-words text-xs leading-4 text-neutral-800">
-			{#each runs as run}<span class={run.heading ? 'font-semibold' : run.code ? 'font-mono' : run.bold ? 'font-semibold' : ''}>{run.text}</span>{/each}
+		<p class="whitespace-pre-wrap break-words text-xs leading-4" style="color: var(--kf-sticky-text)">
+			{#each runs as run, index (index)}
+				{#if run.link}
+					<!-- An http(s)-only target (the tokenizer keeps anything else as
+					     text), opened detached so a note cannot navigate the editor. -->
+					<a href={run.link} target="_blank" rel="noopener noreferrer nofollow" class="underline underline-offset-2" onclick={(event) => event.stopPropagation()}>{run.text}</a>
+				{:else if run.image}
+					<span class="mx-0.5 inline-flex max-w-full items-center gap-1 truncate rounded border border-current/30 bg-current/10 px-1 font-mono text-[0.625rem]" title={run.text}>🖼 {run.text}</span>
+				{:else if run.bullet}
+					<span class={run.code ? 'font-mono' : run.bold ? 'font-semibold' : ''}><span class="opacity-60">• </span>{run.text}</span>
+				{:else}
+					<span class={run.heading ? 'font-semibold' : run.code ? 'font-mono' : run.bold ? 'font-semibold' : ''}>{run.text}</span>
+				{/if}
+			{/each}
 		</p>
 		{#if editable && selected}
 			<NodeResizer

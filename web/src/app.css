@@ -144,6 +144,25 @@
 	--code-function: oklch(0.78 0.11 230);
 	--code-type: oklch(0.8 0.1 190);
 	--code-property: oklch(0.86 0.04 170);
+
+	/* Sticky notes, dark: the same seven choices n8n offers, tinted dark so
+	   the near-white node labels that sit on a note keep their contrast. The
+	   pastel light fills under white labels read at ~1.2:1 — unreadable. */
+	--kf-sticky-text: oklch(0.93 0.01 170);
+	--kf-sticky-1-fill: #3b2c10;
+	--kf-sticky-1-border: #b45309;
+	--kf-sticky-2-fill: #3c2410;
+	--kf-sticky-2-border: #c2410c;
+	--kf-sticky-3-fill: #411418;
+	--kf-sticky-3-border: #dc2626;
+	--kf-sticky-4-fill: #123320;
+	--kf-sticky-4-border: #15803d;
+	--kf-sticky-5-fill: #16283f;
+	--kf-sticky-5-border: #2563eb;
+	--kf-sticky-6-fill: #2c1a42;
+	--kf-sticky-6-border: #9333ea;
+	--kf-sticky-7-fill: #26303f;
+	--kf-sticky-7-border: #64748b;
 }
 
 [data-theme='light'],
@@ -197,6 +216,23 @@
 	--code-function: oklch(0.47 0.14 250);
 	--code-type: oklch(0.47 0.1 200);
 	--code-property: oklch(0.36 0.03 170);
+	/* Sticky notes, light: n8n's pastels, with the dark note text the pastels
+	   were designed for. */
+	--kf-sticky-text: oklch(0.27 0.02 170);
+	--kf-sticky-1-fill: #fef3c7;
+	--kf-sticky-1-border: #eab308;
+	--kf-sticky-2-fill: #ffedd5;
+	--kf-sticky-2-border: #f97316;
+	--kf-sticky-3-fill: #fee2e2;
+	--kf-sticky-3-border: #ef4444;
+	--kf-sticky-4-fill: #dcfce7;
+	--kf-sticky-4-border: #22c55e;
+	--kf-sticky-5-fill: #dbeafe;
+	--kf-sticky-5-border: #3b82f6;
+	--kf-sticky-6-fill: #f3e8ff;
+	--kf-sticky-6-border: #a855f7;
+	--kf-sticky-7-fill: #f1f5f9;
+	--kf-sticky-7-border: #64748b;
 }
 
 /* Svelte Flow ships light-only defaults for its chrome. Bind them to the
