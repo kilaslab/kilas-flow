@@ -50,8 +50,11 @@ export function createWorkflowNode(
 // Spacing is a function of the tile, not a round number: a node is 68px wide
 // under a 128px name. Pitch tracks layout.ts tidy defaults (rankSep 80 /
 // nodeSep 44) so hand-placed steps and Tidy land on the same denser rhythm.
-const COLUMN = 152;
+export const COLUMN = 152;
 const ROW = 136;
+/** The pitch a step after a labelled output uses: one label width wider, so
+ *  the new tile clears the true/false or branch names its source prints. */
+export const BRANCH_COLUMN = COLUMN + 24;
 
 export function nextNodePosition(index: number): { x: number; y: number } {
 	return { x: 60 + (index % 4) * COLUMN, y: 60 + Math.floor(index / 4) * ROW };
@@ -65,9 +68,13 @@ export function nextNodePosition(index: number): { x: number; y: number } {
  * adds the step only exists while the port has none — so the second branch of
  * an IF would land exactly on the first. Testing the destination against every
  * node also covers a node the user dragged there earlier.
+ *
+ * `column` widens the pitch: a node with named outputs (an IF's true/false, a
+ * Switch's branches) carries its labels to the right of the tile, and a step
+ * dropped at the ordinary column used to sit inside them.
  */
-export function positionAfter(source: { x: number; y: number }, occupied: { x: number; y: number }[]): { x: number; y: number } {
-	const candidate = { x: source.x + COLUMN, y: source.y };
+export function positionAfter(source: { x: number; y: number }, occupied: { x: number; y: number }[], column: number = COLUMN): { x: number; y: number } {
+	const candidate = { x: source.x + column, y: source.y };
 	// A tile is 68px under a 128px label, so anything closer than this overlaps
 	// something the reader needs. Both bounds stay under the grid pitch, so a
 	// node in the neighbouring column or row never counts as a collision.

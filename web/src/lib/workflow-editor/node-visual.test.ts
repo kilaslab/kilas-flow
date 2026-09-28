@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Definition, Node, Port } from '$lib/api/generated/models';
 
-import { FALLBACK_GLYPH, TILE, attachmentPorts, mainPorts, nodeChromeBorder, nodeChromeShadow, nodeIconBadgeClass, nodeShape, nodeSubtitle, nodeVisual, portOffset } from './node-visual';
+import { BUILTIN_GLYPHS, FALLBACK_GLYPH, TILE, attachmentLabelRows, attachmentPorts, friendlyOriginalType, mainPorts, nodeChromeBorder, nodeChromeShadow, nodeIconBadgeClass, nodeShape, nodeSubtitle, nodeVisual, portOffset } from './node-visual';
 
 const MAIN: Port = { name: 'main', kind: 'main' };
 
@@ -236,5 +236,54 @@ describe('nodeChrome', () => {
 		expect(TILE.step).toContain('w-17');
 		expect(TILE.trigger).toContain('rounded-l');
 		expect(TILE.attachment).toContain('size-12');
+	});
+});
+
+describe('shipped glyphs', () => {
+	it('implements every glyph name glyphs.json promises', async () => {
+		// glyphs.json is the contract the server's own test holds definitions
+		// to; a name listed there but missing from GLYPHS renders the fallback
+		// box on every canvas for that node.
+		const { default: shipped } = await import('./glyphs.json');
+		const missing = Object.keys(shipped).filter((name) => !(name in BUILTIN_GLYPHS));
+
+		expect(missing).toEqual([]);
+	});
+});
+
+describe('attachmentLabelRows', () => {
+	it('keeps the common one- and two-attachment hubs on a single label row', () => {
+		expect(attachmentLabelRows(1)).toBe(1);
+		expect(attachmentLabelRows(2)).toBe(1);
+	});
+
+	it('adds rows as attachments multiply, so same-row labels cannot collide', () => {
+		// Four attachments — model, memory, two tools — used to print
+		// "Chat Mode|Tools" with the pair overlapping on one row.
+		expect(attachmentLabelRows(4)).toBeGreaterThanOrEqual(2);
+		expect(attachmentLabelRows(6)).toBeGreaterThan(attachmentLabelRows(4) ?? 0);
+		// Same-row spacing is rows * slot; every labelled case must fit a label.
+		for (let count = 2; count <= 24; count++) {
+			const rows = attachmentLabelRows(count);
+			if (rows === null) continue;
+			expect(rows * (144 / (count + 1)), `count ${count}`).toBeGreaterThanOrEqual(48);
+		}
+	});
+
+	it('gives up on labelling rather than stack more rows than the tile is tall', () => {
+		expect(attachmentLabelRows(20)).toBeNull();
+	});
+});
+
+describe('friendlyOriginalType', () => {
+	it('reduces a package-qualified type to readable words', () => {
+		expect(friendlyOriginalType('@n8n/n8n-nodes-langchain.toolSerpApi')).toBe('Tool Serp Api');
+		expect(friendlyOriginalType('n8n-nodes-base.httpRequest')).toBe('Http Request');
+	});
+
+	it('tolerates a missing capsule and a bare word', () => {
+		expect(friendlyOriginalType(null)).toBeNull();
+		expect(friendlyOriginalType(undefined)).toBeNull();
+		expect(friendlyOriginalType('slack')).toBe('Slack');
 	});
 });

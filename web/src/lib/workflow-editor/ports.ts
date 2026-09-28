@@ -67,6 +67,18 @@ export function canConnect(
 	return true;
 }
 
+/**
+ * Whether a node draws names next to its outputs — an IF's true/false, a
+ * Switch's branches, a datastore row-found row-miss. Layout keeps extra
+ * horizontal room after such a node, because the labels sit to the right of
+ * the tile where the next rank used to start.
+ */
+export function hasLabelledOutputs(node: Node, definitions: Definition[]): boolean {
+	const definition = resolveDefinition(node.type, node.typeVersion, definitions);
+	if (!definition) return false;
+	return resolvedPorts(node, definition).outputs.filter((port) => port.kind === 'main').length > 1;
+}
+
 /** What the editor labels a port with: its display name, else its own name. */
 export function portLabel(port: Port): string {
 	return port.displayName || port.name;

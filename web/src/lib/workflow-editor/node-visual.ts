@@ -1,12 +1,14 @@
 import type { Component } from 'svelte';
 
 import ArrowDownUp from '@lucide/svelte/icons/arrow-down-up';
+import ArrowRight from '@lucide/svelte/icons/arrow-right';
 import Archive from '@lucide/svelte/icons/archive';
 import Bot from '@lucide/svelte/icons/bot';
 import Box from '@lucide/svelte/icons/box';
 import CalendarClock from '@lucide/svelte/icons/calendar-clock';
 import Calculator from '@lucide/svelte/icons/calculator';
 import CircleHelp from '@lucide/svelte/icons/circle-help';
+import ClipboardList from '@lucide/svelte/icons/clipboard-list';
 import Repeat from '@lucide/svelte/icons/repeat';
 import Scissors from '@lucide/svelte/icons/scissors';
 import Send from '@lucide/svelte/icons/send';
@@ -16,19 +18,22 @@ import Code from '@lucide/svelte/icons/code';
 import CornerDownLeft from '@lucide/svelte/icons/corner-down-left';
 import Database from '@lucide/svelte/icons/database';
 import Filter from '@lucide/svelte/icons/filter';
+import Folder from '@lucide/svelte/icons/folder';
 import Globe from '@lucide/svelte/icons/globe';
 import Layers from '@lucide/svelte/icons/layers';
 import Link from '@lucide/svelte/icons/link';
+import Mail from '@lucide/svelte/icons/mail';
 import Merge from '@lucide/svelte/icons/merge';
 import MessageCircle from '@lucide/svelte/icons/message-circle';
 import MousePointerClick from '@lucide/svelte/icons/mouse-pointer-click';
+import OctagonAlert from '@lucide/svelte/icons/octagon-alert';
 import Pause from '@lucide/svelte/icons/pause';
 import PencilLine from '@lucide/svelte/icons/pencil-line';
 import Sparkles from '@lucide/svelte/icons/sparkles';
 import Split from '@lucide/svelte/icons/split';
+import Table from '@lucide/svelte/icons/table';
 import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 import Webhook from '@lucide/svelte/icons/webhook';
-import Table from '@lucide/svelte/icons/table';
 import Workflow from '@lucide/svelte/icons/workflow';
 import Wrench from '@lucide/svelte/icons/wrench';
 
@@ -72,21 +77,31 @@ export type NodeVisual = {
 const GLYPHS: Record<string, Component> = {
 	archive: Archive,
 	'arrow-down-up': ArrowDownUp,
+	'arrow-right': ArrowRight,
 	bot: Bot,
 	box: Box,
+	// An older name the server may still send for the alert glyph; both map to
+	// the same lucide icon so a cached catalogue and a fresh one agree.
+	'alert-triangle': TriangleAlert,
+	'triangle-alert': TriangleAlert,
+	'octagon-alert': OctagonAlert,
 	'calendar-clock': CalendarClock,
 	calculator: Calculator,
 	brain: Sparkles,
 	clock: Clock,
 	code: Code,
 	'circle-help': CircleHelp,
+	'clipboard-list': ClipboardList,
 	database: Database,
-	'git-branch': Split,
 	filter: Filter,
+	folder: Folder,
+	form: ClipboardList,
+	'git-branch': Split,
 	'git-merge': Merge,
 	globe: Globe,
 	layers: Layers,
 	link: Link,
+	mail: Mail,
 	'message-circle': MessageCircle,
 	'memory-stick': Archive,
 	'mouse-pointer-click': MousePointerClick,
@@ -102,6 +117,15 @@ const GLYPHS: Record<string, Component> = {
 	workflow: Workflow,
 	wrench: Wrench
 };
+
+/**
+ * The names the editor can draw, and the JSON list that keeps the two sides
+ * honest: the server test (nodes/glyphs_test.go) refuses a definition naming a
+ * builtin glyph absent from glyphs.json, and the frontend test refuses a
+ * glyphs.json entry absent from this map. Adding an icon means touching the
+ * JSON and both tests, never the canvas.
+ */
+export const BUILTIN_GLYPHS = GLYPHS;
 
 /** The prefix that marks a glyph the editor already imports. */
 const BUILTIN_PREFIX = 'builtin:';
@@ -179,6 +203,49 @@ export function glyphClass(shape: NodeShape): string {
 /** Even spacing for `count` ports along one edge of a tile, as a percentage. */
 export function portOffset(index: number, count: number): string {
 	return `${((index + 1) / (count + 1)) * 100}%`;
+}
+
+/**
+ * How many label rows the attachment ports under a hub need, or null when
+ * there are too many to label at all.
+ *
+ * The labels sit in rows under the tile, one row per `index % rows`; two labels
+ * in the same row are `rows` slots apart, so a row fits a label when
+ * `rows * slot >= labelWidth`. Sized against the narrowest hub (144px) because a
+ * wider hub only adds room. The common cases — a model, a model and a memory —
+ * stay on one row; four attachments would otherwise print "Chat Mode|Tools"
+ * with the two labels colliding. Past six rows the stack is taller than the
+ * tile it describes, so the labels drop (the handles keep their aria labels
+ * and tooltips) rather than turn the hub into a wall of text.
+ */
+export function attachmentLabelRows(count: number, tileWidth = 144, labelWidth = 48): number | null {
+	if (count <= 1) return 1;
+	const slot = tileWidth / (count + 1);
+	const rows = Math.ceil(labelWidth / slot);
+	return rows > 6 ? null : rows;
+}
+
+/**
+ * A readable name for the node type an import placeholder stands in for.
+ *
+ * `@n8n/n8n-nodes-langchain.toolSerpApi` becomes "Tool Serp Api": the package
+ * path is dropped and the remainder is split on camel-case. The words keep
+ * their original order because the leading word is often the meaningful kind
+ * (tool, model, chain) and reordering would invent a taxonomy the type string
+ * does not actually carry.
+ */
+export function friendlyOriginalType(originalType: string | null | undefined): string | null {
+	if (!originalType) return null;
+	const leaf = originalType.includes('.') ? (originalType.split('.').pop() ?? originalType) : originalType;
+	const words = leaf
+		.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+		.replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+		.trim()
+		.split(/\s+/)
+		.filter(Boolean);
+	if (words.length === 0) return null;
+	const [first, ...rest] = words;
+	return [first.charAt(0).toUpperCase() + first.slice(1), ...rest].join(' ');
 }
 
 /**
@@ -284,6 +351,14 @@ export function nodeSubtitle(node: WorkflowNode, definition: Definition): string
 		return typeof value === 'object' ? '' : String(value);
 	});
 
-	const trimmed = rendered.replace(/\s+/g, ' ').trim();
+	const trimmed = rendered
+		// A template like "{{ $parameter.resource }}: {{ $parameter.operation }}"
+		// with both parameters unset used to render the bare separators — a
+		// Telegram tile showing a stray ":" — so leading and trailing separator
+		// runs are stripped before deciding the line is empty.
+		.replace(/^[\s:/|,;\-–—]+/, '')
+		.replace(/[\s:/|,;\-–—]+$/, '')
+		.replace(/\s+/g, ' ')
+		.trim();
 	return trimmed === '' || trimmed === '/' ? null : trimmed;
 }

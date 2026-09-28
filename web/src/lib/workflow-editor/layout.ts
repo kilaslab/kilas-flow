@@ -51,6 +51,12 @@ export type AutoLayoutOptions = {
 	marginY?: number;
 	/** Measured canvas size per node id, so a 240px hub is not laid out as 72px. */
 	sizes?: Record<string, { width: number; height: number } | undefined>;
+	/**
+	 * Extra horizontal room per node id, beyond its measured width. A node with
+	 * named outputs carries its true/false or branch labels to the right of the
+	 * tile, and a rank that starts where the labels end wires through them.
+	 */
+	extraWidth?: Record<string, number | undefined>;
 	/** Node ids that annotate the canvas. They are never positioned here. */
 	annotations?: Iterable<string>;
 	attachmentGap?: number;
@@ -91,13 +97,14 @@ export function layoutGraph(
 		marginX = DEFAULT_MARGIN_X,
 		marginY = DEFAULT_MARGIN_Y,
 		sizes = {},
+		extraWidth = {},
 		annotations = [],
 		attachmentGap = DEFAULT_ATTACHMENT_GAP
 	} = options;
 
 	const declared = new Map(nodes.map((node) => [node.id, node]));
 	const sizeOf = (id: string) => ({
-		width: sizes[id]?.width ?? declared.get(id)?.width ?? nodeWidth,
+		width: (sizes[id]?.width ?? declared.get(id)?.width ?? nodeWidth) + (extraWidth[id] ?? 0),
 		height: sizes[id]?.height ?? declared.get(id)?.height ?? nodeHeight
 	});
 	const annotationIDs = new Set(annotations);

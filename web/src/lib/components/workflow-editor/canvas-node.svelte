@@ -15,13 +15,16 @@
 	} from '$lib/workflow-editor/import-diagnostics';
 	import {
 		TILE,
+		attachmentLabelRows,
 		attachmentPorts,
+		friendlyOriginalType,
 		glyphClass,
 		isAnnotation,
 		mainPorts,
 		nodeChromeBorder,
 		nodeChromeShadow,
 		nodeIconBadgeClass,
+		nodeShape,
 		nodeSubtitle,
 		nodeVisual,
 		portOffset
@@ -37,14 +40,7 @@
 	const sourceConnections = useNodeConnections({ handleType: 'source' });
 	const targetConnections = useNodeConnections({ handleType: 'target' });
 
-	const visual = $derived(nodeVisual(data.definition));
 	const node = $derived(data.workflowNode);
-	const subtitle = $derived(nodeSubtitle(node, data.definition));
-	const invalid = $derived(Boolean(data.validationMessage));
-	const runStatus = $derived(data.runStatus ?? null);
-	const annotation = $derived(isAnnotation(data.definition));
-	const palette = $derived(stickyPalette(node.parameters?.color));
-	const runs = $derived(markdownRuns(node.parameters?.content));
 	// An n8n import keeps a node it has no equivalent for as a visible
 	// placeholder and stores the source identity in the parameters capsule
 	// (`originalType`, `originalTypeVersion`). The capsule marks the tile so
@@ -54,11 +50,49 @@
 			? node.parameters.originalType
 			: null
 	);
+	const isPlaceholder = $derived(node.type === 'kilasflow.unsupported');
 
 	// Ports come from the node's own parameters, not from the definition alone:
 	// a Switch has one output per rule and a Merge as many inputs as it was
 	// told to take, and both change as the user configures the node.
-	const ports = $derived(resolvedPorts(node, data.definition));
+	//
+	// A placeholder draws only the ports its edges actually use. Its definition
+	// is the widest member of the arity family the import registered, so the
+	// full declaration is 24 AI diamonds plus main in and out — three times
+	// wider than the node it stands in for, with every label printed over its
+	// neighbours. A placeholder can never run, so an unconnected port has
+	// nothing to offer; when nothing connects at all, the plain main in/out
+	// stay so the tile can still be wired by hand.
+	const connectedHandles = $derived(
+		new Set([...sourceConnections.current.map((c) => c.sourceHandle), ...targetConnections.current.map((c) => c.targetHandle)])
+	);
+	const effectiveDefinition = $derived.by(() => {
+		if (!isPlaceholder) return data.definition;
+		const keep = (declared: typeof data.definition.inputs) => {
+			const wired = (declared ?? []).filter((port) => connectedHandles.has(port.name));
+			return wired.length > 0 ? wired : mainPorts(declared ?? []).slice(0, 1);
+		};
+		const inputs = keep(data.definition.inputs);
+		const outputs = keep(data.definition.outputs);
+		if (inputs === data.definition.inputs && outputs === data.definition.outputs) return data.definition;
+		return { ...data.definition, inputs, outputs };
+	});
+	const visual = $derived(nodeVisual(effectiveDefinition));
+	const subtitle = $derived(
+		isPlaceholder
+			? // The raw original type ("@n8n/n8n-nodes-langchain.toolSerpApi") is
+			  // noise under the tile; the readable words are the useful line, and
+			  // the full string stays in the Unsupported pill's tooltip.
+			  friendlyOriginalType(capsuleType)
+			: nodeSubtitle(node, data.definition)
+	);
+	const invalid = $derived(Boolean(data.validationMessage));
+	const runStatus = $derived(data.runStatus ?? null);
+	const annotation = $derived(isAnnotation(data.definition));
+	const palette = $derived(stickyPalette(node.parameters?.color));
+	const runs = $derived(markdownRuns(node.parameters?.content));
+
+	const ports = $derived(resolvedPorts(node, effectiveDefinition));
 	const mainInputs = $derived(mainPorts(ports.inputs));
 	const mainOutputs = $derived(mainPorts(ports.outputs));
 	const attachmentInputs = $derived(attachmentPorts(ports.inputs));
@@ -70,6 +104,11 @@
 	// `main` port is the obvious one, and labelling it would be noise.
 	const showOutputLabels = $derived(mainOutputs.length > 1);
 	const editable = $derived(actions ? !actions.readOnly() : false);
+
+	// Attachment labels fan across this many rows under the hub (null: too many
+	// to label), and the fill button sits below the deepest row instead of
+	// printing over the first one.
+	const attachmentRows = $derived(attachmentLabelRows(attachmentInputs.length));
 
 	const chrome = $derived({ selected: Boolean(selected), invalid, runStatus });
 	const border = $derived(nodeChromeBorder(chrome));
@@ -239,18 +278,23 @@
 				<span class="kf-port"></span>
 			</Handle>
 			{#if showOutputLabels}
-				<span class="pointer-events-none absolute left-full ml-2.5 -translate-y-1/2 font-mono text-[0.625rem] text-muted-foreground" style={`top: ${top}`}>
+				<!-- Above the wire, not centred on it: the edge leaves the handle at
+				     its own vertical centre, and a label sitting there reads as a
+				     strikethrough ("t̶r̶u̶e̶"). -->
+				<span class="pointer-events-none absolute left-full ml-2.5 max-w-20 -translate-y-full truncate whitespace-nowrap font-mono text-[0.625rem] text-muted-foreground" style={`top: calc(${top} - 0.375rem)`}>
 					{portLabel(port)}
 				</span>
 			{/if}
 			{#if editable && !connectedPorts.has(port.name)}
 				<!-- The shortest path to the next step: one click adds it already wired
-				     to this port, which is why the toolbar has no add button. -->
+				     to this port, which is why the toolbar has no add button. On a
+				     labelled node it drops below the wire line, where the outgoing
+				     edge of a connected sibling used to run through it. -->
 				<button
 					type="button"
 					data-add-step={node.id}
-					class="nodrag absolute -translate-y-1/2 grid size-6 place-items-center rounded-md border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-[var(--node-accent)] hover:text-[var(--node-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-					style={`top: ${top}; left: calc(100% + ${showOutputLabels ? '3.25rem' : '1.5rem'})`}
+					class="nodrag absolute grid size-6 place-items-center rounded-md border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-[var(--node-accent)] hover:text-[var(--node-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+					style={`top: ${showOutputLabels ? `calc(${top} + 0.375rem)` : top}; left: calc(100% + ${showOutputLabels ? '3.25rem' : '1.5rem'}); ${showOutputLabels ? '' : 'transform: translateY(-50%);'}`}
 					aria-label={showOutputLabels ? m.canvas_node_add_after_port_aria({ name: node.name, port: portLabel(port) }) : m.canvas_node_add_after_aria({ name: node.name })}
 					onclick={() => actions?.addFrom(node.id, port.name)}
 				>
@@ -278,28 +322,32 @@
 			{#if editable && empty}
 				<!-- Each agent slot fills itself, filtered to what can attach there:
 				     previously the only way was the generic picker plus a manual drag
-				     onto a 10px handle. -->
+				     onto a 10px handle. It sits below the label rows, which used to
+				     print the first row over the button. -->
 				<button
 					type="button"
 					data-add-attachment={node.id}
 					class="nodrag absolute -translate-x-1/2 grid size-5 place-items-center rounded-full border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-[var(--node-accent)] hover:text-[var(--node-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-					style={`left: ${left}; top: calc(100% + 1.25rem)`}
+					style={`left: ${left}; top: calc(100% + ${attachmentRows === null ? '1.25' : `${0.375 + attachmentRows * 1.25}`}rem)`}
 					aria-label={m.canvas_node_attachment_add_aria({ name: node.name, port: portLabel(port) })}
 					onclick={() => actions?.addAttached(node.id, port.name, port.kind)}
 				>
 					<Plus aria-hidden="true" class="size-2.5" />
 				</button>
 			{/if}
-			<!-- Labels sit under the hub two rows deep and truncate: four of them
-			     across a 240px tile used to collide into one unreadable line. -->
-			{@const row = index % 2}
-			<span
-				class="pointer-events-none absolute -translate-x-1/2 max-w-16 truncate font-mono text-[0.625rem] text-muted-foreground"
-				style={`left: ${left}; top: calc(100% + ${row === 0 ? '0.125rem' : '2.5rem'})`}
-				title={port.required && empty ? m.canvas_node_port_required_title({ port: portLabel(port) }) : portLabel(port)}
-			>
-				{portLabel(port)}{#if port.required && empty}<span class="text-destructive" aria-hidden="true"> *</span>{/if}
-			</span>
+			<!-- Labels fan across as many rows as the port spacing needs, one row
+			     per index modulo the count: four of them across a 144px tile used to
+			     collide into one unreadable line ("Chat Mode|Tools"). -->
+			{#if attachmentRows !== null}
+				{@const row = index % attachmentRows}
+				<span
+					class="pointer-events-none absolute -translate-x-1/2 max-w-12 truncate font-mono text-[0.625rem] leading-tight text-muted-foreground"
+					style={`left: ${left}; top: calc(100% + ${0.125 + row * 1.25}rem)`}
+					title={port.required && empty ? m.canvas_node_port_required_title({ port: portLabel(port) }) : portLabel(port)}
+				>
+					{portLabel(port)}{#if port.required && empty}<span class="text-destructive" aria-hidden="true"> *</span>{/if}
+				</span>
+			{/if}
 		{/each}
 
 		{#each attachmentOutputs as port, index (port.name)}

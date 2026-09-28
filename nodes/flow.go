@@ -361,7 +361,7 @@ func noOpNode() node.Definition {
 		Description:    "Passes items through unchanged. Useful as a join point or a label.",
 		Category:       "Flow",
 		Group:          []node.NodeGroup{node.GroupTransform},
-		Icon:           &node.NodeIcon{Light: "builtin:circle-help"},
+		Icon:           &node.NodeIcon{Light: "builtin:arrow-right"},
 		IconColor:      "#64748b",
 		Inputs:         mainInput(),
 		Outputs:        mainOutput(),

@@ -71,6 +71,8 @@
 		documentFromFlow,
 		duplicateNodes,
 		nextNodePosition,
+		BRANCH_COLUMN,
+		COLUMN,
 		positionAfter,
 		renameNode,
 		resolveDefinition,
@@ -91,6 +93,7 @@
 	import PasteReportSheet from './paste-report-sheet.svelte';
 	import { emptyHistory, record as recordHistory, redo as redoHistory, undo as undoHistory, type History as DocumentHistory } from '$lib/workflow-editor/history';
 	import { SHORTCUT_REFERENCE, CANVAS_DELETE_KEYS, canvasShortcut, controlOwnsKey, isTypingTarget } from '$lib/workflow-editor/shortcuts';
+	import { hasLabelledOutputs } from '$lib/workflow-editor/ports';
 	import { tidyDocument } from '$lib/workflow-editor/layout';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
 	import { isAnnotation } from '$lib/workflow-editor/node-visual';
@@ -514,7 +517,13 @@
 			dropped
 				? { x: Math.round(dropped.x - TILE_CENTRE), y: Math.round(dropped.y - TILE_CENTRE) }
 				: source
-					? positionAfter(source.position, existing.map((candidate) => candidate.position))
+					? positionAfter(
+							source.position,
+							existing.map((candidate) => candidate.position),
+							// A labelled source (IF, Switch) carries its output names to
+							// the right of the tile; the ordinary column lands inside them.
+							hasLabelledOutputs(source, definitions) ? BRANCH_COLUMN : COLUMN
+						)
 					: viewportPlacement(existing.length),
 			undefined,
 			existing.map((candidate) => candidate.name)
@@ -756,15 +765,19 @@
 		// configuration. Sizes come from Svelte Flow's own measurement, so a
 		// 240px hub is laid out as a 240px hub.
 		const sizes: Record<string, { width: number; height: number }> = {};
+		const extraWidth: Record<string, number> = {};
 		const annotations: string[] = [];
 		for (const node of draft.nodes ?? []) {
 			const measured = flow?.getInternalNode(node.id)?.measured;
 			if (measured?.width && measured?.height) sizes[node.id] = { width: measured.width, height: measured.height };
 			const definition = resolveDefinition(node.type, node.typeVersion, definitions);
 			if (definition && isAnnotation(definition)) annotations.push(node.id);
+			// Named outputs print to the right of the tile; the next column starts
+			// past them instead of through them.
+			if (hasLabelledOutputs(node, definitions)) extraWidth[node.id] = 24;
 		}
 
-		replaceDraft(tidyDocument(draft, { sizes, annotations }));
+		replaceDraft(tidyDocument(draft, { sizes, annotations, extraWidth }));
 		// Both Tidy buttons have to land the user on the result, and the toolbar
 		// one used to leave the view where it was.
 		await tick();
@@ -1311,7 +1324,9 @@
 			</SvelteFlow>
 
 			{#if showChat && chatTrigger}
-				<div class="pointer-events-none absolute bottom-4 left-4 z-20">
+				<!-- Right corner: the zoom controls live bottom-left, and a Chat button
+				     on top of them cut the third control in half. -->
+				<div class="pointer-events-none absolute bottom-4 right-4 z-20">
 					<!-- Kept mounted while the trigger is on the canvas so sessionId
 					     and history survive Close. New chat is what rotates the id. -->
 					<div class="pointer-events-auto {chatOpen ? '' : 'hidden'}">
