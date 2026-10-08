@@ -5317,7 +5317,12 @@ func workflowToolToKilas(node Node) (map[string]any, []Unsupported) {
 			// It is carried as the same expression, which this server's
 			// evaluator resolves to the running workflow's own ID, so the
 			// self-reference keeps working instead of blocking activation.
-			parameters["workflowId"] = expressionValue(n8nSelfWorkflowTemplate)
+			// Inside a By ID locator, as the Execute Workflow translator
+			// writes it: a bare expression is not a locator, so the tool
+			// imported clean and then failed validation as unset.
+			parameters["workflowId"] = property.WriteLocator(property.Locator{
+				Mode: "id", Value: expressionValue(n8nSelfWorkflowTemplate),
+			})
 			break
 		}
 		// Stored as a locator object ({value}) at every published version,
@@ -5458,6 +5463,13 @@ func workflowReferenceToN8N(value any) string {
 				return "=" + template
 			}
 			return ""
+		}
+		// A By ID locator holding an expression, which is how a
+		// self-reference is stored: the expression is the reference.
+		if locator, ok := property.ReadLocator(value); ok {
+			if inner, isMap := locator.Value.(map[string]any); isMap {
+				return workflowReferenceToN8N(inner)
+			}
 		}
 		return locatorName(value)
 	}

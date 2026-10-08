@@ -2714,10 +2714,19 @@ func (tool *workflowTool) Invoke(ctx context.Context, arguments json.RawMessage)
 // workflowToolTarget resolves which workflow to run. A locator chosen from
 // the list is fixed; one written by ID may still be an expression, which
 // resolves in the tool call's scope: its input item and the model's $fromAI
-// arguments.
+// arguments. The expression is either the whole reference or the value
+// inside a By ID locator, which is how an imported `{{ $workflow.id }}`
+// self-reference arrives; read unresolved, the marker's own JSON was called
+// as the workflow ID.
 func workflowToolTarget(agentNode string, raw any, parameters map[string]any, scope expression.Context) (string, error) {
 	value := raw
-	if expression.IsExpression(raw) {
+	if inner, ok := property.ReadLocator(raw); ok && expression.IsExpression(inner.Value) {
+		resolved, err := expression.Resolve(map[string]any{"workflowId": inner.Value}, scope)
+		if err != nil {
+			return "", fmt.Errorf("node %q: %w", agentNode, err)
+		}
+		value = resolved["workflowId"]
+	} else if expression.IsExpression(raw) {
 		resolved, err := expression.Resolve(map[string]any{"workflowId": raw}, scope)
 		if err != nil {
 			return "", fmt.Errorf("node %q: %w", agentNode, err)
