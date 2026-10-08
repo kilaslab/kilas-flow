@@ -135,3 +135,5 @@ The binary now does what cli.md says. Every verb that sends a request with no ba
 
 CLI-11 (2026-10-08): the `mcp serve` example in cli.md no longer passes `--token "$KILASFLOW_TOKEN"` on the command line, where a process listing shows it. It relies on `KILASFLOW_TOKEN` from the environment, which the verb already reads.
 
+Criterion 4, partly (2026-10-08): `TestEveryVerbCliMdRunsExists` (internal/cli/docs_examples_test.go) checks, without a server, that every `kilasflow …` line in cli.md's code blocks names a verb of the live command tree (up to three words, e.g. `datastore columns add`). It passes today, and a planted `kilasflow apix` made it fail. Still open: running the examples themselves against a test server in CI, and CLI-3.
+
