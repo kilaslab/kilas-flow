@@ -373,25 +373,31 @@ func (service *Service) loadResumeState(ctx context.Context, tenant repository.T
 // suspending node completes with the stored resume output, then the same pass
 // Run would have taken. Nodes completed before suspension never execute
 // again — their outputs arrive in the checkpoint, not from a second run.
+//
+// Every refusal here fails the run on the wait it was to continue, as
+// Runner.Resume's own refusals do, so the replay marks where it stopped.
 func (service *Service) resumeRun(ctx context.Context, record execution.Record, document workflow.Document, stack []string, wait repository.Wait, resume resumeURLs, trace *traceWriter) (Result, error) {
-	ir, err := service.compile(record, document)
-	if err != nil {
-		return Result{}, err
-	}
 	checkpoint, err := unmarshalCheckpoint(wait.Checkpoint)
 	if err != nil {
-		return Result{}, err
+		// Nothing in the checkpoint can be trusted, but the wait row still
+		// names its node. The run index it would have completed is unknown;
+		// the trace write moves a run that collides to the next free index.
+		return failedResume(Checkpoint{SuspendNode: wait.NodeID}, err)
+	}
+	ir, err := service.compile(record, document)
+	if err != nil {
+		return failedResume(checkpoint, err)
 	}
 	output, err := adaptStoredResumeOutput(ir, checkpoint.SuspendNode, wait.ResumeOutput)
 	if err != nil {
-		return Result{}, err
+		return failedResume(checkpoint, err)
 	}
 	request := service.newRequest(record, document, stack, resume, trace)
 	// The resumed run starts from the same trigger with the same input: the
 	// checkpoint carries the graph state, the record carries the entry.
 	item, err := inputItem(record.Input)
 	if err != nil {
-		return Result{}, err
+		return failedResume(checkpoint, err)
 	}
 	request.Input = item
 	request.TriggerNodeID = record.TriggerNodeID
@@ -400,9 +406,15 @@ func (service *Service) resumeRun(ctx context.Context, record execution.Record, 
 
 // adaptStoredResumeOutput fits one stored resume output to its node's port
 // count. Stored single-port (the shape both the approval surface and the
-// timer sweeper write); padded with empty ports when the node declares more.
+// timer sweeper write); padded with empty ports when the node returns more.
 // Truncation never happens silently: extra ports are refused rather than
 // dropped.
+//
+// The count is the one the node's executor returns, not every port it
+// declares: an error output is the runner's to add, which Resume does as it
+// completes the node. Padded to the declared count, a Wait set to continue
+// using its error output stored two streams where Resume takes one, and could
+// never resume.
 func adaptStoredResumeOutput(ir workflow.IR, nodeID string, raw json.RawMessage) (workflow.NodeOutput, error) {
 	var output workflow.NodeOutput
 	if err := json.Unmarshal(raw, &output); err != nil {
@@ -411,7 +423,7 @@ func adaptStoredResumeOutput(ir workflow.IR, nodeID string, raw json.RawMessage)
 	want := 1
 	for _, node := range ir.Nodes {
 		if node.ID == nodeID {
-			want = len(node.Definition.Outputs)
+			want = expectedPorts(node)
 			break
 		}
 	}
@@ -422,7 +434,7 @@ func adaptStoredResumeOutput(ir workflow.IR, nodeID string, raw json.RawMessage)
 		return output, nil
 	}
 	if len(output) > want {
-		return nil, fmt.Errorf("resume output has %d streams, node %q declares %d", len(output), nodeID, want)
+		return nil, fmt.Errorf("resume output has %d streams, node %q returns %d", len(output), nodeID, want)
 	}
 	for len(output) < want {
 		output = append(output, []workflow.Item{})
