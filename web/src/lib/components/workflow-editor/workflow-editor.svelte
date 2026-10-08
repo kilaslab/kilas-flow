@@ -74,6 +74,7 @@
 		BRANCH_COLUMN,
 		COLUMN,
 		positionAfter,
+		reconcileCanvas,
 		renameNode,
 		resolveDefinition,
 		toggleNodesDisabled,
@@ -416,13 +417,23 @@
 	 * The document is the input; this is its only projection.
 	 */
 	$effect(() => {
-		const canvas = documentFromCanvas(displayed, definitions, issues);
-		// The selection is carried over, not tracked: selecting is the canvas's
-		// own business (selectOnCanvas writes the flags directly), and a
-		// selection change re-projecting the whole document is wasted work.
-		const { nodeIDs, edgeIDs } = untrack(() => ({ nodeIDs: new Set(selectedNodeIDs), edgeIDs: new Set(selectedEdgeIDs) }));
-		nodes = canvas.nodes.map((node) => ({ ...node, selected: nodeIDs.has(node.id) }));
-		edges = canvas.edges.map((edge) => ({ ...edge, selected: edgeIDs.has(edge.id) }));
+		const source = displayed;
+		const catalogue = definitions;
+		const validation = issues;
+		// Reconciled against what Svelte Flow holds, not rebuilt: a keystroke
+		// replaces one node in the draft, and handing Flow 300 fresh objects
+		// made it re-adopt and re-measure every tile (BUG-pzkpfr). The held
+		// arrays and the selection are read untracked — the arrays are this
+		// effect's own output, and selecting is the canvas's own business
+		// (selectOnCanvas writes the flags directly).
+		untrack(() => {
+			const next = reconcileCanvas({ nodes, edges }, source, catalogue, validation, {
+				nodeIDs: new Set(selectedNodeIDs),
+				edgeIDs: new Set(selectedEdgeIDs)
+			});
+			if (next.nodes !== nodes) nodes = next.nodes;
+			if (next.edges !== edges) edges = next.edges;
+		});
 	});
 
 	/**
