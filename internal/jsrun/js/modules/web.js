@@ -57,14 +57,62 @@
   TextEncoder.prototype.encode = function encode(input) {
     return new Uint8ArrayType(kit.native('codec.decode', input === undefined ? '' : String(input), 'utf8'));
   };
+  // encodeInto writes as much of source as fits without splitting a
+  // character. read counts the UTF-16 code units taken from source, so a
+  // surrogate pair is two and a lone surrogate (written as U+FFFD) is one;
+  // written counts bytes. Counting read by decoding the written bytes back
+  // gave neither (BUG-cqbq25).
   TextEncoder.prototype.encodeInto = function encodeInto(source, destination) {
+    if (typeof source !== 'string') throw invalidArgument('The "src" argument must be of type string.', source);
+    if (!(destination instanceof Uint8ArrayType)) {
+      throw invalidArgument('The "dest" argument must be an instance of Uint8Array.', destination);
+    }
     var bytes = this.encode(source);
-    var written = Math.min(bytes.length, destination.length);
-    // Never split a character: back off to the start of the last one that fits.
-    while (written < bytes.length && written > 0 && (bytes[written] & 0xc0) === 0x80) written--;
+    var room = destination.length;
+    if (bytes.length <= room) {
+      destination.set(bytes);
+      return { read: source.length, written: bytes.length };
+    }
+    var read = 0;
+    var written = 0;
+    while (read < source.length) {
+      var unit = source.charCodeAt(read);
+      var units = 1;
+      var size = unit < 0x80 ? 1 : unit < 0x800 ? 2 : 3;
+      if (unit >= 0xd800 && unit <= 0xdbff && read + 1 < source.length) {
+        var next = source.charCodeAt(read + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) {
+          units = 2;
+          size = 4;
+        }
+      }
+      if (written + size > room) break;
+      read += units;
+      written += size;
+    }
     destination.set(bytes.subarray(0, written));
-    return { read: kit.native('codec.encode', bytes.subarray(0, written), 'utf16le').length, written: written };
+    return { read: read, written: written };
   };
+
+  // invalidArgument is Node's ERR_INVALID_ARG_TYPE, naming what it received
+  // the way Node does.
+  function invalidArgument(message, value) {
+    var shown;
+    if (value === null || value === undefined) {
+      shown = 'Received ' + value;
+    } else if (typeof value === 'object' || typeof value === 'function') {
+      var constructor = value.constructor;
+      shown = constructor && typeof constructor.name === 'string' && constructor.name !== ''
+        ? 'Received an instance of ' + constructor.name
+        : 'Received ' + kit.inspect(value, 1);
+    } else {
+      var text = typeof value === 'string' ? "'" + (value.length > 28 ? value.slice(0, 25) + '...' : value) + "'" : String(value);
+      shown = 'Received type ' + typeof value + ' (' + text + ')';
+    }
+    var error = new TypeError(message + ' ' + shown);
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    return error;
+  }
 
   var decoderLabels = {
     'utf-8': 'utf-8', 'utf8': 'utf-8', 'unicode-1-1-utf-8': 'utf-8',

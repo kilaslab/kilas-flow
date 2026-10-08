@@ -124,6 +124,58 @@ func TestTextEncoderAndDecoderFollowTheEncodingStandard(t *testing.T) {
 	})
 }
 
+// BUG-cqbq25: encodeInto's read counts UTF-16 code units taken from the
+// source (a surrogate pair is two) and written counts bytes, and a
+// destination too small stops at a whole character. The expected values are
+// Node 24.21's for the same calls, run by hand.
+func TestTextEncoderEncodeIntoCountsCodeUnitsReadAndBytesWritten(t *testing.T) {
+	expectJSON(t, strings.Join([]string{
+		"const encoder = new TextEncoder()",
+		"function into(text, size) {",
+		"  const destination = new Uint8Array(size)",
+		"  const { read, written } = encoder.encodeInto(text, destination)",
+		"  return read + '/' + written + ':' + Array.from(destination.subarray(0, written)).join(',')",
+		"}",
+		"function refusal(source, destination) {",
+		"  try { encoder.encodeInto(source, destination); return null }",
+		"  catch (error) { return error.name + ' ' + error.code + ' ' + error.message }",
+		"}",
+		"const notBytes = refusal('a', [])",
+		"const noDestination = refusal('a')",
+		"const notString = refusal(5, new Uint8Array(2))",
+		"const backing = new Uint8Array(8)",
+		"const view = backing.subarray(2, 5)",
+		"const viewed = encoder.encodeInto('héllo', view)",
+		"return [{ json: {",
+		"  ascii: into('abc', 8), accented: into('héllo', 10), emoji: into('héllo 😀', 11),",
+		"  emojiCut: into('héllo 😀', 9), pairDoesNotFit: into('😀a', 3), pairAfterAscii: into('a😀', 4),",
+		"  twoByteCut: into('héllo', 2), threeByteCut: into('€x', 2), loneSurrogate: into('\\ud800a', 10),",
+		"  loneSurrogateCut: into('\\ud800a', 3), empty: into('', 4), noRoom: into('abc', 0),",
+		"  viewed: viewed.read + '/' + viewed.written + ':' + Array.from(backing).join(','),",
+		"  buffer: encoder.encodeInto('hé', Buffer.alloc(2)).read,",
+		"  notBytes, noDestination, notString,",
+		"} }]",
+	}, "\n"), map[string]any{
+		"ascii":            "3/3:97,98,99",
+		"accented":         "5/6:104,195,169,108,108,111",
+		"emoji":            "8/11:104,195,169,108,108,111,32,240,159,152,128",
+		"emojiCut":         "6/7:104,195,169,108,108,111,32",
+		"pairDoesNotFit":   "0/0:",
+		"pairAfterAscii":   "1/1:97",
+		"twoByteCut":       "1/1:104",
+		"threeByteCut":     "0/0:",
+		"loneSurrogate":    "2/4:239,191,189,97",
+		"loneSurrogateCut": "1/3:239,191,189",
+		"empty":            "0/0:",
+		"noRoom":           "0/0:",
+		"viewed":           "2/3:0,0,104,195,169,0,0,0",
+		"buffer":           1,
+		"notBytes":         `TypeError ERR_INVALID_ARG_TYPE The "dest" argument must be an instance of Uint8Array. Received an instance of Array`,
+		"noDestination":    `TypeError ERR_INVALID_ARG_TYPE The "dest" argument must be an instance of Uint8Array. Received undefined`,
+		"notString":        `TypeError ERR_INVALID_ARG_TYPE The "src" argument must be of type string. Received type number (5)`,
+	})
+}
+
 // BUG-0592hz: TextDecoder's fatal mode refuses malformed UTF-16 as it does
 // malformed UTF-8, and its lenient mode puts U+FFFD where Node does. The
 // expected values are Node 24.16's, run by hand: a lone surrogate either way
