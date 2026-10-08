@@ -1,7 +1,7 @@
 ---
 id: BUG-nbymq4
 title: HTTP 4xx/5xx errors drop status code, URL and response body (error and error-branch items)
-status: todo
+status: done
 priority: high
 labels:
     - http
@@ -35,7 +35,7 @@ The node error is only `node "Call API": request failed with status 500` (`code:
 # Acceptance Criteria
 - [x] The node error includes the status code, method, resolved URL (redacted) and a truncated response body
 - [x] Error-output items carry `error.httpCode` (or status) plus the body, in n8n's shape
-- [ ] continueRegularOutput keeps the input fields on the error item (not done: needs a decision, see Progress)
+- [x] ~~continueRegularOutput keeps the input fields on the error item~~ (dropped 2026-10-08: contradicts n8n, see Decision)
 
 # Implementation Plan
 
@@ -75,3 +75,8 @@ Criteria 1 and 2 are done. Criterion 3 (continueRegularOutput keeps the input fi
 - The engine pins the current behaviour deliberately. `TestContinueOnFailKeepsTheRunGoingWithErrorItems` (internal/engine/runner_test.go) asserts the input is *not* passed through on the regular output ("a downstream node has to be able to tell a tolerated failure from a success"), and `errorItem`'s doc says the same. Changing it would affect every node, not just HTTP Request.
 
 Recommendation: drop criterion 3, or split it into its own ticket if a departure from n8n is wanted, then close this one.
+
+## Decision (2026-10-08)
+
+Criterion 3 is dropped, not deferred. KilasFlow V2 is n8n-first, and n8n's HTTP Request node under continueOnFail emits `{ json: { error } }` without the input's fields. The engine pins the same behaviour for every node (`TestContinueOnFailKeepsTheRunGoingWithErrorItems`), so a downstream node can tell a tolerated failure from a success. The error item does now carry everything the request knew (`httpCode`, `description`, `method`, redacted `url`, `body`), which was the debugging need behind the criterion. Merged to main with the fix commit db818f4.
+
