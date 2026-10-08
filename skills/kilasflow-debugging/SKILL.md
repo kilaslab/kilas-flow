@@ -29,8 +29,7 @@ kilasflow_nodes:
 kilasflow_expression_roots:
   - $json
 kilasflow_not_shipped:
-  - 'No single-node retry verb: exec retry is not shipped, so a failed node is retried by running the workflow again'
-  - 'No server-side expression evaluation: debug eval is not shipped, so an expression is proved by a run and read back from the trace'
+  - 'No single-node retry verb: exec retry reruns the whole workflow with the same input and trigger, so a failed node is retried by running the workflow again'
 ---
 
 ## Non-negotiables
@@ -96,10 +95,11 @@ something is wrong
          or kilasflow exec trace --from <lastEventId>
 ```
 
+`kilasflow debug eval --execution <executionId> --node <nodeId> [--run <n>] [--item <n>] '<expression>'` evaluates an expression against a finished run's stored trace, as that node's parameters saw it — the item it received, its run index and the nodes before it — so a reference can be checked without another run.
+
 ## Not shipped yet
 
-- No single-node retry verb: exec retry is not shipped, so a failed node is retried by running the workflow again — a re-run is a fresh execution and repeats every side effect its earlier node runs performed, so re-run the whole workflow only once you have read the trace, and prefer a node's own `retryOnFail` settings when the upstream is merely flaky.
-- No server-side expression evaluation: debug eval is not shipped, so an expression is proved by a run and read back from the trace — put the expression where a run reaches it, run the workflow, and read the node run's `input` and `output`; a reference that cannot resolve fails the node with a message naming what was missing.
+- No single-node retry verb: exec retry reruns the whole workflow with the same input and trigger, so a failed node is retried by running the workflow again — a re-run is a fresh execution and repeats every side effect its earlier node runs performed, so re-run the whole workflow only once you have read the trace, and prefer a node's own `retryOnFail` settings when the upstream is merely flaky.
 
 ## Anti-patterns
 

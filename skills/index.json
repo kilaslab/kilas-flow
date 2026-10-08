@@ -122,8 +122,7 @@
         "$json"
       ],
       "notShipped": [
-        "No server-side expression evaluation: debug eval is not shipped, so an expression is proved by a run and read back from the trace",
-        "No single-node retry verb: exec retry is not shipped, so a failed node is retried by running the workflow again"
+        "No single-node retry verb: exec retry reruns the whole workflow with the same input and trigger, so a failed node is retried by running the workflow again"
       ],
       "references": [
         "references/TRACE_READING.md"
@@ -201,7 +200,7 @@
         "$json"
       ],
       "notShipped": [
-        "No single-node retry verb: exec retry is not shipped, so a failed node is retried by running the workflow again"
+        "No single-node retry verb: exec retry reruns the whole workflow with the same input and trigger, so a failed node is retried by running the workflow again"
       ],
       "references": []
     },
@@ -240,9 +239,7 @@
         "$now",
         "$today"
       ],
-      "notShipped": [
-        "No server-side expression evaluation: debug eval is not shipped, so an expression is proved by a run and read back from the trace"
-      ],
+      "notShipped": [],
       "references": [
         "references/EXPRESSION_ROOTS.md"
       ]

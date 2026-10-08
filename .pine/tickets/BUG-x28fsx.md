@@ -140,3 +140,13 @@ Related tickets: BUG-rs0xq1, FEAT-bb4s6e, FEAT-c72set, FEAT-x5qqpm
 # Related Files
 
 # Attachments
+
+## Progress (2026-10-08)
+
+Two of the stale `not_shipped` claims are corrected by hand. Criterion 1's drift gate is still to build.
+- `debug eval` ships (`kilasflow debug eval --execution <id> --node <nodeId> [--run n] [--item n] '<expression>'`, BUG-j7qrp2). Its "not shipped" entry is removed from kilasflow-debugging and kilasflow-expressions, frontmatter and body both, and each skill now says what the verb does.
+- `exec retry` ships but reruns the whole workflow. kilasflow-debugging and kilasflow-error-handling keep "no single-node retry verb" and now say that `exec retry` reruns the whole workflow with the same input and trigger.
+- `skills/index.json` is regenerated. `go test ./internal/skills/`, `make generate-skills-index-check` and `make skills-check` pass.
+
+Still open: the drift gate over every `not_shipped` claim and verb path (criterion 1), validated examples per skill (2), `api <op> --schema` (3), and the AI-agents skill (4).
+

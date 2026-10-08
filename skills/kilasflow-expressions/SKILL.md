@@ -29,8 +29,7 @@ kilasflow_expression_roots:
   - $env
   - $execution
   - $fromAI
-kilasflow_not_shipped:
-  - 'No server-side expression evaluation: debug eval is not shipped, so an expression is proved by a run and read back from the trace'
+kilasflow_not_shipped: []
 ---
 
 ## Non-negotiables
@@ -90,9 +89,7 @@ what should the parameter read?
       -> kilasflow.set with an assignment collection
 ```
 
-## Not shipped yet
-
-- No server-side expression evaluation: debug eval is not shipped, so an expression is proved by a run and read back from the trace — there is no operation that evaluates a body or a value against a sample item. Run the workflow with `kilasflow run <workflowId> --wait`, then read the run: `kilasflow exec get <executionId>` carries the node-run trace and its `{code, message}` error payload, and the live feed from `kilasflow exec trace <executionId>` names which node failed.
+`kilasflow debug eval --execution <executionId> --node <nodeId> [--run <n>] [--item <n>] '<expression>'` evaluates an expression against a finished run's stored trace, as that node's parameters saw it — the item it received, its run index and the nodes before it — so a reference can be checked without another run.
 
 ## Anti-patterns
 

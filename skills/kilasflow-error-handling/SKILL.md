@@ -22,7 +22,7 @@ kilasflow_nodes:
 kilasflow_expression_roots:
   - $json
 kilasflow_not_shipped:
-  - 'No single-node retry verb: exec retry is not shipped, so a failed node is retried by running the workflow again'
+  - 'No single-node retry verb: exec retry reruns the whole workflow with the same input and trigger, so a failed node is retried by running the workflow again'
 ---
 
 ## Non-negotiables
@@ -82,7 +82,7 @@ what is in front of you?
 
 ## Not shipped yet
 
-- No single-node retry verb: exec retry is not shipped, so a failed node is retried by running the workflow again — a partial run is finished by hand: fix the node's configuration in the document, then start a whole new run with kilasflow run and watch it to a terminal status. Confirm first that the graph's side effects are safe to repeat, because the second run performs all of them again, and treat the failed execution as history rather than something to resume.
+- No single-node retry verb: exec retry reruns the whole workflow with the same input and trigger, so a failed node is retried by running the workflow again — a partial run is finished by hand: fix the node's configuration in the document, then start a whole new run with kilasflow run and watch it to a terminal status. Confirm first that the graph's side effects are safe to repeat, because the second run performs all of them again, and treat the failed execution as history rather than something to resume.
 
 ## Anti-patterns
 
