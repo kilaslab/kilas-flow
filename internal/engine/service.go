@@ -42,6 +42,9 @@ type ExecutionStore interface {
 	// StartChild creates a sub-workflow execution that is already running and
 	// already claimed, and returns the document it is pinned to.
 	StartChild(context.Context, repository.TenantScope, repository.ChildExecution) (execution.Record, workflow.Document, error)
+	// AnnotateFailure merges fields into a failed execution's error object,
+	// keeping any key the error already carries.
+	AnnotateFailure(context.Context, repository.TenantScope, string, map[string]any) error
 	// SuspendExecution parks a running execution as waiting, holding the
 	// checkpoint a resumed run continues from.
 	SuspendExecution(context.Context, repository.TenantScope, repository.SuspendWaitParams) (repository.Wait, execution.Record, error)
@@ -1168,8 +1171,12 @@ func attemptOf(run NodeRun) int {
 //
 // n8n's settings.errorWorkflow: a workflow carries the ID of another workflow
 // to run when it fails, and that workflow starts from an Error Trigger with the
-// error. Best effort and logged, deliberately: an error workflow that cannot be
-// started — it was deleted, it is not active, it fails itself — must not change
+// error. It runs the error workflow's latest revision whether or not it is
+// active, as n8n does: an alerting workflow somebody saved and never activated
+// was skipped, and the only trace of that was this function's log line.
+//
+// Best effort and logged, deliberately: an error workflow that cannot be
+// started — it was deleted, it fails itself — must not change
 // the outcome of the execution that already failed, and it must not turn a
 // failed execution into a worker that reports an error nobody can act on.
 func (service *Service) runErrorWorkflow(ctx context.Context, tenant repository.TenantScope, record execution.Record, document workflow.Document, result Result, code string, runErr error) {
@@ -1183,9 +1190,12 @@ func (service *Service) runErrorWorkflow(ctx context.Context, tenant repository.
 		// stack, because this is a configuration mistake worth naming.
 		service.log.Warn("error workflow names its own workflow; not starting it",
 			"execution", record.ID, "workflow", record.WorkflowID)
+		service.noteErrorWorkflow(ctx, tenant, record.ID, map[string]any{
+			"errorWorkflowId": target, "errorWorkflowError": "the error workflow names its own workflow, so it was not started",
+		})
 		return
 	}
-	item := errorWorkflowItem(record, document, result, code, runErr)
+	item := errorWorkflowItem(record, document, result, code, runErr, service.publicBaseURL)
 	if service.errorTriggerType == "" {
 		service.log.Warn("no error trigger type is configured; the error workflow starts from every root",
 			"execution", record.ID, "errorWorkflow", target)
@@ -1193,12 +1203,32 @@ func (service *Service) runErrorWorkflow(ctx context.Context, tenant repository.
 	invoked, err := service.invokeWorkflow(ctx, ExecutionContext{
 		ID: record.ID, Mode: string(record.Trigger), TenantID: record.TenantID,
 		WorkflowID: record.WorkflowID, Stack: []string{record.WorkflowID},
-	}, WorkflowCall{WorkflowID: target, Items: []workflow.Item{item}}, service.errorTriggerSelector)
+	}, WorkflowCall{WorkflowID: target, Items: []workflow.Item{item}}, service.errorTriggerSelector, true)
+	// The failed execution names what its failure started — the run, or why
+	// there is none — where its page shows the error. The child's parent link
+	// answers the question from the other side only.
+	note := map[string]any{"errorWorkflowId": target}
+	if invoked.ExecutionID != "" {
+		note["errorExecutionId"] = invoked.ExecutionID
+	}
+	if err != nil {
+		note["errorWorkflowError"] = err.Error()
+	}
+	service.noteErrorWorkflow(ctx, tenant, record.ID, note)
 	if err != nil {
 		service.log.Error("error workflow failed", "execution", record.ID, "errorWorkflow", target, "error", err)
 		return
 	}
 	service.log.Info("error workflow started", "execution", record.ID, "errorWorkflow", target, "errorExecution", invoked.ExecutionID)
+}
+
+// noteErrorWorkflow records on a failed execution what its error workflow did.
+// Logged rather than returned, like the error workflow itself: the execution
+// has already failed, and a note that cannot be written must not change that.
+func (service *Service) noteErrorWorkflow(ctx context.Context, tenant repository.TenantScope, executionID string, fields map[string]any) {
+	if err := service.executions.AnnotateFailure(ctx, tenant, executionID, fields); err != nil {
+		service.log.Error("record error workflow on the failed execution", "execution", executionID, "error", err)
+	}
 }
 
 // errorTriggerSelector names the node an error workflow starts from.
@@ -1234,12 +1264,19 @@ const errorWorkflowSetting = "errorWorkflow"
 // `{{ $json.execution.id }}` and `{{ $json.workflow.name }}`. Renaming or
 // flattening those keys would make every imported error workflow silently
 // report nothing, which is worse than a failure it cannot report.
-func errorWorkflowItem(record execution.Record, document workflow.Document, result Result, code string, runErr error) workflow.Item {
+//
+// lastNodeExecuted is the node's name, as n8n's is: an alert prints it, and an
+// ID is a handle nobody reading the alert knows. url links to the failed run's
+// page under the public base URL, path-only when none is configured, like the
+// resume links. stack is the message and the node it was raised in: a Go
+// failure carries no JavaScript stack, and an error workflow reading
+// `error.stack` must not get undefined.
+func errorWorkflowItem(record execution.Record, document workflow.Document, result Result, code string, runErr error, publicBaseURL string) workflow.Item {
 	message := "the workflow failed"
 	if runErr != nil {
 		message = runErr.Error()
 	}
-	errorDetail := map[string]any{"message": message, "code": code, "timestamp": time.Now().UTC().Format(time.RFC3339)}
+	errorDetail := map[string]any{"message": message, "stack": message, "code": code, "timestamp": time.Now().UTC().Format(time.RFC3339)}
 	lastNode := ""
 	for _, run := range result.NodeRuns {
 		if run.Error == nil {
@@ -1248,7 +1285,9 @@ func errorWorkflowItem(record execution.Record, document workflow.Document, resu
 		lastNode = run.NodeID
 		for _, node := range document.Nodes {
 			if node.ID == run.NodeID {
+				lastNode = node.Name
 				errorDetail["node"] = map[string]any{"id": node.ID, "name": node.Name, "type": node.Type}
+				errorDetail["stack"] = fmt.Sprintf("%s\n    at %s (%s)", message, node.Name, node.Type)
 				break
 			}
 		}
@@ -1259,6 +1298,7 @@ func errorWorkflowItem(record execution.Record, document workflow.Document, resu
 	return workflow.Item{JSON: map[string]any{
 		"execution": map[string]any{
 			"id":               record.ID,
+			"url":              publicBaseURL + ExecutionPath(record.ID),
 			"mode":             string(record.Trigger),
 			"lastNodeExecuted": lastNode,
 			"error":            errorDetail,
@@ -1266,6 +1306,11 @@ func errorWorkflowItem(record execution.Record, document workflow.Document, resu
 		"workflow": map[string]any{"id": record.WorkflowID, "name": document.Name},
 		"trigger":  map[string]any{"mode": string(record.Trigger)},
 	}}
+}
+
+// ExecutionPath is the dashboard page of one execution.
+func ExecutionPath(executionID string) string {
+	return "/executions/" + executionID
 }
 
 // MaxWorkflowCallDepth bounds how deep a chain of sub-workflow calls may go.
@@ -1290,7 +1335,7 @@ const MaxWorkflowCallDepth = 16
 // already running and already claimed, because a queued one would be visible to
 // ClaimNext and could be run a second time in parallel with this one.
 func (service *Service) InvokeWorkflow(ctx context.Context, parent ExecutionContext, call WorkflowCall) (WorkflowCallResult, error) {
-	return service.invokeWorkflow(ctx, parent, call, service.subworkflowTrigger)
+	return service.invokeWorkflow(ctx, parent, call, service.subworkflowTrigger, false)
 }
 
 // invokeWorkflow runs another workflow inline, starting from the root the
@@ -1300,7 +1345,10 @@ func (service *Service) InvokeWorkflow(ctx context.Context, parent ExecutionCont
 // own sub-workflow trigger, while an error workflow starts from its Error
 // Trigger, and both must be confined to that branch — a workflow carrying a
 // webhook beside the trigger it was called for must not also post to it.
-func (service *Service) invokeWorkflow(ctx context.Context, parent ExecutionContext, call WorkflowCall, selectTrigger func(workflow.Document) string) (WorkflowCallResult, error) {
+//
+// latestRevision runs the workflow's latest revision, active or not, which is
+// what an error workflow runs; a called sub-workflow runs its active one.
+func (service *Service) invokeWorkflow(ctx context.Context, parent ExecutionContext, call WorkflowCall, selectTrigger func(workflow.Document) string, latestRevision bool) (WorkflowCallResult, error) {
 	if service == nil || service.executions == nil {
 		return WorkflowCallResult{}, fmt.Errorf("this runtime cannot run sub-workflows")
 	}
@@ -1319,7 +1367,7 @@ func (service *Service) invokeWorkflow(ctx context.Context, parent ExecutionCont
 	}
 	record, document, err := service.executions.StartChild(ctx, tenant, repository.ChildExecution{
 		WorkflowID: target, ParentExecutionID: parent.ID,
-		Input: input, SelectTrigger: selectTrigger,
+		Input: input, SelectTrigger: selectTrigger, LatestRevision: latestRevision,
 		LeaseOwner: service.workerID, LeaseUntil: time.Now().UTC().Add(service.leaseDurationOrDefault()),
 	})
 	if err != nil {
