@@ -200,6 +200,30 @@ func DeclaredVersion(data []byte) (int, error) {
 	return intField("SKILL.md", decoded, "kilasflow_skills_version")
 }
 
+// Stamped reports whether a SKILL.md's frontmatter carries
+// kilasflow_skills_version at all, whatever its value.
+//
+// It answers the question DeclaredVersion cannot: not "which bundle is this
+// from" but "is this KilasFlow's". A harness directory is shared with other
+// tools' skills, and a drift check that claimed those would fail in every real
+// project. A stamp that is present but not a number still marks the skill as
+// KilasFlow's — a broken copy of ours, not somebody else's skill — and a file
+// with no frontmatter, or one that does not parse, is not ours.
+func Stamped(data []byte) bool {
+	frontmatter, _, err := SplitFrontmatter(data)
+	if err != nil {
+		return false
+	}
+
+	decoded, err := yaml.Parser().Unmarshal(frontmatter)
+	if err != nil {
+		return false
+	}
+	_, found := decoded["kilasflow_skills_version"]
+
+	return found
+}
+
 // LoadDir reads every skill under root — the bundle directory, skills/ — in
 // name order.
 //
