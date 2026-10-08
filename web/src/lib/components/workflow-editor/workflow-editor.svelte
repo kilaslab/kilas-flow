@@ -41,7 +41,7 @@
 </script>
 
 <script lang="ts">
-	import { tick, type Snippet } from 'svelte';
+	import { tick, untrack, type Snippet } from 'svelte';
 
 	import { Background, BackgroundVariant, MiniMap, SvelteFlow, ViewportPortal, type Connection as FlowConnection, type EdgeTypes } from '@xyflow/svelte';
 	import History from '@lucide/svelte/icons/history';
@@ -76,6 +76,7 @@
 		positionAfter,
 		renameNode,
 		resolveDefinition,
+		toggleNodesDisabled,
 		toWorkflowInput,
 		uniqueNodeName,
 		updateNodeCredential,
@@ -92,7 +93,7 @@
 	import { message as apiMessage } from '$lib/api/http';
 	import PasteReportSheet from './paste-report-sheet.svelte';
 	import { emptyHistory, record as recordHistory, redo as redoHistory, undo as undoHistory, type History as DocumentHistory } from '$lib/workflow-editor/history';
-	import { SHORTCUT_REFERENCE, CANVAS_DELETE_KEYS, canvasShortcut, controlOwnsKey, isTypingTarget } from '$lib/workflow-editor/shortcuts';
+	import { SHORTCUT_REFERENCE, CANVAS_DELETE_KEYS, editorShortcut, formatKeys, isMacPlatform, isTypingTarget } from '$lib/workflow-editor/shortcuts';
 	import { hasLabelledOutputs } from '$lib/workflow-editor/ports';
 	import { tidyDocument } from '$lib/workflow-editor/layout';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
@@ -202,6 +203,12 @@
 	} = $props();
 
 	const nodeTypes = { workflow: CanvasNode };
+	// n8n's navigation (UXE-9): the wheel and a two-finger scroll pan, Shift
+	// turns it sideways, and Cmd or Ctrl held over it zooms. A trackpad pinch
+	// zooms regardless, through Svelte Flow's zoomOnPinch.
+	const ZOOM_KEYS = ['Meta', 'Control'];
+	/** ⌘ on a Mac, Ctrl everywhere else, in the shortcut overlay. */
+	const macKeys = isMacPlatform(globalThis.navigator);
 	// Registered under the built-in names so the replay canvas, which uses the
 	// same projection and registers nothing, keeps rendering plain edges.
 	// Typed as the library's own edge map: the component receives the built-in
@@ -235,7 +242,9 @@
 	/** Every selected node, not just the first: a group drag used to lose all but one. */
 	let selectedNodeIDs = $state<string[]>([]);
 	let selectedNodeID = $state<string | null>(null);
-	let selectedEdgeID = $state<string | null>(null);
+	/** Every selected connection: select-all selects the wires too, as n8n's does. */
+	let selectedEdgeIDs = $state<string[]>([]);
+	const selectedEdgeID = $derived(selectedEdgeIDs[0] ?? null);
 	let pickerOpen = $state(false);
 	let triggersOnly = $state(false);
 	// Set when the picker was opened from a node's output port, so the step it
@@ -384,6 +393,7 @@
 		splice: (edgeID) => openPickerSplice(edgeID),
 		removeEdge: (edgeID) => removeConnection(edgeID),
 		rename: (nodeID) => startRename(nodeID),
+		open: (nodeID) => openNode(nodeID),
 		resize: (nodeID, width, height) => {
 			if (locked) return;
 			replaceDraft(updateNodeSize(draft, nodeID, width, height));
@@ -407,9 +417,12 @@
 	 */
 	$effect(() => {
 		const canvas = documentFromCanvas(displayed, definitions, issues);
-		const selectedNow = new Set(selectedNodeIDs);
-		nodes = canvas.nodes.map((node) => ({ ...node, selected: selectedNow.has(node.id) }));
-		edges = canvas.edges.map((edge) => ({ ...edge, selected: edge.id === selectedEdgeID }));
+		// The selection is carried over, not tracked: selecting is the canvas's
+		// own business (selectOnCanvas writes the flags directly), and a
+		// selection change re-projecting the whole document is wasted work.
+		const { nodeIDs, edgeIDs } = untrack(() => ({ nodeIDs: new Set(selectedNodeIDs), edgeIDs: new Set(selectedEdgeIDs) }));
+		nodes = canvas.nodes.map((node) => ({ ...node, selected: nodeIDs.has(node.id) }));
+		edges = canvas.edges.map((edge) => ({ ...edge, selected: edgeIDs.has(edge.id) }));
 	});
 
 	/**
@@ -564,7 +577,7 @@
 		pendingPosition = null;
 		selectedNodeIDs = [node.id];
 		selectedNodeID = node.id;
-		selectedEdgeID = null;
+		selectedEdgeIDs = [];
 		replaceDraft({ ...draft, nodes: nextNodes, connections });
 		propertyPanelOpen = true;
 		// The inspector for the new node is the natural next stop, and on a wide
@@ -619,7 +632,15 @@
 	 * A selection equal to the one already held is therefore not written at
 	 * all: the state is replaced only when what it holds really changed.
 	 */
-	function onSelectionChange({ nodes: selectedNodes, edges: selectedEdges }: { nodes: EditorFlowNode[]; edges: EditorFlowEdge[] }) {
+	function onSelectionChange(selection: { nodes: EditorFlowNode[]; edges: EditorFlowEdge[] }) {
+		// Svelte Flow calls this from inside its own selection effect. Read
+		// tracked, the editor's selection became a dependency of that effect,
+		// so every selection the editor made (Cmd+A, an issue click) re-ran it
+		// with the canvas's stale selection and wiped the new one (UXE-7).
+		untrack(() => adoptSelection(selection));
+	}
+
+	function adoptSelection({ nodes: selectedNodes, edges: selectedEdges }: { nodes: EditorFlowNode[]; edges: EditorFlowEdge[] }) {
 		// Every selected node is kept, not just the first: collapsing a group
 		// drag to one node made a following Delete remove only that one.
 		const ids = selectedNodes.map((node) => node.id);
@@ -636,15 +657,39 @@
 		// one's: while the set is unchanged, the held order is what the state
 		// above still describes.
 		selectedNodeID = selectedNodeIDs[0] ?? null;
-		selectedEdgeID = selectedEdges[0]?.id ?? null;
+		const edgeIDs = selectedEdges.map((edge) => edge.id);
+		if (!sameSelection(edgeIDs, selectedEdgeIDs)) selectedEdgeIDs = edgeIDs;
 		propertyPanelOpen = selectedNodes.length > 0;
 	}
 
+	/**
+	 * Selects on the canvas from the editor's side: the held state and Svelte
+	 * Flow's `selected` flags together, so the two cannot disagree and the
+	 * canvas's own Delete removes exactly what the editor selected.
+	 */
+	function selectOnCanvas(nodeIDs: string[], edgeIDs: string[] = []) {
+		selectFromEditor(nodeIDs);
+		selectedNodeIDs = nodeIDs;
+		selectedNodeID = nodeIDs[0] ?? null;
+		selectedEdgeIDs = edgeIDs;
+		const nodeSet = new Set(nodeIDs);
+		const edgeSet = new Set(edgeIDs);
+		nodes = nodes.map((node) => (Boolean(node.selected) === nodeSet.has(node.id) ? node : { ...node, selected: nodeSet.has(node.id) }));
+		edges = edges.map((edge) => (Boolean(edge.selected) === edgeSet.has(edge.id) ? edge : { ...edge, selected: edgeSet.has(edge.id) }));
+	}
+
 	function selectAll() {
-		selectedNodeIDs = (displayed.nodes ?? []).map((node) => node.id);
-		selectedNodeID = selectedNodeIDs[0] ?? null;
-		selectedEdgeID = null;
+		selectOnCanvas(
+			(displayed.nodes ?? []).map((node) => node.id),
+			(displayed.connections ?? []).map((connection) => connection.id)
+		);
 		propertyPanelOpen = selectedNodeIDs.length > 0;
+	}
+
+	/** A double click opens the node, the way it opens n8n's NDV; F2 renames. */
+	function openNode(nodeID: string) {
+		selectOnCanvas([nodeID]);
+		propertyPanelOpen = true;
 	}
 
 	/** Drops ids that no longer exist, after an undo or a delete. */
@@ -673,11 +718,56 @@
 		restoreFocus();
 	}
 
+	/** Removes nodes and every connection that touches them, as one undo step. */
+	function removeNodes(nodeIDs: readonly string[]) {
+		if (locked || nodeIDs.length === 0) return;
+		const gone = new Set(nodeIDs);
+		replaceDraft({
+			...draft,
+			nodes: (draft.nodes ?? []).filter((node) => !gone.has(node.id)),
+			connections: (draft.connections ?? []).filter((connection) => !gone.has(connection.source.nodeId) && !gone.has(connection.target.nodeId))
+		});
+		selectedNodeIDs = selectedNodeIDs.filter((id) => !gone.has(id));
+		selectedNodeID = selectedNodeIDs[0] ?? null;
+		propertyPanelOpen = selectedNodeIDs.length > 0;
+		restoreFocus();
+	}
+
+	/** n8n's Cmd+X: the selection goes to the clipboard and off the canvas. */
+	async function cutSelection() {
+		const ids = [...selectedNodeIDs];
+		if (await copySelectionToClipboard()) removeNodes(ids);
+	}
+
+	/** n8n's D. Sticky notes take no part in a run, so there is nothing to disable. */
+	function toggleSelectionDisabled() {
+		const steps = selectedNodeIDs.filter((id) => {
+			const node = (draft.nodes ?? []).find((candidate) => candidate.id === id);
+			const definition = node ? resolveDefinition(node.type, node.typeVersion, definitions) : undefined;
+			return node !== undefined && !(definition && isAnnotation(definition));
+		});
+		if (steps.length === 0) return false;
+		replaceDraft(toggleNodesDisabled(draft, steps));
+		return true;
+	}
+
+	/** n8n's Shift+S: a sticky note in the middle of the view. */
+	function addSticky(): boolean {
+		const sticky = definitions.find((definition) => isAnnotation(definition));
+		if (!sticky) return false;
+		pendingSource = null;
+		pendingKind = null;
+		pendingSplice = null;
+		pendingPosition = null;
+		addNode(sticky);
+		return true;
+	}
+
 	/** Only reachable for a connection: a node is deleted from its own toolbar. */
 	function removeSelectedConnection() {
 		if (locked || !selectedEdgeID) return;
 		const edgeID = selectedEdgeID;
-		selectedEdgeID = null;
+		selectedEdgeIDs = [];
 		removeConnection(edgeID);
 	}
 
@@ -691,7 +781,7 @@
 		syncCanvas();
 		selectedNodeID = null;
 		selectedNodeIDs = [];
-		selectedEdgeID = null;
+		selectedEdgeIDs = [];
 		propertyPanelOpen = false;
 		restoreFocus();
 	}
@@ -726,10 +816,7 @@
 	}
 
 	function focusValidationIssue(issue: CanvasValidationIssue) {
-		selectFromEditor(issue.nodeID ? [issue.nodeID] : []);
-		selectedNodeIDs = issue.nodeID ? [issue.nodeID] : [];
-		selectedNodeID = issue.nodeID ?? null;
-		selectedEdgeID = issue.connectionID ?? null;
+		selectOnCanvas(issue.nodeID ? [issue.nodeID] : [], issue.connectionID ? [issue.connectionID] : []);
 		propertyPanelOpen = Boolean(issue.nodeID);
 	}
 
@@ -813,17 +900,19 @@
 		forgetMissingSelection();
 	}
 
-	async function copySelectionToClipboard() {
+	async function copySelectionToClipboard(): Promise<boolean> {
 		const json = copySelection(draft, selectedNodeIDs);
 		if (!json) {
 			canvasMessage = m.editor_select_node_first();
-			return;
+			return false;
 		}
 		try {
 			await navigator.clipboard.writeText(json);
 			canvasMessage = m.editor_nodes_copied({ count: selectedNodeIDs.length });
+			return true;
 		} catch {
 			canvasMessage = m.editor_clipboard_denied_write();
+			return false;
 		}
 	}
 
@@ -865,7 +954,7 @@
 		replaceDraft(next);
 		selectedNodeIDs = nodeIDs;
 		selectedNodeID = nodeIDs[0] ?? null;
-		selectedEdgeID = null;
+		selectedEdgeIDs = [];
 		const notes: string[] = [m.editor_nodes_pasted({ count: nodeIDs.length })];
 		if (issues.length > 0) notes.push(diagnosticSummaryLabel(issues));
 		canvasMessage = `${notes.join(' · ')}.`;
@@ -912,7 +1001,7 @@
 		replaceDraft(next);
 		selectedNodeIDs = nodeIDs;
 		selectedNodeID = nodeIDs[0] ?? null;
-		selectedEdgeID = null;
+		selectedEdgeIDs = [];
 		canvasMessage = m.editor_nodes_duplicated({ count: nodeIDs.length });
 	}
 
@@ -959,16 +1048,26 @@
 	 * keys.
 	 */
 	function handleShortcut(event: KeyboardEvent) {
-		if (event.defaultPrevented || controlOwnsKey(event.target, event.key)) return;
-		if (renameTarget || overlayOpen) return;
+		if (event.defaultPrevented) return;
+		const action = editorShortcut(event, event.target);
+		if (!action) return;
 		const focused = globalThis.document.activeElement;
-		if (focused && focused !== globalThis.document.body && editorSection && !editorSection.contains(focused)) return;
-		const action = canvasShortcut(event);
-		if (!action || !performShortcut(action)) return;
+		const outside = Boolean(focused && focused !== globalThis.document.body && editorSection && !editorSection.contains(focused));
+		if (action === 'save') {
+			// Save is the editor's wherever focus is on this page — a field, the
+			// sidebar, an open dialog — unless another editor holds it. Leaving
+			// it to the browser opened "Save page as…" (UXE-11).
+			if (outside && focused?.closest('[data-workflow-editor]')) return;
+			event.preventDefault();
+			void saveFromKeyboard();
+			return;
+		}
+		if (outside || renameTarget || overlayOpen) return;
+		if (!performShortcut(action)) return;
 		event.preventDefault();
 		// The status line reports the last clipboard action; any other key makes
 		// it stale.
-		if (action !== 'copy' && action !== 'paste' && action !== 'duplicate') canvasMessage = null;
+		if (action !== 'copy' && action !== 'cut' && action !== 'paste' && action !== 'duplicate') canvasMessage = null;
 	}
 
 	function performShortcut(action: CanvasShortcut): boolean {
@@ -982,9 +1081,22 @@
 				redo();
 				return true;
 			case 'save':
-				if (locked || !dirty || saving) return false;
-				void save();
+				void saveFromKeyboard();
 				return true;
+			case 'execute':
+				if (hideRun || previewing || running) return false;
+				void executeFromKeyboard();
+				return true;
+			case 'cut':
+				if (locked || selectedNodeIDs.length === 0) return false;
+				void cutSelection();
+				return true;
+			case 'toggle-disabled':
+				if (locked) return false;
+				return toggleSelectionDisabled();
+			case 'add-sticky':
+				if (locked) return false;
+				return addSticky();
 			case 'select-all':
 				if ((displayed.nodes?.length ?? 0) === 0) return false;
 				selectAll();
@@ -1044,6 +1156,36 @@
 		await onSave(toWorkflowInput(draft));
 	}
 
+	/**
+	 * Cmd+S from wherever the user is. A field that commits on blur or change
+	 * (a JSON parameter, a key name) still holds its last edit while it has
+	 * focus, so it is made to let go and take focus back before the draft is
+	 * read.
+	 */
+	async function saveFromKeyboard() {
+		const active = globalThis.document.activeElement;
+		if (active instanceof HTMLElement && isTypingTarget(active) && editorSection?.contains(active)) {
+			active.blur();
+			active.focus();
+			await tick();
+		}
+		await save();
+	}
+
+	/**
+	 * Cmd+Enter. n8n runs what is on the canvas, and a run here starts from the
+	 * saved revision, so unsaved edits are saved first — the way the Chat panel
+	 * does — instead of the key doing nothing on a dirty canvas.
+	 */
+	async function executeFromKeyboard() {
+		if (dirty) {
+			await save();
+			await tick();
+			if (dirty) return;
+		}
+		await run();
+	}
+
 	async function run() {
 		if (hideRun || dirty || running || previewing) return;
 		const intent = executeIntent(displayed.nodes ?? [], definitions, selectedNodeIDs);
@@ -1093,7 +1235,7 @@
 
 <svelte:window onkeydown={handleShortcut} />
 
-<section bind:this={editorSection} onpaste={onPaste} class="relative flex h-full min-h-0 flex-col bg-background" aria-label={m.editor_aria_label()}>
+<section bind:this={editorSection} data-workflow-editor onpaste={onPaste} class="relative flex h-full min-h-0 flex-col bg-background" aria-label={m.editor_aria_label()}>
 	<header class="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-card px-1.5">
 		{#if header}
 			{@render header()}
@@ -1260,6 +1402,8 @@
 				fitView
 				fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
 				minZoom={0.1}
+				panOnScroll
+				zoomActivationKey={ZOOM_KEYS}
 				elevateNodesOnSelect={false}
 				onlyRenderVisibleElements
 				nodesDraggable={!locked}
@@ -1486,7 +1630,7 @@
 				     handler and be missing from the list a user reads. -->
 				<dl class="mt-3 grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1.5 text-xs">
 					{#each SHORTCUT_REFERENCE as shortcut (shortcut.action)}
-						<dt class="font-mono text-muted-foreground">{shortcut.keys}</dt>
+						<dt class="font-mono text-muted-foreground">{formatKeys(shortcut.keys, macKeys)}</dt>
 						<dd>{shortcut.label()}</dd>
 					{/each}
 				</dl>

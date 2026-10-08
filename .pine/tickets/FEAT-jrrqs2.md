@@ -1,0 +1,21 @@
+---
+id: FEAT-jrrqs2
+title: Pin a node's output data (n8n's P key)
+status: todo
+priority: medium
+created: "2026-10-08T16:20:41Z"
+updated: "2026-10-08T16:20:41Z"
+---
+
+# Description
+
+n8n's `P` pins the selected node's last output so later runs reuse it instead of executing the node. KilasFlow has no pinned-data model: the editor document has no `pinData`, the engine never reads one, and the n8n importer drops it. BUG-3k12ky bound the rest of n8n's canvas keys (Ctrl/Cmd+Enter, D, Shift+S, Cmd+X, Shift+Alt+T, double-click) and left `P` unbound, because a key that pins nothing would be worse than no key.
+
+# Acceptance Criteria
+- [ ] A node's output can be pinned from the editor and a run uses the pinned items instead of executing the node
+- [ ] `P` toggles the pin on the selected nodes and the help overlay lists it
+- [ ] An n8n import keeps `pinData`
+
+# Related Files
+- web/src/lib/workflow-editor/shortcuts.ts — add the `P` binding once pinning exists
+- internal/interop/n8n/ — keep `pinData` on import

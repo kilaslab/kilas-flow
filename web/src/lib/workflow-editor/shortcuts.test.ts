@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { SHORTCUT_REFERENCE, canvasShortcut, controlOwnsKey, isTypingTarget } from './shortcuts';
+import { SHORTCUT_REFERENCE, canvasShortcut, controlOwnsKey, editorShortcut, formatKeys, isMacPlatform, isTypingTarget } from './shortcuts';
 
-const press = (key: string, modifiers: Partial<{ metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }> = {}) => ({
+const press = (key: string, modifiers: Partial<{ metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; code: string }> = {}) => ({
 	key,
 	...modifiers
 });
@@ -22,9 +22,31 @@ describe('canvas keymap', () => {
 		expect(canvasShortcut(press('d', { metaKey: true }))).toBe('duplicate');
 		expect(canvasShortcut(press('a', { metaKey: true }))).toBe('select-all');
 		expect(canvasShortcut(press('s', { metaKey: true }))).toBe('save');
-		expect(canvasShortcut(press('t', { metaKey: true, shiftKey: true }))).toBe('tidy');
 		expect(canvasShortcut(press('F2'))).toBe('rename');
 		expect(canvasShortcut(press('Enter'))).toBe('open-selection');
+	});
+
+	// n8n's own map (UXE-10): the keys an n8n user presses without looking.
+	it('maps the n8n keys for running, cutting, disabling and annotating', () => {
+		expect(canvasShortcut(press('Enter', { metaKey: true }))).toBe('execute');
+		expect(canvasShortcut(press('Enter', { ctrlKey: true }))).toBe('execute');
+		expect(canvasShortcut(press('x', { metaKey: true }))).toBe('cut');
+		expect(canvasShortcut(press('x', { ctrlKey: true }))).toBe('cut');
+		expect(canvasShortcut(press('d'))).toBe('toggle-disabled');
+		expect(canvasShortcut(press('D'))).toBe('toggle-disabled');
+		expect(canvasShortcut(press('S', { shiftKey: true, code: 'KeyS' }))).toBe('add-sticky');
+		// A plain S is not a sticky: only the shifted key is.
+		expect(canvasShortcut(press('s'))).toBeNull();
+	});
+
+	// Cmd+Shift+T is Chrome's "reopen closed tab" and never reaches the page.
+	// Option turns T into a dead glyph on a Mac, so the physical key is read.
+	it('tidies on Shift+Alt+T, by the physical key, and not on Cmd+Shift+T', () => {
+		expect(canvasShortcut(press('ˇ', { shiftKey: true, altKey: true, code: 'KeyT' }))).toBe('tidy');
+		expect(canvasShortcut(press('T', { shiftKey: true, altKey: true, code: 'KeyT' }))).toBe('tidy');
+		expect(canvasShortcut(press('t', { metaKey: true, shiftKey: true, code: 'KeyT' }))).toBeNull();
+		// Alt alone with a letter is a typed character on some layouts, not a shortcut.
+		expect(canvasShortcut(press('∂', { altKey: true, code: 'KeyD' }))).toBeNull();
 	});
 
 	it('maps the viewport and discovery keys', () => {
@@ -53,7 +75,7 @@ describe('canvas keymap', () => {
 		expect(canvasShortcut(press('n', { metaKey: true }))).toBeNull();
 		expect(canvasShortcut(press('k', { metaKey: true }))).toBeNull();
 		expect(canvasShortcut(press('Escape'))).toBeNull();
-		expect(canvasShortcut(press('x'))).toBeNull();
+		expect(canvasShortcut(press('q'))).toBeNull();
 		expect(canvasShortcut(press('Shift'))).toBeNull();
 	});
 });
@@ -105,5 +127,69 @@ describe('controlOwnsKey', () => {
 		expect(controlOwnsKey({ tagName: 'A' } as unknown as EventTarget, 'z')).toBe(false);
 		expect(controlOwnsKey({ tagName: 'DIV' } as unknown as EventTarget, 'Enter')).toBe(false);
 		expect(controlOwnsKey(null, 'Enter')).toBe(false);
+	});
+});
+
+// UXE-11: Cmd+S inside a parameter opened the browser's "Save page as…".
+describe('editorShortcut', () => {
+	const input = { tagName: 'INPUT' } as unknown as EventTarget;
+	const pane = { tagName: 'DIV' } as unknown as EventTarget;
+
+	it('saves from inside a field the user is typing in', () => {
+		expect(editorShortcut(press('s', { metaKey: true }), input)).toBe('save');
+		expect(editorShortcut(press('s', { ctrlKey: true }), input)).toBe('save');
+	});
+
+	it('leaves every other key to the field', () => {
+		expect(editorShortcut(press('a', { metaKey: true }), input)).toBeNull();
+		expect(editorShortcut(press('z', { metaKey: true }), input)).toBeNull();
+		expect(editorShortcut(press('x', { metaKey: true }), input)).toBeNull();
+		expect(editorShortcut(press('d'), input)).toBeNull();
+		expect(editorShortcut(press('Enter', { metaKey: true }), input)).toBeNull();
+	});
+
+	it('is the canvas keymap everywhere else', () => {
+		expect(editorShortcut(press('a', { metaKey: true }), pane)).toBe('select-all');
+		expect(editorShortcut(press('d'), pane)).toBe('toggle-disabled');
+		expect(editorShortcut(press('Enter'), { tagName: 'BUTTON' } as unknown as EventTarget)).toBeNull();
+	});
+});
+
+// UXE-10: the overlay printed ⌘ on every OS.
+describe('formatKeys', () => {
+	it('prints Mac glyphs on a Mac', () => {
+		expect(formatKeys('Mod+Shift+Z', true)).toBe('⌘⇧Z');
+		expect(formatKeys('Shift+Alt+T', true)).toBe('⇧⌥T');
+		expect(formatKeys('Mod+Enter', true)).toBe('⌘↵');
+	});
+
+	it('prints Ctrl and named modifiers elsewhere', () => {
+		expect(formatKeys('Mod+Shift+Z', false)).toBe('Ctrl+Shift+Z');
+		expect(formatKeys('Shift+Alt+T', false)).toBe('Shift+Alt+T');
+		expect(formatKeys('Mod+Enter', false)).toBe('Ctrl+Enter');
+	});
+
+	it('keeps plain keys and alternatives as they are', () => {
+		expect(formatKeys('+ / -', false)).toBe('+ / -');
+		expect(formatKeys('Tab / N', true)).toBe('Tab / N');
+		expect(formatKeys('F2', false)).toBe('F2');
+	});
+
+	it('lists every reference entry in both spellings', () => {
+		for (const entry of SHORTCUT_REFERENCE) {
+			expect(formatKeys(entry.keys, true)).not.toContain('Mod');
+			expect(formatKeys(entry.keys, false)).not.toContain('⌘');
+		}
+	});
+});
+
+describe('isMacPlatform', () => {
+	it('reads the platform the browser reports', () => {
+		expect(isMacPlatform({ platform: 'MacIntel', userAgent: '' })).toBe(true);
+		expect(isMacPlatform({ platform: 'iPad', userAgent: '' })).toBe(true);
+		expect(isMacPlatform({ platform: 'Win32', userAgent: 'Mozilla/5.0 (Windows NT 10.0)' })).toBe(false);
+		expect(isMacPlatform({ platform: 'Linux x86_64', userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' })).toBe(false);
+		expect(isMacPlatform({ platform: '', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)' })).toBe(true);
+		expect(isMacPlatform(undefined)).toBe(false);
 	});
 });

@@ -406,6 +406,29 @@ export function updateNodeSize(document: Document, nodeID: string, width: number
 	return { ...document, nodes };
 }
 
+/**
+ * n8n's D: disables the named nodes, or enables them again when every one of
+ * them is already disabled. Enabling drops the flag rather than writing
+ * `false`, so a node toggled twice saves exactly as it was. Nodes not named
+ * keep their identity, which the canvas projection relies on.
+ */
+export function toggleNodesDisabled(document: Document, nodeIDs: readonly string[]): Document {
+	const named = new Set(nodeIDs);
+	const targets = (document.nodes ?? []).filter((node) => named.has(node.id));
+	if (targets.length === 0) return document;
+	const disable = targets.some((node) => !node.disabled);
+	return {
+		...document,
+		nodes: (document.nodes ?? []).map((node) => {
+			if (!named.has(node.id)) return node;
+			if (disable) return { ...node, disabled: true };
+			// eslint-disable-next-line @typescript-eslint/no-unused-vars
+			const { disabled, ...enabled } = node;
+			return enabled;
+		})
+	};
+}
+
 function rewriteNodeReferences(node: WorkflowNode, from: string, to: string): WorkflowNode {
 	const next = clone(node);
 	for (const scope of ['parameters', 'settings'] as const) {

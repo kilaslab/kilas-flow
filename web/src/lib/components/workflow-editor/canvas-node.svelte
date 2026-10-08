@@ -148,7 +148,7 @@
 		style={`background: ${palette.fill}; border-color: ${palette.border}`}
 		data-testid="sticky-note"
 		role="note"
-		ondblclick={() => actions?.rename(node.id)}
+		ondblclick={() => actions?.open(node.id)}
 	>
 		<p class="whitespace-pre-wrap break-words text-xs leading-4" style="color: var(--kf-sticky-text)">
 			{#each runs as run, index (index)}
@@ -178,10 +178,11 @@
 {:else}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		class="relative"
+		class="relative {node.disabled ? 'opacity-45 grayscale' : ''}"
 		style={`--node-accent: ${visual.accent}`}
-		ondblclick={() => actions?.rename(node.id)}
+		ondblclick={() => actions?.open(node.id)}
 		data-selected={selected ? 'true' : undefined}
+		data-disabled={node.disabled ? 'true' : undefined}
 		data-invalid={invalid ? 'true' : undefined}
 		data-run-status={runStatus ?? undefined}
 	>

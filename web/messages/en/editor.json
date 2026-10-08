@@ -112,6 +112,10 @@
 	"editor_shortcut_reset_zoom": "Reset zoom",
 	"editor_shortcut_zoom": "Zoom in / out",
 	"editor_shortcut_help": "Keyboard shortcuts",
+	"editor_shortcut_cut": "Cut selection",
+	"editor_shortcut_toggle_disabled": "Disable / enable selected nodes",
+	"editor_shortcut_execute": "Execute workflow",
+	"editor_shortcut_add_sticky": "Add a sticky note",
 	"editor_activation_notices_aria": "Activation notices",
 	"editor_activation_notices_summary": [
 		{

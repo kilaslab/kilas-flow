@@ -18,8 +18,12 @@ export type CanvasShortcut =
 	| 'save'
 	| 'select-all'
 	| 'copy'
+	| 'cut'
 	| 'paste'
 	| 'duplicate'
+	| 'execute'
+	| 'toggle-disabled'
+	| 'add-sticky'
 	| 'rename'
 	| 'open-selection'
 	| 'fit-view'
@@ -32,6 +36,8 @@ export type CanvasShortcut =
 
 export type ShortcutEvent = {
 	key: string;
+	/** The physical key, for the combinations a layout rewrites (Option+T is `†` on a Mac). */
+	code?: string;
 	metaKey?: boolean;
 	ctrlKey?: boolean;
 	shiftKey?: boolean;
@@ -44,25 +50,56 @@ export type ShortcutEvent = {
  * `label` is a call rather than the sentence itself so the overlay follows a
  * locale change at runtime — the table is built once at module load, and text
  * captured at that moment would stay in whatever locale was active then. The
- * keys stay literals: a key label reads the same in every locale.
+ * keys are written once in a neutral spelling (`Mod` is ⌘ on a Mac and Ctrl
+ * elsewhere) and printed per platform by formatKeys.
  */
 export const SHORTCUT_REFERENCE: { keys: string; action: CanvasShortcut; label: () => string }[] = [
-	{ keys: '⌘Z', action: 'undo', label: m.editor_shortcut_undo },
-	{ keys: '⌘⇧Z', action: 'redo', label: m.editor_shortcut_redo },
-	{ keys: '⌘C', action: 'copy', label: m.editor_shortcut_copy },
-	{ keys: '⌘V', action: 'paste', label: m.editor_shortcut_paste },
-	{ keys: '⌘D', action: 'duplicate', label: m.editor_shortcut_duplicate },
+	{ keys: 'Mod+Z', action: 'undo', label: m.editor_shortcut_undo },
+	{ keys: 'Mod+Shift+Z', action: 'redo', label: m.editor_shortcut_redo },
+	{ keys: 'Mod+C', action: 'copy', label: m.editor_shortcut_copy },
+	{ keys: 'Mod+X', action: 'cut', label: m.editor_shortcut_cut },
+	{ keys: 'Mod+V', action: 'paste', label: m.editor_shortcut_paste },
+	{ keys: 'Mod+D', action: 'duplicate', label: m.editor_shortcut_duplicate },
+	{ keys: 'D', action: 'toggle-disabled', label: m.editor_shortcut_toggle_disabled },
 	{ keys: 'F2', action: 'rename', label: m.editor_shortcut_rename },
 	{ keys: 'Enter', action: 'open-selection', label: m.editor_shortcut_open },
-	{ keys: '⌘A', action: 'select-all', label: m.editor_shortcut_select_all },
-	{ keys: '⌘S', action: 'save', label: m.editor_shortcut_save },
+	{ keys: 'Mod+A', action: 'select-all', label: m.editor_shortcut_select_all },
+	{ keys: 'Mod+S', action: 'save', label: m.editor_shortcut_save },
+	{ keys: 'Mod+Enter', action: 'execute', label: m.editor_shortcut_execute },
 	{ keys: 'Tab / N', action: 'add-step', label: m.editor_shortcut_add_step },
-	{ keys: '⌘⇧T', action: 'tidy', label: m.editor_shortcut_tidy },
+	{ keys: 'Shift+S', action: 'add-sticky', label: m.editor_shortcut_add_sticky },
+	{ keys: 'Shift+Alt+T', action: 'tidy', label: m.editor_shortcut_tidy },
 	{ keys: '1', action: 'fit-view', label: m.editor_shortcut_fit_view },
 	{ keys: '0', action: 'reset-zoom', label: m.editor_shortcut_reset_zoom },
 	{ keys: '+ / -', action: 'zoom-in', label: m.editor_shortcut_zoom },
 	{ keys: '?', action: 'help', label: m.editor_shortcut_help }
 ];
+
+const MAC_GLYPHS: Record<string, string> = { Mod: '⌘', Shift: '⇧', Alt: '⌥', Enter: '↵' };
+const OTHER_NAMES: Record<string, string> = { Mod: 'Ctrl' };
+
+/**
+ * A reference entry's keys as this platform prints them: `⌘⇧Z` on a Mac,
+ * `Ctrl+Shift+Z` everywhere else. Alternatives (`Tab / N`) and the bare `+`
+ * key pass through untouched.
+ */
+export function formatKeys(keys: string, mac: boolean): string {
+	return keys
+		.split(' / ')
+		.map((combo) => {
+			const parts = combo === '+' ? ['+'] : combo.split('+');
+			// A lone Enter reads better spelled out; the glyphs are for chords.
+			if (parts.length === 1) return parts[0];
+			return mac ? parts.map((part) => MAC_GLYPHS[part] ?? part).join('') : parts.map((part) => OTHER_NAMES[part] ?? part).join('+');
+		})
+		.join(' / ');
+}
+
+/** Whether the browser runs on an Apple platform, where Mod is ⌘. */
+export function isMacPlatform(nav: { platform?: string; userAgent?: string } | undefined): boolean {
+	if (!nav) return false;
+	return /Mac|iPhone|iPad|iPod/.test(nav.platform || '') || /Macintosh|Mac OS X/.test(nav.userAgent || '');
+}
 
 /**
  * The keys the canvas deletes a selection with, in the shape Svelte Flow's
@@ -88,16 +125,24 @@ export function canvasShortcut(event: ShortcutEvent): CanvasShortcut | null {
 
 	if (mod) {
 		// Shift is only meaningful for redo; a shifted copy is still a copy.
+		if (key === 'Enter') return 'execute';
 		if (lower === 'z') return event.shiftKey ? 'redo' : 'undo';
 		if (lower === 'y') return 'redo';
 		if (lower === 's') return 'save';
 		if (lower === 'a') return 'select-all';
 		if (lower === 'c') return 'copy';
+		if (lower === 'x') return 'cut';
 		if (lower === 'v') return 'paste';
 		if (lower === 'd') return 'duplicate';
-		if (event.shiftKey && lower === 't') return 'tidy';
+		// Not ⌘⇧T for tidy: Chrome keeps that for "reopen closed tab" and
+		// never delivers it to the page.
 		return null;
 	}
+
+	// Option rewrites the letter on a Mac (Shift+Option+T is `ˇ`), so this
+	// one reads the physical key. Any other Alt chord is a typed character.
+	if (event.altKey) return event.shiftKey && (event.code === 'KeyT' || lower === 't') ? 'tidy' : null;
+	if (event.shiftKey && lower === 's') return 'add-sticky';
 
 	if (key === 'F2') return 'rename';
 	if (key === 'Enter') return 'open-selection';
@@ -107,17 +152,31 @@ export function canvasShortcut(event: ShortcutEvent): CanvasShortcut | null {
 	if (key === '+' || key === '=') return 'zoom-in';
 	if (key === '-' || key === '_') return 'zoom-out';
 	if (key === '?') return 'help';
-	if (lower === 'n' && !event.altKey) return 'add-step';
+	if (lower === 'n') return 'add-step';
+	if (lower === 'd') return 'toggle-disabled';
 
 	return null;
 }
 
 /**
+ * The action a keydown asks the editor for, given where it was pressed.
+ *
+ * Save is the one global key: n8n saves from inside a parameter, and leaving
+ * ⌘S to the browser there opened its "Save page as…" dialog. Every other key
+ * belongs to the field or button that owns it (controlOwnsKey).
+ */
+export function editorShortcut(event: ShortcutEvent, target: EventTarget | null): CanvasShortcut | null {
+	const action = canvasShortcut(event);
+	if (action === 'save') return action;
+	if (controlOwnsKey(target, event.key)) return null;
+	return action;
+}
+
+/**
  * Whether the event came from a control that owns the keystroke.
  *
- * A canvas shortcut must never fire while the user is typing a parameter, so
- * everything is suppressed — including `⌘S`, which would otherwise save
- * mid-word and look like the editor eating the key.
+ * A canvas shortcut must never fire while the user is typing a parameter —
+ * apart from save, which editorShortcut lets through on purpose.
  *
  * Read through property checks rather than `instanceof HTMLElement`: the field
  * it is testing is the tag name and the editable flag, and this way the rule is
