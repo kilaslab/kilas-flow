@@ -353,9 +353,9 @@ func TestSuspendResumeContinuesWithExactUpstreamData(t *testing.T) {
 	if wait.ResumeToken == "" {
 		t.Fatal("active wait carries no resume token")
 	}
-	resumeURL, approvalURL, ok := service.WaitingLinks(ctx, tenant, queued.ID)
-	if !ok || !strings.HasSuffix(resumeURL, "/resume/"+wait.ResumeToken) {
-		t.Errorf("WaitingLinks() = (%q, %q, %v), want links ending in the token", resumeURL, approvalURL, ok)
+	links, ok := service.WaitingLinks(ctx, tenant, queued.ID)
+	if !ok || !strings.HasSuffix(links.ResumeURL, "/resume/"+wait.ResumeToken) {
+		t.Errorf("WaitingLinks() = (%+v, %v), want links ending in the token", links, ok)
 	}
 
 	_, record, err := service.ResumeApproval(ctx, tenant.ID, wait.ResumeToken,

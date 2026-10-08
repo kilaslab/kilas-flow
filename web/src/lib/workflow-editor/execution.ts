@@ -282,6 +282,21 @@ export function formatDuration(milliseconds: number | null | undefined): string 
 	return m.executions_duration_minutes_seconds({ minutes, seconds });
 }
 
+/**
+ * What a waiting execution offers its reader.
+ *
+ * Only an approval wait has a decision to record, so only it gets the approval
+ * page; the API links one for no other mode. A timer wait says when it
+ * resumes. Anything else waits on a call to its resume URL.
+ */
+export type WaitingNotice = { kind: 'approval'; approvalUrl: string } | { kind: 'timer'; resumeAt: string } | { kind: 'call' };
+
+export function waitingNotice(execution: { approvalUrl?: string; resumeAt?: string; resumeUrl?: string }): WaitingNotice {
+	if (execution.approvalUrl) return { kind: 'approval', approvalUrl: execution.approvalUrl };
+	if (execution.resumeAt) return { kind: 'timer', resumeAt: execution.resumeAt };
+	return { kind: 'call' };
+}
+
 export function formatTimestamp(value: string | undefined): string {
 	if (!value) return m.executions_timestamp_unknown();
 	const date = new Date(value);

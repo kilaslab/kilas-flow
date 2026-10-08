@@ -57,6 +57,10 @@ const (
 	// WaitOutcomeExpired marks a wait the sweeper failed because its deadline
 	// passed on a mode with nobody left to answer it.
 	WaitOutcomeExpired = "expired"
+	// WaitOutcomeCancelled marks a wait whose execution was cancelled while
+	// it waited. Settled with the run so the sweeper stops listing it and the
+	// token answers "already answered" rather than resuming a cancelled run.
+	WaitOutcomeCancelled = "cancelled"
 )
 
 // WaitExpiredCode names the failure a wait past its deadline becomes. A code

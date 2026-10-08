@@ -447,10 +447,12 @@ instead. See the lease section above.
 
 `POST /workflows/{id}/run`, `GET /executions`, `GET /executions/{id}`,
 `POST /executions/{id}/cancel`, `GET /executions/{id}/events`. A waiting
-execution's `GET` also carries its `resumeUrl` and `approvalUrl` — the
-`/resume/{token}` and `/approve/{token}` paths that live beside `/webhook` rather
-than under the API prefix, and the same links the run can compose for itself as
-`$execution.resumeUrl` and `$execution.approvalUrl`. See the [HTTP API
+execution's `GET` also carries its `resumeUrl`, plus `approvalUrl` when it waits
+on an approval and `resumeAt` when it waits on a timer — the `/resume/{token}`
+and `/approve/{token}` paths live beside `/webhook` rather than under the API
+prefix, and are the same links the run can compose for itself as
+`$execution.resumeUrl` and `$execution.approvalUrl`. Cancelling a waiting
+execution records the node it waited on as `cancelled`. See the [HTTP API
 reference](/reference/api/) for the full surface, and a running server's own
 `/docs` for the instance you are talking to.
 

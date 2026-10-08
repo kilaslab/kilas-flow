@@ -13,7 +13,8 @@ import {
 	latestNodeRuns,
 	nodeRunStatus,
 	parseConsole,
-	statusLabel
+	statusLabel,
+	waitingNotice
 } from './execution';
 
 function nodeRun(overrides: Partial<ExecutionNodeRunResource> & { nodeId: string }): ExecutionNodeRunResource {
@@ -278,6 +279,22 @@ describe('formatTimestamp', () => {
 	// same as no timestamp at all.
 	it('treats the zero time as absent rather than a real date in year 1', () => {
 		expect(formatTimestamp('0001-01-01T00:00:00Z')).toBe('—');
+	});
+});
+
+// A timer wait used to read "Waiting for approval" with an approval page,
+// because the API linked one for every wait.
+describe('waitingNotice', () => {
+	it('offers the approval page only to a run waiting on an approval', () => {
+		expect(waitingNotice({ approvalUrl: '/approve/tok', resumeUrl: '/resume/tok' })).toEqual({ kind: 'approval', approvalUrl: '/approve/tok' });
+	});
+
+	it('says when a timer wait resumes, with no approval to record', () => {
+		expect(waitingNotice({ resumeUrl: '/resume/tok', resumeAt: '2026-09-23T10:05:00Z' })).toEqual({ kind: 'timer', resumeAt: '2026-09-23T10:05:00Z' });
+	});
+
+	it('falls back to a wait that resumes on a call when there is neither', () => {
+		expect(waitingNotice({ resumeUrl: '/resume/tok' })).toEqual({ kind: 'call' });
 	});
 });
 

@@ -1083,6 +1083,20 @@ func (service *Service) Cancel(ctx context.Context, tenant repository.TenantScop
 		service.notifyCancel(record.TenantID, record.ID)
 	}
 	if record.Status == execution.StatusCancelled {
+		// A waiting run was stopped on its wait node, and the store recorded
+		// that node as cancelled. Announce the row before the execution's own
+		// event, so an open page stops showing the node as waiting: the live
+		// feed last said "waiting" about it, and nothing else would correct
+		// that until a reload.
+		for _, run := range record.NodeRuns {
+			if run.Status != execution.StatusCancelled {
+				continue
+			}
+			service.publish(events.Event{
+				TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
+				NodeID: run.NodeID, Type: events.NodeFailed, Status: run.Status, Sequence: run.Sequence,
+			})
+		}
 		// Queued work is cancelled without ever being claimed, so no worker
 		// will publish a terminal event for it.
 		service.publish(events.Event{

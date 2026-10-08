@@ -29,7 +29,8 @@
 		parseConsole,
 		preferredNodeRun,
 		statusLabel,
-		statusTone
+		statusTone,
+		waitingNotice
 	} from '$lib/workflow-editor/execution';
 
 	const execution = createGetExecution<ExecutionResource>(() => page.params.id ?? '', () => ({
@@ -102,6 +103,8 @@
 	const liveStatus = $derived(latestExecutionStatus(live.events));
 	const status = $derived(liveStatus ?? execution.data?.status ?? 'queued');
 	const stoppable = $derived(status === 'running' || status === 'queued' || status === 'waiting' || status === 'cancelling');
+	// Only an approval wait gets the approval page; a timer says when it resumes.
+	const waiting = $derived(waitingNotice(execution.data ?? {}));
 	const selectedNodeRuns = $derived(selectedNodeID ? (runGroups.get(selectedNodeID) ?? []) : []);
 	// null = the default (the latest run that has data); picking from the
 	// selector pins a specific iteration until another node is chosen.
@@ -316,14 +319,14 @@
 		</div>
 
 		{#if status === 'waiting'}
-			{#if execution.data.approvalUrl}
+			{#if waiting.kind === 'approval'}
 				<div class="rounded-xl border border-violet-500/30 bg-violet-500/5 p-4">
 					<h2 class="text-sm font-medium">{m.executions_waiting_approval()}</h2>
 					<p class="mt-0.5 text-xs leading-5 text-muted-foreground">
 						{m.executions_waiting_approval_body()}
 					</p>
 					<div class="mt-3 flex flex-wrap gap-2">
-						<Button variant="outline" href={execution.data.approvalUrl}>{m.executions_open_approval_page()}</Button>
+						<Button variant="outline" href={waiting.approvalUrl}>{m.executions_open_approval_page()}</Button>
 						{#if stoppable}
 							<Button variant="outline" onclick={() => void stop()} disabled={stopping}>
 								{stopping ? m.executions_stopping() : m.executions_stop_waiting()}
@@ -333,9 +336,11 @@
 				</div>
 			{:else}
 				<div class="rounded-xl border border-border bg-muted/40 p-4">
-					<h2 class="text-sm font-medium">{m.executions_waiting_resumes()}</h2>
+					<h2 class="text-sm font-medium">
+						{waiting.kind === 'timer' ? m.executions_waiting_until({ time: formatTimestamp(waiting.resumeAt) }) : m.executions_waiting_resumes()}
+					</h2>
 					<p class="mt-0.5 text-xs leading-5 text-muted-foreground">
-						{m.executions_waiting_resumes_body()}
+						{waiting.kind === 'timer' ? m.executions_waiting_until_body() : m.executions_waiting_resumes_body()}
 						{#if stoppable}{m.executions_waiting_cancel_note()}{/if}
 					</p>
 					{#if stoppable}

@@ -114,6 +114,14 @@
 			<h1 class="mt-2 text-base font-semibold tracking-tight">{refusalTitle(refusal.code)}</h1>
 			<p class="mt-1 text-xs leading-5 text-muted-foreground">{refusal.message}</p>
 			<Button class="mt-4" variant="outline" onclick={() => void load(token)}>{m.common_try_again()}</Button>
+		{:else if info && info.mode !== 'approval' && info.mode !== ''}
+			<!-- A timer or webhook wait has no decision to record: Approve and
+			     Reject here would post a decision the resume URL cannot read. -->
+			<h1 class="mt-2 text-base font-semibold tracking-tight">{m.auth_not_an_approval()}</h1>
+			<p class="mt-1 text-xs leading-5 text-muted-foreground">{m.auth_not_an_approval_body()}</p>
+			<p class="mt-3 text-xs text-muted-foreground">
+				{m.auth_field_execution()} <span class="font-mono">{info.executionId}</span>
+			</p>
 		{:else if info}
 			<h1 class="mt-2 text-base font-semibold tracking-tight">{m.auth_approval_requested()}</h1>
 			<dl class="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-[0.8125rem]">

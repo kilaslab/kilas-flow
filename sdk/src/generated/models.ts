@@ -1031,6 +1031,7 @@ export interface ExecutionRequestResource {
 export interface ExecutionResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** The approval page, for a run waiting on an approval only */
   approvalUrl?: string;
   cancellationRequestedAt?: string;
   error?: unknown;
@@ -1042,6 +1043,8 @@ export interface ExecutionResource {
   output?: unknown;
   /** The execution that called this one, for a sub-workflow run */
   parentExecutionId?: string;
+  /** When a run waiting on a timer resumes on its own */
+  resumeAt?: string;
   resumeUrl?: string;
   startedAt: string;
   status: string;

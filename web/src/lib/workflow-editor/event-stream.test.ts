@@ -70,6 +70,20 @@ describe('applyEvents', () => {
 		expect([...statuses.keys()]).toEqual(['a']);
 	});
 
+	// The feed last said "waiting" about the wait node; a Stop that lands
+	// there must not leave it reading Waiting beside a Cancelled execution.
+	it('settles a node still waiting or running as cancelled when the execution is cancelled', () => {
+		const statuses = applyEvents(new Map([['a', run('a', 'succeeded')]]), [
+			event({ id: 1, type: 'execution.waiting', nodeId: 'wait', status: 'waiting' }),
+			event({ id: 2, type: 'node.started', nodeId: 'b', status: 'running' }),
+			event({ id: 3, type: 'execution.cancelled', status: 'cancelled' })
+		]);
+
+		expect(statuses.get('wait')).toBe('cancelled');
+		expect(statuses.get('b')).toBe('cancelled');
+		expect(statuses.get('a')).toBe('succeeded');
+	});
+
 	it('keeps the last status when a node reports more than once', () => {
 		const statuses = applyEvents(new Map(), [
 			event({ id: 1, type: 'node.started', nodeId: 'a', status: 'running' }),
