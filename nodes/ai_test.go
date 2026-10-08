@@ -160,7 +160,7 @@ func TestChatModelNeedsNoCredentialButInventsNone(t *testing.T) {
 		t.Fatalf("Validate() = %v, want a local endpoint accepted with no credential", err)
 	}
 	for _, nodeType := range []string{nodes.OpenAIChatModelNodeType, nodes.OpenRouterChatModelNodeType} {
-		definition, _ := aiRegistry(t).Lookup(nodeType, workflow.V(1))
+		definition, _ := aiRegistry(t).Get(nodeType, workflow.V(1))
 		if err := definition.Validate(workflow.Node{Parameters: map[string]any{"model": modelLocator("gpt-test")}}); err == nil {
 			t.Errorf("%s was accepted with no credential", nodeType)
 		}
@@ -2330,6 +2330,160 @@ func TestAgentSendsImagesOnlyWhenTheFlagIsOn(t *testing.T) {
 	turn, _ := messages[0].(map[string]any)
 	if _, isParts := turn["content"].([]any); isParts {
 		t.Fatalf("content = %#v, want no image parts when the flag is off", turn["content"])
+	}
+}
+
+// runVisionChain runs the chain with a binary store on the request, which
+// runChainNode leaves out, and returns the one request body the provider got.
+func runVisionChain(t *testing.T, parameters map[string]any, item workflow.Item, store engine.BinaryStore) map[string]any {
+	t.Helper()
+	var bodies []map[string]any
+	provider := countingProvider(t, &bodies)
+	defer provider.Close()
+	executor := nodes.NewChainExecutor(localPolicy(), 0)
+	definition, _ := aiRegistry(t).Lookup(nodes.ChainNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "chain", Name: "Basic LLM Chain", Type: nodes.ChainNodeType, TypeVersion: workflow.V(1),
+		Parameters: parameters, Definition: definition,
+	}
+	if _, err := executor.Execute(context.Background(), ir, chainModelInput(provider.URL, item),
+		engine.Request{Credentials: bearerResolver(), Binaries: store}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(bodies) != 1 {
+		t.Fatalf("provider received %d calls, want one", len(bodies))
+	}
+	return bodies[0]
+}
+
+// imageParts returns the image URLs of a turn sent as a part list, and the
+// text beside them.
+func imageParts(t *testing.T, turn map[string]any) (string, []string) {
+	t.Helper()
+	parts, ok := turn["content"].([]any)
+	if !ok {
+		t.Fatalf("content = %#v, want a part list carrying an image", turn["content"])
+	}
+	text, urls := "", []string{}
+	for _, raw := range parts {
+		part, _ := raw.(map[string]any)
+		switch part["type"] {
+		case "text":
+			text, _ = part["text"].(string)
+		case "image_url":
+			image, _ := part["image_url"].(map[string]any)
+			url, _ := image["url"].(string)
+			urls = append(urls, url)
+		}
+	}
+	return text, urls
+}
+
+// TestChainSendsTheItemsImagesToTheModel: the chain asked to describe a
+// downloaded picture sent a text-only turn, so the model asked for the image.
+// It now sends the item's pictures with the user message, as the agent does.
+func TestChainSendsTheItemsImagesToTheModel(t *testing.T) {
+	t.Parallel()
+
+	store := binaryStore(t)
+	stored, err := store.Put("circle.png", "image/png", bytes.NewReader([]byte{0x89, 'P', 'N', 'G', 0x01}))
+	if err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	item := workflow.Item{JSON: map[string]any{}, Binary: map[string]workflow.BinaryRef{
+		"data": {ID: stored.ID, FileName: "circle.png", MediaType: "image/png"},
+	}}
+
+	body := runVisionChain(t, map[string]any{"promptType": "define", "text": "Describe the shape"}, item, store)
+	messages := promptContents(t, body)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %#v, want one user turn", messages)
+	}
+	text, urls := imageParts(t, messages[0])
+	if text != "Describe the shape" || len(urls) != 1 || !strings.HasPrefix(urls[0], "data:image/png;base64,") {
+		t.Fatalf("turn = %q %v, want the prompt and the picture as a data URI", text, urls)
+	}
+
+	off := runVisionChain(t, map[string]any{"promptType": "define", "text": "hi", "passthroughBinaryImages": false}, item, store)
+	if turn := promptContents(t, off)[0]; turn["content"] != "hi" {
+		t.Fatalf("content = %#v, want no image parts when the flag is off", turn["content"])
+	}
+}
+
+// TestChainSendsImageRows: n8n's chain takes Image (Binary) and Image (URL)
+// prompt rows, each a human turn holding one picture.
+func TestChainSendsImageRows(t *testing.T) {
+	t.Parallel()
+
+	store := binaryStore(t)
+	stored, err := store.Put("photo.jpg", "image/jpeg", bytes.NewReader([]byte{0xff, 0xd8, 0xff}))
+	if err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	item := workflow.Item{JSON: map[string]any{}, Binary: map[string]workflow.BinaryRef{
+		"photo": {ID: stored.ID, FileName: "photo.jpg", MediaType: "image/jpeg"},
+	}}
+	body := runVisionChain(t, map[string]any{
+		"promptType": "define", "text": "Compare them", "passthroughBinaryImages": false,
+		"messages": map[string]any{"messageValues": []any{
+			map[string]any{"type": "human", "messageType": "imageBinary", "binaryImageDataKey": "photo"},
+			map[string]any{"type": "human", "messageType": "imageUrl", "imageUrl": "https://example.com/cat.png"},
+		}},
+	}, item, store)
+
+	messages := promptContents(t, body)
+	if len(messages) != 3 {
+		t.Fatalf("messages = %#v, want two image rows then the user message", messages)
+	}
+	if _, urls := imageParts(t, messages[0]); len(urls) != 1 || !strings.HasPrefix(urls[0], "data:image/jpeg;base64,") {
+		t.Errorf("row 1 images = %v, want the item's photo binary as a data URI", urls)
+	}
+	if _, urls := imageParts(t, messages[1]); len(urls) != 1 || urls[0] != "https://example.com/cat.png" {
+		t.Errorf("row 2 images = %v, want the URL as given", urls)
+	}
+	if messages[2]["content"] != "Compare them" {
+		t.Errorf("row 3 = %#v, want the defined text", messages[2])
+	}
+}
+
+// TestChainImageRowNamesTheMissingBinary: a row reading a binary the item
+// does not carry fails naming it, rather than sending a text-only turn the
+// model answers by asking for the picture.
+func TestChainImageRowNamesTheMissingBinary(t *testing.T) {
+	t.Parallel()
+
+	_, err := runChainNode(t, map[string]any{
+		"promptType": "define", "text": "Describe",
+		"messages": map[string]any{"messageValues": []any{
+			map[string]any{"type": "human", "messageType": "imageBinary", "binaryImageDataKey": "photo"},
+		}},
+	}, chainModelInput("http://127.0.0.1:1", workflow.Item{JSON: map[string]any{}}), bearerResolver(), nil)
+	if err == nil || !strings.Contains(err.Error(), `"photo"`) {
+		t.Fatalf("Execute() error = %v, want one naming the missing binary", err)
+	}
+}
+
+// TestVisionToggleSaysItSendsImagesToTheModel: the agent's toggle read as
+// though it only copied attachments to the output, when it is the switch that
+// sends pictures to the model. The chain carries the same toggle.
+func TestVisionToggleSaysItSendsImagesToTheModel(t *testing.T) {
+	t.Parallel()
+
+	for _, nodeType := range []string{nodes.AgentNodeType, nodes.ChainNodeType} {
+		definition, _ := aiRegistry(t).Get(nodeType, workflow.V(1))
+		found := false
+		for _, parameter := range definition.Parameters {
+			if parameter.Key != "passthroughBinaryImages" {
+				continue
+			}
+			found = true
+			if !strings.Contains(strings.ToLower(parameter.Description), "send input images to the model") {
+				t.Errorf("%s description = %q, want it to say it sends input images to the model", nodeType, parameter.Description)
+			}
+		}
+		if !found {
+			t.Errorf("%s has no passthroughBinaryImages toggle", nodeType)
+		}
 	}
 }
 

@@ -574,7 +574,7 @@ func agentNode() node.Definition {
 			},
 			{
 				Key: "passthroughBinaryImages", Label: "Passthrough binary images", Kind: node.PropertyBoolean, Default: true,
-				Description: "Carry the incoming item's binary attachments through to the output item.",
+				Description: "Send input images to the model: the incoming item's image attachments go with the prompt, for a vision model to read. The attachments are also carried through to the output item. Turn off for a model that reads text only.",
 			},
 			{
 				Key: "enableStreaming", Label: "Enable streaming", Kind: node.PropertyBoolean, Default: false,
@@ -600,6 +600,14 @@ const (
 	chainRoleSystem = "system"
 	chainRoleHuman  = "human"
 	chainRoleAI     = "ai"
+)
+
+// Chain message kinds, named as n8n names them. Only a human row carries an
+// image: one picture from the item's binaries or from a URL.
+const (
+	chainMessageText        = "text"
+	chainMessageImageBinary = "imageBinary"
+	chainMessageImageURL    = "imageUrl"
 )
 
 func chainLlmNode() node.Definition {
@@ -660,11 +668,37 @@ func chainLlmNode() node.Definition {
 							},
 						},
 						{
-							Key: "message", Label: "Message", Kind: node.PropertyString, Required: true,
-							Description: "The message text. Supports expressions.",
+							Key: "messageType", Label: "Message Type", Kind: node.PropertyOptions, Default: chainMessageText,
+							Options: []node.PropertyOption{
+								{Label: "Text", Value: chainMessageText},
+								{Label: "Image (Binary)", Value: chainMessageImageBinary},
+								{Label: "Image (URL)", Value: chainMessageImageURL},
+							},
+							VisibleWhen: []node.VisibilityCondition{{Key: "type", Equals: chainRoleHuman}},
+							Description: "A human message can carry one image instead of text.",
+						},
+						{
+							// Not Required: an image row has no text. Validation
+							// refuses an empty text row instead.
+							Key: "message", Label: "Message", Kind: node.PropertyString,
+							Description: "The message text. Supports expressions. Image rows ignore it.",
+						},
+						{
+							Key: "binaryImageDataKey", Label: "Image Data Field Name", Kind: node.PropertyString, Default: "data",
+							VisibleWhen: []node.VisibilityCondition{{Key: "messageType", Equals: chainMessageImageBinary}},
+							Description: "The binary field of the incoming item holding the image.",
+						},
+						{
+							Key: "imageUrl", Label: "Image URL", Kind: node.PropertyString,
+							VisibleWhen: []node.VisibilityCondition{{Key: "messageType", Equals: chainMessageImageURL}},
+							Description: "An http(s) or data: URL the model reads the image from. Supports expressions.",
 						},
 					},
 				}},
+			},
+			{
+				Key: "passthroughBinaryImages", Label: "Passthrough binary images", Kind: node.PropertyBoolean, Default: true,
+				Description: "Send input images to the model: the incoming item's image attachments go with the user message, for a vision model to read. An attachment an Image (Binary) row already sends is not sent twice. Turn off for a model that reads text only.",
 			},
 		},
 		SharedSettings: sharedSettings(),
@@ -1598,25 +1632,39 @@ func inputImages(request engine.Request, item workflow.Item) ([]string, error) {
 		if !strings.HasPrefix(reference.MediaType, "image/") {
 			continue
 		}
-		body, resolved, err := request.Binaries.Get(reference.ID)
+		image, fits, err := imageDataURI(request, name, reference)
 		if err != nil {
-			return nil, fmt.Errorf("read image %q: %w", name, err)
+			return nil, err
 		}
-		contents, readErr := io.ReadAll(io.LimitReader(body, maxVisionBytes+1))
-		body.Close()
-		if readErr != nil {
-			return nil, fmt.Errorf("read image %q: %w", name, readErr)
-		}
-		if len(contents) > maxVisionBytes {
+		if !fits {
 			continue
 		}
-		mediaType := resolved.MediaType
-		if mediaType == "" {
-			mediaType = reference.MediaType
-		}
-		images = append(images, "data:"+mediaType+";base64,"+base64.StdEncoding.EncodeToString(contents))
+		images = append(images, image)
 	}
 	return images, nil
+}
+
+// imageDataURI reads one stored image into a data URI. An image over the
+// vision bound reports fits=false rather than an error, so each caller decides
+// whether that skips the picture or fails the item.
+func imageDataURI(request engine.Request, name string, reference workflow.BinaryRef) (string, bool, error) {
+	body, resolved, err := request.Binaries.Get(reference.ID)
+	if err != nil {
+		return "", false, fmt.Errorf("read image %q: %w", name, err)
+	}
+	contents, readErr := io.ReadAll(io.LimitReader(body, maxVisionBytes+1))
+	body.Close()
+	if readErr != nil {
+		return "", false, fmt.Errorf("read image %q: %w", name, readErr)
+	}
+	if len(contents) > maxVisionBytes {
+		return "", false, nil
+	}
+	mediaType := resolved.MediaType
+	if mediaType == "" {
+		mediaType = reference.MediaType
+	}
+	return "data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(contents), true, nil
 }
 
 // agentStep is one intermediate step in n8n's shape: the tool the model asked
@@ -1712,7 +1760,7 @@ func (executor *ChainExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 		if err != nil {
 			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 		}
-		messages, err := chainMessagesForItem(ir.Name, parameters, item)
+		messages, err := chainMessagesForItem(ir.Name, parameters, item, request)
 		if err != nil {
 			return nil, err
 		}
@@ -1823,14 +1871,28 @@ func (executor *ChainExecutor) completeChainItem(ctx context.Context, ir workflo
 }
 
 // chainMessagesForItem builds one item's prompt: the ordered message rows
-// first, then the user message from the field or the defined text.
-func chainMessagesForItem(nodeName string, parameters map[string]any, item workflow.Item) ([]ai.Message, error) {
+// first, then the user message from the field or the defined text, carrying
+// the item's images the way the agent's user turn does.
+func chainMessagesForItem(nodeName string, parameters map[string]any, item workflow.Item, request engine.Request) ([]ai.Message, error) {
 	rows, err := chainMessageRows(parameters["messages"])
 	if err != nil {
 		return nil, fmt.Errorf("node %q: %w", nodeName, err)
 	}
 	messages := make([]ai.Message, 0, len(rows)+1)
+	// The binaries an image row sends, so the passthrough does not send the
+	// same picture a second time.
+	sent := map[string]bool{}
 	for index, row := range rows {
+		// Only a human row reads its message type, as in n8n, so a row
+		// switched to system with an image type still set stays a text row.
+		if row.Type == chainRoleHuman && row.MessageType != "" && row.MessageType != chainMessageText {
+			image, err := chainRowImage(request, item, row, sent)
+			if err != nil {
+				return nil, fmt.Errorf("node %q: message %d %w", nodeName, index+1, err)
+			}
+			messages = append(messages, ai.Message{Role: ai.RoleUser, Images: []string{image}})
+			continue
+		}
 		var role ai.Role
 		switch row.Type {
 		case chainRoleSystem, "":
@@ -1863,7 +1925,70 @@ func chainMessagesForItem(nodeName string, parameters map[string]any, item workf
 	if len(messages) == 0 {
 		return nil, fmt.Errorf("node %q: the prompt is empty; provide text or at least one message", nodeName)
 	}
+	// On by default, as on the agent: the parameter's declared default is
+	// what a document that never wrote it means.
+	if boolOr(parameters, "passthroughBinaryImages", true) && len(item.Binary) > 0 {
+		unsent := workflow.Item{Binary: make(map[string]workflow.BinaryRef, len(item.Binary))}
+		for name, reference := range item.Binary {
+			if !sent[name] {
+				unsent.Binary[name] = reference
+			}
+		}
+		images, err := inputImages(request, unsent)
+		if err != nil {
+			return nil, fmt.Errorf("node %q: %w", nodeName, err)
+		}
+		if len(images) > 0 {
+			last := &messages[len(messages)-1]
+			if last.Role == ai.RoleUser {
+				last.Images = append(last.Images, images...)
+			} else {
+				messages = append(messages, ai.Message{Role: ai.RoleUser, Images: images})
+			}
+		}
+	}
 	return messages, nil
+}
+
+// chainRowImage resolves an image row to the URL the model reads. Unlike the
+// passthrough, which skips what it cannot send, a row names one picture, so
+// one that cannot be sent fails the item rather than leaving the model to
+// answer a question about an image it never saw.
+func chainRowImage(request engine.Request, item workflow.Item, row chainMessageRow, sent map[string]bool) (string, error) {
+	if row.MessageType == chainMessageImageURL {
+		url := strings.TrimSpace(row.ImageURL)
+		lower := strings.ToLower(url)
+		if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "data:image/") {
+			return "", fmt.Errorf("has image URL %q, want an http(s) or data:image URL", url)
+		}
+		return url, nil
+	}
+	if row.MessageType != chainMessageImageBinary {
+		return "", fmt.Errorf("has message type %q, want text, imageBinary, or imageUrl", row.MessageType)
+	}
+	key := strings.TrimSpace(row.BinaryKey)
+	if key == "" {
+		key = "data"
+	}
+	reference, ok := item.Binary[key]
+	if !ok {
+		return "", fmt.Errorf("reads binary %q, which the item does not carry", key)
+	}
+	if !strings.HasPrefix(reference.MediaType, "image/") {
+		return "", fmt.Errorf("reads binary %q, which is %q rather than an image", key, reference.MediaType)
+	}
+	if request.Binaries == nil {
+		return "", fmt.Errorf("reads binary %q, but this run has no binary store", key)
+	}
+	image, fits, err := imageDataURI(request, key, reference)
+	if err != nil {
+		return "", err
+	}
+	if !fits {
+		return "", fmt.Errorf("reads binary %q, which is larger than the %d MiB a vision request carries", key, maxVisionBytes>>20)
+	}
+	sent[key] = true
+	return image, nil
 }
 
 // withFormatInstructions states the required output shape in the last human
@@ -1888,8 +2013,11 @@ func withFormatInstructions(messages []ai.Message, instructions string) []ai.Mes
 
 // chainMessageRow is one typed row of the chain's message list.
 type chainMessageRow struct {
-	Type string
-	Text string
+	Type        string
+	Text        string
+	MessageType string
+	BinaryKey   string
+	ImageURL    string
 }
 
 // chainMessageRows reads the stored messages fixedCollection. An
@@ -1917,7 +2045,11 @@ func chainMessageRows(value any) ([]chainMessageRow, error) {
 		if !ok {
 			return nil, fmt.Errorf("messages.messageValues must be a list of message rows")
 		}
-		rows = append(rows, chainMessageRow{Type: chainLiteral(fields["type"]), Text: chainLiteral(fields["message"])})
+		rows = append(rows, chainMessageRow{
+			Type: chainLiteral(fields["type"]), Text: chainLiteral(fields["message"]),
+			MessageType: chainLiteral(fields["messageType"]), BinaryKey: chainLiteral(fields["binaryImageDataKey"]),
+			ImageURL: chainLiteral(fields["imageUrl"]),
+		})
 	}
 	return rows, nil
 }
@@ -1949,6 +2081,22 @@ func validateChainConfiguration(n workflow.Node) error {
 		case chainRoleSystem, chainRoleHuman, chainRoleAI, "expression", "":
 		default:
 			return fmt.Errorf("message %d has type %q, want system, human, or ai", index+1, row.Type)
+		}
+		if row.Type == chainRoleHuman {
+			switch row.MessageType {
+			case "", chainMessageText:
+			case chainMessageImageBinary, "expression":
+				// An expression-valued type may resolve to an image row,
+				// which has no text, so run time judges it.
+				continue
+			case chainMessageImageURL:
+				if strings.TrimSpace(row.ImageURL) == "" {
+					return fmt.Errorf("message %d is an image URL row with no URL", index+1)
+				}
+				continue
+			default:
+				return fmt.Errorf("message %d has message type %q, want text, imageBinary, or imageUrl", index+1, row.MessageType)
+			}
 		}
 		if strings.TrimSpace(row.Text) == "" {
 			return fmt.Errorf("message %d has empty text", index+1)
