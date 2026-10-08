@@ -1,7 +1,7 @@
 ---
 id: BUG-15st2k
 title: 'Canvas node rendering: AI port labels overlap, placeholders draw 24 ports, branch labels crossed, fallback icons, empty subtitles'
-status: todo
+status: done
 priority: high
 labels:
     - editor
@@ -9,7 +9,7 @@ labels:
     - rendering
 parent: EPIC-8rbys7
 created: "2026-09-23T01:48:15Z"
-updated: "2026-10-08T15:58:00Z"
+updated: "2026-10-08T16:20:00Z"
 ---
 
 # Description
@@ -144,9 +144,9 @@ none
 
 # Acceptance Criteria
 - [x] The agent's AI sub-node handles are spaced by count and their labels never overlap
-- [ ] A placeholder renders only the ports its edges use (or its original type's ports), as a sub-node circle when it only has AI outputs, labelled with a friendly name from the original type
+- [x] A placeholder renders only the ports its edges use (or its original type's ports), as a sub-node circle when it only has AI outputs, labelled with a friendly name from the original type
 - [x] IF/Switch output labels are offset from the wires, and steps after labelled outputs get extra horizontal gap
-- [ ] Every node type has a distinct glyph; No Operation doesn't reuse the Unsupported "?"; app nodes can show brand artwork via the icon route
+- [x] Every node type has a distinct glyph; No Operation doesn't reuse the Unsupported "?"; app nodes can show brand artwork via the icon route
 - [x] A subtitle that evaluates to empty (":") is hidden
 
 ## Verification (2026-10-08): still open
@@ -170,6 +170,20 @@ Fix commit: `690a2da`. Three of the five criteria are met. Two are not: the plac
 - **Empty subtitle hidden (met).** `nodeSubtitle` strips separator runs at either end before it decides the line is empty (`node-visual.ts`). This verification added the test `node-visual.test.ts` "hides a line that renders only its separators". The Chat button moved to the bottom-right (`workflow-editor.svelte:1333`), so it no longer covers the zoom controls (LEAD-8 d, confirmed in the app).
 
 Self-test setup: `make build-web` + `go build ./cmd/kilasflow` from this branch, served on 127.0.0.1:18095 with an isolated SQLite file (`KILASFLOW_DATABASE_DSN=/tmp/kf-verify/data/kilasflow.db`), driven with playwright-cli. Probe workflows were imported through `POST /api/v1/workflows/import`. Screenshots are in `/tmp/kf-verify/` and are not committed.
+
+## Fix (2026-10-08): the two open gaps
+
+- **Placeholder ports.** The port selection moved out of `canvas-node.svelte` into the pure helper `placeholderDefinition(definition, wiredInputs, wiredOutputs)` (`web/src/lib/workflow-editor/node-visual.ts`). It matches inputs against target handles and outputs against source handles separately, because both sides have a port called `main`. The old code merged them into one set, so a wired main output also kept the main input. It falls back to the plain main in and out only when nothing is wired at all. A tool wired only by its AI output now has no inputs, so it draws as the attachment circle. The execution replay node (`execution-canvas-node.svelte`) never trimmed placeholder ports and drew all 24. It now uses the same helper and shows the same friendly subtitle. Tests: `node-visual.test.ts` `describe('placeholderDefinition')` (5 cases).
+- **One glyph per type.** New test `nodes/glyphs_test.go` `TestEveryNodeTypeHasAGlyphOfItsOwn` takes every type `RegisterAll`, `RegisterVectorNodes` and the Telegram and WAHA packs register. It resolves each icon name through `glyphs.json` to its lucide component, and fails when two types draw the same component. Comparing components rather than names catches aliases: `memory-stick` used to resolve to `Archive`, the same icon as Aggregate. The only allowed exceptions are listed in `glyphVariants`: a trigger or tool that is the same service as its base node (Gmail Trigger, Google Drive Trigger, Telegram Trigger and pack.telegram, WAHA Trigger, HTTP Request Tool, Calculator Tool, Data table Tool, Workflow Tool and the Execute Workflow trigger). Different versions of one type share a glyph by design. A frontend test (`node-visual.test.ts` "draws two names alike only when glyphs.json says they are the same icon") keeps `GLYPHS` from aliasing two names that `glyphs.json` keeps apart. The new assignments:
+  - IF keeps `git-branch` (Split). Switch → `signpost`. Split Out → `ungroup`.
+  - Aggregate → `group`. Summarize → `sigma`. Remove Duplicates → `copy-minus`. Extract From File → `file-output`. Simple Memory's `memory-stick` now draws `MemoryStick`, not `Archive`.
+  - OpenAI Chat Model → `sparkles`. OpenAI-Compatible Chat Model → `brain`, which now draws `Brain`, not `Sparkles`. OpenRouter Chat Model → `route`. Embeddings → `axis-3d`. The provider's glyph is a new `icon` field on `chatModelProvider`.
+  - PostgreSQL v1/v2 keep `database`. MySQL v1/v2 → `server`. SQLite → `hard-drive`. `databaseNode` takes the icon as a parameter. Postgres PGVector Store → `database-search`. Vector Store → `boxes`. Default Data Loader keeps `layers`.
+  - When chat message received → `messages-square` (WAHA keeps `message-circle`). Limit → `list-end`. Text splitter keeps `scissors`. Structured Output Parser → `braces`. Sort keeps `arrow-down-up`.
+  - Code keeps `code`. Code (JavaScript) → `code-xml`. Code (JavaScript or Python) → `square-terminal`.
+- **Brand artwork (not done, out of scope).** App nodes can show artwork: a definition carries an `IconAsset`, and `GET /api/v1/node-types/{type}/icon` serves it as an `<img>` (`servedIconURL`). No built-in app node ships brand SVGs yet (Gmail, Google Drive, Telegram, WAHA, OpenAI, OpenRouter, PostgreSQL, MySQL). They still draw the distinct lucide glyphs above. Shipping the artwork, with licensing checked, is follow-up work.
+- **Self-test.** Ran `make build-web` and `go build`, then served on 127.0.0.1:18096 with an isolated SQLite file and drove it with playwright-cli. The probe workflow had a chat trigger, an AI Agent with an OpenAI model and a memory, and two tool placeholders (SerpAPI and Google Calendar Tool), then IF → Switch / Split Out. It was imported with `POST /api/v1/workflows/import`. Each placeholder rendered one handle, `top:outTool`, and no main input. Both drew as circles subtitled "Tool Serp Api" and "Google Calendar Tool". IF, Switch and Split Out drew three different glyphs. Screenshot: `/tmp/kf-ui3/01-canvas.png` (not committed). The replay node was not exercised in the app: a workflow that contains a placeholder cannot run, so there is no execution to replay. It shares the tested helper.
+- **Checks.** `go test ./nodes/ ./packs/... ./internal/node/` ok. `pnpm vitest run src/lib/workflow-editor` 514/514. `pnpm check` 0 errors, 0 warnings.
 
 # Implementation Plan
 

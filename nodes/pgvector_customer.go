@@ -27,7 +27,7 @@ func vectorStorePGVectorNode() node.Definition {
 		Description: "Inserts and retrieves vectors in a PostgreSQL database you own. The table must already exist with a vector column; this node never runs CREATE EXTENSION or CREATE TABLE.",
 		Category:    "AI",
 		Group:       []node.NodeGroup{node.GroupTransform},
-		Icon:        &node.NodeIcon{Light: "builtin:database"},
+		Icon:        &node.NodeIcon{Light: "builtin:database-search"},
 		IconColor:   "#336791",
 		Subtitle:    "{{ $parameter.mode }} {{ $parameter.tableName }}",
 		Inputs:      mainInput(),

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Definition, Node, Port } from '$lib/api/generated/models';
 
-import { BUILTIN_GLYPHS, FALLBACK_GLYPH, TILE, attachmentLabelRows, attachmentPorts, friendlyOriginalType, mainPorts, nodeChromeBorder, nodeChromeShadow, nodeIconBadgeClass, nodeShape, nodeSubtitle, nodeVisual, portOffset } from './node-visual';
+import { BUILTIN_GLYPHS, FALLBACK_GLYPH, TILE, attachmentLabelRows, attachmentPorts, friendlyOriginalType, mainPorts, nodeChromeBorder, nodeChromeShadow, nodeIconBadgeClass, nodeShape, nodeSubtitle, nodeVisual, placeholderDefinition, portOffset } from './node-visual';
 
 const MAIN: Port = { name: 'main', kind: 'main' };
 
@@ -258,6 +258,23 @@ describe('shipped glyphs', () => {
 
 		expect(missing).toEqual([]);
 	});
+
+	it('draws two names alike only when glyphs.json says they are the same icon', async () => {
+		// The server's distinct-glyph test (nodes/glyphs_test.go) compares the
+		// icon each name resolves to in glyphs.json. That holds on the canvas
+		// only if GLYPHS resolves the names the same way, so two names glyphs.json
+		// keeps apart must not share a component here.
+		const { default: shipped } = (await import('./glyphs.json')) as { default: Record<string, string> };
+		const clashes: string[] = [];
+		const names = Object.keys(shipped);
+		for (const [index, a] of names.entries()) {
+			for (const b of names.slice(index + 1)) {
+				if (shipped[a] !== shipped[b] && BUILTIN_GLYPHS[a] === BUILTIN_GLYPHS[b]) clashes.push(`${a} = ${b}`);
+			}
+		}
+
+		expect(clashes).toEqual([]);
+	});
 });
 
 describe('attachmentLabelRows', () => {
@@ -294,5 +311,54 @@ describe('friendlyOriginalType', () => {
 		expect(friendlyOriginalType(null)).toBeNull();
 		expect(friendlyOriginalType(undefined)).toBeNull();
 		expect(friendlyOriginalType('slack')).toBe('Slack');
+	});
+});
+
+describe('placeholderDefinition', () => {
+	// The placeholder family declares main in/out plus twelve AI ports each
+	// way; these are the shapes the import actually produces.
+	const AI_IN: Port[] = [
+		{ name: 'inModel', kind: 'ai_languageModel' },
+		{ name: 'inTool', kind: 'ai_tool' }
+	];
+	const AI_OUT: Port[] = [
+		{ name: 'outModel', kind: 'ai_languageModel' },
+		{ name: 'outTool', kind: 'ai_tool' }
+	];
+	const placeholder = definition([MAIN, ...AI_IN], [MAIN, { name: 'output1', kind: 'main' }, ...AI_OUT]);
+
+	it('draws a tool wired only by its AI output as a sub-node with no main input', () => {
+		// An imported SerpAPI tool: one edge, from its tool output to an agent.
+		const drawn = placeholderDefinition(placeholder, new Set(), new Set(['outTool']));
+		expect(drawn.inputs).toEqual([]);
+		expect(drawn.outputs).toEqual([{ name: 'outTool', kind: 'ai_tool' }]);
+		expect(nodeShape(drawn)).toBe('attachment');
+	});
+
+	it('keeps an input and an output apart when they share the name main', () => {
+		// Wired from its main output only: the main input is not in use, even
+		// though it is also called "main".
+		const drawn = placeholderDefinition(placeholder, new Set(), new Set(['main']));
+		expect(drawn.inputs).toEqual([]);
+		expect(drawn.outputs).toEqual([MAIN]);
+	});
+
+	it('draws only the wired ports on both sides', () => {
+		const drawn = placeholderDefinition(placeholder, new Set(['main', 'inModel']), new Set(['output1']));
+		expect(drawn.inputs).toEqual([MAIN, { name: 'inModel', kind: 'ai_languageModel' }]);
+		expect(drawn.outputs).toEqual([{ name: 'output1', kind: 'main' }]);
+	});
+
+	it('falls back to the plain main in and out only when nothing is wired at all', () => {
+		const drawn = placeholderDefinition(placeholder, new Set(), new Set());
+		expect(drawn.inputs).toEqual([MAIN]);
+		expect(drawn.outputs).toEqual([MAIN]);
+		expect(nodeShape(drawn)).toBe('step');
+	});
+
+	it('ignores handles the definition does not declare', () => {
+		const drawn = placeholderDefinition(placeholder, new Set([null, 'nothing']), new Set([undefined]));
+		expect(drawn.inputs).toEqual([MAIN]);
+		expect(drawn.outputs).toEqual([MAIN]);
 	});
 });

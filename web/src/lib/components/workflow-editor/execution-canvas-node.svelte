@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Component } from 'svelte';
-	import { Handle, Position, type NodeProps } from '@xyflow/svelte';
+	import { Handle, Position, useNodeConnections, type NodeProps } from '@xyflow/svelte';
 	import Ban from '@lucide/svelte/icons/ban';
 	import Check from '@lucide/svelte/icons/check';
 	import CircleDashed from '@lucide/svelte/icons/circle-dashed';
@@ -14,12 +14,14 @@
 	import {
 		TILE,
 		attachmentPorts,
+		friendlyOriginalType,
 		glyphClass,
 		mainPorts,
 		nodeChromeShadow,
 		nodeIconBadgeClass,
 		nodeSubtitle,
 		nodeVisual,
+		placeholderDefinition,
 		portOffset
 	} from '$lib/workflow-editor/node-visual';
 	import { portLabel, resolvedPorts } from '$lib/workflow-editor/ports';
@@ -33,9 +35,28 @@
 	 */
 	let { data, selected }: NodeProps<EditorFlowNode> = $props();
 
-	const visual = $derived(nodeVisual(data.definition));
+	const sourceConnections = useNodeConnections({ handleType: 'source' });
+	const targetConnections = useNodeConnections({ handleType: 'target' });
+
 	const node = $derived(data.workflowNode);
-	const subtitle = $derived(nodeSubtitle(node, data.definition));
+	// An import placeholder is drawn as the editor draws it: only the ports its
+	// edges use, and the readable name of the type it stands in for.
+	const isPlaceholder = $derived(node.type === 'kilasflow.unsupported');
+	const definition = $derived(
+		isPlaceholder
+			? placeholderDefinition(
+					data.definition,
+					new Set(targetConnections.current.map((connection) => connection.targetHandle)),
+					new Set(sourceConnections.current.map((connection) => connection.sourceHandle))
+				)
+			: data.definition
+	);
+	const visual = $derived(nodeVisual(definition));
+	const subtitle = $derived(
+		isPlaceholder
+			? friendlyOriginalType(typeof node.parameters?.originalType === 'string' ? node.parameters.originalType : null)
+			: nodeSubtitle(node, data.definition)
+	);
 	const status = $derived(data.runStatus ?? 'skipped');
 	const accent = $derived(statusAccent(status));
 	const reached = $derived(status !== 'skipped');
@@ -44,7 +65,7 @@
 	// rules, a Merge's inputs, the Error output of a node on "continue using
 	// error output" — carry edges in the replay too, and an edge whose handle
 	// is missing is silently not drawn (the failed items' branch vanished).
-	const ports = $derived(resolvedPorts(node, data.definition));
+	const ports = $derived(resolvedPorts(node, definition));
 	const mainInputs = $derived(mainPorts(ports.inputs));
 	const mainOutputs = $derived(mainPorts(ports.outputs));
 	const attachmentInputs = $derived(attachmentPorts(ports.inputs));

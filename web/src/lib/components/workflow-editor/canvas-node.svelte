@@ -27,6 +27,7 @@
 		nodeShape,
 		nodeSubtitle,
 		nodeVisual,
+		placeholderDefinition,
 		portOffset
 	} from '$lib/workflow-editor/node-visual';
 	import { portLabel, resolvedPorts } from '$lib/workflow-editor/ports';
@@ -56,27 +57,17 @@
 	// a Switch has one output per rule and a Merge as many inputs as it was
 	// told to take, and both change as the user configures the node.
 	//
-	// A placeholder draws only the ports its edges actually use. Its definition
-	// is the widest member of the arity family the import registered, so the
-	// full declaration is 24 AI diamonds plus main in and out — three times
-	// wider than the node it stands in for, with every label printed over its
-	// neighbours. A placeholder can never run, so an unconnected port has
-	// nothing to offer; when nothing connects at all, the plain main in/out
-	// stay so the tile can still be wired by hand.
-	const connectedHandles = $derived(
-		new Set([...sourceConnections.current.map((c) => c.sourceHandle), ...targetConnections.current.map((c) => c.targetHandle)])
+	// A placeholder draws only the ports its edges actually use (see
+	// placeholderDefinition); the replay node draws it the same way.
+	const effectiveDefinition = $derived(
+		isPlaceholder
+			? placeholderDefinition(
+					data.definition,
+					new Set(targetConnections.current.map((connection) => connection.targetHandle)),
+					new Set(sourceConnections.current.map((connection) => connection.sourceHandle))
+				)
+			: data.definition
 	);
-	const effectiveDefinition = $derived.by(() => {
-		if (!isPlaceholder) return data.definition;
-		const keep = (declared: typeof data.definition.inputs) => {
-			const wired = (declared ?? []).filter((port) => connectedHandles.has(port.name));
-			return wired.length > 0 ? wired : mainPorts(declared ?? []).slice(0, 1);
-		};
-		const inputs = keep(data.definition.inputs);
-		const outputs = keep(data.definition.outputs);
-		if (inputs === data.definition.inputs && outputs === data.definition.outputs) return data.definition;
-		return { ...data.definition, inputs, outputs };
-	});
 	const visual = $derived(nodeVisual(effectiveDefinition));
 	const subtitle = $derived(
 		isPlaceholder
