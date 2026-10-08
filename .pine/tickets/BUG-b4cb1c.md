@@ -117,7 +117,7 @@ Criteria 1-3 done; criterion 4 (CLI-18) only partly, so the ticket stays `todo`.
 - **CLI help nouns:** `registerCreateFlags(noun)` takes the verb's noun; `credential create/update -h` say "credential document to send", `workflow create -h` says "workflow document to send". Test: `internal/cli/document_flag_help_test.go`. `make generate-skills-command-reference-check` up to date.
 - **CLI-18, partly:** cli.md no longer states a catalogue size ("90-entry" → "the whole catalogue"), and the `node describe` / `node options` examples use the full type `kilasflow.httpRequest` (describe matches the type exactly, so `httpRequest` exited 4).
 
-Left for criterion 4: run cli.md's fenced examples against a test server in CI; the `--url ''` exit-code claim (cli.md says exit 2 naming the four ways to set a server; the binary exits 1 `network_error`, re-checked 2026-10-08, CLI-14: fix the binary or the prose); the `--token "$KILASFLOW_TOKEN"` example (CLI-11); and the skills' contradiction of the "deliberately absent" list (CLI-3).
+Left for criterion 4: run cli.md's fenced examples against a test server in CI; the `--token "$KILASFLOW_TOKEN"` example (CLI-11); and the skills' contradiction of the "deliberately absent" list (CLI-3).
 
 # Implementation Plan
 
@@ -128,3 +128,8 @@ See each finding's suggested fix above.
 # Related Files
 
 # Attachments
+
+## Fix (2026-10-08, CLI-14)
+
+The binary now does what cli.md says. Every verb that sends a request with no base URL (`--url ''`) is refused with exit 2 and `no server URL: pass --url, set KILASFLOW_URL, or name one in the configuration file`. Before, it exited 1 with `network_error: unsupported protocol scheme ""`. The check sits in the CLI client's `buildRequest`, so it fires only where a request would have been sent, after each verb's own argument checks. Test: `TestAServerVerbWithNoServerURLIsAUsageError` (internal/cli/exit_test.go), which failed first for `workflow list`, `workflow get`, `exec get` and `credential list`. Still left for criterion 4: the CI job that runs cli.md's examples, CLI-11 and CLI-3.
+

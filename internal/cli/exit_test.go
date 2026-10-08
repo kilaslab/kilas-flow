@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -97,5 +98,30 @@ func TestExitCodeConstantsAreTheDocumentedContract(t *testing.T) {
 		ExitNotFound != wantNotFound || ExitConflict != wantConflict || ExitNotReady != wantNotReady {
 		t.Fatalf("exit codes changed: %d %d %d %d %d %d %d",
 			ExitOK, ExitFailure, ExitUsage, ExitRefused, ExitNotFound, ExitConflict, ExitNotReady)
+	}
+}
+
+// `--url ”` is how a caller says "no server", and cli.md promises a verb that
+// needs one refuses it with exit 2 and the ways to name one. Most verbs sent
+// their request to an empty base URL instead and exited 1 with network_error,
+// which an agent reads as "report, do not retry" for what is its own missing
+// configuration (BUG-b4cb1c, CLI-14).
+func TestAServerVerbWithNoServerURLIsAUsageError(t *testing.T) {
+	for _, args := range [][]string{
+		{"workflow", "list"},
+		{"workflow", "get", "wf_x"},
+		{"exec", "get", "e_x"},
+		{"credential", "list"},
+	} {
+		code, _, stdout, _ := runCLI(t, Env{
+			Args:   append(append([]string{}, args...), "--url", ""),
+			Getenv: homeEnv(t.TempDir(), nil),
+		})
+		if code != ExitUsage {
+			t.Errorf("%v --url '' exit = %d, want %d (stdout=%q)", args, code, ExitUsage, stdout)
+		}
+		if !strings.Contains(stdout, "no server URL") {
+			t.Errorf("%v --url '' stdout = %q, want the usage error naming how to set a server", args, stdout)
+		}
 	}
 }

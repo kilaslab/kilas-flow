@@ -157,6 +157,14 @@ func (c *Client) Stream(ctx context.Context, method, path string, query url.Valu
 // buildRequest assembles one request and returns the URL it targets, which the
 // trace needs and a caller should not have to recompose.
 func (c *Client) buildRequest(ctx context.Context, method, path string, query url.Values, header http.Header, body []byte) (*http.Request, string, error) {
+	// No base URL is the caller's configuration, not the network: `--url ''`
+	// says "no server", and a request built from it failed as an unsupported
+	// protocol scheme, exit 1, which an agent reads as "report, do not retry".
+	// Every verb that reaches here needs a server, so it is refused the way
+	// requireServerURL refuses one, with exit 2 (BUG-b4cb1c, CLI-14).
+	if strings.TrimSpace(c.BaseURL) == "" {
+		return nil, "", usageError("no server URL: pass --url, set %s, or name one in the configuration file (--config <path>)", envURLVar)
+	}
 	target := c.BaseURL + path
 	if len(query) > 0 {
 		target += "?" + query.Encode()
