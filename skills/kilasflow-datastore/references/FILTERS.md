@@ -74,7 +74,9 @@ composed statement contains no byte of a supplied value (`buildFilterClause`).
   (`queryValue` in internal/api/handlers/datastores.go).
 - **Inside a node**, `keyValue` supports expressions — `$json.email` binds per
   item — while `keyName` and the increment's `counterColumn` never do: a column
-  name is resolved against the catalogue, not taken from an item
+  name is resolved against the catalogue, not taken from an item. The same holds
+  for a condition's operator and for a whole condition row written as one
+  expression: the node, not the item, decides which column is compared and how
   (nodes/datastore.go).
 
 ## Columns you may filter on

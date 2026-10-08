@@ -3155,6 +3155,25 @@ func (executor *AgentExecutor) datastoreToolFrom(ir workflow.IRNode, descriptor 
 		// A write without its template has nothing to say what it writes.
 		return nil, fmt.Errorf("node %q: tool %q runs %s but carries no parameters", ir.Name, nodeName, operation)
 	}
+	// The tool's own rules, again, here. The tool executor checked them when
+	// it built this descriptor, but a descriptor can reach the agent without
+	// passing through it — pinned output, an import, a graph that bypassed
+	// the compiler — and what a write may touch must not depend on how its
+	// descriptor arrived. The check reads a copy pinned to the table the
+	// descriptor resolved, the one every call uses, and the operation the
+	// parameters perform must be the one the descriptor claims: a write
+	// claimed over a read's parameters would skip the write's rules.
+	checked := make(map[string]any, len(parameters)+1)
+	for key, value := range parameters {
+		checked[key] = value
+	}
+	checked["dataTableId"] = property.WriteLocator(property.Locator{Mode: "id", Value: datastoreID})
+	if err := checkDatastoreToolOperation(checked); err != nil {
+		return nil, fmt.Errorf("node %q: tool %q: %w", ir.Name, nodeName, err)
+	}
+	if performed := DatastoreToolOperation(checked); performed != operation {
+		return nil, fmt.Errorf("node %q: tool %q carries operation %q, but its parameters perform %s", ir.Name, nodeName, operation, performed)
+	}
 	return &datastoreTool{
 		name:          name,
 		description:   textValue(descriptor["description"], ""),
