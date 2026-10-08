@@ -334,3 +334,59 @@ func TestCalculatorToolTreatsFromAIArgumentsAsData(t *testing.T) {
 		t.Errorf("outcome = %+v, want 2 + 1 to evaluate to 3", outcome)
 	}
 }
+
+// TestAToolDoesNotAskForAFromAICallInAnExpressionsLiteralText covers
+// {"mode":"expression","value":"Customer $fromAI('name')"}: the call sits in
+// the expression's literal text, which is rendered as written, so the value
+// stays "Customer $fromAI('name')" whatever the model sends. The schema used
+// to require name all the same. It is left out now, and the call beside it
+// inside {{ }} is still offered and filled.
+func TestAToolDoesNotAskForAFromAICallInAnExpressionsLiteralText(t *testing.T) {
+	t.Parallel()
+
+	workflows := &stubWorkflows{items: []workflow.Item{{JSON: map[string]any{"ok": true}}}}
+	provider, offered := schemaRecordingProvider(t, []string{
+		assistantToolCalls(`{"name":"greet","arguments":"{\"city\":\"Utrecht\"}"}`),
+		assistantAnswer("done"),
+	})
+	failed := false
+	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil)
+	_, err := executor.Execute(context.Background(), agentIR(t, map[string]any{"prompt": "Greet."}), workflow.NodeInput{
+		"main":  {{JSON: map[string]any{}}},
+		"model": {modelItem(provider.URL)},
+		"tools": {toolItem(map[string]any{
+			"kind": "workflow", "name": "greet", "description": "Greets.", "nodeName": "Greet",
+			"workflowId": "wf_greet",
+			"parameters": map[string]any{"workflowId": "wf_greet", "workflowInputs": map[string]any{
+				"greeting": expr("Customer $fromAI('name')"),
+				"city":     expr("{{ $fromAI('city', 'the city') }}"),
+			}},
+		})},
+	}, engine.Request{
+		Credentials: agentCredentials(), Workflows: workflows, Execution: agentExecution(),
+		Events: func(event engine.NodeEvent) {
+			if event.Name == string(ai.EventToolFailed) {
+				failed = true
+			}
+		},
+	})
+	if err != nil || failed {
+		t.Fatalf("Execute() = %v, tool failed = %v, want the call to run", err, failed)
+	}
+
+	schema := offered()["greet"]
+	properties, _ := schema["properties"].(map[string]any)
+	if _, asked := properties["name"]; asked {
+		t.Errorf("tool schema = %#v, want no name: nothing would fill it", schema)
+	}
+	if required, _ := schema["required"].([]any); !reflect.DeepEqual(required, []any{"city"}) {
+		t.Errorf("required = %#v, want only the call inside {{ }}", schema["required"])
+	}
+	if len(workflows.calls) != 1 {
+		t.Fatalf("sub-workflow calls = %#v, want one", workflows.calls)
+	}
+	sent := workflows.calls[0].Items[0].JSON
+	if sent["city"] != "Utrecht" || sent["greeting"] != "Customer $fromAI('name')" {
+		t.Errorf("sub-workflow input = %#v, want the city filled and the literal text as written", sent)
+	}
+}
