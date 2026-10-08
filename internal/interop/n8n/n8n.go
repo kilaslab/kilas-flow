@@ -729,7 +729,72 @@ func byN8NType(nodeType string) (mapping, bool) {
 			return entry, true
 		}
 	}
+	return toolVariantMapping(nodeType)
+}
+
+// toolVariant is the KilasFlow tool a mapped node's agent-tool form becomes.
+type toolVariant struct {
+	kilasType string
+	// toKilas is the base node's translator plus the tool's own naming and
+	// description, so the request the tool makes is read exactly as the
+	// node's would be.
+	toKilas func(node Node) (map[string]any, []Unsupported)
+}
+
+// toolVariants is keyed by the KilasFlow type the base node imports as. n8n
+// exports every usableAsTool node as its own type with Tool appended,
+// carrying the base node's parameters plus toolDescription, so one entry here
+// covers that whole family instead of one mapping per n8n type. A base node
+// with no entry has no tool form on this server yet. The Data Table tool is
+// not here: it has an explicit mapping of its own, found first.
+var toolVariants = map[string]toolVariant{
+	"kilasflow.httpRequest": {kilasType: "kilasflow.httpTool", toKilas: httpToolToKilas},
+}
+
+// toolVariantMapping derives the import mapping of an n8n <type>Tool from
+// its base node's. It is import-only: the KilasFlow tool exports through its
+// own entry, so a round trip lands on the n8n node that tool is mapped to.
+func toolVariantMapping(nodeType string) (mapping, bool) {
+	base, ok := toolVariantBase(nodeType)
+	if !ok {
+		return mapping{}, false
+	}
+	variant, ok := toolVariants[base.kilasType]
+	if !ok {
+		return mapping{}, false
+	}
+	return mapping{
+		n8nType: nodeType, kilasType: variant.kilasType, kilasVersion: workflow.V(1),
+		toKilas: variant.toKilas, refuseKilas: base.refuseKilas, importOnly: true,
+	}, true
+}
+
+// toolVariantBase is the mapping of the node an n8n <type>Tool is the agent
+// form of, when that node imports.
+func toolVariantBase(nodeType string) (mapping, bool) {
+	baseType, isTool := strings.CutSuffix(nodeType, "Tool")
+	if !isTool || baseType == "" {
+		return mapping{}, false
+	}
+	for _, entry := range mappings {
+		if entry.n8nType == baseType && !entry.exportOnly {
+			return entry, true
+		}
+	}
 	return mapping{}, false
+}
+
+// unmappedReason is the placeholder's diagnostic for a type with no mapping.
+// A tool variant whose base node imports is not "no equivalent": the node is
+// here, its agent-tool form is what is missing, and saying so tells the
+// author the step node is the way to keep the work.
+func unmappedReason(nodeType string) string {
+	if base, ok := toolVariantBase(nodeType); ok {
+		return fmt.Sprintf("KilasFlow imports the n8n node %q, but not its agent-tool form %q: there is no %s tool here yet. "+
+			"It was imported as an unsupported placeholder: the workflow can be edited, but it cannot run until this tool is replaced.",
+			base.n8nType, nodeType, base.kilasType)
+	}
+	return fmt.Sprintf("KilasFlow has no equivalent of the n8n node %q. It was imported as an unsupported placeholder: the workflow can be edited, but it cannot run until this node is replaced.", nodeType)
 }
 
 func byKilasType(nodeType string) (mapping, bool) {
@@ -868,8 +933,7 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 			// placeholder exists so a node "came from n8n and belongs there",
 			// and a round trip that returned it stripped of its credentials,
 			// its notes or its retry policy would defeat exactly that.
-			unsupported = append(unsupported, placeholderFor(&converted, name, id, node, arityByName,
-				fmt.Sprintf("KilasFlow has no equivalent of the n8n node %q. It was imported as an unsupported placeholder: the workflow can be edited, but it cannot run until this node is replaced.", node.Type)))
+			unsupported = append(unsupported, placeholderFor(&converted, name, id, node, arityByName, unmappedReason(node.Type)))
 			nodes = append(nodes, converted)
 			continue
 		}
