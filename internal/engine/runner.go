@@ -246,6 +246,10 @@ type Request struct {
 	// so a service can announce a node that has started — the half of live
 	// progress a completed-row sink cannot report. Nil is a no-op.
 	NodeStartSink func(nodeID string)
+	// Now is the clock trace rows are timed against, so a node run says when
+	// it started and when it finished. Nil reads the wall clock; the service
+	// passes its own, which a test moves by hand.
+	Now func() time.Time
 	// NodeOutputs maps a completed node's display name to its first output
 	// item, backing the `$node` expression root. The runner fills it as the
 	// graph progresses, so a node only ever sees nodes that ran before it.
@@ -406,6 +410,15 @@ type NodeRun struct {
 	// Console is what the node's code printed, a ConsoleDetail captured from
 	// its ConsoleEventName events. Nil when it printed nothing.
 	Console json.RawMessage
+	// StartedAt and FinishedAt are when the invocation this row records began
+	// and ended, on the request's clock. The runner stamps them because it is
+	// the only place that sees the node start: the service renders the row
+	// after the node has finished, and stamping it there is what gave every
+	// node, a 30 s agent included, a duration of 0 ms. A row for something
+	// that never ran — a skipped branch, a refused resume — takes no time, and
+	// starts when it finishes.
+	StartedAt  time.Time
+	FinishedAt time.Time
 }
 
 // Result contains node data in execution order and outputs of graph leaves.
@@ -834,7 +847,17 @@ func (state *runState) complete(graph preparedGraph, node workflow.IRNode, input
 
 // record appends one trace row and hands it to the run's progress sink, which
 // is how a running execution is visible before it finishes.
+//
+// A row is finished the moment it is recorded, so its finish is stamped here,
+// on the one path every row takes. Its start is the caller's, who saw the node
+// begin; a row with none took no time.
 func (state *runState) record(run NodeRun, request *Request) {
+	if run.FinishedAt.IsZero() {
+		run.FinishedAt = request.clock()
+	}
+	if run.StartedAt.IsZero() {
+		run.StartedAt = run.FinishedAt
+	}
 	state.result.NodeRuns = append(state.result.NodeRuns, run)
 	if request.NodeRunSink == nil {
 		return
@@ -1111,8 +1134,10 @@ func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Reques
 		// before it, and the run goes on to the items after it. The node
 		// completes once, when its last item is resolved — here, on a later
 		// resume, or not at all if an item after this one fails the run.
+		progress := resumedProgress(state, graph, node, checkpoint, partial, output)
+		progress.started = request.clock()
 		suspended, err := runner.resolveItems(ctx, graph, &request, state, node, partial.Input,
-			retryPolicy(node.Settings), resumedProgress(state, graph, node, checkpoint, partial, output))
+			retryPolicy(node.Settings), progress)
 		if err != nil {
 			return *state.result, err
 		}
@@ -1247,6 +1272,10 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 	if _, found := runner.executors.Lookup(node.Definition.ExecutorID); !found {
 		return nil, fmt.Errorf("node %q executor %q is not registered", node.ID, node.Definition.ExecutorID)
 	}
+	// The node starts here, and every row this invocation writes keeps the
+	// moment: a retried success reads the time its retries took with it, as
+	// n8n counts a node's execution time.
+	started := request.clock()
 	if request.NodeStartSink != nil {
 		request.NodeStartSink(node.ID)
 	}
@@ -1261,7 +1290,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 	// n8n resolves continueOnFail inside the item loop: one failing item must
 	// not discard the items that already succeeded or skip the ones after it.
 	if perItemTolerance(node, policy) && len(input[mainPortName]) > 0 {
-		return runner.runPerItem(ctx, graph, request, state, node, input, policy)
+		return runner.runPerItem(ctx, graph, request, state, node, input, policy, started)
 	}
 
 	capture := &responseCapture{}
@@ -1280,7 +1309,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 			sources := lineageSources(graph.incoming[node.ID], input)
 			assembled := state.assembleOutcomes(node, sources, input, outcomes, policy.onError)
 			run := NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: outcomes.first(), Attempt: attempt, ErrorCode: "node.partial",
-				Response: capture.response, Console: capture.consoleOutput()}
+				Response: capture.response, Console: capture.consoleOutput(), StartedAt: started}
 			if outcomes.failed() == len(outcomes) {
 				run.ErrorCode = "node.failed"
 			}
@@ -1291,7 +1320,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 			// The console is kept on a failure too: what the code printed
 			// before it failed is usually how its author finds out why.
 			state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: cause, Attempt: attempt, ErrorCode: code,
-				Console: capture.consoleOutput()}, request)
+				Console: capture.consoleOutput(), StartedAt: started}, request)
 			return nil, fmt.Errorf("execute node %q: %w", node.ID, cause)
 		}
 		// Tolerated: the node emits error items rather than aborting, and the
@@ -1304,7 +1333,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 		state.stampProvenance(node, graph.incoming[node.ID], input, output)
 		state.complete(graph, node, input, output, NodeRun{
 			NodeID: node.ID, Input: cloneInput(input), Error: cause, Attempt: attempt, ErrorCode: code,
-			Response: capture.response, Console: capture.consoleOutput(),
+			Response: capture.response, Console: capture.consoleOutput(), StartedAt: started,
 		}, request)
 		return nil, nil
 	}
@@ -1323,7 +1352,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 	state.stampProvenance(node, graph.incoming[node.ID], input, output)
 	state.complete(graph, node, input, output, NodeRun{
 		NodeID: node.ID, Input: cloneInput(input), Attempt: attempt,
-		Response: capture.response, Console: capture.consoleOutput(),
+		Response: capture.response, Console: capture.consoleOutput(), StartedAt: started,
 	}, request)
 	return nil, nil
 }
@@ -1347,13 +1376,17 @@ func (runner *Runner) invoke(ctx context.Context, graph preparedGraph, node work
 		attempt int
 	)
 	for attempt = 1; attempt <= policy.attempts; attempt++ {
+		// A failed attempt's row is timed from its own start, so a reader
+		// sees what each try took rather than each one reading the same
+		// start as the first.
+		attemptStarted := request.clock()
 		// The per-node context is rebuilt each time round, because its cancel
 		// must fire per attempt rather than once for all of them — a shared
 		// deadline would make the second attempt inherit the first one's
 		// remaining time.
 		nodeCtx, cancel, timeout, err := nodeContext(ctx, node)
 		if err != nil {
-			state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: err, Attempt: attempt, ErrorCode: "config.invalid"}, request)
+			state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: err, Attempt: attempt, ErrorCode: "config.invalid", StartedAt: attemptStarted}, request)
 			return nil, nil, "", attempt, nil, err
 		}
 		execution := cloneRequest(*request)
@@ -1411,7 +1444,7 @@ func (runner *Runner) invoke(ctx context.Context, graph preparedGraph, node work
 		if attempt < policy.attempts {
 			// Each attempt's row keeps what that attempt printed.
 			state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: err, Attempt: attempt, ErrorCode: code,
-				Console: capture.takeConsole()}, request)
+				Console: capture.takeConsole(), StartedAt: attemptStarted}, request)
 			if !sleepBetweenAttempts(ctx, policy.wait) {
 				// The execution was cancelled while waiting; stop here rather
 				// than burning the remaining attempts.
@@ -1425,12 +1458,12 @@ func (runner *Runner) invoke(ctx context.Context, graph preparedGraph, node work
 
 // runPerItem runs a node once per input item, so a tolerated failure costs the
 // failing item and nothing else.
-func (runner *Runner) runPerItem(ctx context.Context, graph preparedGraph, request *Request, state *runState, node workflow.IRNode, input workflow.NodeInput, policy retry) (*SuspendError, error) {
+func (runner *Runner) runPerItem(ctx context.Context, graph preparedGraph, request *Request, state *runState, node workflow.IRNode, input workflow.NodeInput, policy retry, started time.Time) (*SuspendError, error) {
 	assembled := make(workflow.NodeOutput, len(node.Definition.Outputs))
 	for index := range assembled {
 		assembled[index] = []workflow.Item{}
 	}
-	return runner.resolveItems(ctx, graph, request, state, node, input, policy, perItemProgress{assembled: assembled, capture: &responseCapture{}})
+	return runner.resolveItems(ctx, graph, request, state, node, input, policy, perItemProgress{assembled: assembled, capture: &responseCapture{}, started: started})
 }
 
 // perItemProgress is how far one per-item run has got: the next item to
@@ -1446,6 +1479,11 @@ type perItemProgress struct {
 	// answers the caller from the first item — the same item the boundary
 	// answers from.
 	capture *responseCapture
+	// started is when the run's first item began, which its one row is timed
+	// from. A run resumed from a checkpoint is timed from the resume, as n8n
+	// times a node that continues after a wait: the time spent suspended is
+	// the execution's, not the node's.
+	started time.Time
 }
 
 // resolveItems resolves a per-item run's items from progress.next on, and
@@ -1513,7 +1551,8 @@ func (runner *Runner) resolveItems(ctx context.Context, graph preparedGraph, req
 		}
 		state.stampPerItem(node, sources, item, assembled, before)
 	}
-	run := NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: firstCause, Response: capture.response, Console: capture.consoleOutput()}
+	run := NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: firstCause, Response: capture.response, Console: capture.consoleOutput(),
+		StartedAt: progress.started}
 	if firstCause != nil {
 		run.ErrorCode = "node.partial"
 		if failed == len(items) {
@@ -1866,6 +1905,15 @@ func nodeInput(edges []workflow.IREdge, completed map[string]workflow.NodeOutput
 	return input, nil
 }
 
+// clock reads the time a trace row is stamped with, in UTC as the store keeps
+// it.
+func (request *Request) clock() time.Time {
+	if request.Now != nil {
+		return request.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
 // cloneRequest is what each executor is handed.
 //
 // Every field an expression can read has to be here. `NodeItems`, `Workflow`
@@ -1884,6 +1932,7 @@ func cloneRequest(request Request) Request {
 		Events:        request.Events,
 		NodeRunSink:   request.NodeRunSink,
 		NodeStartSink: request.NodeStartSink,
+		Now:           request.Now,
 		Workflows:     request.Workflows,
 		// Shared, not copied: every node run of the execution reads and
 		// writes the one handle.

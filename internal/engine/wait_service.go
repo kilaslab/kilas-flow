@@ -445,6 +445,8 @@ func (service *Service) newRequest(record execution.Record, document workflow.Do
 		StaticData:  service.staticDataFor(record),
 		Env:         service.environment,
 		Credentials: &tenantCredentials{store: service.credentials, tenant: repository.TenantScope{ID: record.TenantID}},
+		// Node runs are timed on the service's clock, the one a test moves.
+		Now: service.clock,
 		Events: func(event NodeEvent) {
 			service.publish(events.Event{
 				TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
@@ -636,10 +638,10 @@ func (service *Service) persistTraceRow(ctx context.Context, tenant repository.T
 		}
 		errorPayload = structuredError(run.ErrorCode, run.Error)
 	}
-	now := time.Now().UTC()
+	startedAt, finishedAt := service.runTimes(run)
 	if _, err := service.executions.CreateNodeRun(ctx, tenant, execution.NodeRun{
 		TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID, Attempt: attemptOf(run), RunIndex: run.RunIndex, Sequence: sequence,
-		Status: status, Input: input, Output: output, Error: errorPayload, Response: run.Response, Console: run.Console, StartedAt: now, FinishedAt: &now, LeaseOwner: record.LeaseOwner,
+		Status: status, Input: input, Output: output, Error: errorPayload, Response: run.Response, Console: run.Console, StartedAt: startedAt, FinishedAt: finishedAt, LeaseOwner: record.LeaseOwner,
 	}); err != nil {
 		return fmt.Errorf("persist node %q run: %w", run.NodeID, err)
 	}
