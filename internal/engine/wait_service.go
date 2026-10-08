@@ -400,9 +400,15 @@ func (service *Service) resumeRun(ctx context.Context, record execution.Record, 
 
 // adaptStoredResumeOutput fits one stored resume output to its node's port
 // count. Stored single-port (the shape both the approval surface and the
-// timer sweeper write); padded with empty ports when the node declares more.
+// timer sweeper write); padded with empty ports when the node returns more.
 // Truncation never happens silently: extra ports are refused rather than
 // dropped.
+//
+// The count is the one the node's executor returns, not every port it
+// declares: an error output is the runner's to add, which Resume does as it
+// completes the node. Padded to the declared count, a Wait set to continue
+// using its error output stored two streams where Resume takes one, and could
+// never resume.
 func adaptStoredResumeOutput(ir workflow.IR, nodeID string, raw json.RawMessage) (workflow.NodeOutput, error) {
 	var output workflow.NodeOutput
 	if err := json.Unmarshal(raw, &output); err != nil {
@@ -411,7 +417,7 @@ func adaptStoredResumeOutput(ir workflow.IR, nodeID string, raw json.RawMessage)
 	want := 1
 	for _, node := range ir.Nodes {
 		if node.ID == nodeID {
-			want = len(node.Definition.Outputs)
+			want = expectedPorts(node)
 			break
 		}
 	}
@@ -422,7 +428,7 @@ func adaptStoredResumeOutput(ir workflow.IR, nodeID string, raw json.RawMessage)
 		return output, nil
 	}
 	if len(output) > want {
-		return nil, fmt.Errorf("resume output has %d streams, node %q declares %d", len(output), nodeID, want)
+		return nil, fmt.Errorf("resume output has %d streams, node %q returns %d", len(output), nodeID, want)
 	}
 	for len(output) < want {
 		output = append(output, []workflow.Item{})
