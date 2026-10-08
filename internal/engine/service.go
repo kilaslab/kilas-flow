@@ -654,7 +654,7 @@ func (service *Service) traceRows(record execution.Record, nodeTypes map[string]
 			}
 			errorPayload = structuredError(run.ErrorCode, run.Error)
 		}
-		now := time.Now().UTC()
+		startedAt, finishedAt := service.runTimes(run)
 		sequenceNumber := seqBase + sequence + 1
 		eventType := events.NodeCompleted
 		// A skipped node reached a terminal state without failing. Publishing
@@ -670,7 +670,7 @@ func (service *Service) traceRows(record execution.Record, nodeTypes map[string]
 				Attempt: attemptOf(run), RunIndex: run.RunIndex, Sequence: sequenceNumber,
 				Status: status, Input: input, Output: output, Error: errorPayload,
 				Response: run.Response, Console: run.Console,
-				StartedAt: now, FinishedAt: &now, LeaseOwner: record.LeaseOwner,
+				StartedAt: startedAt, FinishedAt: finishedAt, LeaseOwner: record.LeaseOwner,
 			},
 			event: events.Event{
 				TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
@@ -680,6 +680,26 @@ func (service *Service) traceRows(record execution.Record, nodeTypes map[string]
 		})
 	}
 	return rows, nil
+}
+
+// runTimes is when one node run started and finished, as the runner stamped
+// them on the row.
+//
+// The row used to be stamped here instead, with the time it was rendered as
+// both its start and its finish, so every node read 0 ms however long it ran.
+// A row the runner did not stamp (a run refused before it reached the graph)
+// is given the render time, the closest the service knows.
+func (service *Service) runTimes(run NodeRun) (time.Time, *time.Time) {
+	finishedAt := run.FinishedAt
+	if finishedAt.IsZero() {
+		finishedAt = service.clock()
+	}
+	finishedAt = finishedAt.UTC()
+	startedAt := run.StartedAt.UTC()
+	if run.StartedAt.IsZero() || startedAt.After(finishedAt) {
+		startedAt = finishedAt
+	}
+	return startedAt, &finishedAt
 }
 
 // traceWriter persists a run's node rows while the graph is still running.
@@ -1374,13 +1394,13 @@ func (service *Service) persistChild(ctx context.Context, tenant repository.Tena
 			status = execution.StatusFailed
 			errorPayload = structuredError(run.ErrorCode, run.Error)
 		}
-		now := time.Now().UTC()
+		startedAt, finishedAt := service.runTimes(run)
 		rows = append(rows, execution.NodeRun{
 			TenantID: record.TenantID, ExecutionID: record.ID, NodeID: run.NodeID,
 			Attempt: attemptOf(run), RunIndex: run.RunIndex, Sequence: sequence + 1,
 			Status: status, Input: input, Output: output, Error: errorPayload,
 			Response: run.Response, Console: run.Console,
-			StartedAt: now, FinishedAt: &now, LeaseOwner: record.LeaseOwner,
+			StartedAt: startedAt, FinishedAt: finishedAt, LeaseOwner: record.LeaseOwner,
 		})
 	}
 	if _, err := service.executions.CreateNodeRuns(ctx, tenant, rows); err != nil {
