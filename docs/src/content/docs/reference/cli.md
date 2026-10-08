@@ -379,11 +379,14 @@ kilasflow exec tail exec_01K7
   execution, whose id `--quiet` prints. A retry of an execution that is still
   running is a `409`, which exits 5 (`conflict`): re-read, then decide.
 - `exec trace` collects the feed into one envelope:
-  `{executionId, events: [{id, event, data}], terminal, lastEventId}`. It stops
-  at the run's outcome rather than waiting for the server to close the stream,
-  and its deadline (`--timeout`, default 30 s) is **not** a failure: a run that
-  is still going answers `terminal: false` with the `lastEventId` to resume from
-  (`--from <lastEventId>`, sent as the standard `Last-Event-ID` header).
+  `{executionId, events: [{id, event, data}], terminal, lastEventId, truncated}`.
+  It stops at the run's outcome rather than waiting for the server to close the
+  stream, and its deadline (`--timeout`, default 30 s) is **not** a failure: a
+  run that is still going answers `terminal: false` with the `lastEventId` to
+  resume from (`--from <lastEventId>`, sent as the standard `Last-Event-ID`
+  header). `truncated: true` means the feed did not hold every event after
+  `--from` — the ids skip, or the outcome frame was rebuilt from the execution
+  record — and `exec get` has the complete node runs.
 - `exec tail` is the second documented exception to the one-envelope rule: it
   writes one JSON object per line (`{"id","event","data"}`) in JSON mode and one
   line of text otherwise, so events arrive before the run ends. It exits 0 when

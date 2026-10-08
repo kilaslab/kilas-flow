@@ -32,7 +32,15 @@ type streamEvent struct {
 	ID   uint64          `json:"id"`
 	Name string          `json:"event"`
 	Data json.RawMessage `json:"data,omitempty"`
+	// Truncated is the server's word that the feed lost events before this
+	// frame — it rides on the frame as a `: truncated…` comment so the event
+	// schema stays the same for every other client.
+	Truncated bool `json:"truncated,omitempty"`
 }
+
+// lostEventsMarker opens the comment the server puts on a frame that ends a
+// feed which did not deliver every event.
+const lostEventsMarker = "truncated"
 
 // readStream reads an event stream and hands each frame to emit, which returns
 // false to stop.
@@ -46,19 +54,22 @@ func readStream(body io.Reader, emit func(streamEvent) bool) (bool, error) {
 	scanner.Buffer(make([]byte, 0, 64*1024), maxStreamLine)
 
 	var (
-		frameID   uint64
-		frameName string
-		payload   strings.Builder
-		hasData   bool
+		frameID        uint64
+		frameName      string
+		payload        strings.Builder
+		hasData        bool
+		frameTruncated bool
 	)
 
 	dispatch := func() (bool, bool) {
 		if !hasData {
+			frameTruncated = false
+
 			return false, true
 		}
 
-		event := streamEvent{ID: frameID, Name: frameName, Data: eventPayload(payload.String())}
-		frameID, frameName, hasData = 0, "", false
+		event := streamEvent{ID: frameID, Name: frameName, Data: eventPayload(payload.String()), Truncated: frameTruncated}
+		frameID, frameName, hasData, frameTruncated = 0, "", false, false
 		payload.Reset()
 
 		if !emit(event) {
@@ -78,6 +89,10 @@ func readStream(body io.Reader, emit func(streamEvent) bool) (bool, error) {
 			continue
 		}
 		if strings.HasPrefix(line, ":") {
+			if strings.HasPrefix(strings.TrimSpace(line[1:]), lostEventsMarker) {
+				frameTruncated = true
+			}
+
 			continue
 		}
 

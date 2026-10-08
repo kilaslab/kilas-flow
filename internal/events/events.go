@@ -67,7 +67,9 @@ type Event struct {
 
 // BrokerOptions tunes fan-out and retention.
 type BrokerOptions struct {
-	// SubscriberQueue bounds one subscriber's pending events.
+	// SubscriberQueue bounds one subscriber's pending live events. The replay
+	// a subscription opens with is on top of it, so a retained history longer
+	// than the queue is never cut short.
 	SubscriberQueue int
 	// BufferPerExecution bounds the replay history kept per execution.
 	BufferPerExecution int
@@ -109,6 +111,9 @@ type Subscription struct {
 	mu     sync.Mutex
 	closed bool
 	lagged bool
+	// truncated is set once, at Subscribe: the retained history no longer
+	// reached back to the requested id, so the replay starts after a gap.
+	truncated bool
 }
 
 // NewBroker creates an in-process broker.
@@ -169,32 +174,38 @@ func (broker *Broker) Publish(event Event) {
 //
 // The tenant is part of the key, so guessing an execution ID from another
 // tenant yields an empty feed rather than someone else's data.
+//
+// The queue is sized to hold the whole replay plus the live allowance. It used
+// to be the live allowance alone — 64 slots against 256 retained events — so a
+// finished run with more than 64 events lost everything after them, its
+// outcome included. The replay is queued before the subscription is visible to
+// Publish, so a live event can never overtake the history it follows.
 func (broker *Broker) Subscribe(tenantID, executionID string, afterID uint64) *Subscription {
 	key := streamKey{tenantID: tenantID, executionID: executionID}
-	subscription := &Subscription{
-		events: make(chan Event, broker.options.SubscriberQueue),
-		key:    key,
-		broker: broker,
-	}
+	subscription := &Subscription{key: key, broker: broker}
 
 	broker.mu.Lock()
+	defer broker.mu.Unlock()
 	current, found := broker.streams[key]
 	if !found {
 		current = &stream{subscribers: make(map[*Subscription]struct{})}
 		broker.streams[key] = current
 	}
-	current.subscribers[subscription] = struct{}{}
 	replay := make([]Event, 0, len(current.history))
 	for _, event := range current.history {
 		if event.ID > afterID {
 			replay = append(replay, event)
 		}
 	}
-	broker.mu.Unlock()
+	// Retained IDs are consecutive, so a replay whose first event is not the
+	// one right after afterID is missing the events the history released.
+	subscription.truncated = len(replay) > 0 && replay[0].ID > afterID+1
 
+	subscription.events = make(chan Event, len(replay)+broker.options.SubscriberQueue)
 	for _, event := range replay {
-		subscription.deliver(event)
+		subscription.events <- event
 	}
+	current.subscribers[subscription] = struct{}{}
 	return subscription
 }
 
@@ -230,6 +241,14 @@ func (subscription *Subscription) Lagged() bool {
 	subscription.mu.Lock()
 	defer subscription.mu.Unlock()
 	return subscription.lagged
+}
+
+// Truncated reports whether the replay began after a gap: events after the
+// requested id had already aged out of the retained history.
+func (subscription *Subscription) Truncated() bool {
+	subscription.mu.Lock()
+	defer subscription.mu.Unlock()
+	return subscription.truncated
 }
 
 // Close detaches the subscription and closes its channel. It is safe to call

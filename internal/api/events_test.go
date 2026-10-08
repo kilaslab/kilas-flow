@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,9 @@ type streamedEvent struct {
 	name string
 	id   string
 	data map[string]any
+	// comments are the `:` lines inside the event's frame, which is where the
+	// stream says events were lost without changing the event's schema.
+	comments []string
 }
 
 // readStream consumes an SSE response until it has `want` events or the
@@ -46,6 +50,8 @@ func readStream(t *testing.T, body *bufio.Reader, want int) []streamedEvent {
 				collected = append(collected, current)
 			}
 			current = streamedEvent{}
+		case strings.HasPrefix(line, ":"):
+			current.comments = append(current.comments, strings.TrimSpace(strings.TrimPrefix(line, ":")))
 		case strings.HasPrefix(line, "id:"):
 			current.id = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
 		case strings.HasPrefix(line, "event:"):
@@ -279,16 +285,10 @@ func TestExecutionEventStreamIsDocumentedInTheOpenAPISpec(t *testing.T) {
 	}
 }
 
-// A finished run whose terminal frame never reached the broker still ends its
-// stream, because the durable record is what says the run is over.
-//
-// The gate reads that record before the stream opens, and the handler used to
-// synthesize the terminal frame only when the replay was empty. A replay that
-// kept earlier frames but lost the terminal one — a dropped publication, a
-// released history — therefore streamed heartbeats forever: exactly the held
-// connection this endpoint exists not to hold, and one a browser tab reopens
-// after every reconnect.
-func TestAFinishedExecutionEndsItsStreamEvenWhenTheTerminalFrameWasLost(t *testing.T) {
+// finishedExecution stores a run that has already succeeded, so the stream's
+// gate reads a durable record that says the run is over.
+func finishedExecution(t *testing.T) (*database.DB, *repository.GORMExecutionStore, execution.Record) {
+	t.Helper()
 	db, err := database.Open(context.Background(), config.Database{
 		Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "events.db"),
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -319,6 +319,20 @@ func TestAFinishedExecutionEndsItsStreamEvenWhenTheTerminalFrameWasLost(t *testi
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
+	return db, executions, record
+}
+
+// A finished run whose terminal frame never reached the broker still ends its
+// stream, because the durable record is what says the run is over.
+//
+// The gate reads that record before the stream opens, and the handler used to
+// synthesize the terminal frame only when the replay was empty. A replay that
+// kept earlier frames but lost the terminal one — a dropped publication, a
+// released history — therefore streamed heartbeats forever: exactly the held
+// connection this endpoint exists not to hold, and one a browser tab reopens
+// after every reconnect.
+func TestAFinishedExecutionEndsItsStreamEvenWhenTheTerminalFrameWasLost(t *testing.T) {
+	db, executions, record := finishedExecution(t)
 
 	broker := events.NewBroker(events.BrokerOptions{})
 	// The frames before the outcome survived; the outcome itself did not.
@@ -347,6 +361,17 @@ func TestAFinishedExecutionEndsItsStreamEvenWhenTheTerminalFrameWasLost(t *testi
 	if last := streamed[2]; last.name != string(events.ExecutionCompleted) || last.data["status"] != string(execution.StatusSucceeded) {
 		t.Fatalf("the reconstructed outcome = %#v, want execution.completed with the record's status", last)
 	}
+	// The reconstructed frame is numbered after the frames already sent. It
+	// used to take the client's resume point plus one — id 1 here — so a
+	// client resuming from it replayed the whole run again.
+	if last := streamed[2]; last.id != "3" {
+		t.Errorf("the reconstructed outcome's id = %q, want 3, after the last id sent", last.id)
+	}
+	// And it says the run's own outcome frame was lost rather than looking
+	// like a complete feed.
+	if last := streamed[2]; !hasComment(last, "truncated") {
+		t.Errorf("the reconstructed outcome's comments = %q, want a truncated marker", last.comments)
+	}
 	// And the stream is over rather than waiting for a publication that can
 	// never come.
 	rest := make([]byte, 1)
@@ -359,5 +384,64 @@ func TestAFinishedExecutionEndsItsStreamEvenWhenTheTerminalFrameWasLost(t *testi
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Error("the stream stayed open for a run that had already finished")
+	}
+}
+
+// hasComment reports whether an event's frame carried a comment starting with
+// the marker.
+func hasComment(event streamedEvent, marker string) bool {
+	for _, comment := range event.comments {
+		if strings.HasPrefix(comment, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// A finished run with more events than one subscriber's queue streams every
+// retained event, in order, and ends on its own outcome.
+//
+// The broker replayed the history into a 64-slot queue and dropped the rest, so
+// the handler saw 64 frames and no outcome, and the gate's record supplied one
+// numbered from the resume point: `exec trace` of a 65-node run returned 64
+// events and `{"id":1,"event":"execution.completed"}`, claiming it was whole.
+func TestAFinishedRunLongerThanTheSubscriberQueueStreamsEveryEvent(t *testing.T) {
+	db, executions, record := finishedExecution(t)
+
+	broker := events.NewBroker(events.BrokerOptions{})
+	broker.Publish(events.Event{TenantID: repository.DefaultTenantID, ExecutionID: record.ID, Type: events.ExecutionStarted, Status: execution.StatusRunning})
+	for range 98 {
+		broker.Publish(events.Event{TenantID: repository.DefaultTenantID, ExecutionID: record.ID, NodeID: "n1", Type: events.NodeCompleted, Status: execution.StatusSucceeded})
+	}
+	broker.Publish(events.Event{TenantID: repository.DefaultTenantID, ExecutionID: record.ID, Type: events.ExecutionCompleted, Status: execution.StatusSucceeded})
+
+	server := httptest.NewServer(newTestServer(t, api.Deps{
+		DB: db, Events: broker, Executions: executions,
+	}))
+	t.Cleanup(server.Close)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Get(server.URL + "/api/v1/executions/" + record.ID + "/events")
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	defer response.Body.Close()
+
+	// One more than published: a frame past the outcome would be a bug too.
+	streamed := readStream(t, bufio.NewReader(response.Body), 101)
+	if len(streamed) != 100 {
+		t.Fatalf("streamed %d events, want all 100 the broker retained", len(streamed))
+	}
+	for index, event := range streamed {
+		if want := strconv.Itoa(index + 1); event.id != want {
+			t.Fatalf("streamed[%d].id = %q, want %s: every frame in order, none invented", index, event.id, want)
+		}
+	}
+	last := streamed[len(streamed)-1]
+	if last.name != string(events.ExecutionCompleted) {
+		t.Errorf("last frame = %q, want the run's own execution.completed", last.name)
+	}
+	if hasComment(last, "truncated") {
+		t.Errorf("a complete replay was marked truncated: %q", last.comments)
 	}
 }

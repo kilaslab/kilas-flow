@@ -183,6 +183,49 @@ func TestExecTraceReturnsOneEnvelopeWithTheEvents(t *testing.T) {
 	}
 }
 
+// A trace that lost events says so. The feed numbers its frames one apart, so
+// a gap — or a first id past the resume point — is an event the trace does not
+// hold; the server marks a frame it had to reconstruct with a `truncated`
+// comment, because that loss leaves no gap. Either used to pass as a whole run.
+func TestExecTraceFlagsLostEvents(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		from      string
+		frames    string
+		truncated bool
+	}{
+		{name: "contiguous", frames: terminalFrames, truncated: false},
+		{name: "resumed contiguous", from: "1", frames: "id: 2\nevent: node.started\ndata: {}\n\n" +
+			"id: 3\nevent: execution.completed\ndata: {}\n\n", truncated: false},
+		{name: "gap", frames: "id: 1\nevent: execution.started\ndata: {}\n\n" +
+			"id: 3\nevent: execution.completed\ndata: {}\n\n", truncated: true},
+		{name: "aged out", frames: "id: 7\nevent: node.started\ndata: {}\n\n" +
+			"id: 8\nevent: execution.completed\ndata: {}\n\n", truncated: true},
+		{name: "reconstructed", frames: "id: 1\nevent: execution.started\ndata: {}\n\n" +
+			"id: 2\n: truncated: the run's own outcome frame was not retained\nevent: execution.completed\ndata: {}\n\n", truncated: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			srv := stubAPI(t, map[string]http.HandlerFunc{
+				apiPrefix + "/executions/exec_1/events": sseStub(test.frames, false),
+			})
+
+			args := []string{"exec", "trace", "exec_1", "--url", srv.URL, "--json"}
+			if test.from != "" {
+				args = append(args, "--from", test.from)
+			}
+			code, _, stdout, stderr := runCLI(t, Env{Args: args, Getenv: homeEnv(t.TempDir(), nil)})
+			if code != ExitOK {
+				t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+			}
+
+			data, _ := envelope(t, stdout)["data"].(map[string]any)
+			if data["truncated"] != test.truncated {
+				t.Fatalf("data.truncated = %v, want %v", data["truncated"], test.truncated)
+			}
+		})
+	}
+}
+
 func TestExecTraceStopsAtTheTerminalEventWithoutWaitingForTheClose(t *testing.T) {
 	srv := stubAPI(t, map[string]http.HandlerFunc{
 		// The connection stays open after the terminal frame. A client that

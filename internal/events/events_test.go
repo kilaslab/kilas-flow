@@ -130,6 +130,74 @@ func TestSubscribeFromZeroReplaysTheWholeRetainedHistory(t *testing.T) {
 	}
 }
 
+// The subscriber queue used to be the replay's ceiling: Subscribe pushed the
+// retained history into a 64-slot channel, so a finished run with more events
+// than that lost everything after the 64th — its outcome included — and a
+// trace of it ended on a reconstructed frame instead of the run's own.
+func TestSubscribeReplaysAHistoryLongerThanTheSubscriberQueue(t *testing.T) {
+	t.Parallel()
+
+	broker := events.NewBroker(events.BrokerOptions{SubscriberQueue: 4, BufferPerExecution: 100})
+	for range 99 {
+		broker.Publish(events.Event{TenantID: "tenant-a", ExecutionID: "exec-1", Type: events.NodeCompleted})
+	}
+	broker.Publish(events.Event{TenantID: "tenant-a", ExecutionID: "exec-1", Type: events.ExecutionFailed})
+
+	subscription := broker.Subscribe("tenant-a", "exec-1", 0)
+	defer subscription.Close()
+
+	var replayed []events.Event
+	for drained := false; !drained; {
+		select {
+		case event := <-subscription.Events():
+			replayed = append(replayed, event)
+		default:
+			drained = true
+		}
+	}
+	if len(replayed) != 100 {
+		t.Fatalf("replayed %d events, want the whole retained history of 100", len(replayed))
+	}
+	for index, event := range replayed {
+		if event.ID != uint64(index+1) {
+			t.Fatalf("replayed[%d].ID = %d, want %d: the replay is out of order", index, event.ID, index+1)
+		}
+	}
+	if last := replayed[len(replayed)-1]; last.Type != events.ExecutionFailed {
+		t.Errorf("last replayed event = %s, want the run's own outcome", last.Type)
+	}
+	if subscription.Lagged() || subscription.Truncated() {
+		t.Errorf("Lagged() = %v, Truncated() = %v, want neither for a replay that fitted", subscription.Lagged(), subscription.Truncated())
+	}
+}
+
+// A replay that starts after the requested id is missing the events in
+// between, and says so rather than looking complete.
+func TestSubscribeReportsHistoryThatAgedOutBeforeTheReplay(t *testing.T) {
+	t.Parallel()
+
+	broker := events.NewBroker(events.BrokerOptions{BufferPerExecution: 3})
+	for range 10 {
+		broker.Publish(events.Event{TenantID: "tenant-a", ExecutionID: "exec-1", Type: events.NodeStarted})
+	}
+
+	for _, test := range []struct {
+		after     uint64
+		truncated bool
+	}{
+		{after: 0, truncated: true},
+		{after: 6, truncated: true},
+		{after: 7, truncated: false},
+		{after: 10, truncated: false},
+	} {
+		subscription := broker.Subscribe("tenant-a", "exec-1", test.after)
+		if got := subscription.Truncated(); got != test.truncated {
+			t.Errorf("Subscribe(after %d).Truncated() = %v, want %v", test.after, got, test.truncated)
+		}
+		subscription.Close()
+	}
+}
+
 func TestRetainedHistoryIsBoundedPerExecution(t *testing.T) {
 	t.Parallel()
 

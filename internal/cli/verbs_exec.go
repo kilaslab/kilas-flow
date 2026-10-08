@@ -224,6 +224,10 @@ type tracePayload struct {
 	Events      []streamEvent `json:"events"`
 	Terminal    bool          `json:"terminal"`
 	LastEventID uint64        `json:"lastEventId"`
+	// Truncated says the trace does not hold every event after --from: the
+	// server marked a frame, or the ids skip. The execution's node runs
+	// (`exec get`) are then the complete record.
+	Truncated bool `json:"truncated"`
 }
 
 // runExecTrace collects an execution's feed into one envelope.
@@ -251,10 +255,19 @@ func runExecTrace(ctx *Context, args []string) error {
 	defer cancel()
 
 	payload := tracePayload{ExecutionID: id, Events: []streamEvent{}}
+	// The feed numbers an execution's events one apart, so the next id is
+	// known in advance; a frame that skips past it means events were lost.
+	next := flags.from + 1
 	terminal, err := ctx.stream("/executions/"+url.PathEscape(id)+"/events", nil, resumeHeader(flags.from),
 		func(event streamEvent) bool {
 			payload.Events = append(payload.Events, event)
 			payload.LastEventID = event.ID
+			if event.Truncated || (event.ID != 0 && event.ID != next) {
+				payload.Truncated = true
+			}
+			if event.ID != 0 {
+				next = event.ID + 1
+			}
 
 			return true
 		})
@@ -448,6 +461,9 @@ func humanTrace(w io.Writer, data any) {
 
 	for _, event := range payload.Events {
 		fmt.Fprintln(w, humanEventLine(event))
+	}
+	if payload.Truncated {
+		fmt.Fprintln(w, "some events were not delivered; `exec get` has the complete node runs")
 	}
 	if !payload.Terminal {
 		fmt.Fprintf(w, "the run had not finished; resume with --from %d\n", payload.LastEventID)
