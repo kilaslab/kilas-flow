@@ -18,7 +18,8 @@ Two rules keep it honest:
   `run` is the only way to start a run; `workflow run` does not exist. There is
   one documented exception, and it runs the other way: `node list` and `node
   describe` are two views of one operation (`list-node-types`), because there is
-  no operation that returns a single node and reading a 90-entry catalogue to
+  no operation that returns a single node and reading the whole catalogue (one
+  entry per node type and version) to
   answer "what does httpRequest take?" is the wrong shape for an agent's context.
   The verbs that are local rather than remote — `version`, `help`, `context`,
   `api <operation-id>`, `auth login`, `auth logout`, `pack validate`, the five
@@ -434,8 +435,8 @@ these verbs are how an agent finds out what it may put in a document.
 
 ```bash
 kilasflow node list --json                       # the whole catalogue
-kilasflow node describe httpRequest              # one entry, newest version
-kilasflow node options httpRequest --property channel --credential cred_1
+kilasflow node describe kilasflow.httpRequest    # one entry, newest version
+kilasflow node options kilasflow.httpRequest --property channel --credential cred_1
 ```
 
 - `node list` and `node describe` drive the same operation. `describe` needs no

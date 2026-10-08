@@ -1,19 +1,31 @@
 ---
 id: FEAT-3taswf
 title: Publish @kilasflow/sdk to npm
-status: done
+status: todo
 priority: high
 labels:
     - sdk
     - release
+    - blocked
 deps:
     - FEAT-yx0qt6
     - FEAT-53fht8
 parent: EPIC-m42s3g
 phase: p10
 created: "2026-09-05T11:51:49Z"
-updated: "2026-09-20T11:21:36Z"
+updated: "2026-10-08T16:25:00Z"
 ---
+
+> **Reopened 2026-10-08 (BUG-b4cb1c): blocked on the first `sdk-v*` release tag.**
+> This ticket was closed on 2026-09-20 with criteria 1 ("`npm install @kilasflow/sdk`
+> resolves"), 5 ("publishing is driven by a git tag … with npm provenance") and 7
+> (the example runs against a published image and package) unticked, and
+> `npm view @kilasflow/sdk version` still answers E404. Everything a publish
+> needs is in place (manifest, `make sdk-release-check`, the `sdk` job in
+> `release.yml` on `sdk-v*` tags); what is missing is the first tag being pushed
+> and that job publishing. It stays `todo` with the `blocked` label (the board
+> has no blocked column) until the tag publishes; then tick 1, 5 and 7 with the
+> run's evidence and close it. EPIC-bkj6yf and FEAT-5fhj6p depend on it.
 
 ## Scope
 

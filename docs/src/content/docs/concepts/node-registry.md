@@ -10,13 +10,15 @@ during composition at startup and is read-only for the rest of the process's
 life, which is what makes compiled graphs and the metadata served to the editor
 deterministic.
 
-When last measured (2026-09-23) it held **61 distinct node types across 68
-type-and-version pairs**: 58 types (63 pairs) compiled into the binary, counting
+A default install holds **62 distinct node types across 69
+type-and-version pairs**: 59 types (64 pairs) compiled into the binary, counting
 the `kilasflow.unsupported` import placeholder, and 3 types (5 pairs) from the
-declarative packs it ships with. The list of record is
-[`GET /api/v1/node-types`](/reference/api/), which serves one entry per
-type-and-version pair: the numbers here are measured from it, and it is what the
-editor reads.
+declarative packs it ships with. A pack loaded from `packs.dir` adds to that.
+The list of record is [`GET /api/v1/node-types`](/reference/api/), which serves
+one entry per type-and-version pair and is what the editor reads. The numbers
+here are checked against the same registrations by a test
+(`cmd/kilasflow/catalogue_docs_test.go`), which fails when a node is added or
+removed and this sentence is not.
 
 ## What a definition holds
 

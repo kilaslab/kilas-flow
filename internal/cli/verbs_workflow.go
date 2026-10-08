@@ -54,7 +54,7 @@ func workflowVerbs() []Verb {
 			Path:      "workflow create",
 			Operation: "create-workflow",
 			Summary:   "create a workflow from a canonical document (`--file <path>|-`)",
-			Flags:     registerCreateFlags,
+			Flags:     registerCreateFlags("workflow"),
 			Run:       runWorkflowCreate,
 			Human:     humanWorkflowResource,
 		},
@@ -184,12 +184,17 @@ type createFlags struct {
 	file string
 }
 
-// registerCreateFlags attaches --file.
-func registerCreateFlags(fs *flag.FlagSet) any {
-	flags := &createFlags{}
-	fs.StringVar(&flags.file, "file", "", "workflow document to send: a path, or - for stdin")
+// registerCreateFlags attaches --file, described as a document of the named
+// kind. The flag is shared by every verb that sends a document, so the noun is
+// the verb's: with one fixed noun, `credential create -h` described a workflow
+// document.
+func registerCreateFlags(noun string) func(fs *flag.FlagSet) any {
+	return func(fs *flag.FlagSet) any {
+		flags := &createFlags{}
+		fs.StringVar(&flags.file, "file", "", noun+" document to send: a path, or - for stdin")
 
-	return flags
+		return flags
+	}
 }
 
 // validateFlags carry the draft document to validate.
