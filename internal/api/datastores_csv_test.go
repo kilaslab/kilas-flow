@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -104,6 +105,39 @@ func TestExportHeaderIsExactlyUserColumnsInIndexOrder(t *testing.T) {
 	}
 	if got, want := strings.Join(records[0], "|"), "zeta|alpha"; got != want {
 		t.Fatalf("header = %q, want %q (catalogue index order, not alphabetical)", got, want)
+	}
+}
+
+// exportFilename reads the download name the export suggests, decoding the
+// RFC 5987 filename* form the way a browser does.
+func exportFilename(t *testing.T, handler http.Handler, id string) string {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/datastores/"+id+"/rows/export", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("export = %d, want 200 (body: %s)", recorder.Code, recorder.Body)
+	}
+	disposition := recorder.Header().Get("Content-Disposition")
+	kind, params, err := mime.ParseMediaType(disposition)
+	if err != nil || kind != "attachment" {
+		t.Fatalf("export Content-Disposition = %q (%v), want a parseable attachment", disposition, err)
+	}
+	return params["filename"]
+}
+
+func TestExportFileIsNamedAfterTheTable(t *testing.T) {
+	handler, _ := newDatastoreAPI(t, "tenant-a")
+	for _, tc := range []struct{ name, want string }{
+		{"[ux-ops] Leads", "[ux-ops] Leads.csv"},
+		{`Q3 "final" report`, `Q3 "final" report.csv`},
+		{"Données 2026", "Données 2026.csv"},
+		{"north/south\\east", "north-south-east.csv"},
+	} {
+		created := createDatastoreWithColumns(t, handler, tc.name, [2]string{"email", "string"})
+		if got := exportFilename(t, handler, created.ID); got != tc.want {
+			t.Errorf("export of %q is named %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 

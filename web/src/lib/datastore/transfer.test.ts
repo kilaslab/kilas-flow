@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	exportFilename,
 	exportRowsURL,
 	filenameFromDisposition,
 	importRowsURL,
@@ -38,6 +39,38 @@ describe('filenameFromDisposition', () => {
 		expect(filenameFromDisposition(null)).toBeNull();
 		expect(filenameFromDisposition('attachment')).toBeNull();
 		expect(filenameFromDisposition('attachment; filename=""')).toBeNull();
+	});
+
+	it('decodes the RFC 5987 filename* the server sends for a non-ASCII table name', () => {
+		expect(filenameFromDisposition("attachment; filename*=utf-8''Donn%C3%A9es%202026.csv")).toBe(
+			'Données 2026.csv'
+		);
+	});
+
+	it('prefers filename* over the plain filename', () => {
+		expect(
+			filenameFromDisposition(`attachment; filename="Donnees.csv"; filename*=UTF-8''Donn%C3%A9es.csv`)
+		).toBe('Données.csv');
+	});
+
+	it('unescapes a quoted pair inside a quoted filename', () => {
+		expect(filenameFromDisposition('attachment; filename="Q3 \\"final\\" report.csv"')).toBe(
+			'Q3 "final" report.csv'
+		);
+	});
+});
+
+describe('exportFilename', () => {
+	it('names the file after the table', () => {
+		expect(exportFilename('[ux-ops] Leads', 'datastore_1')).toBe('[ux-ops] Leads.csv');
+	});
+
+	it('turns path separators into hyphens so the name stays one file', () => {
+		expect(exportFilename('north/south\\east', 'datastore_1')).toBe('north-south-east.csv');
+	});
+
+	it('falls back to the id when the name is blank', () => {
+		expect(exportFilename('   ', 'datastore_1')).toBe('datastore-datastore_1.csv');
 	});
 });
 

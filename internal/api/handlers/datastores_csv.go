@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -164,11 +165,11 @@ func (handler *Datastores) ExportRows(ctx context.Context, input *exportDatastor
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}
-	filename := "datastore-" + strings.ReplaceAll(input.ID, `"`, "") + ".csv"
+	disposition := csvExportDisposition(definition.Name, input.ID)
 	return &huma.StreamResponse{
 		Body: func(stream huma.Context) {
 			stream.SetHeader("Content-Type", "text/csv; charset=utf-8")
-			stream.SetHeader("Content-Disposition", `attachment; filename="`+filename+`"`)
+			stream.SetHeader("Content-Disposition", disposition)
 			writer := csv.NewWriter(stream.BodyWriter())
 			if err := writer.Write(header); err != nil {
 				return
@@ -236,6 +237,28 @@ func (handler *Datastores) ImportRows(ctx context.Context, input *importDatastor
 		}
 	}
 	return &importDatastoreRowsOutput{Body: CSVImportReport{Inserted: len(rows), Skipped: skipped, Failed: []CSVImportIssue{}}}, nil
+}
+
+// csvExportDisposition names the download after the table, the way n8n names
+// its exports, rather than after an id nobody recognises in a downloads
+// folder. Path separators and control characters become a hyphen so the name
+// is one file, not a path; mime.FormatMediaType then quotes what needs quoting
+// and switches to RFC 5987 filename* for anything outside ASCII, so a name can
+// never break out of the header. A name with nothing left falls back to the id.
+func csvExportDisposition(name, id string) string {
+	base := strings.TrimSpace(strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r < ' ' || r == 0x7f {
+			return '-'
+		}
+		return r
+	}, name))
+	if base == "" {
+		base = "datastore-" + id
+	}
+	if disposition := mime.FormatMediaType("attachment", map[string]string{"filename": base + ".csv"}); disposition != "" {
+		return disposition
+	}
+	return `attachment; filename="datastore.csv"`
 }
 
 // csvExportHeader is the download's first row: exactly the user columns in

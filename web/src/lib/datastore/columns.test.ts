@@ -3,12 +3,15 @@ import { describe, expect, it } from 'vitest';
 import {
 	COLUMN_TYPES,
 	cellButtonLabel,
+	cellHover,
+	cellText,
 	coerceValue,
 	displayType,
 	gridColumns,
 	isSystemColumn,
 	wireType
 } from './columns';
+import { formatTimestamp } from '$lib/workflow-editor/execution';
 
 describe('isSystemColumn', () => {
 	it.each([['id'], ['createdAt'], ['updatedAt']])('treats %s as system', (name) => {
@@ -134,5 +137,38 @@ describe('cellButtonLabel', () => {
 				cellButtonLabel({ column: 'email', system: false, rowID: '7', text, empty: false })
 			).toContain(text);
 		}
+	});
+});
+
+describe('cellText and cellHover', () => {
+	const signedUp = { name: 'signed_up', type: 'date', system: false };
+	const createdAt = { name: 'createdAt', type: '', system: true };
+	const email = { name: 'email', type: 'string', system: false };
+	const iso = '2026-09-01T03:00:00Z';
+
+	it('formats a user datetime column exactly like the system timestamps', () => {
+		expect(cellText(iso, signedUp)).toBe(formatTimestamp(iso));
+		expect(cellText(iso, signedUp)).toBe(cellText(iso, createdAt));
+		expect(cellText(iso, signedUp)).not.toBe(iso);
+	});
+
+	it('keeps the ISO instant for the hover on every date column', () => {
+		expect(cellHover(iso, signedUp)).toBe(iso);
+		expect(cellHover(iso, createdAt)).toBe(iso);
+	});
+
+	it('leaves other columns as their text', () => {
+		expect(cellText('a@example.com', email)).toBe('a@example.com');
+		expect(cellHover('a@example.com', email)).toBe('a@example.com');
+		expect(cellText(42, { name: 'score', type: 'number', system: false })).toBe('42');
+	});
+
+	it('shows a date cell it cannot parse as written rather than as unknown', () => {
+		expect(cellText('not a date', signedUp)).toBe('not a date');
+	});
+
+	it('renders an empty cell as empty text', () => {
+		expect(cellText(null, signedUp)).toBe('');
+		expect(cellText(undefined, email)).toBe('');
 	});
 });

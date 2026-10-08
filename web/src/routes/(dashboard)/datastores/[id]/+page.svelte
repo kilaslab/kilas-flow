@@ -45,6 +45,8 @@
 	import {
 		COLUMN_TYPES,
 		cellButtonLabel,
+		cellHover,
+		cellText,
 		coerceValue,
 		displayType,
 		gridColumns,
@@ -52,7 +54,6 @@
 		wireType,
 		type GridColumn
 	} from '$lib/datastore/columns';
-	import { formatTimestamp } from '$lib/workflow-editor/execution';
 	import {
 		downloadExport,
 		severityLabel,
@@ -492,7 +493,7 @@
 		transferError = null;
 		savedFilename = null;
 		try {
-			const saved = await downloadExport(id, includeSystem);
+			const saved = await downloadExport(id, detail?.name ?? '', includeSystem);
 			savedFilename = saved.filename;
 		} catch (error) {
 			transferError = message(error);
@@ -532,15 +533,6 @@
 			checkState = {};
 			allChecked = false;
 		}
-	}
-
-	function cellText(row: RowListOutputBodyItemsItem, column: GridColumn): string {
-		const value = row[column.name];
-		if (value === null || value === undefined) return '';
-		if (column.name === 'createdAt' || column.name === 'updatedAt') {
-			return typeof value === 'string' ? formatTimestamp(value) : String(value);
-		}
-		return String(value);
 	}
 
 	function isNullCell(row: RowListOutputBodyItemsItem, column: GridColumn): boolean {
@@ -692,7 +684,6 @@
 													}}
 												/>
 											{:else}
-												<span class="font-medium">{column.name}</span>
 												{#if !column.system}
 													<span class="font-normal text-muted-foreground">· {displayType(column.type)}</span>
 													<Button
@@ -755,12 +746,12 @@
 													}}
 												/>
 											{:else if isNullCell(row, column)}
-												<button type="button" title={column.system ? m.datastores_cell_readonly_title() : m.datastores_cell_empty_title()} aria-label={cellButtonLabel({ column: column.name, system: column.system, rowID, text: cellText(row, column), empty: isNullCell(row, column) })} class="text-muted-foreground {column.system ? '' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
+												<button type="button" title={column.system ? m.datastores_cell_readonly_title() : m.datastores_cell_empty_title()} aria-label={cellButtonLabel({ column: column.name, system: column.system, rowID, text: cellText(row[column.name], column), empty: isNullCell(row, column) })} class="text-muted-foreground {column.system ? '' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
 													<span>{m.datastores_null()}</span>
 												</button>
 											{:else}
-												<button type="button" title={column.system ? cellText(row, column) : m.datastores_cell_value_title({ value: cellText(row, column) })} aria-label={cellButtonLabel({ column: column.name, system: column.system, rowID, text: cellText(row, column), empty: isNullCell(row, column) })} class="max-w-full truncate {column.system ? 'cursor-default' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
-													{cellText(row, column)}
+												<button type="button" title={column.system ? cellHover(row[column.name], column) : m.datastores_cell_value_title({ value: cellHover(row[column.name], column) })} aria-label={cellButtonLabel({ column: column.name, system: column.system, rowID, text: cellText(row[column.name], column), empty: isNullCell(row, column) })} class="max-w-full truncate {column.system ? 'cursor-default' : 'hover:underline'}" onclick={() => startCellEdit(rowID, column, row[column.name])} disabled={column.system}>
+													{cellText(row[column.name], column)}
 												</button>
 											{/if}
 										</Table.Cell>
@@ -983,7 +974,9 @@
 			{/if}
 
 			<Dialog.Footer>
-				<Button type="button" variant="outline" onclick={() => (transfer = null)}>{m.datastores_close()}</Button>
+				<Button type="button" variant="outline" onclick={() => (transfer = null)}>
+					{savedFilename || transferReport ? m.datastores_done() : m.datastores_cancel()}
+				</Button>
 				{#if transfer === 'import'}
 					<Button type="button" onclick={() => void runImport()} disabled={transferBusy || !transferFile}>
 						{transferBusy ? m.datastores_uploading() : m.datastores_upload()}
