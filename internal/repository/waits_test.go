@@ -275,6 +275,74 @@ func TestCancelWaitingCompletesItAtOnce(t *testing.T) {
 	}
 }
 
+// The node a run was suspended on is where the cancellation landed, so the
+// trace says so. Without the row the reloaded inspector had nothing for the
+// wait node and read it as "Not reached" beside a cancelled execution.
+func TestCancelWaitingRecordsTheSuspendedNodeAsCancelled(t *testing.T) {
+	db := openWaitsSQLite(t)
+	ctx := context.Background()
+	tenant, store, record := queueAndClaimWaitFixture(t, db, "wait-tenant-f2", "wait_wf_f2")
+	token, _ := suspendWaitFixture(t, store, tenant, record, time.Now().UTC().Add(time.Hour))
+
+	if _, err := store.Cancel(ctx, tenant, record.ID); err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	// A fresh read is the reload: the row has to be durable, not an event.
+	reloaded, err := store.Get(ctx, tenant, record.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got := len(reloaded.NodeRuns); got != 3 {
+		t.Fatalf("node runs = %d, want the two before the wait plus the cancelled wait", got)
+	}
+	last := reloaded.NodeRuns[2]
+	if last.NodeID != "approve" || last.Status != execution.StatusCancelled {
+		t.Errorf("last node run = %s/%s, want approve/cancelled", last.NodeID, last.Status)
+	}
+	if last.Sequence != 3 || last.Attempt != 1 {
+		t.Errorf("last node run sequence/attempt = %d/%d, want 3/1 after the persisted segment", last.Sequence, last.Attempt)
+	}
+	if last.FinishedAt == nil {
+		t.Error("cancelled node run carries no finish time")
+	}
+	var failure struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(last.Error, &failure); err != nil || failure.Code != "execution.cancelled" {
+		t.Errorf("cancelled node run error = %s, want code execution.cancelled", last.Error)
+	}
+
+	// The wait is settled with the run: nothing still holds the execution,
+	// the token is spent, and the sweeper never visits it again.
+	if _, err := store.FindActiveWait(ctx, tenant, record.ID); !errors.Is(err, repository.ErrNotFound) {
+		t.Errorf("FindActiveWait() after cancel = %v, want ErrNotFound", err)
+	}
+	if _, _, err := store.ResumeWait(ctx, "", repository.HashWaitToken(token), json.RawMessage(`{}`), time.Now().UTC()); !errors.Is(err, repository.ErrWaitConsumed) {
+		t.Errorf("ResumeWait() after cancel = %v, want ErrWaitConsumed", err)
+	}
+	expired, err := store.ListExpiredWaits(ctx, time.Now().UTC().Add(2*time.Hour), 0)
+	if err != nil {
+		t.Fatalf("ListExpiredWaits() error = %v", err)
+	}
+	for _, wait := range expired {
+		if wait.ExecutionID == record.ID {
+			t.Errorf("the cancelled execution's wait is still listed for the sweeper: %+v", wait)
+		}
+	}
+
+	// Cancelling again changes nothing: no second row.
+	if _, err := store.Cancel(ctx, tenant, record.ID); err != nil {
+		t.Fatalf("second Cancel() error = %v", err)
+	}
+	again, err := store.Get(ctx, tenant, record.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got := len(again.NodeRuns); got != 3 {
+		t.Errorf("node runs after a second cancel = %d, want 3", got)
+	}
+}
+
 func TestSuspendedWaitSurvivesARestart(t *testing.T) {
 	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
 	path := filepath.Join(t.TempDir(), "kilasflow.db")

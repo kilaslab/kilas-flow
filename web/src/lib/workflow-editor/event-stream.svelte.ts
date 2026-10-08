@@ -153,6 +153,14 @@ export function applyEvents(
 	const statuses = new Map<string, string>();
 	for (const [nodeID, run] of runs) statuses.set(nodeID, run.status);
 	for (const event of events) {
+		if (event.type === 'execution.cancelled') {
+			// The run stopped where it stood: a node the feed last left waiting
+			// or running is where the cancellation landed, not still in flight.
+			for (const [nodeID, status] of statuses) {
+				if (status === 'waiting' || status === 'running') statuses.set(nodeID, 'cancelled');
+			}
+			continue;
+		}
 		if (!event.nodeId || !event.status) continue;
 		statuses.set(event.nodeId, event.status);
 	}

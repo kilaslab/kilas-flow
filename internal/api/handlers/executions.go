@@ -736,6 +736,14 @@ func (handler *Executions) ownsExecution(ctx context.Context, record execution.R
 	return huma.Error404NotFound("execution not found")
 }
 
+// waitingLinker is the optional controller half that says how a waiting
+// execution continues. Named so a test can hold the engine to it: an
+// anonymous assertion that drifts from the engine's signature fails silently
+// and every waiting execution loses its links.
+type waitingLinker interface {
+	WaitingLinks(context.Context, repository.TenantScope, string) (engine.ResumeLinks, bool)
+}
+
 // Get returns a tenant-scoped execution record, including its persisted trace.
 func (handler *Executions) Get(ctx context.Context, input *executionPathInput) (*executionOutput, error) {
 	if handler.controller == nil {
@@ -752,16 +760,16 @@ func (handler *Executions) Get(ctx context.Context, input *executionPathInput) (
 		return nil, err
 	}
 	resource := executionResource(record)
-	// A waiting execution answers with the links that resume it. The lookup
-	// is optional so existing controller fakes keep compiling: without it
-	// the record simply carries no links.
+	// A waiting execution answers with how it continues: the resume link, the
+	// approval page when it waits on a decision, and the resume time when it
+	// waits on a timer. The lookup is optional so existing controller fakes
+	// keep compiling: without it the record simply carries no links.
 	if record.Status == execution.StatusWaiting {
-		if linker, ok := handler.controller.(interface {
-			WaitingLinks(context.Context, repository.TenantScope, string) (string, string, bool)
-		}); ok {
-			if resumeURL, approvalURL, found := linker.WaitingLinks(ctx, handler.tenants.Resolve(ctx), record.ID); found {
-				resource.ResumeURL = resumeURL
-				resource.ApprovalURL = approvalURL
+		if linker, ok := handler.controller.(waitingLinker); ok {
+			if links, found := linker.WaitingLinks(ctx, handler.tenants.Resolve(ctx), record.ID); found {
+				resource.ResumeURL = links.ResumeURL
+				resource.ApprovalURL = links.ApprovalURL
+				resource.ResumeAt = links.ResumeAt
 			}
 		}
 	}

@@ -762,18 +762,44 @@ func expressionExecution(record execution.Record, resume resumeURLs) expression.
 	}
 }
 
-// WaitingLinks returns the resume links for a waiting execution: the machine
-// resume URL and the human approval page for its active token. It reports
-// false when no unconsumed wait holds the execution. The read surface uses
-// it to enrich a waiting execution; the checkpoint travels only on the
-// resume path, never here.
-func (service *Service) WaitingLinks(ctx context.Context, tenant repository.TenantScope, executionID string) (resumeURL, approvalURL string, ok bool) {
+// ResumeLinks is what the read surface shows about how a waiting execution
+// continues.
+type ResumeLinks struct {
+	// ResumeURL is the machine resume link. Every mode has one: a
+	// call-resumed wait with a limit is held as a timer, and a call to this
+	// link is what ends it early.
+	ResumeURL string
+	// ApprovalURL is the human approval page, for an approval wait only. A
+	// timer or webhook wait has no decision to record, and its page offered
+	// Approve and Reject buttons that meant nothing.
+	ApprovalURL string
+	// ResumeAt is when a timer wait (interval, until) continues on its own.
+	// Nil for the other modes, whose deadline fails the run rather than
+	// resuming it.
+	ResumeAt *time.Time
+}
+
+// WaitingLinks returns how a waiting execution continues: its machine resume
+// URL, the approval page when it waits on a decision, and the resume time
+// when it waits on a timer. It reports false when no unconsumed wait holds
+// the execution. The read surface uses it to enrich a waiting execution; the
+// checkpoint travels only on the resume path, never here.
+func (service *Service) WaitingLinks(ctx context.Context, tenant repository.TenantScope, executionID string) (ResumeLinks, bool) {
 	wait, err := service.executions.FindActiveWait(ctx, tenant, executionID)
 	if err != nil {
-		return "", "", false
+		return ResumeLinks{}, false
 	}
 	if strings.TrimSpace(wait.ResumeToken) == "" {
-		return "", "", false
+		return ResumeLinks{}, false
 	}
-	return service.ResumeURL(wait.ResumeToken), service.ApprovalURL(wait.ResumeToken), true
+	links := ResumeLinks{ResumeURL: service.ResumeURL(wait.ResumeToken)}
+	switch wait.Mode {
+	// An unnamed mode is an approval, as the resume handler reads it.
+	case WaitModeApproval, "":
+		links.ApprovalURL = service.ApprovalURL(wait.ResumeToken)
+	case WaitModeInterval, WaitModeUntil:
+		resumeAt := wait.ExpiresAt.UTC()
+		links.ResumeAt = &resumeAt
+	}
+	return links, true
 }

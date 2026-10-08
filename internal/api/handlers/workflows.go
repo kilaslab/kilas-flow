@@ -355,11 +355,13 @@ type ExecutionResource struct {
 	StartedAt               time.Time         `json:"startedAt"`
 	FinishedAt              *time.Time        `json:"finishedAt,omitempty"`
 	CancellationRequestedAt *time.Time        `json:"cancellationRequestedAt,omitempty"`
-	// ResumeURL is the machine resume link for a waiting execution, and
-	// ApprovalURL its human page. Both are present only while the execution
-	// waits; any other status omits them.
+	// ResumeURL is the machine resume link for a waiting execution,
+	// ApprovalURL its human page when it waits on an approval, and ResumeAt
+	// when a timer wait continues on its own. All are present only while the
+	// execution waits; any other status omits them.
 	ResumeURL   string                     `json:"resumeUrl,omitempty"`
-	ApprovalURL string                     `json:"approvalUrl,omitempty"`
+	ApprovalURL string                     `json:"approvalUrl,omitempty" doc:"The approval page, for a run waiting on an approval only"`
+	ResumeAt    *time.Time                 `json:"resumeAt,omitempty" doc:"When a run waiting on a timer resumes on its own"`
 	NodeRuns    []ExecutionNodeRunResource `json:"nodeRuns"`
 }
 

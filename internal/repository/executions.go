@@ -836,8 +836,14 @@ func (store *GORMExecutionStore) Cancel(ctx context.Context, tenant TenantScope,
 	switch execution.Status(model.Status) {
 	// A waiting execution holds no worker and no lease, so cancellation
 	// completes it at once like a queued one: entering cancelling would wait
-	// for a worker that does not exist to observe the request.
-	case execution.StatusQueued, execution.StatusWaiting:
+	// for a worker that does not exist to observe the request. Unlike a queued
+	// one it stopped on a node, which cancelWaiting records.
+	case execution.StatusWaiting:
+		if err := store.cancelWaiting(ctx, tenant, executionID, now); err != nil {
+			return execution.Record{}, err
+		}
+		return store.Get(ctx, tenant, executionID)
+	case execution.StatusQueued:
 		updates["status"] = string(execution.StatusCancelled)
 		updates["finished_at"] = &now
 		updates["lease_owner"] = ""
@@ -855,6 +861,91 @@ func (store *GORMExecutionStore) Cancel(ctx context.Context, tenant TenantScope,
 		return execution.Record{}, fmt.Errorf("cancel execution: %w", err)
 	}
 	return store.Get(ctx, tenant, executionID)
+}
+
+// waitCancelledError is the node-run error a wait cancelled in place carries,
+// spelled with the code the runner gives a node its cancellation interrupted.
+var waitCancelledError = []byte(`{"code":"execution.cancelled","message":"execution was cancelled while this node waited"}`)
+
+// cancelWaiting completes a waiting execution as cancelled and settles the
+// wait that held it, in one transaction.
+//
+// The suspended node is where the run stopped, so it gets a cancelled trace
+// row: the runner never recorded one (a suspended node has not finished), and
+// without it a reloaded inspector found nothing for the node and read it as
+// "Not reached" beside a cancelled execution. The wait is consumed too, so its
+// token is spent and the sweeper, which lists unconsumed waits past their
+// deadline, stops visiting a run that is already over.
+//
+// The status guard makes a race with a resume harmless: whichever of the two
+// moves the execution out of waiting first wins, and the loser changes nothing.
+func (store *GORMExecutionStore) cancelWaiting(ctx context.Context, tenant TenantScope, executionID string, now time.Time) error {
+	return store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		cancelled := tx.Model(&executionModel{}).
+			Where("tenant_id = ? AND id = ? AND status = ?", tenant.ID, executionID, string(execution.StatusWaiting)).
+			Updates(map[string]any{
+				"status":           string(execution.StatusCancelled),
+				"finished_at":      &now,
+				"lease_owner":      "",
+				"lease_expires_at": nil,
+			})
+		if cancelled.Error != nil {
+			return fmt.Errorf("cancel execution: %w", cancelled.Error)
+		}
+		if cancelled.RowsAffected == 0 {
+			return nil
+		}
+		var wait executionWaitModel
+		err := tx.Where("tenant_id = ? AND execution_id = ? AND consumed_at IS NULL", tenant.ID, executionID).
+			Order("id DESC").First(&wait).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("lookup suspended wait: %w", err)
+		}
+		if err := tx.Model(&executionWaitModel{}).Where("id = ? AND consumed_at IS NULL", wait.ID).
+			Updates(map[string]any{
+				"consumed_at": &now, "outcome": WaitOutcomeCancelled,
+				"resume_token": "", "updated_at": now,
+			}).Error; err != nil {
+			return fmt.Errorf("settle cancelled wait: %w", err)
+		}
+		taken, err := existingNodeRuns(tx, tenant.ID, executionID)
+		if err != nil {
+			return err
+		}
+		// After every row already stored: the wait's RunCount is where the
+		// resumed segment would have started, and the stored maximum covers a
+		// trace that outgrew it. The run index is the node's next free one, so
+		// a wait inside a loop does not collide with its earlier iterations.
+		sequence := wait.RunCount
+		runIndex := 0
+		for key, stored := range taken {
+			if stored > sequence {
+				sequence = stored
+			}
+			if key.nodeID == wait.NodeID && key.attempt == 1 && key.runIndex >= runIndex {
+				runIndex = key.runIndex + 1
+			}
+		}
+		id, err := workflow.NewID("run")
+		if err != nil {
+			return err
+		}
+		row := executionNodeRunModel{
+			ID: id, TenantID: tenant.ID, ExecutionID: executionID, NodeID: wait.NodeID,
+			Attempt: 1, RunIndex: runIndex, Sequence: sequence + 1,
+			Status: string(execution.StatusCancelled),
+			Input:  []byte("null"), Output: []byte("null"),
+			Error:     append([]byte(nil), waitCancelledError...),
+			StartedAt: wait.CreatedAt, FinishedAt: &now,
+		}
+		if err := tx.Create(&row).Error; err != nil {
+			return fmt.Errorf("record cancelled wait node: %w", err)
+		}
+		return nil
+	})
 }
 
 // CreateNodeRun appends a node attempt only to an execution visible to the
