@@ -89,7 +89,7 @@ none
 
 
 # Acceptance Criteria
-- [ ] Node `notes`/`notesInFlow` are part of the canonical node and round-trip
+- [x] Node `notes`/`notesInFlow` are part of the canonical node and round-trip
 - [ ] Workflow `settings.executionOrder` is exported; tags round-trip (executionOrder: done; tags: open, the canonical document has no place for them)
 - [x] A node's authored `typeVersion` is kept when the translator can write it (If ≥ 2.2 is not downgraded)
 - [x] The document returned by `workflow get` passes `workflow validate` unchanged (`id` is accepted and ignored)
@@ -127,3 +127,6 @@ Left:
 - Tags. `workflow.Document` has no field for tags, and the importer's n8n `Document` does not read `tags` at all, so there is nothing to export. Carrying tags needs a canonical field, which is a schema change.
 - Node `notes`/`notesInFlow`. `workflow.Node` has no field for them, and adding one is a schema change (schemas/workflow-v1.schema.json, SDK and web models) that did not fit this time box. The import still reports `notes` as dropped.
 - The other version shifts the audit listed (Agent 1.7/1.8 → 3.1, Webhook 1 → 2, Merge 2 → 3, Code 1 → 2, Telegram 1.1 → 1.2) are a different case. Those translators write the newer version's parameter shape, so the change is reported as lossy, and that is correct. Keeping them would take a translator per older shape.
+
+Notes (2026-10-08): a node's `notes` and `notesInFlow` are carried in the canonical node's `settings` (`withNotes` on import, `applyNotes` on export, internal/interop/n8n/n8n.go), beside its error policy. This needs no schema change, and the editor keeps unknown setting keys when it saves. The import no longer reports the note as dropped. `TestANodesNoteRoundTrips` failed first. `TestImportReportsEveryDroppedElement` now names `webhookId` as its node-level dropped element. Still open: tags (the canonical document has no field for them) and keeping the authored versions of the other nodes the audit lists.
+

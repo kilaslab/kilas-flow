@@ -113,3 +113,33 @@ func TestAnIfNodeGoesBackAtTheVersionItWasAuthoredAt(t *testing.T) {
 		t.Errorf("an If imported at v1 exported at %v, want 2, the shape the translator writes", got)
 	}
 }
+
+// TestANodesNoteRoundTrips is TPL-12's notes half: all 24 node notes of
+// template 5170 were dropped on import and so missing from the export. A note
+// is documentation the author wrote on the node; it travels in the node's
+// settings beside its error policy, and goes back to n8n as it came.
+func TestANodesNoteRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	imported := importFixture(t, `{
+	  "name": "Annotated",
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{},
+	     "notes":"Starts the nightly sync","notesInFlow":true}
+	  ],
+	  "connections": {}
+	}`)
+	for _, issue := range imported.Unsupported {
+		if issue.Field == "notes" {
+			t.Errorf("import reported the note as not carried: %#v", issue)
+		}
+	}
+	exported, err := n8n.Export(imported.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	node := exported.Document.Nodes[0]
+	if node.Notes != "Starts the nightly sync" || !node.NotesInFlow {
+		t.Errorf("exported node notes = %q, notesInFlow = %v, want the note back as written", node.Notes, node.NotesInFlow)
+	}
+}

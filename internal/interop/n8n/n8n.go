@@ -64,6 +64,8 @@ type Node struct {
 	Credentials map[string]any `json:"credentials,omitempty"`
 	Disabled    bool           `json:"disabled,omitempty"`
 	Notes       string         `json:"notes,omitempty"`
+	// NotesInFlow shows the note under the node on n8n's canvas.
+	NotesInFlow bool `json:"notesInFlow,omitempty"`
 	// WebhookID is n8n's per-node webhook identity. A node imported as a
 	// placeholder must carry it back out, or the exported workflow claims a
 	// different endpoint than the one it came from.
@@ -953,6 +955,7 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 		if settings := errorHandlingSettings(node); len(settings) > 0 {
 			converted.Settings = settings
 		}
+		converted.Settings = withNotes(converted.Settings, node)
 
 		converted.Type = entry.kilasType
 		if entry.kilasTypeFor != nil {
@@ -1826,6 +1829,7 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 		// continued on failure returned to n8n as one that fails the whole run
 		// on the first error.
 		applyErrorHandling(&exported, node.Settings)
+		applyNotes(&exported, node.Settings)
 		// A node the author switched off goes back switched off.
 		exported.Disabled = node.Disabled
 		if entry.toN8N != nil {
@@ -2315,9 +2319,6 @@ func nodeIssues(name, id string, node Node) []ImportIssue {
 		})
 	}
 
-	if strings.TrimSpace(node.Notes) != "" {
-		add("notes", "the node's note was parsed but has no KilasFlow equivalent and was not carried")
-	}
 	if strings.TrimSpace(node.WebhookID) != "" {
 		add("webhookId", "n8n's per-node webhook identity is meaningless in this installation; KilasFlow assigns its own webhook binding on activation")
 	}
@@ -2411,6 +2412,35 @@ func exportSettings(settings map[string]any) map[string]any {
 		exported["errorWorkflow"] = strings.TrimSpace(target)
 	}
 	return exported
+}
+
+// withNotes carries a node's note in its settings, beside its error policy: the
+// note is documentation its author wrote on the node, and the canonical node has
+// no other place for it (BUG-6gkd12). applyNotes is the inverse on export.
+func withNotes(settings map[string]any, node Node) map[string]any {
+	if strings.TrimSpace(node.Notes) == "" && !node.NotesInFlow {
+		return settings
+	}
+	if settings == nil {
+		settings = map[string]any{}
+	}
+	if strings.TrimSpace(node.Notes) != "" {
+		settings["notes"] = node.Notes
+	}
+	if node.NotesInFlow {
+		settings["notesInFlow"] = true
+	}
+	return settings
+}
+
+// applyNotes writes a node's note back onto the n8n node it came from.
+func applyNotes(exported *Node, settings map[string]any) {
+	if note, _ := settings["notes"].(string); note != "" {
+		exported.Notes = note
+	}
+	if inFlow, _ := settings["notesInFlow"].(bool); inFlow {
+		exported.NotesInFlow = true
+	}
 }
 
 // applyErrorHandling writes the canonical error settings back onto an n8n node.

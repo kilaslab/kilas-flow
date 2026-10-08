@@ -1668,9 +1668,9 @@ func TestImportReportsEveryDroppedElement(t *testing.T) {
 		// Workflow level.
 		"settings", "pinData", "meta", "staticData",
 		// Node level. Everything else a node carries — the error-handling set,
-		// the disabled flag, the notes and the webhook identity — is either
-		// carried onto the canonical node or has its own test.
-		"notes", "webhookId",
+		// the disabled flag and the notes — is carried onto the canonical node,
+		// and has its own test.
+		"webhookId",
 	} {
 		issue, found := reported[field]
 		if !found {
@@ -1688,7 +1688,7 @@ func TestImportReportsEveryDroppedElement(t *testing.T) {
 	}
 
 	// A node-level diagnostic names its node; a workflow-level one does not.
-	for _, field := range []string{"notes"} {
+	for _, field := range []string{"webhookId"} {
 		if reported[field].NodeName != "Edit" {
 			t.Errorf("%q did not name the node it came from: %#v", field, reported[field])
 		}
