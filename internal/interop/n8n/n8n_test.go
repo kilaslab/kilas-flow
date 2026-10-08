@@ -2503,7 +2503,9 @@ func TestAJavaScriptSortComparatorImportsRunnableAndRoundTripsByteForByte(t *tes
 		t.Fatalf("sort = %s %#v, want the code type and the comparator copied exactly", order.Type, order.Parameters)
 	}
 	for _, issue := range result.Unsupported {
-		if issue.NodeName == "Order" {
+		// A lone node is a fragment no trigger feeds; that is the graph's
+		// shape, reported as topology, not the comparator's conversion.
+		if issue.NodeName == "Order" && issue.Field != "topology" {
 			t.Fatalf("an import issue %#v for a comparator that runs", issue)
 		}
 	}
@@ -2541,7 +2543,9 @@ func TestASortComparatorLeftAtItsDefaultRoundTripsWithoutOne(t *testing.T) {
 		t.Fatalf("parameters = %#v, want the code type and no comparator invented", order.Parameters)
 	}
 	for _, issue := range result.Unsupported {
-		if issue.NodeName == "Order" {
+		// A lone node is a fragment no trigger feeds; that is the graph's
+		// shape, reported as topology, not the comparator's conversion.
+		if issue.NodeName == "Order" && issue.Field != "topology" {
 			t.Fatalf("an import issue %#v for the default comparator", issue)
 		}
 	}

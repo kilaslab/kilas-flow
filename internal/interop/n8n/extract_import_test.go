@@ -45,8 +45,16 @@ func TestImportExtractFromFileOperations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Import(%q) error = %v", given, err)
 		}
-		if len(result.Unsupported) != 0 {
-			t.Fatalf("Import(%q) unsupported = %#v, want none", given, result.Unsupported)
+		// The fixture is a lone node, which the report rightly calls
+		// unrunnable as a graph; only the conversion's own issues count here.
+		var converted []n8n.ImportIssue
+		for _, issue := range result.Unsupported {
+			if issue.Field != "topology" {
+				converted = append(converted, issue)
+			}
+		}
+		if len(converted) != 0 {
+			t.Fatalf("Import(%q) unsupported = %#v, want none", given, converted)
 		}
 		node := nodeByName(result.Document, "Extract")
 		if node.Parameters["operation"] != want {

@@ -16,7 +16,9 @@ package n8n
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -749,7 +751,9 @@ func byKilasType(nodeType string) (mapping, bool) {
 // its instance metadata, and a paste lands in a workflow that keeps its own
 // settings and static data, so the document-level entries saying those were
 // not carried describe nothing the user did. Pinned data stays reported: the
-// nodes it was pinned to will run for real.
+// nodes it was pinned to will run for real. So does a loop, which the paste
+// brings with it whole; the rest of the fragment's shape — no trigger, an
+// input nothing feeds yet — is the shape of a piece of a workflow, and is not.
 func ImportFragment(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 	result, err := Import(payload, catalog)
 	if err != nil {
@@ -758,6 +762,9 @@ func ImportFragment(payload []byte, catalog workflow.Catalog) (ImportResult, err
 	kept := make([]ImportIssue, 0, len(result.Unsupported))
 	for _, issue := range result.Unsupported {
 		if issue.NodeID == "" && issue.NodeName == "" && workflowOnlyField(issue.Field) {
+			continue
+		}
+		if issue.Field == "topology" {
 			continue
 		}
 		kept = append(kept, issue)
@@ -780,10 +787,11 @@ type ImportResult struct {
 
 // Import converts n8n workflow JSON into a canonical KilasFlow document.
 //
-// The result is a *draft*. It is not compiled here: the caller saves it
-// through the normal repository path, and the existing compiler is what
-// decides whether it can be activated or run. That keeps one validation
-// authority rather than a second, weaker one inside the adapter.
+// The result is a *draft*. The caller saves it through the normal repository
+// path, and the existing compiler is what decides whether it can be activated
+// or run. That keeps one validation authority rather than a second, weaker one
+// inside the adapter: the report's cycle and topology entries are that
+// compiler's own verdict on the saved document, asked for, never restated.
 //
 // The catalogue is read, never validated against. n8n identifies a connection
 // endpoint by kind and index; KilasFlow identifies it by port name, and the
@@ -973,6 +981,7 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 	}
 	if catalog != nil {
 		unsupported = append(unsupported, cycleIssues(document, catalog, sourceByID)...)
+		unsupported = append(unsupported, topologyIssues(document, catalog, sourceByID)...)
 	}
 
 	return ImportResult{
@@ -1023,6 +1032,107 @@ func cycleIssues(document workflow.Document, catalog workflow.Catalog, sourceByI
 		})
 	}
 	return issues
+}
+
+// topologyIssues names every other refusal of the graph's shape that run and
+// activate will make: a node no trigger reaches, no trigger at all, a missing
+// required input or sub-node, a second chat trigger, a tool name two nodes
+// share.
+//
+// Like cycleIssues it asks the compiler rather than restating its rules, so
+// the report and the run cannot disagree: the document the import saves is
+// compiled, and each workflow.invalid_topology it is refused with becomes a
+// blocking entry (BUG-t9e3k5). A cycle is left to cycleIssues, which names
+// the loop's path. The compiler names nodes by id, which an n8n workflow
+// never shows its author, so each one is renamed in the reason.
+//
+// An import never carries credentials — they belong to the instance it came
+// from — and the compiler checks the graph's shape only once every node's
+// configuration passes. Compiled as saved, nearly every real import would
+// stop at its missing credentials and say nothing about its shape, so the
+// check compiles a copy whose required credentials are attached as stand-ins.
+func topologyIssues(document workflow.Document, catalog workflow.Catalog, sourceByID map[string]Node) []ImportIssue {
+	document = withStandInCredentials(document, catalog)
+	if document.ID == "" {
+		document.ID = "n8n-import"
+	}
+	_, err := workflow.Compile(document, catalog)
+	var refused *workflow.ValidationErrors
+	if !errors.As(err, &refused) {
+		return nil
+	}
+	nameByID := make(map[string]string, len(document.Nodes))
+	for _, node := range document.Nodes {
+		nameByID[node.ID] = node.Name
+	}
+	named := func(message string) string {
+		for id, name := range nameByID {
+			message = strings.ReplaceAll(message, strconv.Quote(id), strconv.Quote(name))
+		}
+		return message
+	}
+	var issues []ImportIssue
+	seen := map[string]bool{}
+	for _, refusal := range refused.Issues {
+		if !shapeRefusal(refusal) {
+			continue
+		}
+		reason := named(refusal.Message)
+		if key := refusal.NodeID + "\x00" + reason; seen[key] {
+			continue
+		} else {
+			seen[key] = true
+		}
+		issue := ImportIssue{
+			Severity: SeverityBlocking, Field: "topology",
+			Reason: reason + ". Run and activate refuse this workflow until it is fixed.",
+		}
+		if refusal.NodeID != "" {
+			source := sourceByID[refusal.NodeID]
+			issue.NodeName, issue.NodeID = nameByID[refusal.NodeID], refusal.NodeID
+			issue.Type, issue.TypeVersion = source.Type, sourceTypeVersion(source.TypeVersion)
+		}
+		issues = append(issues, issue)
+	}
+	return issues
+}
+
+// withStandInCredentials is a copy of the document in which every credential a
+// node requires and lacks is attached under a stand-in id, the way the person
+// importing it will attach their own. Nothing saved is touched.
+func withStandInCredentials(document workflow.Document, catalog workflow.Catalog) workflow.Document {
+	nodes := make([]workflow.Node, len(document.Nodes))
+	for index, node := range document.Nodes {
+		definition, found := catalog.Lookup(node.Type, node.TypeVersion)
+		if found && len(definition.RequiredCredentials) > 0 {
+			attached := make(map[string]string, len(node.Credentials)+len(definition.RequiredCredentials))
+			maps.Copy(attached, node.Credentials)
+			for _, credentialType := range definition.RequiredCredentials {
+				if strings.TrimSpace(attached[credentialType]) == "" {
+					attached[credentialType] = "import-stand-in"
+				}
+			}
+			node.Credentials = attached
+		}
+		nodes[index] = node
+	}
+	document.Nodes = nodes
+	return document
+}
+
+// shapeRefusal reports a compile refusal of how the graph is wired: its
+// topology, or a port that must be connected, is full, or takes the wrong node.
+// A cycle is cycleIssues' to name. An unknown node type is already blocking as
+// its placeholder, and a node's configuration is reported by its converter.
+func shapeRefusal(refusal workflow.ValidationError) bool {
+	switch refusal.Code {
+	case workflow.ErrorInvalidTopology:
+		return !strings.Contains(refusal.Message, "must not contain a cycle")
+	case workflow.ErrorPortRequired, workflow.ErrorPortFull, workflow.ErrorPortNotAllowed,
+		workflow.ErrorIncompatiblePort, workflow.ErrorUnknownPort:
+		return true
+	}
+	return false
 }
 
 // withDefaultSeverity fills in the severity of issues raised by the per-node
