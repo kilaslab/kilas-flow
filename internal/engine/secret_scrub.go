@@ -126,9 +126,32 @@ func (err *scrubbedError) As(target any) bool {
 		}
 		*typed = scrubbedMessage(credentials.ScrubText(described.ItemMessage(), err.secrets))
 		return true
+	case *itemErrorFields:
+		var detailed itemErrorFields
+		if !errors.As(err.cause, &detailed) {
+			return false
+		}
+		// An HTTP error's body is whatever the service answered, and a
+		// service that echoes the key it was sent ("invalid key …") answers
+		// with the secret.
+		fields := detailed.ItemErrorFields()
+		scrubbed := make(scrubbedFields, len(fields))
+		for key, value := range fields {
+			if text, ok := value.(string); ok {
+				value = credentials.ScrubText(text, err.secrets)
+			}
+			scrubbed[key] = value
+		}
+		*typed = scrubbed
+		return true
 	}
 	return false
 }
+
+// scrubbedFields is an error item's extra fields, already scrubbed.
+type scrubbedFields map[string]any
+
+func (fields scrubbedFields) ItemErrorFields() map[string]any { return fields }
 
 // scrubbedMessage is a message-alone error item's text, already scrubbed.
 type scrubbedMessage string
