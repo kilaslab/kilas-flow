@@ -47,6 +47,15 @@ type NodeDefinition struct {
 	// maximum. When set, the result replaces Inputs and Outputs for *this*
 	// node, before any connection is resolved against them.
 	PortsFor func(parameters map[string]any, typeVersion TypeVersion) (inputs, outputs []Port)
+	// RequiredInputsFor names the item inputs a node with several of them
+	// cannot run without, by port name.
+	//
+	// The runner reads it, not the compiler: it decides whether a node some of
+	// whose inputs received nothing runs on the others. Nil, or an empty list,
+	// is the default — any one input that received items is enough. A fixed
+	// rule ignores its arguments; Merge's depends on its mode. It is a
+	// callback for the same reason PortsFor is.
+	RequiredInputsFor func(parameters map[string]any, typeVersion TypeVersion) []string
 	// RequiredCredentials are the credential types the node cannot run without.
 	//
 	// It is checked here rather than in each node's Validate because a
@@ -673,6 +682,7 @@ func cloneNodeDefinition(definition NodeDefinition) NodeDefinition {
 		RequiredParameters:  append([]string(nil), definition.RequiredParameters...),
 		RequiredFor:         definition.RequiredFor,
 		PortsFor:            definition.PortsFor,
+		RequiredInputsFor:   definition.RequiredInputsFor,
 		RequiredCredentials: append([]string(nil), definition.RequiredCredentials...),
 		CredentialTypes:     append([]string(nil), definition.CredentialTypes...),
 		ExecutorID:          definition.ExecutorID,

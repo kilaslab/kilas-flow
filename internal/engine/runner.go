@@ -711,26 +711,53 @@ func (state *runState) next(graph preparedGraph) (pendingInvocation, bool, error
 // it pushes a branch — the difference is that this one is read from the
 // completed map, so it also covers the convergence nodes the stack leaves
 // alone.
+//
+// One input that received items is enough, unless the node's definition names
+// the inputs it cannot run without; then every one of those must have.
 func delivered(graph preparedGraph, nodeID string, completed map[string]workflow.NodeOutput) bool {
-	ports := itemInputPorts(graph.nodes[nodeID])
+	target := graph.nodes[nodeID]
+	ports := itemInputPorts(target)
 	if ports == 0 {
 		return true
 	}
+	received := make(map[string]bool, ports)
+	fed := false
 	for _, edge := range graph.incoming[nodeID] {
 		if edge.Kind != workflow.ConnectionMain {
 			continue
 		}
+		fed = true
 		output := completed[edge.Source.NodeID]
 		if edge.SourceOutputIndex >= 0 && edge.SourceOutputIndex < len(output) && len(output[edge.SourceOutputIndex]) > 0 {
-			return true
+			received[edge.Target.Port] = true
 		}
 	}
 	// A node whose item port has no incoming edge at all cannot be delivered
 	// to, and the compiler already refuses that graph; running it keeps the
 	// executors' empty-item substitution reachable rather than changing what a
 	// hand-written document does.
-	for _, edge := range graph.incoming[nodeID] {
-		if edge.Kind == workflow.ConnectionMain {
+	if !fed {
+		return true
+	}
+	if len(received) == 0 {
+		return false
+	}
+	return requiredInputsReceived(target, received)
+}
+
+// requiredInputsReceived reports whether every item input a node's definition
+// says it cannot run without received items.
+//
+// This is n8n's rule for a node whose inputs did not all receive items: it
+// runs on the ones that did, unless its type requires some of the others. A
+// Merge choosing between two branches is the case in point — run on one side,
+// it would hand that side on as the author's choice.
+func requiredInputsReceived(target workflow.IRNode, received map[string]bool) bool {
+	if target.Definition.RequiredInputsFor == nil {
+		return true
+	}
+	for _, port := range target.Definition.RequiredInputsFor(target.Parameters, target.TypeVersion) {
+		if !received[port] {
 			return false
 		}
 	}
