@@ -245,6 +245,11 @@ var mappings = []mapping{
 	{
 		n8nType: "n8n-nodes-base.if", kilasType: "kilasflow.if", kilasVersion: workflow.V(1),
 		exportTypeVersion: 2, toKilas: ifToKilas, toN8N: ifToN8N,
+		// Every 2.x reads the filter shape the translator writes, and the filter
+		// options it carried (their own version, the type validation) come back
+		// with it. Version 1 is a different shape the import rewrites, so it is
+		// not listed and goes back at the pin.
+		publishedVersions: []float64{2, 2.1, 2.2, 2.3},
 	},
 	{
 		n8nType: "n8n-nodes-base.merge", kilasType: "kilasflow.merge", kilasVersion: workflow.V(1),
@@ -2385,8 +2390,13 @@ func errorHandlingSettings(node Node) map[string]any {
 // Keys this server invented are not written back: n8n would ignore them, and a
 // document carrying settings the receiving system does not understand is how
 // two formats start diverging.
+//
+// executionOrder is the exception, and it is not invented: it says which order
+// this server already runs every workflow in. n8n opens a file without the key
+// as a legacy workflow and runs it in its v0 order, so leaving it out sent a
+// workflow back that ran differently there than it did here.
 func exportSettings(settings map[string]any) map[string]any {
-	exported := map[string]any{}
+	exported := map[string]any{"executionOrder": "v1"}
 	if zone, _ := settings["timezone"].(string); strings.TrimSpace(zone) != "" {
 		exported["timezone"] = zone
 	}
