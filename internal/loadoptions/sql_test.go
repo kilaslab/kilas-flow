@@ -49,16 +49,23 @@ func liveCredential(t *testing.T, env, credentialType string) *loadoptions.Resol
 		t.Fatalf("%s is not a URL: %v", env, err)
 	}
 	password, _ := parsed.User.Password()
+	// An empty field means a verified connection, which a throwaway server
+	// cannot offer, so TLS is read off the DSN and otherwise off.
 	sslMode := parsed.Query().Get("sslmode")
 	if sslMode == "" {
 		sslMode = "disable"
+	}
+	tlsMode := parsed.Query().Get("tls")
+	if tlsMode == "" {
+		tlsMode = "false"
 	}
 	return &loadoptions.ResolvedCredential{
 		Record: credentials.Record{ID: "cred-db", Name: "Integration", Type: credentialType},
 		Fields: map[string]string{
 			"host": parsed.Hostname(), "port": parsed.Port(),
 			"database": strings.TrimPrefix(parsed.Path, "/"),
-			"user":     parsed.User.Username(), "password": password, "sslMode": sslMode,
+			"user":     parsed.User.Username(), "password": password,
+			"sslMode": sslMode, "tls": tlsMode,
 		},
 	}
 }

@@ -494,6 +494,18 @@ func httpToolNode() node.Definition {
 	return definition
 }
 
+// declaredCredentialOrder lists the credential types a definition declares, in
+// its own order. The agent rebuilds a connected tool's node from a descriptor
+// rather than a compiled definition, and the engine picks among several
+// attached credentials by that order, so the rebuilt node is handed it.
+func declaredCredentialOrder(definition node.Definition) []string {
+	order := make([]string, 0, len(definition.Credentials))
+	for _, requirement := range definition.Credentials {
+		order = append(order, requirement.Type)
+	}
+	return order
+}
+
 func agentNode() node.Definition {
 	return node.Definition{
 		Type:        AgentNodeType,
@@ -1976,6 +1988,7 @@ func (executor *AgentExecutor) httpToolFrom(ir workflow.IRNode, descriptor map[s
 			Definition: workflow.NodeDefinition{
 				Type: HTTPToolNodeType, Version: workflow.V(1),
 				Outputs: mainOutput(), ExecutorID: HTTPExecutorID,
+				CredentialTypes: declaredCredentialOrder(httpToolNode()),
 			},
 		},
 		request: request,
@@ -3857,6 +3870,7 @@ func (executor *AgentExecutor) mcpToolFrom(ir workflow.IRNode, descriptor map[st
 			Definition: workflow.NodeDefinition{
 				Type: MCPClientToolNodeType, Version: workflow.V(1),
 				Outputs: mainOutput(), ExecutorID: MCPClientToolExecutorID,
+				CredentialTypes: declaredCredentialOrder(mcpClientToolNode()),
 			},
 		},
 		timeout: mcpTimeout(parameters, executor.policy),

@@ -138,7 +138,10 @@ func RegisterAll(registry *Registry) error {
 					Key: "password", Label: "Password", Kind: property.KindString, Required: true,
 					TypeOptions: &property.TypeOptions{Password: true},
 				},
-				{Key: "sslMode", Label: "SSL mode", Kind: property.KindString, Description: "disable, require, verify-ca, or verify-full. Defaults to require."},
+				{
+					Key: "sslMode", Label: "SSL mode", Kind: property.KindString, Default: "verify-full",
+					Description: "verify-full (the default) checks the server's certificate and host name; verify-ca checks the certificate only; require encrypts without checking either; disable sends everything in the clear.",
+				},
 			},
 			Secrets: []string{"password"},
 			// No Authenticate descriptor: a database credential does not sign
@@ -158,7 +161,10 @@ func RegisterAll(registry *Registry) error {
 					Key: "password", Label: "Password", Kind: property.KindString, Required: true,
 					TypeOptions: &property.TypeOptions{Password: true},
 				},
-				{Key: "tls", Label: "TLS", Kind: property.KindString, Description: "true, skip-verify, preferred, or a registered config name."},
+				{
+					Key: "tls", Label: "TLS", Kind: property.KindString, Default: "true",
+					Description: "true (the default) checks the server's certificate and host name; skip-verify encrypts without checking; preferred encrypts only when the server offers it, without checking; false sends everything in the clear.",
+				},
 			},
 			Secrets:           []string{"password"},
 			NeverSentOverHTTP: true,
