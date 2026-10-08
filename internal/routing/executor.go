@@ -72,7 +72,9 @@ func (executor *Executor) Execute(ctx context.Context, ir workflow.IRNode, input
 		// Non-secret half only, from the credential type's own field
 		// descriptors. A type this build does not know yields nothing rather
 		// than everything.
-		_, public = credentials.Split(resolved.Type, resolved.Fields)
+		// Declared defaults are filled first, so a Telegram credential saved
+		// with no base URL reads Telegram's own in `$credentials.baseUrl`.
+		_, public = credentials.Split(resolved.Type, credentials.WithDefaults(resolved.Type, resolved.Fields))
 	}
 
 	items := input["main"]

@@ -1,14 +1,14 @@
 ---
 id: BUG-epy2se
 title: 'Credential tests: untestable types shown as ''Test failed''; OpenAI has no Base URL; Telegram baseUrl required, no probe'
-status: todo
+status: done
 priority: medium
 labels:
     - credentials
     - ux
 parent: EPIC-8rbys7
 created: "2026-09-23T01:34:44Z"
-updated: "2026-09-23T01:34:44Z"
+updated: "2026-10-08T16:20:00Z"
 ---
 
 # Description
@@ -107,9 +107,18 @@ packs/telegram/pack.json:13 uses `{{ $credentials.baseUrl }}` with no default
 
 
 # Acceptance Criteria
-- [ ] When the API reports `untestable: true`, the UI hides Test or shows a neutral message, and GET /credential-types exposes `testable`
-- [ ] `openAiApi` has an optional Base URL (n8n key `url`, default https://api.openai.com/v1) used by the probe and as the nodes' fallback
-- [ ] `telegramApi` baseUrl is optional and defaults to https://api.telegram.org, and Telegram has a getMe probe
+- [x] When the API reports `untestable: true`, the UI hides Test or shows a neutral message, and GET /credential-types exposes `testable`
+- [x] `openAiApi` has an optional Base URL (n8n key `url`, default https://api.openai.com/v1) used by the probe and as the nodes' fallback
+- [x] `telegramApi` baseUrl is optional and defaults to https://api.telegram.org, and Telegram has a getMe probe
+
+## Fix (2026-10-08)
+
+- **Testable / untestable.** `GET /credential-types` carries `testable` (true for a type with a declared probe or a database type, mirroring `probe`'s branches; `handlers.testable`). The credentials page hides Test when `testable` is false and renders an `untestable: true` verdict as a neutral muted line (`credentials_test_untestable`, en + id) instead of the red "Test failed". Mapping lives in `web/src/lib/dashboard/credential-test.ts` (`testVerdict`, `canTest`). Web API client and SDK types regenerated.
+- **Declared defaults.** New `credentials.Type.WithDefaults` / `credentials.WithDefaults` fill an empty optional field with its declared default. `RunTest` probes with them, and the routing executor fills them before splitting off `$credentials`, so a pack reading `{{ $credentials.baseUrl }}` gets `https://api.telegram.org` for a credential saved without one. `expandURL` trims a trailing slash where a field joins a path (`{{ url }}/models`).
+- **Telegram.** `baseUrl` is no longer required (default unchanged); new probe `GET {{ baseUrl }}/bot{credential.accessToken}/getMe` through the existing path placement, `RunTest` and safehttp client (no new egress path).
+- **OpenAI.** New optional field `url` (n8n's key, default `https://api.openai.com/v1`); probe is `GET {{ url }}/models`. The type's default scope moved from the fixed `DefaultDomains: [api.openai.com]` to `DefaultDomainsFrom: "url"`, so an empty Base URL still scopes the key to api.openai.com while a gateway/Ollama the owner set is the key's home (a workflow editor cannot edit a credential). Rows already stored with the materialised `[api.openai.com]` keep it; an owner who moves such a credential to a gateway edits its allowed hosts too. The placeholder-fill rule already treats a changed `url` as a moved target. The OpenAI Chat Model uses the credential's `url` when its own `baseUrl` is empty or still the provider default (`nodes.providerBaseURL`); a node that names another URL wins, and the call is still held to the credential's scope.
+- Docs: concepts/credentials.md (scope table, Base URL paragraph, which types are testable), concepts/safety-boundaries.md, skills/kilasflow-credentials/references/CREDENTIAL_TYPES.md.
+- Tests: internal/credentials/probe_test.go (Telegram optional baseUrl, WithDefaults, getMe probe against a stub granted by `AllowedPrivateEndpoints`, OpenAI url field/scope/probe), internal/api/credential_testable_test.go, nodes/openai_credential_url_test.go, packs/telegram/default_base_url_test.go, web/src/lib/dashboard/credential-test.test.ts; scope/field-list pins updated for the new openAiApi shape.
 
 # Implementation Plan
 

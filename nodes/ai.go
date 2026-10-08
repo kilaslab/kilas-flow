@@ -873,7 +873,8 @@ func executeProviderChatModel(provider chatModelProvider) engine.ExecutorFunc {
 		if credentialID == "" {
 			return nil, fmt.Errorf("node %q: a %s credential is required", ir.Name, provider.credentialType)
 		}
-		if _, err := resolveModelCredential(ctx, ir, request, credentialID, provider.credentialType); err != nil {
+		resolved, err := resolveModelCredential(ctx, ir, request, credentialID, provider.credentialType)
+		if err != nil {
 			return nil, err
 		}
 
@@ -882,7 +883,7 @@ func executeProviderChatModel(provider chatModelProvider) engine.ExecutorFunc {
 			modelName = provider.defaultModel
 		}
 		descriptor := modelDescriptorFor(ir, credentialID, provider.credentialType, modelName,
-			textValue(ir.Parameters["baseUrl"], provider.baseURL))
+			providerBaseURL(provider, ir.Parameters["baseUrl"], resolved.Fields))
 		options := mapValue(ir.Parameters[modelOptionsKey])
 		copyPresentOptions(descriptor, options, samplingOptionKeys)
 		// The transport options are kept apart from the sampling ones because
@@ -892,6 +893,33 @@ func executeProviderChatModel(provider chatModelProvider) engine.ExecutorFunc {
 		copyPresentOptions(descriptor, options, []string{ModelOptionTimeout, ModelOptionMaxRetries})
 		return workflow.NodeOutput{{{JSON: map[string]any{descriptorKey: descriptor}}}}, nil
 	}
+}
+
+// credentialBaseURLFields names the field a provider credential keeps its own
+// base URL in: n8n's `url` on openAiApi. A type that is absent carries none.
+var credentialBaseURLFields = map[string]string{
+	OpenAICredentialType: "url",
+}
+
+// providerBaseURL is where a provider chat model sends its calls: the node's
+// own base URL when it names one other than the provider's, else the one its
+// credential carries, else the provider's.
+//
+// The node's default is filled into every stored document, so a node showing
+// the provider's own address has not chosen it. Reading that as unset is what
+// lets a credential pointed at an OpenAI-compatible endpoint, such as a local
+// Ollama, reach every node that uses it, as n8n's does. The credential's domain
+// scope still binds the call when the agent makes it.
+func providerBaseURL(provider chatModelProvider, configured any, credentialFields map[string]string) string {
+	if chosen := strings.TrimSpace(textValue(configured, "")); chosen != "" && chosen != provider.baseURL {
+		return chosen
+	}
+	if field, carries := credentialBaseURLFields[provider.credentialType]; carries {
+		if fromCredential := strings.TrimSpace(credentialFields[field]); fromCredential != "" {
+			return fromCredential
+		}
+	}
+	return provider.baseURL
 }
 
 // resolveModelCredential resolves a chat model's credential and checks its type.

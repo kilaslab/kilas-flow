@@ -154,9 +154,11 @@ func TestUnscopedNamesTheCredentialsThatCouldBeSentAnywhere(t *testing.T) {
 
 func TestTheCatalogueCarriesEachTypesDefaultScope(t *testing.T) {
 	t.Parallel()
+	// OpenAI's key follows the credential's own base URL (n8n's `url`), which
+	// defaults to api.openai.com; see TestAnOpenAICredentialCarriesAnOptionalBaseURL.
 	openAI, _ := credentials.Lookup("openAiApi")
-	if !reflect.DeepEqual(openAI.DefaultDomains, []string{"api.openai.com"}) {
-		t.Errorf("openAiApi DefaultDomains = %v, want api.openai.com", openAI.DefaultDomains)
+	if len(openAI.DefaultDomains) != 0 || openAI.DefaultDomainsFrom != "url" {
+		t.Errorf("openAiApi default scope = %v/%q, want derived from url", openAI.DefaultDomains, openAI.DefaultDomainsFrom)
 	}
 	openRouter, _ := credentials.Lookup("openRouterApi")
 	if !reflect.DeepEqual(openRouter.DefaultDomains, []string{"openrouter.ai"}) {
@@ -176,10 +178,10 @@ func TestTheCatalogueCarriesEachTypesDefaultScope(t *testing.T) {
 
 func TestApplyDefaultDomainsMaterialisesOnlyAFixedList(t *testing.T) {
 	t.Parallel()
-	openAI := credentials.Record{Type: "openAiApi"}
-	credentials.ApplyDefaultDomains(&openAI)
-	if !reflect.DeepEqual(openAI.AllowedDomains, []string{"api.openai.com"}) {
-		t.Errorf("AllowedDomains = %v, want the fixed default stored", openAI.AllowedDomains)
+	openRouter := credentials.Record{Type: "openRouterApi"}
+	credentials.ApplyDefaultDomains(&openRouter)
+	if !reflect.DeepEqual(openRouter.AllowedDomains, []string{"openrouter.ai"}) {
+		t.Errorf("AllowedDomains = %v, want the fixed default stored", openRouter.AllowedDomains)
 	}
 	// A scope derived from a field is computed when it is read, never stored:
 	// a stored copy would go stale the moment the owner moved the base URL.

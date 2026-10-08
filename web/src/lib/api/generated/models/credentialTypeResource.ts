@@ -20,4 +20,6 @@ export interface CredentialTypeResource {
   /** @nullable */
   fields: Field[] | null;
   id: string;
+  /** Whether this server can test a credential of this type; one that cannot is answered untestable */
+  testable: boolean;
 }

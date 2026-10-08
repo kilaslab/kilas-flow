@@ -9,7 +9,7 @@ labels:
     - cli
 parent: EPIC-8rbys7
 created: "2026-09-23T01:34:44Z"
-updated: "2026-09-23T01:34:44Z"
+updated: "2026-10-08T16:30:00Z"
 ---
 
 # Description
@@ -103,10 +103,21 @@ BUG-b4cb1c (stale node counts in other pages)
 
 
 # Acceptance Criteria
-- [ ] FEAT-3taswf is reopened as blocked on the first release tag, or its unticked criteria move to a new ticket
-- [ ] The node counts in the docs are re-measured (done in the audit change on 2026-09-23), and a drift gate compares the prose with GET /node-types
-- [ ] `credential create --help` describes --file as a credential document; the shared flag help takes a per-verb noun
+- [x] FEAT-3taswf is reopened as blocked on the first release tag, or its unticked criteria move to a new ticket
+- [x] The node counts in the docs are re-measured (done in the audit change on 2026-09-23), and a drift gate compares the prose with GET /node-types
+- [x] `credential create --help` describes --file as a credential document; the shared flag help takes a per-verb noun
 - [ ] The CLI reference examples run as written (checked in CI), and the catalogue size and exit-code claims are generated
+
+## Progress (2026-10-08)
+
+Criteria 1-3 done; criterion 4 (CLI-18) only partly, so the ticket stays `todo`.
+
+- **FEAT-3taswf** reopened: `status: todo` plus a `blocked` label (the board has no blocked column; `pine doctor` flags `status: blocked`), with a note at the top of the ticket that it waits on the first `sdk-v*` tag publishing through `release.yml`'s sdk job, and which criteria (1, 5, 7) to tick then. Nothing was published.
+- **Node counts** re-measured: a default install now serves 62 types across 69 pairs (59 types / 64 pairs compiled, 3 / 5 from the Telegram and WAHA packs), one more than the 2026-09-23 audit's 61/68. `concepts/node-registry.md` and `start/what-kilasflow-is.md` corrected. Drift gate: `cmd/kilasflow/catalogue_docs_test.go` registers what `run()` registers before directory packs (`nodes.RegisterAll`, `nodes.RegisterVectorNodes`, `telegram.Register`, `waha.Register`), counts types and pairs the way `GET /node-types` lists them, and fails when either page's sentence disagrees. It caught the 61→62 drift on its first run. Limit: it mirrors `run()`'s registration calls rather than calling the endpoint, so a new embedded pack added to `run()` must be added there too.
+- **CLI help nouns:** `registerCreateFlags(noun)` takes the verb's noun; `credential create/update -h` say "credential document to send", `workflow create -h` says "workflow document to send". Test: `internal/cli/document_flag_help_test.go`. `make generate-skills-command-reference-check` up to date.
+- **CLI-18, partly:** cli.md no longer states a catalogue size ("90-entry" → "the whole catalogue"), and the `node describe` / `node options` examples use the full type `kilasflow.httpRequest` (describe matches the type exactly, so `httpRequest` exited 4).
+
+Left for criterion 4: run cli.md's fenced examples against a test server in CI; the `--url ''` exit-code claim (cli.md says exit 2 naming the four ways to set a server; the binary exits 1 `network_error`, re-checked 2026-10-08, CLI-14: fix the binary or the prose); the `--token "$KILASFLOW_TOKEN"` example (CLI-11); and the skills' contradiction of the "deliberately absent" list (CLI-3).
 
 # Implementation Plan
 

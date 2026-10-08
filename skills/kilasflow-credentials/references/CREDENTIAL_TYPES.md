@@ -46,9 +46,9 @@ A credential type is one `credentials.Type` value:
 | `postgres` | PostgreSQL | `host`, `port`, `database`, `user`, `password` (secret), `sslMode` (empty means `verify-full`) | none: a database connection |
 | `mysql` | MySQL and MariaDB | `host`, `port`, `database`, `user`, `password` (secret), `tls` (empty means `true`, verified) | none: a database connection |
 | `sqlite` | a SQLite file on the server | `path` | none: a file, not a host |
-| `telegramApi` | Telegram Bot API | `accessToken` (secret), `baseUrl` | path placement: the Bot API puts the token in the request path |
+| `telegramApi` | Telegram Bot API | `accessToken` (secret), `baseUrl` (optional, default `https://api.telegram.org`) | path placement: the Bot API puts the token in the request path |
 | `wahaApi` | a self-hosted WAHA instance | `baseUrl`, `apiKey` (secret) | one fixed header whose name the type declares |
-| `openAiApi` | OpenAI | `apiKey` (secret) | bearer placement |
+| `openAiApi` | OpenAI, or an OpenAI-compatible endpoint | `apiKey` (secret), `url` (optional, default `https://api.openai.com/v1`) | bearer placement |
 | `openRouterApi` | OpenRouter | `apiKey` (secret) | bearer placement |
 
 Thirteen types ship, and every id and field key is byte-identical to what the
@@ -76,14 +76,17 @@ today; the registry is a package-level singleton built at init.
 ## Which types can be tested
 
 A probe exists where a harmless authenticated call proves the credential:
-`openAiApi` and `openRouterApi` declare one, and the three database types are
-tested by connecting (`internal/api/handlers/credentials.go`, `probe`, which
-routes a database type to the SQL driver's own handshake under the same guard
-the executors receive).
+`openAiApi` (`{url}/models`), `openRouterApi`, `telegramApi`
+(`{baseUrl}/bot<token>/getMe`) and the two Google types declare one, and the
+three database types are tested by connecting
+(`internal/api/handlers/credentials.go`, `probe`, which routes a database type
+to the SQL driver's own handshake under the same guard the executors receive).
+An optional field left empty is probed at its declared default.
 
 Everything else answers `untestable`, which is a different answer from a probe
 that ran and failed — a client showing a cross for both would be lying about
-one. OpenRouter is probed at its key endpoint rather than its model catalogue,
+one. `GET /api/v1/credential-types` marks each type `testable`, so a client can
+leave Test off a type it cannot probe. OpenRouter is probed at its key endpoint rather than its model catalogue,
 because that catalogue is served unauthenticated and a 200 there would pass an
 expired key.
 

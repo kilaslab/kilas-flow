@@ -394,7 +394,7 @@ func TestEveryStoredCredentialTypeStillResolves(t *testing.T) {
 		"sqlite":               {"path"},
 		"wahaApi":              {"baseUrl", "apiKey"},
 		"telegramApi":          {"accessToken", "baseUrl"},
-		"openAiApi":            {"apiKey"},
+		"openAiApi":            {"apiKey", "url"},
 		"openRouterApi":        {"apiKey"},
 		"googleDriveOAuth2Api": {"clientId", "clientSecret", "access_token", "refresh_token", "expiry", "scope"},
 		"gmailOAuth2":          {"clientId", "clientSecret", "access_token", "refresh_token", "expiry", "scope"},

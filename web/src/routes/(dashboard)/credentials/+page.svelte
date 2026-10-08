@@ -19,6 +19,7 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { defaultScope } from '$lib/dashboard/credential-scope';
+	import { canTest, testVerdict, type TestVerdict } from '$lib/dashboard/credential-test';
 	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
 	import { RequestGuard } from '$lib/dashboard/request-guard';
 	import * as m from '$lib/paraglide/messages.js';
@@ -78,7 +79,7 @@
 	let pendingDelete = $state<CredentialResource | null>(null);
 	let deleting = $state(false);
 	let deleteError = $state<string | null>(null);
-	let testResult = $state<{ ok: boolean; detail: string } | null>(null);
+	let testResult = $state<TestVerdict | null>(null);
 	let testing = $state(false);
 	let connecting = $state(false);
 	let connectResult = $state<{ ok: boolean; detail: string } | null>(null);
@@ -309,9 +310,9 @@
 			};
 			const response = await testCredentialPayload(typeID, payload);
 			if (response.status !== 200) throw new Error(m.credentials_error_test());
-			testResult = { ok: response.data.ok, detail: response.data.detail ?? '' };
+			testResult = testVerdict(response.data);
 		} catch (error) {
-			testResult = { ok: false, detail: message(error) };
+			testResult = { kind: 'failed', detail: message(error) };
 		} finally {
 			testing = false;
 		}
@@ -428,7 +429,13 @@
 					<p class="text-xs leading-5 text-muted-foreground">{hostsHint}</p>
 				</div>
 				{#if testResult}
-					<p role="status" class={`text-sm ${testResult.ok ? 'text-success' : 'text-destructive'}`}>{testResult.ok ? (testResult.detail ? m.credentials_test_connected_detail({ detail: testResult.detail }) : m.credentials_test_connected()) : m.credentials_test_failed({ detail: testResult.detail })}</p>
+					{#if testResult.kind === 'ok'}
+						<p role="status" class="text-sm text-success">{testResult.detail ? m.credentials_test_connected_detail({ detail: testResult.detail }) : m.credentials_test_connected()}</p>
+					{:else if testResult.kind === 'untestable'}
+						<p role="status" class="text-sm text-muted-foreground">{m.credentials_test_untestable()}</p>
+					{:else}
+						<p role="status" class="text-sm text-destructive">{m.credentials_test_failed({ detail: testResult.detail })}</p>
+					{/if}
 				{/if}
 				{#if connectResult}
 					<p role="status" class={`text-sm ${connectResult.ok ? 'text-success' : 'text-destructive'}`}>{connectResult.ok ? m.credentials_connect_ok() : m.credentials_connect_failed({ detail: connectResult.detail })}</p>
@@ -438,7 +445,9 @@
 					{#if GOOGLE_TYPES.has(typeID)}
 						<Button type="button" variant="outline" onclick={() => void connectGoogle()} disabled={saving || connecting}>{connecting ? m.credentials_connecting() : m.credentials_connect()}</Button>
 					{/if}
-					<Button type="button" variant="outline" onclick={() => void testCurrent()} disabled={saving || testing}>{testing ? m.credentials_testing() : m.credentials_test()}</Button>
+					{#if canTest(definition)}
+						<Button type="button" variant="outline" onclick={() => void testCurrent()} disabled={saving || testing}>{testing ? m.credentials_testing() : m.credentials_test()}</Button>
+					{/if}
 					<Button type="button" variant="outline" onclick={() => (editorOpen = false)} disabled={saving}>{m.credentials_cancel()}</Button>
 					<Button type="submit" disabled={saving}>{saving ? m.credentials_saving() : m.credentials_save()}</Button>
 				</Dialog.Footer>
