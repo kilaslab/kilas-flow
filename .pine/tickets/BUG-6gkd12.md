@@ -108,7 +108,8 @@ Related tickets: BUG-gaavr5
 
 ## Progress (2026-10-08)
 
-Done, TPL-15: `workflowDocumentInput` (internal/api/handlers/workflows.go) accepts `id` and never reads it, because the workflow a request acts on is the one its path names. The document `GET /workflows/{id}` returns now validates and saves unchanged. `TestADocumentReadBackFromGetValidatesAsItIs` (internal/api/debug_ops_test.go) failed with the ticket's `unexpected property body.id` first. The web client model and SDK types are regenerated; the API reference is unchanged.
+Done, TPL-15: the CLI's workflow verbs (`workflow validate`, and `create`/`update` from a file) drop a document's top-level `id` before sending it (`readWorkflowDocument` in internal/cli/verbs_workflow.go). The document `workflow get` prints therefore validates and saves unchanged. A document without an id is still sent byte for byte. Test: `TestWorkflowValidateSendsADocumentReadBackFromGetWithoutItsID`, which failed first.
+
+The API still refuses `id` on purpose: `TestWorkflowAPIOpenAPIDocumentsLifecycleResponseStatuses` pins that the write schema never exposes the server-owned id. A first attempt that accepted and ignored `id` server-side broke that guard and was reverted.
 
 Open, TPL-12: node `notes`/`notesInFlow` in the canonical node, export of `settings.executionOrder` and tags, and keeping an authored `typeVersion` (If ≥ 2.2) on export. The status stays todo for these.
-

@@ -303,7 +303,7 @@ func runWorkflowCreate(ctx *Context, args []string) error {
 		return usageError("no document: pass --file <path>, or --file - to read it from stdin")
 	}
 
-	document, err := readDocument(flags.file, ctx.Env.Stdin)
+	document, err := readWorkflowDocument(flags.file, ctx.Env.Stdin)
 	if err != nil {
 		return err
 	}
@@ -348,7 +348,7 @@ func runWorkflowValidate(ctx *Context, args []string) error {
 		return usageError("no document: pass --file <path>, or --file - to read it from stdin")
 	}
 
-	document, err := readDocument(flags.file, ctx.Env.Stdin)
+	document, err := readWorkflowDocument(flags.file, ctx.Env.Stdin)
 	if err != nil {
 		return err
 	}
@@ -656,6 +656,30 @@ func readDocument(path string, stdin io.Reader) ([]byte, error) {
 	}
 
 	return raw, nil
+}
+
+// readWorkflowDocument reads a workflow document for a verb that sends one,
+// without its top-level id.
+//
+// The document `workflow get` prints carries the workflow's id, and the write
+// schema refuses it as server-owned: the workflow a request acts on is the one
+// its path names. get → edit → validate is the loop this CLI is built for, so
+// the id is dropped here rather than left for every caller to know to strip
+// (BUG-6gkd12). A document without one is sent byte for byte as it was read.
+func readWorkflowDocument(path string, stdin io.Reader) ([]byte, error) {
+	raw, err := readDocument(path, stdin)
+	if err != nil {
+		return nil, err
+	}
+	var members map[string]json.RawMessage
+	if json.Unmarshal(raw, &members) != nil {
+		return raw, nil
+	}
+	if _, carriesID := members["id"]; !carriesID {
+		return raw, nil
+	}
+	delete(members, "id")
+	return json.Marshal(members)
 }
 
 // locationID is the last path segment of a Location header, which is the id the

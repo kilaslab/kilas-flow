@@ -455,6 +455,42 @@ func TestWorkflowValidateReadsTheDocumentFromStdinAndPrintsTheVerdict(t *testing
 	}
 }
 
+// get → edit → validate is the loop the CLI is built for, and the document
+// get returns carries the workflow's id, which the write schema refuses as
+// server-owned ("unexpected property body.id"). The verbs that send a
+// workflow document drop it, so the document get printed goes back as it is
+// (BUG-6gkd12).
+func TestWorkflowValidateSendsADocumentReadBackFromGetWithoutItsID(t *testing.T) {
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		apiPrefix + "/workflows/validate": jsonBody(http.StatusOK,
+			`{"valid":true,"diagnostics":[]}`),
+	})
+	srv := stubAPI(t, api.routesFor(t))
+
+	document := `{"id":"wf_1","schemaVersion":1,"name":"Orders","nodes":[{"id":"n1","name":"Start"}],"connections":[],"settings":{}}`
+
+	code, _, stdout, stderr := runCLI(t, Env{
+		Args:   []string{"workflow", "validate", "--file", "-", "--url", srv.URL, "--quiet"},
+		Stdin:  strings.NewReader(document),
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+	}
+
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(api.last(t).Body), &sent); err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
+	if _, kept := sent["id"]; kept {
+		t.Errorf("body = %v, want the server-owned id dropped", sent)
+	}
+	nodes, _ := sent["nodes"].([]any)
+	if sent["name"] != "Orders" || len(nodes) != 1 || nodes[0].(map[string]any)["id"] != "n1" {
+		t.Errorf("body = %v, want everything else as written, node ids included", sent)
+	}
+}
+
 func TestWorkflowValidateReportsDiagnosticsWithoutFailing(t *testing.T) {
 	// The diagnostics are the import path's own resource, so the reason is
 	// under `reason` and the node is under `nodeId`.

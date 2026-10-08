@@ -130,10 +130,6 @@ type WorkflowValidationIssue struct {
 // identity is deliberately absent: POST assigns it and PUT takes it from the
 // path, so a request can never choose a workflow ID or contradict its URL.
 type workflowDocumentInput struct {
-	// ID is accepted and never read: the workflow a write goes to is the one
-	// its path names. A document read back from get carries it, and get →
-	// edit → validate is the loop the CLI is built for (BUG-6gkd12).
-	ID            string                `json:"id,omitempty" doc:"Ignored. The workflow a request acts on is the one its path names; accepted so a document read back from get can be sent unchanged"`
 	SchemaVersion int                   `json:"schemaVersion"`
 	Name          string                `json:"name"`
 	Nodes         []workflow.Node       `json:"nodes"`
