@@ -1,7 +1,7 @@
 ---
 id: BUG-c73h98
 title: the embedded frame gets 403 on GET /credential-types on every load
-status: todo
+status: done
 priority: low
 labels:
     - embed
@@ -32,9 +32,18 @@ Either the embed scope permits the credential-types read the editor needs, or th
 `GET /api/v1/credential-types` 403s for every embed session on every load, because the route requires `kindKey` before any scope check runs.
 
 # Acceptance Criteria
-- [ ] The embed scope that a workflow-editing session already carries (e.g. `workflow:read`) permits `GET /credential-types`, or the editor stops requesting it when running in an embed
-- [ ] `TestEmbedSentencesAreUnchangedByTheSharedTable`'s credential-types case is updated to match the decided behavior
-- [ ] A manual or automated check confirms the editor iframe no longer surfaces a 403 for this request in an embed session
+- [x] The embed scope that a workflow-editing session already carries (e.g. `workflow:read`) permits `GET /credential-types`, or the editor stops requesting it when running in an embed
+- [x] `TestEmbedSentencesAreUnchangedByTheSharedTable`'s credential-types case is updated to match the decided behavior
+- [x] A manual or automated check confirms the editor iframe no longer surfaces a 403 for this request in an embed session
+
+# Fix (2026-10-08)
+
+Decided behaviour: an embed session reads the credential type catalogue on `workflow:read` (which `workflow:write` and `workflow:run` imply), the same scope the node catalogue needs. The catalogue holds schemas, never values, and is deployment-wide. The payload validator `POST /credential-types/{type}/test` spends a live call and stays refused to an embed session by kind, with its pinned sentence unchanged.
+
+- `internal/api/middleware/scope.go`: the `/credential-types` arm refuses non-GET by kind first (embed: "cannot use this endpoint", key: "cannot manage credentials"), then admits GET on `ScopeRead` for either subject.
+- `TestEmbedSentencesAreUnchangedByTheSharedTable` drops the GET row; `TestAnEmbedSessionReadsTheCredentialTypeCatalogue` pins GET permitted with `workflow:read` and refused to a datastore-only session.
+- Automated check: `TestTheEmbeddedEditorLoadsTheCredentialTypeCatalogue` (internal/api) issues a real embed token and calls the router; it returns 403 without the fix and 200 with the catalogue with it.
+- `go test ./internal/api/ ./internal/api/middleware/` pass.
 
 # Related Files
 

@@ -387,6 +387,28 @@ func TestAnEmbedSessionCannotTestACredential(t *testing.T) {
 	}
 }
 
+func TestTheEmbeddedEditorLoadsTheCredentialTypeCatalogue(t *testing.T) {
+	issuer := embedIssuer(t)
+	handler, _ := credentialAPI(t, api.Deps{EmbedIssuer: issuer})
+
+	// The editor requests the catalogue on every load to render a node's
+	// credential field, and every embedded load used to log a 403 for it.
+	_, token, err := issuer.Issue(embed.Request{
+		TenantID: repository.DefaultTenantID, WorkflowID: "wf_embedded",
+		Scopes: []embed.Scope{embed.ScopeRead, embed.ScopeWrite}, Origin: hostOrigin,
+	})
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	got := embedRequest(t, handler, token, http.MethodGet, "/api/v1/credential-types", nil)
+	if got.Code != http.StatusOK {
+		t.Fatalf("GET /credential-types status = %d, want 200 (body: %s)", got.Code, got.Body)
+	}
+	if !strings.Contains(got.Body.String(), `"postgres"`) {
+		t.Errorf("the catalogue names no postgres type: %s", got.Body)
+	}
+}
+
 func TestOnlyOneTestOfACredentialRunsAtATime(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

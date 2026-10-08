@@ -151,10 +151,15 @@ func permits(subject subject, r *http.Request) (int, string) {
 		// needs the type catalogue — and the payload validator that goes with
 		// it spends a live call against the customer's service, so it is part
 		// of credential mutation rather than of reading.
-		if subject.Kind() != kindKey {
-			return http.StatusForbidden, subject.Denial("cannot use this endpoint")
-		}
+		//
+		// The catalogue is schemas, never values, and the embedded editor
+		// reads it on every load to render a node's credential field, so an
+		// embed session reads it on the same scope as the node catalogue. The
+		// validator stays refused to it by kind, as the whole prefix was.
 		if r.Method != http.MethodGet {
+			if subject.Kind() != kindKey {
+				return http.StatusForbidden, subject.Denial("cannot use this endpoint")
+			}
 			return http.StatusForbidden, subject.Denial("cannot manage credentials")
 		}
 		return refused(subject, subject.Allows(embed.ScopeRead), "cannot read")
