@@ -1018,20 +1018,23 @@ func suspendWithCheckpoint(suspended *SuspendError, nodeID string, input workflo
 // node with resumeOutput and then running the same pass Run would have. Nodes
 // completed before suspension never execute again: their outputs arrive in
 // the checkpoint, not from a second run.
+//
+// A resume refused before anything runs fails on the suspended node, refusals
+// that leave the graph unreadable included: see failedResume.
 func (runner *Runner) Resume(ctx context.Context, ir workflow.IR, request Request, checkpoint Checkpoint, resumeOutput workflow.NodeOutput) (Result, error) {
 	if runner == nil || runner.executors == nil {
-		return Result{}, fmt.Errorf("engine executor registry is required")
+		return failedResume(checkpoint, fmt.Errorf("engine executor registry is required"))
 	}
 	if checkpoint.TriggerNodeID != request.TriggerNodeID {
-		return Result{}, fmt.Errorf("wait checkpoint is for a different trigger")
+		return failedResume(checkpoint, fmt.Errorf("wait checkpoint is for a different trigger"))
 	}
 	graph, err := prepareGraph(ir, request.TriggerNodeID)
 	if err != nil {
-		return Result{}, err
+		return failedResume(checkpoint, err)
 	}
 	node, found := graph.nodes[checkpoint.SuspendNode]
 	if !found {
-		return Result{}, fmt.Errorf("suspended node %q is not in the compiled graph", checkpoint.SuspendNode)
+		return failedResume(checkpoint, fmt.Errorf("suspended node %q is not in the compiled graph", checkpoint.SuspendNode))
 	}
 	// Keyed by run, not by node: a wait inside a loop has completed runs from
 	// every batch before the one it suspended on, and refusing on those failed
@@ -1178,7 +1181,14 @@ func resumedProgress(state *runState, graph preparedGraph, node workflow.IRNode,
 // refused resume failed the execution with every node it had reached shown as
 // succeeded, the wait included, and an error that pointed at nothing a reader
 // could open. The run index is the one the resume would have completed.
+//
+// Every refusal of a resume goes through here, the service's as well as
+// Resume's, so none of them leaves the replay all green.
 func failedResume(checkpoint Checkpoint, cause error) (Result, error) {
+	if checkpoint.SuspendNode == "" {
+		// No node to mark: a row with no node is one the replay cannot draw.
+		return Result{}, cause
+	}
 	attempt := checkpoint.SuspendAttempt
 	if attempt < 1 {
 		attempt = 1

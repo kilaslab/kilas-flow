@@ -373,25 +373,31 @@ func (service *Service) loadResumeState(ctx context.Context, tenant repository.T
 // suspending node completes with the stored resume output, then the same pass
 // Run would have taken. Nodes completed before suspension never execute
 // again — their outputs arrive in the checkpoint, not from a second run.
+//
+// Every refusal here fails the run on the wait it was to continue, as
+// Runner.Resume's own refusals do, so the replay marks where it stopped.
 func (service *Service) resumeRun(ctx context.Context, record execution.Record, document workflow.Document, stack []string, wait repository.Wait, resume resumeURLs, trace *traceWriter) (Result, error) {
-	ir, err := service.compile(record, document)
-	if err != nil {
-		return Result{}, err
-	}
 	checkpoint, err := unmarshalCheckpoint(wait.Checkpoint)
 	if err != nil {
-		return Result{}, err
+		// Nothing in the checkpoint can be trusted, but the wait row still
+		// names its node. The run index it would have completed is unknown;
+		// the trace write moves a run that collides to the next free index.
+		return failedResume(Checkpoint{SuspendNode: wait.NodeID}, err)
+	}
+	ir, err := service.compile(record, document)
+	if err != nil {
+		return failedResume(checkpoint, err)
 	}
 	output, err := adaptStoredResumeOutput(ir, checkpoint.SuspendNode, wait.ResumeOutput)
 	if err != nil {
-		return Result{}, err
+		return failedResume(checkpoint, err)
 	}
 	request := service.newRequest(record, document, stack, resume, trace)
 	// The resumed run starts from the same trigger with the same input: the
 	// checkpoint carries the graph state, the record carries the entry.
 	item, err := inputItem(record.Input)
 	if err != nil {
-		return Result{}, err
+		return failedResume(checkpoint, err)
 	}
 	request.Input = item
 	request.TriggerNodeID = record.TriggerNodeID
