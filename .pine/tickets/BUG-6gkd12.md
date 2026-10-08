@@ -8,7 +8,7 @@ labels:
     - round-trip
 parent: EPIC-8rbys7
 created: "2026-09-23T01:35:50Z"
-updated: "2026-09-23T01:35:50Z"
+updated: "2026-10-08T12:00:00Z"
 ---
 
 # Description
@@ -90,8 +90,8 @@ none
 
 # Acceptance Criteria
 - [ ] Node `notes`/`notesInFlow` are part of the canonical node and round-trip
-- [ ] Workflow `settings.executionOrder` is exported; tags round-trip
-- [ ] A node's authored `typeVersion` is kept when the translator can write it (If ≥ 2.2 is not downgraded)
+- [ ] Workflow `settings.executionOrder` is exported; tags round-trip (executionOrder: done; tags: open, the canonical document has no place for them)
+- [x] A node's authored `typeVersion` is kept when the translator can write it (If ≥ 2.2 is not downgraded)
 - [x] The document returned by `workflow get` passes `workflow validate` unchanged (`id` is accepted and ignored)
 
 # Implementation Plan
@@ -113,3 +113,17 @@ Done, TPL-15: the CLI's workflow verbs (`workflow validate`, and `create`/`updat
 The API still refuses `id` on purpose: `TestWorkflowAPIOpenAPIDocumentsLifecycleResponseStatuses` pins that the write schema never exposes the server-owned id. A first attempt that accepted and ignored `id` server-side broke that guard and was reverted.
 
 Open, TPL-12: node `notes`/`notesInFlow` in the canonical node, export of `settings.executionOrder` and tags, and keeping an authored `typeVersion` (If ≥ 2.2) on export. The status stays todo for these.
+
+## Progress (2026-10-08, TPL-12 part)
+
+Done:
+
+- Every n8n export now writes `settings.executionOrder: "v1"`, because that is the order KilasFlow runs every workflow in. Without the key, n8n opens the file as a legacy workflow and runs it in its v0 order. The settings the import carries (the timezone, `executionTimeout` and `errorWorkflow`) still go back out beside it. See `exportSettings` in internal/interop/n8n/n8n.go. On import, `executionOrder` is still reported as an uncarried setting, which is what `TestAnImportedWorkflowKeepsItsTimezone` pins.
+- An If node now goes back at its authored version for 2, 2.1, 2.2 and 2.3. The If mapping now has `publishedVersions`, the mechanism the exporter's `pinnedVersion` already used for other nodes. Every 2.x version reads the filter shape the translator writes, and the filter's own `options` (version and typeValidation) were already carried. v1 is a different shape that the import rewrites, so it still goes back at 2. No lossy `typeVersion` entry is reported for 2.x any more.
+- Tests: `TestAnExportedWorkflowDeclaresTheExecutionOrderItRunsIn` and `TestAnIfNodeGoesBackAtTheVersionItWasAuthoredAt` in internal/interop/n8n/roundtrip_fidelity_test.go. Both failed before the fix.
+
+Left:
+
+- Tags. `workflow.Document` has no field for tags, and the importer's n8n `Document` does not read `tags` at all, so there is nothing to export. Carrying tags needs a canonical field, which is a schema change.
+- Node `notes`/`notesInFlow`. `workflow.Node` has no field for them, and adding one is a schema change (schemas/workflow-v1.schema.json, SDK and web models) that did not fit this time box. The import still reports `notes` as dropped.
+- The other version shifts the audit listed (Agent 1.7/1.8 → 3.1, Webhook 1 → 2, Merge 2 → 3, Code 1 → 2, Telegram 1.1 → 1.2) are a different case. Those translators write the newer version's parameter shape, so the change is reported as lossy, and that is correct. Keeping them would take a translator per older shape.
