@@ -113,6 +113,10 @@ type Deps struct {
 	// node type, so the editor can say so before a workflow is saved rather
 	// than after it runs. Nil means everything registered can run.
 	NodeAvailability func() map[string]string
+	// CodeChecker compiles Go Code nodes for `POST /workflows/validate`, and
+	// for nothing else: a save never waits on a build. Nil leaves validate
+	// checking everything but compilation.
+	CodeChecker handlers.CodeChecker
 	// DatabaseGuard is the same guard the database executors receive, so a
 	// SQLite credential naming KilasFlow's own database is refused by the test
 	// endpoint too rather than only at run time.

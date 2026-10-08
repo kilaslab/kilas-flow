@@ -237,6 +237,24 @@ type CompilationStatus struct {
 	Error      string `json:"error,omitempty"`
 }
 
+// CheckCode builds source through the same artifact cache a run reads and
+// answers only whether it compiled, so `workflow validate` can report a
+// compile error before anything runs and the run that follows is a cache hit.
+//
+// It answers a *runcode.CompileError when the code is wrong, and an error
+// wrapping runcode.ErrCompilerUnavailable, worded for the operator, when this
+// deployment cannot build and has no artifact for the source.
+func (executor *CodeExecutor) CheckCode(ctx context.Context, source string) error {
+	runner := runcode.NewRunner(executor.compiler, executor.cache, executor.modules, executor.limits)
+	if _, err := runner.Artifact(ctx, source); err != nil {
+		if errors.Is(err, runcode.ErrCompilerUnavailable) {
+			return fmt.Errorf("%w: %s", runcode.ErrCompilerUnavailable, runcode.DescribeUnavailable(executor.compiler))
+		}
+		return err
+	}
+	return nil
+}
+
 // Status compiles if needed and reports the outcome.
 func (executor *CodeExecutor) Status(ctx context.Context, source string) CompilationStatus {
 	status := CompilationStatus{

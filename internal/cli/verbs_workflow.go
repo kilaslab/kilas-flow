@@ -883,14 +883,19 @@ func humanWorkflowValidation(w io.Writer, data any) {
 		return
 	}
 
+	type diagnosticLine struct {
+		Severity string `json:"severity"`
+		NodeID   string `json:"nodeId"`
+		Field    string `json:"field"`
+		Reason   string `json:"reason"`
+	}
 	var report struct {
-		Valid       bool `json:"valid"`
-		Diagnostics []struct {
-			Severity string `json:"severity"`
-			NodeID   string `json:"nodeId"`
-			Field    string `json:"field"`
-			Reason   string `json:"reason"`
-		} `json:"diagnostics"`
+		Valid       bool             `json:"valid"`
+		Diagnostics []diagnosticLine `json:"diagnostics"`
+		// Warnings carry no severity of their own: they never make the
+		// document invalid, so they are printed after the diagnostics as
+		// "warning".
+		Warnings []diagnosticLine `json:"warnings"`
 	}
 	if err := json.Unmarshal(raw, &report); err != nil {
 		printJSONValue(w, data)
@@ -902,6 +907,10 @@ func humanWorkflowValidation(w io.Writer, data any) {
 		{"valid", strconv.FormatBool(report.Valid)},
 		{"diagnostics", strconv.Itoa(len(report.Diagnostics))},
 	})
+	for _, warning := range report.Warnings {
+		warning.Severity = "warning"
+		report.Diagnostics = append(report.Diagnostics, warning)
+	}
 	for _, diagnostic := range report.Diagnostics {
 		// The diagnostic is the import path's own resource, so the reason is
 		// under `reason` and the text is carried, never reworded here.

@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 import type { ImportIssue } from './importIssue';
+import type { ValidationWarning } from './validationWarning';
 
 export interface ValidateWorkflowResource {
   /** A URL to the JSON Schema for this object. */
@@ -17,4 +18,9 @@ export interface ValidateWorkflowResource {
   diagnostics: ImportIssue[] | null;
   /** True when the document compiles and would run */
   valid: boolean;
+  /**
+     * What this server could not check, such as a Go Code node it has no toolchain to compile. A warning never makes the document invalid
+     * @nullable
+     */
+  warnings?: ValidationWarning[] | null;
 }

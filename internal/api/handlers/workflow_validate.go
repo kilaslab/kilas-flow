@@ -3,11 +3,14 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/kilaslab/kilas-flow/internal/interop/n8n"
+	"github.com/kilaslab/kilas-flow/internal/runcode"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
+	"github.com/kilaslab/kilas-flow/nodes"
 )
 
 // This file is the dry run an agent needs before it saves: `POST
@@ -37,6 +40,34 @@ type ValidateWorkflowResource struct {
 	Valid bool `json:"valid" doc:"True when the document compiles and would run"`
 	// Diagnostics is never nil, so a client renders one shape on both answers.
 	Diagnostics []n8n.ImportIssue `json:"diagnostics" doc:"What the compiler refused, stated as the import report states it: severity blocking, the node where one is named, and the reason"`
+	// Warnings never make a document invalid. They are what this dry run could
+	// not prove, kept apart from Diagnostics because the import vocabulary has
+	// no severity for "unchecked", and borrowing one would misreport it.
+	Warnings []ValidationWarning `json:"warnings,omitempty" doc:"What this server could not check, such as a Go Code node it has no toolchain to compile. A warning never makes the document invalid"`
+}
+
+// ValidationWarning is one thing the dry run left unproven.
+type ValidationWarning struct {
+	NodeID string `json:"nodeId,omitempty"`
+	Field  string `json:"field,omitempty"`
+	Reason string `json:"reason"`
+}
+
+// CodeChecker builds a Go Code node's source the way a run would, so the dry
+// run can report a compile error before anything runs.
+//
+// It answers nil when the source compiled, a *runcode.CompileError when the
+// user's code is wrong, and any other error when the source could not be
+// checked at all, such as on a deployment with no Go toolchain.
+// nodes.CodeExecutor is the production implementation: it builds through the
+// same artifact cache a run reads, so a dry run's build is the run's cache
+// hit.
+//
+// Only this operation builds. A save must never wait on a compiler (see
+// validateCodeConfiguration in nodes), and validate is the one request whose
+// whole purpose is to ask.
+type CodeChecker interface {
+	CheckCode(ctx context.Context, source string) error
 }
 
 type validateWorkflowInput struct {
@@ -70,13 +101,11 @@ func (handler *Workflows) ValidateDocument(ctx context.Context, input *validateW
 	// caller asked what is wrong with it, and "this field is missing" is that
 	// answer.
 	_, err := workflow.Compile(document, workflow.CatalogFor(handler.catalog, tenant.ID))
-	if err == nil {
-		return &validateWorkflowOutput{Body: ValidateWorkflowResource{Valid: true, Diagnostics: []n8n.ImportIssue{}}}, nil
-	}
 
 	var validation *workflow.ValidationErrors
 	diagnostics := []n8n.ImportIssue{}
 	switch {
+	case err == nil:
 	case errors.As(err, &validation):
 		for _, issue := range validation.Issues {
 			diagnostics = append(diagnostics, n8n.ImportIssue{
@@ -94,5 +123,63 @@ func (handler *Workflows) ValidateDocument(ctx context.Context, input *validateW
 			Reason:   err.Error(),
 		})
 	}
-	return &validateWorkflowOutput{Body: ValidateWorkflowResource{Valid: false, Diagnostics: diagnostics}}, nil
+
+	// A draft that never reached the graph has no node worth building.
+	var warnings []ValidationWarning
+	if err == nil || validation != nil {
+		var compiled []n8n.ImportIssue
+		compiled, warnings = handler.checkCode(ctx, document, validation)
+		diagnostics = append(diagnostics, compiled...)
+	}
+	return &validateWorkflowOutput{Body: ValidateWorkflowResource{
+		Valid: len(diagnostics) == 0, Diagnostics: diagnostics, Warnings: warnings,
+	}}, nil
+}
+
+// checkCode builds every Go Code node that would run and reports what the
+// toolchain said, at the user's own line (runcode.Wrap puts the body there).
+//
+// A node the compiler already refused is skipped, because its source is not
+// worth building and the user would read one problem twice; so is a disabled
+// node, because it never runs. A build that could not happen is a warning: an
+// install with no toolchain may still run the node from its artifact cache,
+// and refusing every Code node there would refuse documents that work.
+func (handler *Workflows) checkCode(ctx context.Context, document workflow.Document, refused *workflow.ValidationErrors) ([]n8n.ImportIssue, []ValidationWarning) {
+	if handler.code == nil {
+		return nil, nil
+	}
+	alreadyRefused := map[string]bool{}
+	if refused != nil {
+		for _, issue := range refused.Issues {
+			alreadyRefused[issue.NodeID] = true
+		}
+	}
+	var diagnostics []n8n.ImportIssue
+	var warnings []ValidationWarning
+	for index, candidate := range document.Nodes {
+		if candidate.Type != nodes.CodeNodeType || candidate.Disabled || alreadyRefused[candidate.ID] {
+			continue
+		}
+		source, _ := candidate.Parameters["code"].(string)
+		field := fmt.Sprintf("/nodes/%d/parameters/code", index)
+		err := handler.code.CheckCode(ctx, source)
+		var compileError *runcode.CompileError
+		switch {
+		case err == nil:
+		case errors.As(err, &compileError):
+			diagnostics = append(diagnostics, n8n.ImportIssue{
+				Severity: n8n.SeverityBlocking,
+				NodeID:   candidate.ID,
+				Field:    field,
+				Reason:   fmt.Sprintf("node %q %v", candidate.ID, compileError),
+			})
+		default:
+			warnings = append(warnings, ValidationWarning{
+				NodeID: candidate.ID,
+				Field:  field,
+				Reason: fmt.Sprintf("node %q was not compiled, so a compile error would show only when it runs: %v", candidate.ID, err),
+			})
+		}
+	}
+	return diagnostics, warnings
 }

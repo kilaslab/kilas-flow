@@ -1704,6 +1704,12 @@ export interface UpsertRowOutputBody {
   rows: UpsertRowOutputBodyRowsItem[] | null;
 }
 
+export interface ValidationWarning {
+  field?: string;
+  nodeId?: string;
+  reason: string;
+}
+
 export interface ValidateWorkflowResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1714,6 +1720,11 @@ export interface ValidateWorkflowResource {
   diagnostics: ImportIssue[] | null;
   /** True when the document compiles and would run */
   valid: boolean;
+  /**
+     * What this server could not check, such as a Go Code node it has no toolchain to compile. A warning never makes the document invalid
+     * @nullable
+     */
+  warnings?: ValidationWarning[] | null;
 }
 
 export interface WebhookResponseEvent {

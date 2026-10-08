@@ -1,14 +1,14 @@
 ---
 id: BUG-nn74ph
 title: 'Go Code node: panics report only ''exited with status 2''; compile errors use wrapper line numbers'
-status: todo
+status: done
 priority: medium
 labels:
     - code-node
     - debugging
 parent: EPIC-8rbys7
 created: "2026-09-23T01:25:27Z"
-updated: "2026-10-08T15:57:50Z"
+updated: "2026-10-08T16:28:13Z"
 ---
 
 # Description
@@ -34,7 +34,7 @@ The panic reports only `node "Make items": code exited with status 2`, because t
 # Acceptance Criteria
 - [x] A panic shows its message and the user's line (e.g. `panic: assignment to entry in nil map (line 2)`)
 - [x] Compile errors are remapped to user line numbers (for example with a `//line user.go:1` directive)
-- [ ] `workflow validate` reports compile errors before a run
+- [x] `workflow validate` reports compile errors before a run
 
 # Implementation Plan
 
@@ -56,7 +56,5 @@ Related (from the audit): none
 - `Sandbox` reads a Go runtime crash from stderr on exit status 2 (`describeCrash`): the last `panic: ` / `fatal error: ` header with its continuation lines, plus `(line N)` from the innermost `main.run` frame in `code.go`. A pack module has no such frame, so it gets the message alone. The out-of-memory naming still wins, and a crash with nothing readable still says `exited with status 2`.
 - `RuntimeVersion` is unchanged on purpose. A bump would invalidate every cached artifact, and a deployment without a toolchain would lose Code nodes that already work. An artifact built before this change still reports the panic message. It has no line number, because its frames are in `main.go`.
 - Tests: `TestACompileErrorNamesTheLineInTheUsersOwnCode`, `TestACompileErrorAfterTheLastLineIsNamedAsTheEndOfTheCode`, `TestAPanicReportsItsMessageAndTheLineInTheUsersCode` (toolchain), `TestACrashIsReadFromWhatTheGoRuntimePrinted` (canned stderr, no toolchain).
-
-## Progress
-
-Criterion 3 (`workflow validate` reports compile errors) is not done. `POST /workflows/validate` (`internal/api/handlers/workflow_validate.go`) runs only `workflow.Compile` and cannot reach the Code executor. `validateCodeConfiguration` refuses to build on purpose, so that a save never blocks on a build. The next step is to give the validate handler a compile-status seam, such as `nodes.CodeExecutor.Status`, which compiles once and caches by source hash. It should turn a `CompileError` into a blocking diagnostic on that node. When the toolchain is missing it should report a warning, not block. This needs wiring in `cmd/kilasflow`.
+- Criterion 3: `POST /workflows/validate` now builds every Go Code node that would run, through a `handlers.CodeChecker` seam (`Workflows.WithCodeChecker`, `api.Deps.CodeChecker`). `nodes.CodeExecutor.CheckCode` is the production checker. `cmd/kilasflow` gives validate its own executor over the run's compiler and caches, so a dry run's build becomes the next run's cache hit. A `*runcode.CompileError` becomes a blocking diagnostic on the node, with field `/nodes/N/parameters/code` and reason `node "explode" code did not compile: undefined: itemz (line 3, column 8)`. A build that could not happen, such as with no toolchain and no cached artifact, does not make the document invalid. It goes into a new optional `warnings` list (`ValidationWarning`: nodeId, field, reason), because the import severity vocabulary (`blocking`/`lossy`/`dropped`) has no word for "unchecked". Adding one to that vocabulary would have rippled into every web `Record<ImportIssueSeverity, …>`. The validate handler skips a node the compiler already refused, so one problem is not reported twice, and it skips a disabled node. Saves still never build: only the validate handler holds the checker. `kilasflow workflow validate`'s human output prints warnings as `<node>: warning: <reason>`. Web client, SDK types and API reference were regenerated.
+- Tests: `TestValidateReportsAGoCodeNodesCompileErrorAtTheUsersLine`, `TestValidateWarnsRatherThanBlocksWhenCodeCannotBeCompiledHere`, `TestValidateBuildsOnlyCodeThatWouldRun` (stub checker, no toolchain), `TestValidateCompilesAGoCodeNodeWithTheToolchain` (toolchain-gated, real executor), `TestWorkflowValidatePrintsWarningsAfterTheVerdict` (CLI).

@@ -168,6 +168,7 @@ export * from './upsertRowOutputBody';
 export * from './upsertRowOutputBodyRowsItem';
 export * from './userResource';
 export * from './validateWorkflowResource';
+export * from './validationWarning';
 export * from './visibility';
 export * from './visibilityCondition';
 export * from './webhookDeclaration';

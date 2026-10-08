@@ -47,7 +47,7 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 		WithAvailability(deps.NodeAvailability).Register(v1)
 	handlers.NewWorkflows(deps.Workflows, deps.Executions, deps.NodeRegistry, deps.Tenants, deps.ExecutionController).
 		WithTriggers(deps.TriggerCoordinator).WithSessionMemory(deps.SessionMemory).WithIdempotency(deps.Idempotency).
-		WithCredentials(deps.Credentials).Register(v1)
+		WithCredentials(deps.Credentials).WithCodeChecker(deps.CodeChecker).Register(v1)
 	handlers.NewExecutions(deps.ExecutionController, deps.Executions, deps.Events, deps.Tenants, deps.NodeRegistry).
 		WithWorkflowVersions(deps.Workflows).WithCredentials(deps.Credentials).Register(v1)
 	credentials := handlers.NewCredentials(deps.Credentials, deps.Tenants).

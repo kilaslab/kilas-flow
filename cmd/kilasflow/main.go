@@ -871,14 +871,17 @@ func run(args []string) error {
 		ExecutionController: runtime,
 		ResumeService:       runtime,
 		NodeAvailability:    availability,
-		HTTPPolicy:          outboundPolicy(cfg.Outbound),
-		DatabaseGuard:       sqlGuard,
-		SessionMemory:       agentMemory,
-		Idempotency:         idempotencyService,
-		TenantPurger:        tenantPurger,
-		Version:             version,
-		OAuthSigningKey:     oauthSigningKey,
-		OAuthHTTP:           oauthHTTP,
+		// Its own executor over the run's compiler and caches, so a dry run's
+		// build is the next run's cache hit.
+		CodeChecker:     nodes.NewCodeExecutorWith(codeCompiler, codeArtifacts, moduleCache, runcode.DefaultLimits()),
+		HTTPPolicy:      outboundPolicy(cfg.Outbound),
+		DatabaseGuard:   sqlGuard,
+		SessionMemory:   agentMemory,
+		Idempotency:     idempotencyService,
+		TenantPurger:    tenantPurger,
+		Version:         version,
+		OAuthSigningKey: oauthSigningKey,
+		OAuthHTTP:       oauthHTTP,
 	})
 
 	// The HTTP surface drains first, then the workers: a request in flight may
