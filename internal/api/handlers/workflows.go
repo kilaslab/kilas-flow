@@ -54,6 +54,9 @@ type Workflows struct {
 	// document attaches. Without it such a document is refused rather than
 	// let through unchecked; see confinedDocumentProblem.
 	credentials repository.CredentialRepository
+	// code builds Go Code nodes for the validate operation only. Optional:
+	// without it a dry run checks everything but compilation, as it did before.
+	code CodeChecker
 }
 
 // SessionForgetter drops a workflow's retained agent conversations. It is a
@@ -1165,5 +1168,11 @@ func (handler *Workflows) WithIdempotency(service *idempotency.Service) *Workflo
 // document is checked against.
 func (handler *Workflows) WithCredentials(store repository.CredentialRepository) *Workflows {
 	handler.credentials = store
+	return handler
+}
+
+// WithCodeChecker lets the validate operation compile Go Code nodes.
+func (handler *Workflows) WithCodeChecker(checker CodeChecker) *Workflows {
+	handler.code = checker
 	return handler
 }

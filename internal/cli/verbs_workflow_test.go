@@ -533,6 +533,29 @@ func TestWorkflowValidateReportsDiagnosticsWithoutFailing(t *testing.T) {
 	}
 }
 
+// A warning never makes the document invalid, but a person reading the verdict
+// by hand still has to see what the server could not check.
+func TestWorkflowValidatePrintsWarningsAfterTheVerdict(t *testing.T) {
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		apiPrefix + "/workflows/validate": jsonBody(http.StatusOK,
+			`{"valid":true,"diagnostics":[],"warnings":[{"nodeId":"code","reason":"node \"code\" was not compiled"}]}`),
+	})
+	srv := stubAPI(t, api.routesFor(t))
+
+	code, _, stdout, stderr := runCLI(t, Env{
+		Args:   []string{"workflow", "validate", "--file", "-", "--url", srv.URL},
+		TTY:    true,
+		Stdin:  strings.NewReader(`{"schemaVersion":1,"name":"x","nodes":[],"connections":[],"settings":{}}`),
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+	}
+	if !strings.Contains(stdout, `code: warning: node "code" was not compiled`) {
+		t.Fatalf("stdout = %q, want the warning printed with its node", stdout)
+	}
+}
+
 func TestWorkflowValidateWithoutAFileIsAUsageError(t *testing.T) {
 	api := newRecordingAPI(nil)
 	srv := stubAPI(t, api.routesFor(t))
