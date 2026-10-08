@@ -94,6 +94,7 @@
 	import { emptyHistory, record as recordHistory, redo as redoHistory, undo as undoHistory, type History as DocumentHistory } from '$lib/workflow-editor/history';
 	import { SHORTCUT_REFERENCE, CANVAS_DELETE_KEYS, canvasShortcut, controlOwnsKey, isTypingTarget } from '$lib/workflow-editor/shortcuts';
 	import { hasLabelledOutputs } from '$lib/workflow-editor/ports';
+	import { chatDockBottom, MINIMAP_BOTTOM, MINIMAP_HEIGHT, MINIMAP_WIDTH, showsMinimap, viewportRevealing } from '$lib/workflow-editor/canvas-chrome';
 	import { tidyDocument } from '$lib/workflow-editor/layout';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
 	import { isAnnotation } from '$lib/workflow-editor/node-visual';
@@ -337,6 +338,7 @@
 	const activationBlockedByDirty = $derived(!active && dirty);
 	const chatTrigger = $derived(chatTriggerIn(displayed.nodes ?? []));
 	const showChat = $derived(Boolean(chatTrigger) && !hideRun && !previewing);
+	const minimapShown = $derived(showsMinimap(displayed.nodes?.length ?? 0, narrow.current));
 	let chatOpen = $state(false);
 	$effect(() => {
 		if (!showChat) chatOpen = false;
@@ -389,6 +391,26 @@
 			replaceDraft(updateNodeSize(draft, nodeID, width, height));
 		}
 	});
+
+	// Opening the inspector takes a column from the canvas, and a node near the
+	// right edge used to end up behind it with the view left where it was. Only
+	// the selection and the panel are tracked, so a node dragged near an edge
+	// is never chased.
+	$effect(() => {
+		const id = selectedNodeID;
+		if (showInspector && id) void revealNode(id);
+	});
+
+	/** Pans just enough of the view for the node to sit inside the visible canvas. */
+	async function revealNode(id: string) {
+		await tick();
+		const node = (displayed.nodes ?? []).find((candidate) => candidate.id === id);
+		if (!flow || !canvasRegion || !node || selectedNodeID !== id) return;
+		const measured = flow.getInternalNode(id)?.measured;
+		const box = { x: node.position.x, y: node.position.y, width: measured?.width ?? TILE_CENTRE * 2, height: measured?.height ?? TILE_CENTRE * 2 };
+		const next = viewportRevealing(box, flow.getViewport(), { width: canvasRegion.clientWidth, height: canvasRegion.clientHeight });
+		if (next) await flow.setViewport(next, { duration: 200 });
+	}
 
 	$effect(() => {
 		if (propertyPanelOpen && narrow.current && !wasPropertyPanelOpen) {
@@ -1282,10 +1304,14 @@
 				     needs and renders nothing. -->
 				<CanvasBridge onReady={(next) => (flow = next)} />
 				<!-- A minimap over a few nodes is noise; on a 63-node import it is
-				     the only way to know where you are. -->
-				{#if (displayed.nodes?.length ?? 0) > 12 && !narrow.current}
+				     the only way to know where you are. Bottom-right as in n8n: in
+				     the controls' corner it covered zoom, fit and tidy. -->
+				{#if minimapShown}
 					<MiniMap
-						position="bottom-left"
+						position="bottom-right"
+						width={MINIMAP_WIDTH}
+						height={MINIMAP_HEIGHT}
+						style="margin-bottom: {MINIMAP_BOTTOM}px"
 						pannable
 						zoomable
 						ariaLabel={m.editor_minimap_aria()}
@@ -1329,8 +1355,10 @@
 
 			{#if showChat && chatTrigger}
 				<!-- Right corner: the zoom controls live bottom-left, and a Chat button
-				     on top of them cut the third control in half. -->
-				<div class="pointer-events-none absolute bottom-4 right-4 z-20">
+				     on top of them cut the third control in half. The closed button
+				     sits above the minimap; the open panel is a surface the user
+				     asked for and may cover it. -->
+				<div class="pointer-events-none absolute right-4 z-20" style:bottom="{chatOpen ? chatDockBottom(false) : chatDockBottom(minimapShown)}px">
 					<!-- Kept mounted while the trigger is on the canvas so sessionId
 					     and history survive Close. New chat is what rotates the id. -->
 					<div class="pointer-events-auto {chatOpen ? '' : 'hidden'}">
