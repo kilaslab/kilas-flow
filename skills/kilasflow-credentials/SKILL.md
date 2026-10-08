@@ -25,7 +25,7 @@ kilasflow_nodes:
   - kilasflow.httpRequest
 kilasflow_expression_roots: []
 kilasflow_not_shipped:
-  - 'No guarded write verbs: credential create, update and delete, datastore create, rename, delete, columns and clear, schedule create, update and delete, pack install, and tenant create and delete have no verbs yet'
+  - 'No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes)'
   - 'No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch'
 ---
 
@@ -92,7 +92,7 @@ what are you doing?
 
 ## Not shipped yet
 
-- No guarded write verbs: credential create, update and delete, datastore create, rename, delete, columns and clear, schedule create, update and delete, pack install, and tenant create and delete have no verbs yet — every one of them is served, so reach it through kilasflow api with --path and --body, and treat the missing verb as the missing guard: confirm with the user before a write that cannot be undone, then read the resource back.
+- No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes) — every one of them is served, so reach it through kilasflow api with --path and --body, and treat the missing verb as the missing guard: confirm with the user before a write that cannot be undone, then read the resource back.
 - No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch — mint, list and revoke keys through kilasflow api with --body and --path, and note that the token comes back once from the mint and is never returned again, so it has to be stored by whoever asked for it.
 
 ## Anti-patterns

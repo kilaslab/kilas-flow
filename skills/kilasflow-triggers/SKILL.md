@@ -35,7 +35,7 @@ kilasflow_not_shipped:
   - 'No activation verb: activation and deactivation are the activate-workflow and deactivate-workflow operations through the escape hatch'
   - 'No webhook discovery verb: the list-workflow-webhooks operation is served, but no verb lists the webhook URLs of a workflow yet'
   - 'No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet'
-  - 'No guarded write verbs: credential create, update and delete, datastore create, rename, delete, columns and clear, schedule create, update and delete, pack install, and tenant create and delete have no verbs yet'
+  - 'No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes)'
 ---
 
 ## Non-negotiables
@@ -113,7 +113,7 @@ a workflow did not start
 - No activation verb: activation and deactivation are the activate-workflow and deactivate-workflow operations through the escape hatch — no verb path exists for either, so reach them through `kilasflow api` with `--path id=<workflowId>`, and read the workflow back to confirm `active` and `activeVersion` moved.
 - No webhook discovery verb: the list-workflow-webhooks operation is served, but no verb lists the webhook URLs of a workflow yet — ask the server through `kilasflow api list-workflow-webhooks --path id=<workflowId>`, which mints the route on first read, so an address can be handed to a sender before the workflow is ever activated.
 - No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet — a retried `kilasflow run` is a second execution. Send the header through the escape hatch if the retry must be safe, and remember a webhook delivery is deduplicated separately, by the sender's delivery id.
-- No guarded write verbs: credential create, update and delete, datastore create, rename, delete, columns and clear, schedule create, update and delete, pack install, and tenant create and delete have no verbs yet — reach each operation through `kilasflow api`, and expect the schedule rows a workflow's own trigger owns to be created and removed by activation rather than by hand.
+- No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes) — reach each operation through `kilasflow api`, and expect the schedule rows a workflow's own trigger owns to be created and removed by activation rather than by hand.
 
 ## Anti-patterns
 

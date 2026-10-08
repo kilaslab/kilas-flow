@@ -80,3 +80,30 @@ func TestEveryVerbASkillQuotesExists(t *testing.T) {
 		t.Fatalf("walk the skills bundle: %v", err)
 	}
 }
+
+// The list form of the same drift: "credential create, update and delete …
+// have no verbs yet" denied three guarded verbs the binary ships, and named
+// none of them as "<path> is not shipped". A verb path written before "have
+// no verb(s)" in a not-shipped entry is a claim that it does not exist.
+func TestNoSkillListsAShippedVerbAsMissing(t *testing.T) {
+	bundle, err := skills.LoadBundle()
+	if err != nil {
+		t.Fatalf("LoadBundle() error = %v", err)
+	}
+	for _, skill := range bundle {
+		for _, entry := range skill.NotShipped {
+			claim, _, found := strings.Cut(entry, " have no verb")
+			if !found {
+				claim, _, found = strings.Cut(entry, " has no verb")
+			}
+			if !found {
+				continue
+			}
+			for _, verb := range registry() {
+				if strings.Contains(verb.Path, " ") && strings.Contains(claim, verb.Path) {
+					t.Errorf("%s says %q has no verb, but `kilasflow %s` ships", skill.Name, verb.Path, verb.Path)
+				}
+			}
+		}
+	}
+}

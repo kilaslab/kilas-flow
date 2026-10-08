@@ -154,3 +154,5 @@ Gate, partly (criterion 1): `TestNoSkillCallsAShippedVerbUnshipped` (internal/cl
 
 Still open: validated examples per skill (2) and the AI-agents skill (4).
 
+List-form claims (2026-10-08, 23:56): `TestNoSkillListsAShippedVerbAsMissing` checks every verb path written before "have no verb(s)" in a `not_shipped` entry. It found that kilasflow-credentials, -embedding and -triggers (and earlier -datastore and -operations) denied the shipped credential, datastore and tenant-delete verbs. All five now name only what is absent: schedule writes, pack install and tenant create. The skills tests, the index check and `skills-check` pass.
+
