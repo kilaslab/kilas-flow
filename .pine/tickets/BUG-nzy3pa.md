@@ -1,7 +1,7 @@
 ---
 id: BUG-nzy3pa
 title: "Chat/embedding model names dropped on import (Gemini modelName, n8n defaults) and lost on export; provider options dropped silently"
-status: todo
+status: done
 priority: high
 labels:
     - n8n
@@ -9,7 +9,7 @@ labels:
     - ai
 parent: EPIC-8rbys7
 created: "2026-09-23T01:17:54Z"
-updated: "2026-09-23T01:17:54Z"
+updated: "2026-10-08T16:25:00Z"
 ---
 
 # Description
@@ -159,12 +159,12 @@ TPL-3 and NG-5 (model names dropped; different fields)
 
 
 # Acceptance Criteria
-- [ ] Gemini's `modelName` (or n8n's default when it is absent) becomes the chatModel model, with the `models/` prefix handled
-- [ ] Every chat-model option that is not carried produces a `dropped` import issue; `maxTokensToSample` maps to `maxTokens`
-- [ ] A test imports template 6270 and asserts the model is non-empty and the run gets past validation
-- [ ] Ollama (`llama3.2`), embeddingsOpenAi (`text-embedding-3-small`, or `ada-002` at v1) and every OpenAI-compatible provider fill in n8n's per-version default model when the key is absent, with a lossy note (consistent with lmChatOpenAi)
-- [ ] Exporting an imported Gemini/Ollama/Groq/DeepSeek/Mistral/xAI model restores the original provider node type, version and model key (`modelName` for Gemini), so the round-tripped workflow opens in n8n
-- [ ] Imported chat-model options land in the fields the NDV shows and the runtime reads; `stream` means the same thing in the editor and at run time
+- [x] Gemini's `modelName` (or n8n's default when it is absent) becomes the chatModel model, with the `models/` prefix handled
+- [x] Every chat-model option that is not carried produces a `dropped` import issue; `maxTokensToSample` maps to `maxTokens`
+- [x] A test imports template 6270 and asserts the model is non-empty and the run gets past validation
+- [x] Ollama (`llama3.2`), embeddingsOpenAi (`text-embedding-3-small`, or `ada-002` at v1) and every OpenAI-compatible provider fill in n8n's per-version default model when the key is absent, with a lossy note (consistent with lmChatOpenAi)
+- [x] Exporting an imported Gemini/Ollama/Groq/DeepSeek/Mistral/xAI model restores the original provider node type, version and model key (`modelName` for Gemini), so the round-tripped workflow opens in n8n
+- [x] Imported chat-model options land in the fields the NDV shows and the runtime reads; `stream` means the same thing in the editor and at run time
 
 # Implementation Plan
 
@@ -184,3 +184,45 @@ Related (from the audit): none
 - `chatModelToKilas` (`parameters.go:4935`) keeps only `n8nChatModelOptionKeys` and reports only `responseFormat`.
 
 # Attachments
+
+## Fix (2026-10-08)
+
+The six OpenAI-compatible providers (Ollama chat and plain LLM, Gemini, DeepSeek, Groq, Mistral, xAI) are now one table, `openAICompatibleProviders` (`internal/interop/n8n/parameters.go`). Each row gives the provider's base URL, model key (`modelName` for Gemini), model prefix (`models/` for Gemini), per-version n8n default, and the provider's own name for the token budget (`numPredict`, `maxOutputTokens`, `maxTokensToSample`). The defaults were read from n8n 2.34.0 as format facts:
+
+| Provider | n8n default model |
+|---|---|
+| Gemini v1 | `models/gemini-2.5-flash` |
+| Gemini v1.1+ | `models/gemini-3-flash-preview` |
+| Ollama | `llama3.2` |
+| DeepSeek | `deepseek-chat` |
+| Groq | `llama3-8b-8192` |
+| Mistral | `mistral-small` |
+| xAI | `grok-2-vision-1212` |
+
+Import (`providerModelToKilas`):
+- **Model.** It is always written. The `models/` prefix is stripped for the OpenAI-compatible endpoint. An absent model gets n8n's default for the node's version, plus a lossy note naming it.
+- **Options.** `temperature` and the token budget (as `maxTokens`) go to the top-level fields that the form shows and the runtime prefers. `topP`, the penalties, `timeout` and `maxRetries` go to the Options collection. Every other key produces its own `dropped` issue, for example `safetySettings`, `topK`, `keepAlive`, `numCtx`, `numBatch` and `think`.
+- **OpenAI and OpenRouter.** `chatModelToKilas`, used by lmChatOpenAi and lmChatOpenRouter, now also reports each leftover option as dropped, for example `reasoningEffort`.
+- **Embeddings.** `embeddingsOpenAiToKilas` writes `text-embedding-ada-002` at v1 and `text-embedding-3-small` above it when the model is absent, with a lossy note.
+- **Editor.** `nodes/ai.go` declares Top P, Frequency Penalty and Presence Penalty in the chat model's Options collection, which the runtime already read, so an imported value shows in the editor. `stream` was already fixed (see Notes).
+
+Export (`providerModelMapping`): a `kilasflow.chatModel` whose `baseUrl` is one of the table's URLs goes back as that provider's node. The export keeps:
+- the node's own (imported) typeVersion;
+- the model under the provider's key, with `models/` restored for Gemini;
+- the options under the provider's names.
+
+A model pointed at any other URL still exports as `kilasflow.chatModel`, as before.
+
+Tests (`internal/interop/n8n/chatmodel_import_test.go`):
+- `TestGeminiModelNameImportsWithItsOptions` (shape of template 2421)
+- `TestGeminiWithoutModelNameGetsNsDefaultAndValidates` (shape of template 6270; compiles; also covers v1.1)
+- `TestProviderModelDefaultsAndOptionsAreCarriedOrReported`
+- `TestEmbeddingsOpenAiGetsTheVersionsDefaultModel`
+- `TestProviderModelExportsAsItsOwnN8NNode`, a round trip for all six providers
+- `TestOpenAIChatModelReportsTheOptionsItCannotCarry`
+- `TestTemplate6270GeminiModelGetsPastValidation`, which imports the real 6270 JSON from `KILASFLOW_N8N_TEMPLATES_DIR` (never committed) and skips without it. It passes against a fresh copy. Its RSS Feed Read tool is still a placeholder (BUG-b8bwhw), so the test sets that node aside before compiling.
+
+Known limits:
+- Export finds the provider by base URL, so a model whose base URL was edited after import exports as `kilasflow.chatModel`.
+- An `lmOllama` (plain LLM) node exports back as `lmChatOllama`.
+- On lmChatOpenAi and lmChatOpenRouter, a known option holding an expression instead of a number is not carried, and is not reported either. The providers above do report it.

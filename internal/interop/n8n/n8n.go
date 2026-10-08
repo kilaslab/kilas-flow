@@ -561,46 +561,31 @@ var mappings = []mapping{
 	// only the base URL differs.
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmChatOllama", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
-		exportTypeVersion: 1, toKilas: ollamaModelToKilas, importOnly: true,
+		exportTypeVersion: 1, importOnly: true, toKilas: providerModelToKilas("@n8n/n8n-nodes-langchain.lmChatOllama"),
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmOllama", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
-		exportTypeVersion: 1, toKilas: ollamaModelToKilas, importOnly: true,
+		exportTypeVersion: 1, importOnly: true, toKilas: providerModelToKilas("@n8n/n8n-nodes-langchain.lmOllama"),
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmChatGoogleGemini", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
-		exportTypeVersion: 1, importOnly: true,
-		toKilas: func(node Node) (map[string]any, []Unsupported) {
-			return openAICompatibleModelToKilas(node, "https://generativelanguage.googleapis.com/v1beta/openai", "model")
-		},
+		exportTypeVersion: 1, importOnly: true, toKilas: providerModelToKilas("@n8n/n8n-nodes-langchain.lmChatGoogleGemini"),
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmChatDeepSeek", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
-		exportTypeVersion: 1, importOnly: true,
-		toKilas: func(node Node) (map[string]any, []Unsupported) {
-			return openAICompatibleModelToKilas(node, "https://api.deepseek.com/v1", "model")
-		},
+		exportTypeVersion: 1, importOnly: true, toKilas: providerModelToKilas("@n8n/n8n-nodes-langchain.lmChatDeepSeek"),
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmChatGroq", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
-		exportTypeVersion: 1, importOnly: true,
-		toKilas: func(node Node) (map[string]any, []Unsupported) {
-			return openAICompatibleModelToKilas(node, "https://api.groq.com/openai/v1", "model")
-		},
+		exportTypeVersion: 1, importOnly: true, toKilas: providerModelToKilas("@n8n/n8n-nodes-langchain.lmChatGroq"),
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmChatMistralCloud", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
-		exportTypeVersion: 1, importOnly: true,
-		toKilas: func(node Node) (map[string]any, []Unsupported) {
-			return openAICompatibleModelToKilas(node, "https://api.mistral.ai/v1", "model")
-		},
+		exportTypeVersion: 1, importOnly: true, toKilas: providerModelToKilas("@n8n/n8n-nodes-langchain.lmChatMistralCloud"),
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmChatXAiGrok", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
-		exportTypeVersion: 1, importOnly: true,
-		toKilas: func(node Node) (map[string]any, []Unsupported) {
-			return openAICompatibleModelToKilas(node, "https://api.x.ai/v1", "model")
-		},
+		exportTypeVersion: 1, importOnly: true, toKilas: providerModelToKilas("@n8n/n8n-nodes-langchain.lmChatXAiGrok"),
 	},
 	{
 		// Versions 1 through 2.2: v1 is [1, 1.1, 1.2, 1.3] and v2 is
@@ -1330,6 +1315,7 @@ func importConnections(source Connections, idByName, typeByID map[string]string,
 		sourceNames = append(sourceNames, name)
 	}
 	sort.Strings(sourceNames)
+	loaderByStore := documentLoadersByStore(source, sourceNames)
 
 	counter := 0
 	for _, sourceName := range sourceNames {
@@ -1393,6 +1379,23 @@ func importConnections(source Connections, idByName, typeByID map[string]string,
 						}
 					}
 					targetPort, targetOK := resolvePort(catalog, typeByID[targetID], versionByID[targetID], parametersByID[targetID], kind, target.Index, portInput)
+					if sourceOK && !targetOK && kind == workflow.ConnectionMain {
+						// An insert-mode vector store takes its items on main
+						// in n8n; in KilasFlow they reach it through its data
+						// loader, so the edge lands on the loader instead.
+						if loaderName := loaderByStore[target.Node]; loaderName != "" {
+							if loaderID, port, rerouted := documentLoaderInput(catalog, loaderName, targetID, idByName, typeByID, versionByID, parametersByID); rerouted {
+								targetID, targetPort, targetOK = loaderID, port, true
+								issues = append(issues, Unsupported{
+									Severity: SeverityLossy,
+									NodeName: target.Node,
+									NodeID:   idByName[target.Node],
+									Reason: fmt.Sprintf("the items %q sends to %q arrive on its data loader %q instead: in KilasFlow an insert-mode vector store receives documents from its loader rather than items on main",
+										sourceName, target.Node, loaderName),
+								})
+							}
+						}
+					}
 					if !sourceOK || !targetOK {
 						// Held back rather than dropped silently: recording an
 						// edge onto a port that does not exist would fail
@@ -1422,6 +1425,45 @@ func importConnections(source Connections, idByName, typeByID map[string]string,
 		}
 	}
 	return connections, issues
+}
+
+// documentLoadersByStore maps each node that receives an ai_document edge to
+// the node that sends it, by n8n name.
+//
+// n8n wires an ingest path with the items on the vector store's own main input
+// and the Default Data Loader hanging off the store as a sub-node; KilasFlow's
+// loader is where the items go in. Knowing which loader serves which store is
+// what lets importConnections move the main edge there instead of holding it
+// back. n8n allows one document sub-node per store, so the first, in name
+// order, is the one.
+func documentLoadersByStore(source Connections, sourceNames []string) map[string]string {
+	loaders := map[string]string{}
+	for _, sourceName := range sourceNames {
+		for _, targets := range source[sourceName][string(workflow.ConnectionDocument)] {
+			for _, target := range targets {
+				if _, taken := loaders[target.Node]; !taken {
+					loaders[target.Node] = sourceName
+				}
+			}
+		}
+	}
+	return loaders
+}
+
+// documentLoaderInput resolves the main input of the loader serving storeID,
+// but only when the store really takes documents on a typed port. A store
+// that declares no document input has no loader to stand in for it, and
+// moving the edge would wire the items somewhere the store never reads.
+func documentLoaderInput(catalog workflow.Catalog, loaderName, storeID string, idByName, typeByID map[string]string, versionByID map[string]workflow.TypeVersion, parametersByID map[string]map[string]any) (string, string, bool) {
+	if _, takesDocuments := resolvePort(catalog, typeByID[storeID], versionByID[storeID], parametersByID[storeID], workflow.ConnectionDocument, 0, portInput); !takesDocuments {
+		return "", "", false
+	}
+	loaderID, known := idByName[loaderName]
+	if !known {
+		return "", "", false
+	}
+	port, found := resolvePort(catalog, typeByID[loaderID], versionByID[loaderID], parametersByID[loaderID], workflow.ConnectionMain, 0, portInput)
+	return loaderID, port, found
 }
 
 // dropResolvedParserFlags removes a hasOutputParser diagnostic when the
@@ -1665,6 +1707,10 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 
 		entry, supported := byKilasType(node.Type)
 		if !supported {
+			// An imported provider model goes back as its provider's node.
+			entry, supported = providerModelMapping(node)
+		}
+		if !supported {
 			// Emitted under its own type rather than omitted. n8n does not
 			// know this type and will show it as unrecognised and refuse to
 			// run the workflow, which is the honest outcome: the graph keeps
@@ -1759,7 +1805,20 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 	// reports the flag; this is the other half.
 	result.Document.Nodes = applySubnodeFlags(result.Document.Nodes, document.Connections)
 
+	// The inverse of the import's ingest re-route: n8n's data loader has no
+	// main input, so items KilasFlow feeds the loader go back onto the store
+	// it serves, which is where n8n takes them.
+	storeByLoader := map[string]string{}
 	for _, connection := range document.Connections {
+		if connection.Kind == workflow.ConnectionDocument && typeByID[connection.Source.NodeID] == DocumentLoaderNodeType {
+			storeByLoader[connection.Source.NodeID] = connection.Target.NodeID
+		}
+	}
+
+	for _, connection := range document.Connections {
+		if store, served := storeByLoader[connection.Target.NodeID]; served && connection.Kind == workflow.ConnectionMain {
+			connection.Target = workflow.Endpoint{NodeID: store, Port: "main"}
+		}
 		sourceName, sourceKnown := nameByID[connection.Source.NodeID]
 		targetName, targetKnown := nameByID[connection.Target.NodeID]
 		if !sourceKnown || !targetKnown || !exported[sourceName] || !exported[targetName] {

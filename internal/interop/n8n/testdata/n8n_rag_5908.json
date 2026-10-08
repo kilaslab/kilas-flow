@@ -16,7 +16,7 @@
   ],
   "connections": {
     "Gmail Trigger": {"main": [[{"node":"Gmail","type":"main","index":0}]]},
-    "Gmail": {"main": [[{"node":"Default Data Loader","type":"main","index":0}]]},
+    "Gmail": {"main": [[{"node":"Postgres PGVector Store","type":"main","index":0}]]},
     "Recursive Character Text Splitter": {"ai_textSplitter": [[{"node":"Default Data Loader","type":"ai_textSplitter","index":0}]]},
     "Default Data Loader": {"ai_document": [[{"node":"Postgres PGVector Store","type":"ai_document","index":0}]]},
     "Embeddings OpenAI": {"ai_embedding": [[{"node":"Postgres PGVector Store","type":"ai_embedding","index":0}]]},
