@@ -13,6 +13,7 @@ import (
 
 	"github.com/kilaslab/kilas-flow/internal/ai"
 	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 	"github.com/kilaslab/kilas-flow/nodes"
 )
@@ -249,6 +250,202 @@ func TestWorkflowToolSurfacesTheEnginesRecursionRefusal(t *testing.T) {
 	}
 	if !named {
 		t.Errorf("no tool failure named the cycle; events = %v", published)
+	}
+}
+
+// describingWorkflows is a sub-workflow invoker that can also read the
+// trigger each target starts from, the way the runtime's own can.
+type describingWorkflows struct {
+	stubWorkflows
+	triggers map[string]workflow.Node
+}
+
+func (stub *describingWorkflows) SubworkflowTrigger(_ context.Context, _ engine.ExecutionContext, workflowID string) (workflow.Node, bool, error) {
+	trigger, ok := stub.triggers[workflowID]
+	if !ok {
+		return workflow.Node{}, false, fmt.Errorf("%w: active workflow", repository.ErrNotFound)
+	}
+	return trigger, true, nil
+}
+
+// schemaRecordingProvider serves one chat-completion body per model turn and
+// keeps the tool schemas the first turn offered, by tool name.
+func schemaRecordingProvider(t *testing.T, bodies []string) (*httptest.Server, func() map[string]map[string]any) {
+	t.Helper()
+	var mu sync.Mutex
+	turn := 0
+	offered := map[string]map[string]any{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		var request struct {
+			Tools []struct {
+				Function struct {
+					Name       string         `json:"name"`
+					Parameters map[string]any `json:"parameters"`
+				} `json:"function"`
+			} `json:"tools"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		if turn == 0 {
+			for _, tool := range request.Tools {
+				offered[tool.Function.Name] = tool.Function.Parameters
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if turn >= len(bodies) {
+			_, _ = w.Write([]byte(assistantAnswer("out of script")))
+			return
+		}
+		_, _ = w.Write([]byte(bodies[turn]))
+		turn++
+	}))
+	t.Cleanup(server.Close)
+	return server, func() map[string]map[string]any {
+		mu.Lock()
+		defer mu.Unlock()
+		return offered
+	}
+}
+
+// TestWorkflowToolOffersTheSubworkflowsDeclaredInputs covers a Workflow Tool
+// whose target declares the fields it expects. Offered a bare {input: object},
+// a model guesses the names — {"input":{"temperature":37}} — and the
+// sub-workflow computes NaN from the tempC nobody sent. The declared fields are
+// offered by name and type instead, less the ones the author fixed in Workflow
+// inputs, and a target that declares nothing keeps the open input object.
+func TestWorkflowToolOffersTheSubworkflowsDeclaredInputs(t *testing.T) {
+	t.Parallel()
+
+	workflows := &describingWorkflows{
+		stubWorkflows: stubWorkflows{items: []workflow.Item{{JSON: map[string]any{"fahrenheit": 98.6}}}},
+		triggers: map[string]workflow.Node{
+			"wf_celsius": {ID: "start", Type: nodes.ExecuteWorkflowTriggerType, Parameters: map[string]any{
+				"inputSource": "fields",
+				"workflowInputs": map[string]any{"values": []any{
+					map[string]any{"name": "tempC", "type": "number"},
+					map[string]any{"name": "roundTo", "type": "number"},
+					map[string]any{"name": "unit", "type": "string"},
+				}},
+			}},
+			"wf_open": {ID: "start", Type: nodes.ExecuteWorkflowTriggerType, Parameters: map[string]any{"inputSource": "passthrough"}},
+		},
+	}
+	provider, offered := schemaRecordingProvider(t, []string{
+		assistantToolCalls(`{"name":"celsius_to_fahrenheit","arguments":"{\"tempC\":37,\"roundTo\":1}"}`),
+		assistantAnswer("98.6F"),
+	})
+
+	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil)
+	output, err := executor.Execute(context.Background(), agentIR(t, map[string]any{"prompt": "Convert 37C."}), workflow.NodeInput{
+		"main":  {{JSON: map[string]any{}}},
+		"model": {modelItem(provider.URL)},
+		"tools": {
+			toolItem(map[string]any{
+				"kind": "workflow", "name": "celsius_to_fahrenheit", "description": "Converts.", "nodeName": "Convert",
+				"workflowId": "wf_celsius",
+				"parameters": map[string]any{"workflowId": "wf_celsius", "workflowInputs": map[string]any{"unit": "F"}},
+			}),
+			toolItem(map[string]any{
+				"kind": "workflow", "name": "open_tool", "description": "Anything.", "nodeName": "Open",
+				"workflowId": "wf_open", "parameters": map[string]any{"workflowId": "wf_open"},
+			}),
+		},
+	}, engine.Request{
+		Credentials: agentCredentials(), Workflows: workflows, Execution: agentExecution(),
+		Events: func(engine.NodeEvent) {},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if output[0][0].JSON["output"] != "98.6F" {
+		t.Fatalf("agent output = %#v, want the final answer", output[0])
+	}
+
+	schema := offered()["celsius_to_fahrenheit"]
+	properties, _ := schema["properties"].(map[string]any)
+	for _, name := range []string{"tempC", "roundTo"} {
+		property, _ := properties[name].(map[string]any)
+		if property["type"] != "number" {
+			t.Errorf("tool schema %q = %#v, want a number property", name, properties[name])
+		}
+	}
+	if _, offeredFixed := properties["unit"]; offeredFixed {
+		t.Errorf("tool schema = %#v, want unit left out: the author fixed it", schema)
+	}
+	if _, generic := properties["input"]; generic {
+		t.Errorf("tool schema = %#v, want the declared inputs instead of an open input object", schema)
+	}
+	required, _ := schema["required"].([]any)
+	if fmt.Sprint(required) != "[tempC roundTo]" {
+		t.Errorf("required = %v, want the declared inputs the model defines, in declared order", required)
+	}
+
+	open, _ := offered()["open_tool"]["properties"].(map[string]any)
+	if _, generic := open["input"]; !generic {
+		t.Errorf("open tool schema = %#v, want the input object a passthrough target takes", offered()["open_tool"])
+	}
+
+	if len(workflows.calls) != 1 {
+		t.Fatalf("sub-workflow calls = %#v, want one", workflows.calls)
+	}
+	sent := workflows.calls[0].Items[0].JSON
+	if sent["tempC"] != float64(37) || sent["roundTo"] != float64(1) || sent["unit"] != "F" {
+		t.Errorf("sub-workflow input = %#v, want the model's typed inputs and the fixed unit", sent)
+	}
+}
+
+// TestWorkflowToolWordsAFailedCallByItsCause covers the text a model reads
+// when a sub-workflow call fails. A target that ran and failed hands back the
+// child's own error, so the model can correct its arguments and try again;
+// telling it the tool is unavailable made it give up on a call it could have
+// fixed. Only a target the lookup could not find keeps that wording.
+func TestWorkflowToolWordsAFailedCallByItsCause(t *testing.T) {
+	t.Parallel()
+
+	failure := func(t *testing.T, cause error) string {
+		t.Helper()
+		provider := scriptProvider(t, []string{
+			assistantToolCalls(`{"name":"child","arguments":"{\"input\":{\"temperature\":37}}"}`),
+			assistantAnswer("done"),
+		})
+		var detail string
+		executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil)
+		_, err := executor.Execute(context.Background(), agentIR(t, map[string]any{"prompt": "Convert."}), workflow.NodeInput{
+			"main":  {{JSON: map[string]any{}}},
+			"model": {modelItem(provider.URL)},
+			"tools": {toolItem(map[string]any{
+				"kind": "workflow", "name": "child", "description": "Child.", "nodeName": "Child",
+				"workflowId": "wf_child", "parameters": map[string]any{},
+			})},
+		}, engine.Request{
+			Credentials: agentCredentials(), Workflows: &stubWorkflows{err: cause}, Execution: agentExecution(),
+			Events: func(event engine.NodeEvent) {
+				if event.Name == string(ai.EventToolFailed) {
+					detail = string(event.Detail)
+				}
+			},
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v, want the agent to carry on after the failed call", err)
+		}
+		return detail
+	}
+
+	ran := failure(t, &engine.SubworkflowError{
+		WorkflowID: "wf_child",
+		Err:        fmt.Errorf(`execute node "set": node "Compute": the JSON body is not a valid object`),
+	})
+	if !strings.Contains(ran, `the sub-workflow \"wf_child\" failed: execute node \"set\": node \"Compute\": the JSON body is not a valid object`) {
+		t.Errorf("a failed run = %s, want the sub-workflow's own error", ran)
+	}
+	if strings.Contains(ran, "not active") || strings.Contains(ran, "unavailable") {
+		t.Errorf("a failed run = %s, want no claim that the tool is unavailable", ran)
+	}
+
+	missing := failure(t, fmt.Errorf("%w: active workflow", repository.ErrNotFound))
+	if !strings.Contains(missing, "not active") {
+		t.Errorf("a target the lookup could not find = %s, want it named not active", missing)
 	}
 }
 

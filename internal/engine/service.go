@@ -42,6 +42,9 @@ type ExecutionStore interface {
 	// StartChild creates a sub-workflow execution that is already running and
 	// already claimed, and returns the document it is pinned to.
 	StartChild(context.Context, repository.TenantScope, repository.ChildExecution) (execution.Record, workflow.Document, error)
+	// ActiveDocument reads the document a sub-workflow call to the workflow
+	// would run, without starting one.
+	ActiveDocument(context.Context, repository.TenantScope, string) (workflow.Document, error)
 	// SuspendExecution parks a running execution as waiting, holding the
 	// checkpoint a resumed run continues from.
 	SuspendExecution(context.Context, repository.TenantScope, repository.SuspendWaitParams) (repository.Wait, execution.Record, error)
@@ -1357,9 +1360,7 @@ func (service *Service) invokeWorkflow(ctx context.Context, parent ExecutionCont
 		return WorkflowCallResult{}, err
 	}
 	if runErr != nil {
-		// Named with the workflow, because "node X failed" inside a
-		// sub-workflow reads as a failure of the caller otherwise.
-		return WorkflowCallResult{ExecutionID: record.ID}, fmt.Errorf("sub-workflow %q failed: %w", target, runErr)
+		return WorkflowCallResult{ExecutionID: record.ID}, &SubworkflowError{WorkflowID: target, Err: runErr}
 	}
 	if !call.Wait {
 		return WorkflowCallResult{ExecutionID: record.ID}, nil
@@ -1484,6 +1485,32 @@ func (service *Service) subworkflowTrigger(document workflow.Document) string {
 		}
 	}
 	return ""
+}
+
+// SubworkflowTrigger reads the trigger a call to another workflow of the
+// caller's tenant would start from, on the revision that call would run.
+//
+// The same tenant clause and the same active revision as InvokeWorkflow, so a
+// caller is described exactly the target it would reach, and a target it could
+// not call reports the same not-found.
+func (service *Service) SubworkflowTrigger(ctx context.Context, parent ExecutionContext, workflowID string) (workflow.Node, bool, error) {
+	if service == nil || service.executions == nil {
+		return workflow.Node{}, false, fmt.Errorf("this runtime cannot run sub-workflows")
+	}
+	document, err := service.executions.ActiveDocument(ctx, repository.TenantScope{ID: parent.TenantID}, strings.TrimSpace(workflowID))
+	if err != nil {
+		return workflow.Node{}, false, err
+	}
+	trigger := service.subworkflowTrigger(document)
+	if trigger == "" {
+		return workflow.Node{}, false, nil
+	}
+	for _, node := range document.Nodes {
+		if node.ID == trigger {
+			return node, true, nil
+		}
+	}
+	return workflow.Node{}, false, nil
 }
 
 // itemsJSON renders items for the child's trigger input.

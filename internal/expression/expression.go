@@ -295,6 +295,27 @@ func plainValue(value any) (any, error) {
 	}
 }
 
+// Bodies returns the source of each `{{ … }}` segment of a template, in order
+// and split exactly as Evaluate splits it. The text around them is literal:
+// it is rendered as written, and nothing in it is evaluated.
+//
+// For a caller that reads what an expression will run without running it —
+// the $fromAI calls an agent tool offers the model are the calls its
+// expressions evaluate, not every one written in their text.
+func Bodies(template string) ([]string, error) {
+	segments, err := split(template)
+	if err != nil {
+		return nil, err
+	}
+	bodies := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		if segment.isExpression {
+			bodies = append(bodies, segment.text)
+		}
+	}
+	return bodies, nil
+}
+
 // split separates literal text from `{{ … }}` expressions. An unterminated
 // opener is an error rather than literal text, so a typo surfaces at save time
 // instead of silently sending braces to an upstream API.

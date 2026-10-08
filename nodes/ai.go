@@ -23,6 +23,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/expression"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
 	"github.com/kilaslab/kilas-flow/internal/sqlnode"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
@@ -1318,7 +1319,7 @@ func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 	tools := make([]ai.Tool, 0, len(toolDescriptors))
 
 	for _, descriptor := range toolDescriptors {
-		tool, err := executor.toolFrom(ir, descriptor, request)
+		tool, err := executor.toolFrom(ctx, ir, descriptor, request)
 		if err != nil {
 			return nil, err
 		}
@@ -2589,7 +2590,8 @@ func workflowToolNode() node.Definition {
 			},
 			{
 				Key: "workflowInputs", Label: "Workflow inputs", Kind: node.PropertyJSON,
-				Description: "Extra static inputs merged over the model's arguments into the sub-workflow's input item. Supports expressions.",
+				Description: "Extra static inputs merged over the model's arguments into the sub-workflow's input item. Supports expressions. " +
+					"The model is offered each field the workflow's trigger declares, by name and type; a field written here is fixed to what you wrote and is not offered.",
 			},
 		},
 		SharedSettings: sharedSettings(),
@@ -2636,14 +2638,44 @@ type workflowTool struct {
 	description string
 	rawWorkflow any
 	parameters  map[string]any
-	nodeName    string
-	agentNode   string
-	request     engine.Request
+	// declared is what the target's trigger says it expects, read when the
+	// agent run built its tools.
+	declared  []workflowInput
+	nodeName  string
+	agentNode string
+	request   engine.Request
 }
 
+// Definition offers the model the target's declared inputs and any $fromAI
+// calls in the node, and an open input object when there is neither.
+//
+// A declared input is the model's to define unless the author fixed it: a key
+// written in Workflow inputs is sent as written and not offered, the way n8n's
+// per-field "let the model define this" leaves the others fixed. Inputs written
+// as one expression fix them all, because which keys it produces is only
+// known when it runs.
 func (tool *workflowTool) Definition() ai.ToolDefinition {
-	if calls, err := ai.ExtractFromAI(tool.parameters); err == nil && len(calls) > 0 {
-		return ai.ToolDefinition{Name: tool.name, Description: tool.description, Parameters: ai.FromAISchema(calls)}
+	calls, err := ai.ExtractFromAI(tool.parameters)
+	if err != nil {
+		calls = nil
+	}
+	modelDefined := tool.modelDefinedInputs()
+	if len(calls) > 0 || len(modelDefined) > 0 {
+		schema := ai.FromAISchema(calls)
+		properties, _ := schema["properties"].(map[string]any)
+		required, _ := schema["required"].([]string)
+		for _, input := range modelDefined {
+			if _, taken := properties[input.Name]; taken {
+				// A $fromAI call of the same key already describes it.
+				continue
+			}
+			properties[input.Name] = workflowInputSchema(input)
+			required = append(required, input.Name)
+		}
+		if len(required) > 0 {
+			schema["required"] = required
+		}
+		return ai.ToolDefinition{Name: tool.name, Description: tool.description, Parameters: schema}
 	}
 	return ai.ToolDefinition{
 		Name:        tool.name,
@@ -2657,6 +2689,39 @@ func (tool *workflowTool) Definition() ai.ToolDefinition {
 				},
 			},
 		},
+	}
+}
+
+// modelDefinedInputs is the declared inputs the author left for the model.
+func (tool *workflowTool) modelDefinedInputs() []workflowInput {
+	raw, present := tool.parameters["workflowInputs"]
+	if !present || raw == nil {
+		return tool.declared
+	}
+	fixed, literal := raw.(map[string]any)
+	if !literal || expression.IsExpression(raw) {
+		return nil
+	}
+	inputs := make([]workflowInput, 0, len(tool.declared))
+	for _, input := range tool.declared {
+		if _, isFixed := fixed[input.Name]; !isFixed {
+			inputs = append(inputs, input)
+		}
+	}
+	return inputs
+}
+
+// workflowInputSchema is the JSON Schema property for one declared input. An
+// input declared as any accepts anything, so it carries no type; an array
+// names its items, which OpenAI refuses a function schema without.
+func workflowInputSchema(input workflowInput) map[string]any {
+	switch input.Type {
+	case "array":
+		return map[string]any{"type": "array", "items": map[string]any{}}
+	case "string", "number", "boolean", "object":
+		return map[string]any{"type": input.Type}
+	default:
+		return map[string]any{}
 	}
 }
 
@@ -2690,12 +2755,7 @@ func (tool *workflowTool) Invoke(ctx context.Context, arguments json.RawMessage)
 		WorkflowID: target, Items: []workflow.Item{inputItem}, Wait: true,
 	})
 	if err != nil {
-		// The model reads this text and repeats it to the user, so an internal
-		// lookup failure is translated rather than echoed: "repository record
-		// not found: active workflow" is how an agent ends up telling someone
-		// their order does not exist while the execution reports success.
-		return "", fmt.Errorf("node %q: the sub-workflow %q this tool calls could not be run — it is not active, or it no longer exists. This is a configuration problem in this workflow, not a missing record: tell the user the tool is unavailable instead of answering with the data it would have returned (%w)",
-			tool.agentNode, target, err)
+		return "", workflowToolFailure(tool.agentNode, target, err)
 	}
 	if len(result.Items) == 1 {
 		encoded, err := json.Marshal(result.Items[0].JSON)
@@ -2709,6 +2769,30 @@ func (tool *workflowTool) Invoke(ctx context.Context, arguments json.RawMessage)
 		return "", fmt.Errorf("encode tool result: %w", err)
 	}
 	return string(encoded), nil
+}
+
+// workflowToolFailure words a failed sub-workflow call for the model, which
+// reads it and acts on it.
+//
+// By cause, because the right next step differs. A target that ran and failed
+// gets its own error back, so the model can correct the arguments it sent and
+// call again — as n8n hands back the sub-workflow's error. A target the lookup
+// could not find is the author's to fix, and the model repeats whatever it is
+// told to the user, so that internal failure is translated rather than echoed:
+// "repository record not found: active workflow" is how an agent ends up
+// telling someone their order does not exist while the execution reports
+// success. Anything else — a cycle, the depth limit — is passed on as it is.
+func workflowToolFailure(agentNode, target string, err error) error {
+	var failed *engine.SubworkflowError
+	switch {
+	case errors.As(err, &failed):
+		return fmt.Errorf("node %q: the sub-workflow %q failed: %w", agentNode, target, failed.Err)
+	case errors.Is(err, repository.ErrNotFound):
+		return fmt.Errorf("node %q: the sub-workflow %q this tool calls could not be run — it is not active, or it no longer exists. This is a configuration problem in this workflow, not a missing record: tell the user the tool is unavailable instead of answering with the data it would have returned (%w)",
+			agentNode, target, err)
+	default:
+		return fmt.Errorf("node %q: %w", agentNode, err)
+	}
 }
 
 // workflowToolTarget resolves which workflow to run. A locator chosen from
@@ -2950,12 +3034,12 @@ func parserSlot(items []workflow.Item, nodeName string) (schema map[string]any, 
 // than reimplementing any of them; the workflow and calculator tools reuse
 // their own node implementations the same way, and the MCP tool calls
 // through the shared MCP transport below for the same reason.
-func (executor *AgentExecutor) toolFrom(ir workflow.IRNode, descriptor map[string]any, request engine.Request) (ai.Tool, error) {
+func (executor *AgentExecutor) toolFrom(ctx context.Context, ir workflow.IRNode, descriptor map[string]any, request engine.Request) (ai.Tool, error) {
 	switch textValue(descriptor["kind"], toolKindHTTP) {
 	case toolKindHTTP:
 		return executor.httpToolFrom(ir, descriptor, request)
 	case toolKindWorkflow:
-		return executor.workflowToolFrom(ir, descriptor, request)
+		return executor.workflowToolFrom(ctx, ir, descriptor, request)
 	case toolKindCalculator:
 		return executor.calculatorToolFrom(ir, descriptor, request)
 	case toolKindDatastore:
@@ -2971,7 +3055,7 @@ func (executor *AgentExecutor) toolFrom(ir workflow.IRNode, descriptor map[strin
 }
 
 // workflowToolFrom wraps a workflow tool descriptor as a callable tool.
-func (executor *AgentExecutor) workflowToolFrom(ir workflow.IRNode, descriptor map[string]any, request engine.Request) (ai.Tool, error) {
+func (executor *AgentExecutor) workflowToolFrom(ctx context.Context, ir workflow.IRNode, descriptor map[string]any, request engine.Request) (ai.Tool, error) {
 	name := textValue(descriptor["name"], "")
 	if name == "" {
 		return nil, fmt.Errorf("node %q: a connected tool has no name", ir.Name)
@@ -2982,10 +3066,53 @@ func (executor *AgentExecutor) workflowToolFrom(ir workflow.IRNode, descriptor m
 		description: textValue(descriptor["description"], ""),
 		rawWorkflow: descriptor["workflowId"],
 		parameters:  parameters,
+		declared:    declaredWorkflowInputs(ctx, request, descriptor["workflowId"]),
 		nodeName:    textValue(descriptor["nodeName"], name),
 		agentNode:   ir.Name,
 		request:     request,
 	}, nil
+}
+
+// workflowInput is one field a called workflow's trigger declares it expects.
+type workflowInput struct {
+	Name string
+	Type string
+}
+
+// declaredWorkflowInputs reads the fields a Workflow Tool's target declares,
+// once per agent run, so the model is offered them by name and type.
+//
+// Only for a target fixed in the node: one written as an expression is only
+// knowable when the call is made, after the model was offered its schema. A
+// target that cannot be read — not active, deleted, a runtime that cannot
+// describe one — declares nothing here, and the call itself reports why it
+// could not be run.
+func declaredWorkflowInputs(ctx context.Context, request engine.Request, raw any) []workflowInput {
+	describer, ok := request.Workflows.(engine.WorkflowDescriber)
+	if !ok || expression.IsExpression(raw) {
+		return nil
+	}
+	locator, _ := property.ReadLocator(raw)
+	target := strings.TrimSpace(textValue(locator.Value, ""))
+	if target == "" || expressionTarget(locator.Value) {
+		return nil
+	}
+	trigger, found, err := describer.SubworkflowTrigger(ctx, request.Execution, target)
+	if err != nil || !found || textParameter(trigger.Parameters, "inputSource") != "fields" {
+		return nil
+	}
+	declaration, _ := trigger.Parameters["workflowInputs"].(map[string]any)
+	values, _ := declaration["values"].([]any)
+	inputs := make([]workflowInput, 0, len(values))
+	for _, value := range values {
+		field, _ := value.(map[string]any)
+		name := strings.TrimSpace(textValue(field["name"], ""))
+		if name == "" {
+			continue
+		}
+		inputs = append(inputs, workflowInput{Name: name, Type: textValue(field["type"], "string")})
+	}
+	return inputs
 }
 
 // calculatorToolFrom wraps a calculator tool descriptor as a callable tool.

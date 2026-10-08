@@ -3,6 +3,7 @@ package engine_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -473,5 +474,95 @@ func TestDollarItemRefusesAChildsLineageUnderAParentNodesID(t *testing.T) {
 	}
 	if len(tally.paired) != 0 || tally.refused != 9 {
 		t.Errorf("$('Parent fan').item paired %v and refused %d, want all 9 refused", tally.paired, tally.refused)
+	}
+}
+
+// TestACallerCanReadATargetsInputsAndTellALookupFailureFromAFailedRun covers
+// what an agent's Workflow Tool needs from the runtime: the trigger a target
+// starts from, so the inputs it declares can be offered to the model, and a
+// failed call it can word by cause. A target that could not be found is the
+// author's to fix; a target that ran and failed is the model's to retry with
+// other arguments, so it carries the child's own error.
+func TestACallerCanReadATargetsInputsAndTellALookupFailureFromAFailedRun(t *testing.T) {
+	var targets struct{ failing, inactive string }
+	var describer engine.WorkflowDescriber
+	var trigger workflow.Node
+	var found bool
+	var describeErr, describeInactiveErr, runErr, lookupErr error
+	setup := newCompositionWith(t, map[string]engine.ExecutorFunc{
+		"test.fail": func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return nil, errors.New("the JSON body is not a valid object")
+		},
+		"test.call": func(ctx context.Context, _ workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+			describer, _ = request.Workflows.(engine.WorkflowDescriber)
+			if describer != nil {
+				trigger, found, describeErr = describer.SubworkflowTrigger(ctx, request.Execution, targets.failing)
+				_, _, describeInactiveErr = describer.SubworkflowTrigger(ctx, request.Execution, targets.inactive)
+			}
+			_, runErr = request.Workflows.InvokeWorkflow(ctx, request.Execution, engine.WorkflowCall{
+				WorkflowID: targets.failing, Items: []workflow.Item{{JSON: map[string]any{"temperature": 37}}}, Wait: true,
+			})
+			_, lookupErr = request.Workflows.InvokeWorkflow(ctx, request.Execution, engine.WorkflowCall{
+				WorkflowID: targets.inactive, Items: []workflow.Item{{JSON: map[string]any{}}}, Wait: true,
+			})
+			return workflow.NodeOutput{input["main"]}, nil
+		},
+	})
+	targets.failing = setup.activate(t, setup.tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion, Name: "Celsius",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Called", Type: nodes.ExecuteWorkflowTriggerType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"inputSource": "fields", "workflowInputs": map[string]any{"values": []any{
+					map[string]any{"name": "tempC", "type": "number"},
+				}}}},
+			{ID: "fail", Name: "Compute", Type: "test.fail", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{mainEdge("c1", "start", "main", "fail")},
+		Settings:    map[string]any{},
+	})
+	draft, err := setup.workflows.SaveDraft(context.Background(), setup.tenant, subworkflow("Never activated", "x"))
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+	targets.inactive = draft.ID
+	parent := setup.activate(t, setup.tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion, Name: "Parent",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "call", Name: "Call", Type: "test.call", TypeVersion: workflow.V(1)},
+		},
+		Connections: []workflow.Connection{mainEdge("c1", "manual", "main", "call")},
+		Settings:    map[string]any{},
+	})
+
+	if record := setup.runManual(t, parent, `{}`); record.Status != execution.StatusSucceeded {
+		t.Fatalf("parent status = %s, error = %s", record.Status, record.Error)
+	}
+
+	if describer == nil {
+		t.Fatal("the runtime's invoker cannot describe a target")
+	}
+	if describeErr != nil || !found || trigger.ID != "start" {
+		t.Fatalf("SubworkflowTrigger() = (%#v, %v, %v), want the target's own trigger", trigger, found, describeErr)
+	}
+	if trigger.Parameters["inputSource"] != "fields" {
+		t.Errorf("trigger parameters = %#v, want its declared inputs", trigger.Parameters)
+	}
+	if !errors.Is(describeInactiveErr, repository.ErrNotFound) {
+		t.Errorf("describing an inactive target = %v, want a not-found", describeInactiveErr)
+	}
+
+	var failed *engine.SubworkflowError
+	if !errors.As(runErr, &failed) {
+		t.Fatalf("a target that ran and failed = %v (%T), want a SubworkflowError", runErr, runErr)
+	}
+	if failed.WorkflowID != targets.failing || !strings.Contains(failed.Err.Error(), "the JSON body is not a valid object") {
+		t.Errorf("SubworkflowError = %#v, want the target and the child's own error", failed)
+	}
+	if !strings.Contains(runErr.Error(), fmt.Sprintf("sub-workflow %q failed", targets.failing)) {
+		t.Errorf("error = %v, want the wording a caller's trace already reads", runErr)
+	}
+	if errors.As(lookupErr, &failed) || !errors.Is(lookupErr, repository.ErrNotFound) {
+		t.Errorf("an inactive target = %v, want a not-found and no failed run", lookupErr)
 	}
 }

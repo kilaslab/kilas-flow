@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/kilaslab/kilas-flow/internal/expression"
 )
 
 // FromAIArgument is one $fromAI(key, description, type, defaultValue) call
@@ -85,7 +87,30 @@ func CheckFromAIConsistent(parameters map[string]any) error {
 	return nil
 }
 
+// collectFromAI gathers the calls the tool will fill: every call in a plain
+// string, which is filled wherever it sits, and only the calls inside an
+// expression's {{ }} segments, which are what the expression evaluates.
+//
+// A call in an expression's literal text stays the literal characters
+// "$fromAI(…)" when the tool runs, so offering it to the model asked for an
+// argument nothing would use — required, when it declared no default. Reading
+// the segments the way the evaluator splits them keeps the schema to what is
+// filled. A template whose delimiters do not close has no segment the
+// evaluator would run; it fails with its own error when the tool resolves it.
 func collectFromAI(value any, collected *[]FromAIArgument) error {
+	if expression.IsExpression(value) {
+		template, _ := value.(map[string]any)["value"].(string)
+		bodies, err := expression.Bodies(template)
+		if err != nil {
+			return nil
+		}
+		for _, body := range bodies {
+			if err := collectFromAI(body, collected); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	switch typed := value.(type) {
 	case string:
 		calls, err := scanFromAICalls(typed)

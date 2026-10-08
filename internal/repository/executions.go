@@ -1287,27 +1287,12 @@ func (store *GORMExecutionStore) StartChild(ctx context.Context, tenant TenantSc
 	}
 	var document workflow.Document
 	err = store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// The tenant clause is the isolation boundary: a workflow ID from
-		// another tenant simply does not exist here, so a call naming one is
-		// refused as "not found" rather than reaching across.
-		var parent workflowModel
-		if err := tx.Where("tenant_id = ? AND id = ? AND active = ?", tenant.ID, call.WorkflowID, true).First(&parent).Error; err != nil {
-			return mapNotFound(err, "active workflow")
-		}
-		if parent.ActiveVersionID == nil {
-			return fmt.Errorf("%w: workflow has no active revision", ErrNotFound)
-		}
-		var versionModel workflowVersionModel
-		if err := tx.Where("tenant_id = ? AND workflow_id = ? AND id = ?", tenant.ID, call.WorkflowID, *parent.ActiveVersionID).
-			First(&versionModel).Error; err != nil {
-			return mapNotFound(err, "workflow version")
-		}
-		version, err := versionFromModel(versionModel)
+		version, err := activeCallableVersion(tx, tenant, call.WorkflowID)
 		if err != nil {
 			return err
 		}
 		document = version.Document
-		model.WorkflowVersionID = versionModel.ID
+		model.WorkflowVersionID = version.ID
 		if call.SelectTrigger != nil {
 			model.TriggerNodeID = call.SelectTrigger(document)
 		}
@@ -1317,6 +1302,45 @@ func (store *GORMExecutionStore) StartChild(ctx context.Context, tenant TenantSc
 		return execution.Record{}, workflow.Document{}, err
 	}
 	return executionFromModel(model), document, nil
+}
+
+// ActiveDocument reads the document a sub-workflow call to the workflow would
+// run, without starting one: the same lookup StartChild makes, so a caller is
+// described the revision it would reach and refused the target it would be
+// refused.
+func (store *GORMExecutionStore) ActiveDocument(ctx context.Context, tenant TenantScope, workflowID string) (workflow.Document, error) {
+	if err := tenant.validate(); err != nil {
+		return workflow.Document{}, err
+	}
+	if workflowID == "" {
+		return workflow.Document{}, fmt.Errorf("a sub-workflow call needs a workflow")
+	}
+	version, err := activeCallableVersion(store.db.WithContext(ctx), tenant, workflowID)
+	if err != nil {
+		return workflow.Document{}, err
+	}
+	return version.Document, nil
+}
+
+// activeCallableVersion loads the revision a sub-workflow call to the workflow
+// runs: its active one, and only while it is active.
+func activeCallableVersion(tx *gorm.DB, tenant TenantScope, workflowID string) (workflow.Version, error) {
+	// The tenant clause is the isolation boundary: a workflow ID from
+	// another tenant simply does not exist here, so a call naming one is
+	// refused as "not found" rather than reaching across.
+	var parent workflowModel
+	if err := tx.Where("tenant_id = ? AND id = ? AND active = ?", tenant.ID, workflowID, true).First(&parent).Error; err != nil {
+		return workflow.Version{}, mapNotFound(err, "active workflow")
+	}
+	if parent.ActiveVersionID == nil {
+		return workflow.Version{}, fmt.Errorf("%w: workflow has no active revision", ErrNotFound)
+	}
+	var versionModel workflowVersionModel
+	if err := tx.Where("tenant_id = ? AND workflow_id = ? AND id = ?", tenant.ID, workflowID, *parent.ActiveVersionID).
+		First(&versionModel).Error; err != nil {
+		return workflow.Version{}, mapNotFound(err, "workflow version")
+	}
+	return versionFromModel(versionModel)
 }
 
 // Ancestry returns an execution's chain of parents, nearest first.

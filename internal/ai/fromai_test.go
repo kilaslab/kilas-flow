@@ -2,6 +2,7 @@ package ai_test
 
 import (
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -112,6 +113,52 @@ func TestSubstituteFromAILeavesExpressionsAsWritten(t *testing.T) {
 	}
 	if !reflect.DeepEqual(substituted, parameters) {
 		t.Errorf("SubstituteFromAI() = %#v, want every expression exactly as written", substituted)
+	}
+}
+
+// TestExtractFromAIReadsAnExpressionOnlyInsideItsBraces covers a $fromAI call
+// written as an expression's literal text. Nothing evaluates the text around
+// an expression's {{ }} segments, so the call stays the literal characters
+// "$fromAI('name')" when the tool runs: offering name as a required argument
+// asked the model for a value nothing would use. A call inside a segment, and
+// a call in a plain string — which is filled wherever it sits — are offered as
+// before.
+func TestExtractFromAIReadsAnExpressionOnlyInsideItsBraces(t *testing.T) {
+	t.Parallel()
+
+	literal := map[string]any{"mode": "expression", "value": "Customer $fromAI('name')"}
+	calls, err := ai.ExtractFromAI(map[string]any{"greeting": literal})
+	if err != nil {
+		t.Fatalf("ExtractFromAI() error = %v", err)
+	}
+	if len(calls) != 0 {
+		t.Errorf("ExtractFromAI(literal text) = %#v, want no argument the tool would never fill", calls)
+	}
+	if schema := ai.FromAISchema(calls); schema["required"] != nil {
+		t.Errorf("FromAISchema() = %#v, want nothing required", schema)
+	}
+
+	calls, err = ai.ExtractFromAI(map[string]any{
+		"greeting": literal,
+		"segment":  map[string]any{"mode": "expression", "value": "Customer {{ $fromAI('name') }} of $fromAI('ignored') in {{ { city: $fromAI('city') }.city }}"},
+		"plain":    "Order $fromAI('order', 'the order number', 'number')",
+	})
+	if err != nil {
+		t.Fatalf("ExtractFromAI() error = %v", err)
+	}
+	keys := make([]string, 0, len(calls))
+	for _, call := range calls {
+		keys = append(keys, call.Key)
+	}
+	sort.Strings(keys)
+	if !reflect.DeepEqual(keys, []string{"city", "name", "order"}) {
+		t.Errorf("ExtractFromAI() keys = %v, want the calls inside {{ }} and in the plain string", keys)
+	}
+
+	// The plain string is filled where the call sits, so its argument is used.
+	filled, err := ai.SubstituteFromAI(map[string]any{"plain": "Order $fromAI('order', 'the order number', 'number')"}, map[string]any{"order": float64(7)})
+	if err != nil || filled["plain"] != "Order 7" {
+		t.Errorf("SubstituteFromAI(plain) = (%#v, %v), want the argument filled in", filled, err)
 	}
 }
 

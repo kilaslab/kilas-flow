@@ -92,6 +92,10 @@ func (*idleExecutionStore) StartChild(context.Context, repository.TenantScope, r
 	return execution.Record{}, workflow.Document{}, nil
 }
 
+func (*idleExecutionStore) ActiveDocument(context.Context, repository.TenantScope, string) (workflow.Document, error) {
+	return workflow.Document{}, nil
+}
+
 func (*idleExecutionStore) Cancel(context.Context, repository.TenantScope, string) (execution.Record, error) {
 	return execution.Record{}, nil
 }
