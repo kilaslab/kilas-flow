@@ -59,6 +59,11 @@ func codeNode() node.Definition {
 		SharedSettings: sharedSettings(),
 		ExecutorID:     CodeExecutorID,
 		Validate:       validateCodeConfiguration,
+		// "Run once for all items", the default, hands the body its whole
+		// batch: split into one-item calls to tolerate failures item by item,
+		// a body that sums or groups would do it one item at a time. The
+		// per-item mode reports each item's outcome itself (see Execute).
+		WholeBatch: true,
 	}
 }
 
@@ -121,7 +126,7 @@ func NewCodeExecutorWith(compiler runcode.Compiler, cache runcode.Cache, modules
 // Unlike the per-item nodes, code sees the whole batch: that is what lets a
 // Code node filter, group, or aggregate, which is most of why someone reaches
 // for one.
-func (executor *CodeExecutor) Execute(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, _ engine.Request) (workflow.NodeOutput, error) {
+func (executor *CodeExecutor) Execute(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
 	source, _ := ir.Parameters["code"].(string)
 	if source == "" {
 		return nil, fmt.Errorf("node %q: code is required", ir.Name)
@@ -150,17 +155,31 @@ func (executor *CodeExecutor) Execute(ctx context.Context, ir workflow.IRNode, i
 		// keyed by source hash and by module, so this multiplies sandbox calls
 		// and neither builds nor translations. Each call sees a batch of one,
 		// which is what makes the same body work in either mode.
+		//
+		// The node is whole-batch, so the runner does not split it to tolerate
+		// a failure: a node that continues on failure goes on past a failed
+		// item here and reports every item's outcome, as n8n does inside its
+		// item loop, and the runner routes the failed ones.
 		out := make([]workflow.Item, 0, len(incoming))
+		var outcomes engine.ItemOutcomes
+		failed := false
 		for index, item := range incoming {
 			produced, err := executor.call(ctx, ir, runner, source, []workflow.Item{item})
-			if err != nil {
+			if err != nil && !request.TolerateItemFailures {
 				return nil, err
 			}
+			var made []workflow.Item
 			for _, result := range produced {
 				// Every item this call produced inherits the one item it was
 				// given, because that is the only source it can have come from.
-				out = append(out, withBinaryFrom(result, incoming, index))
+				made = append(made, withBinaryFrom(result, incoming, index))
 			}
+			out = append(out, made...)
+			outcomes = append(outcomes, engine.ItemOutcome{Items: made, Err: err})
+			failed = failed || err != nil
+		}
+		if failed {
+			return nil, outcomes
 		}
 		return workflow.NodeOutput{out}, nil
 	}

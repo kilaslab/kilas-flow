@@ -296,6 +296,9 @@ func respondToWebhookNode() node.Definition {
 		SharedSettings: sharedSettings(),
 		ExecutorID:     RespondExecutorID,
 		Validate:       validateRespondConfiguration,
+		// The caller is answered once, with the first item or all of them:
+		// one item at a time, "all incoming items" would answer with one.
+		WholeBatch: true,
 	}
 }
 

@@ -1245,6 +1245,11 @@ type ChildExecution struct {
 	// A function rather than a node type, so this package stays free of node
 	// knowledge — the same seam WebhookExtractor uses, and for the same reason.
 	SelectTrigger func(workflow.Document) string
+	// LatestRevision runs the workflow's latest revision whether or not it is
+	// active, instead of its active one. An error workflow's: n8n runs a
+	// workflow that starts from an Error Trigger without it being published,
+	// while a called sub-workflow has to be active.
+	LatestRevision bool
 	// LeaseOwner and LeaseUntil are the caller's own. A child is created
 	// already claimed rather than queued: it runs inline in the parent's
 	// goroutine, so a worker picking it up would run it a second time.
@@ -1287,7 +1292,15 @@ func (store *GORMExecutionStore) StartChild(ctx context.Context, tenant TenantSc
 	}
 	var document workflow.Document
 	err = store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		version, err := activeCallableVersion(tx, tenant, call.WorkflowID)
+		// An error workflow runs its latest revision whether or not it is
+		// active (BUG-p334yw); every other call runs the active one.
+		var version workflow.Version
+		var err error
+		if call.LatestRevision {
+			version, err = latestCallableVersion(tx, tenant, call.WorkflowID)
+		} else {
+			version, err = activeCallableVersion(tx, tenant, call.WorkflowID)
+		}
 		if err != nil {
 			return err
 		}
@@ -1341,6 +1354,61 @@ func activeCallableVersion(tx *gorm.DB, tenant TenantScope, workflowID string) (
 		return workflow.Version{}, mapNotFound(err, "workflow version")
 	}
 	return versionFromModel(versionModel)
+}
+
+// latestCallableVersion loads a workflow's latest revision, active or not:
+// what an error workflow runs. The tenant clause is the isolation boundary, as
+// in activeCallableVersion.
+func latestCallableVersion(tx *gorm.DB, tenant TenantScope, workflowID string) (workflow.Version, error) {
+	var parent workflowModel
+	if err := tx.Where("tenant_id = ? AND id = ?", tenant.ID, workflowID).First(&parent).Error; err != nil {
+		return workflow.Version{}, mapNotFound(err, "workflow")
+	}
+	var versionModel workflowVersionModel
+	if err := tx.Where("tenant_id = ? AND workflow_id = ? AND revision = ?", tenant.ID, workflowID, parent.LatestRevision).
+		First(&versionModel).Error; err != nil {
+		return workflow.Version{}, mapNotFound(err, "workflow version")
+	}
+	return versionFromModel(versionModel)
+}
+
+// AnnotateFailure merges fields into a failed execution's error object.
+//
+// For what happened because the run failed, after it was already terminal: the
+// error workflow it started, or why that could not start. The error object is
+// where the execution page and the API already show a failure's details, so a
+// note there needs no column of its own. Only a failed execution is touched,
+// and a key the run's own error already carries is kept, so a note can never
+// overwrite the failure it is about.
+func (store *GORMExecutionStore) AnnotateFailure(ctx context.Context, tenant TenantScope, executionID string, fields map[string]any) error {
+	if err := tenant.validate(); err != nil {
+		return err
+	}
+	return store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var model executionModel
+		if err := tx.Where("tenant_id = ? AND id = ? AND status = ?", tenant.ID, executionID, string(execution.StatusFailed)).
+			First(&model).Error; err != nil {
+			return mapNotFound(err, "failed execution")
+		}
+		current := map[string]any{}
+		if len(model.Error) > 0 && string(model.Error) != "null" {
+			if err := json.Unmarshal(model.Error, &current); err != nil {
+				return fmt.Errorf("execution error is not an object: %w", err)
+			}
+		}
+		for key, value := range fields {
+			if _, taken := current[key]; !taken {
+				current[key] = value
+			}
+		}
+		encoded, err := json.Marshal(current)
+		if err != nil {
+			return fmt.Errorf("encode execution error: %w", err)
+		}
+		return tx.Model(&executionModel{}).
+			Where("tenant_id = ? AND id = ? AND status = ?", tenant.ID, executionID, string(execution.StatusFailed)).
+			Update("error", encoded).Error
+	})
 }
 
 // Ancestry returns an execution's chain of parents, nearest first.

@@ -73,6 +73,9 @@ func aggregateNode() node.Definition {
 		SharedSettings: sharedSettings(),
 		ExecutorID:     AggregateExecutorID,
 		Validate:       validateAggregateConfiguration,
+		// Aggregate folds its batch into one item: split into one-item calls
+		// to tolerate failures item by item, it would fold each item alone.
+		WholeBatch: true,
 	}
 }
 
@@ -530,6 +533,9 @@ func summarizeNode() node.Definition {
 		SharedSettings: sharedSettings(),
 		ExecutorID:     SummarizeExecutorID,
 		Validate:       validateSummarizeConfiguration,
+		// A summary groups and counts across the batch: one item at a time,
+		// every group would count one.
+		WholeBatch: true,
 	}
 }
 
@@ -780,6 +786,9 @@ func removeDuplicatesNode() node.Definition {
 		SharedSettings: sharedSettings(),
 		ExecutorID:     RemoveDuplicatesExecutorID,
 		Validate:       validateRemoveDuplicatesConfiguration,
+		// A duplicate is an item compared with the others in its batch: one
+		// item at a time, nothing is ever a duplicate.
+		WholeBatch: true,
 	}
 }
 

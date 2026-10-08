@@ -311,6 +311,9 @@ func limitNode() node.Definition {
 		SharedSettings: sharedSettings(),
 		ExecutorID:     LimitExecutorID,
 		Validate:       validateLimitConfiguration,
+		// The first or last N are positions in the batch: one item at a time,
+		// every item is the first, and none is ever dropped.
+		WholeBatch: true,
 	}
 }
 
