@@ -148,5 +148,7 @@ Two of the stale `not_shipped` claims are corrected by hand. Criterion 1's drift
 - `exec retry` ships but reruns the whole workflow. kilasflow-debugging and kilasflow-error-handling keep "no single-node retry verb" and now say that `exec retry` reruns the whole workflow with the same input and trigger.
 - `skills/index.json` is regenerated. `go test ./internal/skills/`, `make generate-skills-index-check` and `make skills-check` pass.
 
-Still open: the drift gate over every `not_shipped` claim and verb path (criterion 1), validated examples per skill (2), `api <op> --schema` (3), and the AI-agents skill (4).
+Gate, partly (criterion 1): `TestNoSkillCallsAShippedVerbUnshipped` (internal/cli/skills_not_shipped_test.go) fails when any skill's `kilasflow_not_shipped` entry, or its '## Not shipped yet' section, calls a verb of the live command tree unshipped. Run against the skills from before this fix, it names all six stale claims. Still open in criterion 1: checking every verb path in the prose against the tree.
+
+Still open: validated examples per skill (2), `api <op> --schema` (3), and the AI-agents skill (4).
 
