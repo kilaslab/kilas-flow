@@ -172,12 +172,16 @@ type chatModelProvider struct {
 	// defaultTimeout is n8n's own default for this provider, in milliseconds,
 	// which is what the collection offers when the option is added.
 	defaultTimeout float64
+	// icon is the provider's own glyph: two chat models drawn alike cannot be
+	// told apart on a canvas that holds both.
+	icon string
 }
 
 func openAIChatModelProvider() chatModelProvider {
 	return chatModelProvider{
 		nodeType:       OpenAIChatModelNodeType,
 		executorID:     OpenAIChatModelExecutorID,
+		icon:           "builtin:sparkles",
 		displayName:    "OpenAI Chat Model",
 		description:    "Supplies an OpenAI chat model to an AI Agent.",
 		credentialType: OpenAICredentialType,
@@ -192,6 +196,7 @@ func openRouterChatModelProvider() chatModelProvider {
 	return chatModelProvider{
 		nodeType:       OpenRouterChatModelNodeType,
 		executorID:     OpenRouterChatModelExecutorID,
+		icon:           "builtin:route",
 		displayName:    "OpenRouter Chat Model",
 		description:    "Supplies a model from OpenRouter's catalogue to an AI Agent.",
 		credentialType: OpenRouterCredentialType,
@@ -219,7 +224,7 @@ func providerChatModelNode(provider chatModelProvider) node.Definition {
 		Description: provider.description,
 		Category:    "AI",
 		Group:       []node.NodeGroup{node.GroupTransform},
-		Icon:        &node.NodeIcon{Light: "builtin:brain"},
+		Icon:        &node.NodeIcon{Light: provider.icon},
 		IconColor:   "#a855f7",
 		// No subtitle template. `model` is a resource locator, which is an
 		// object, and the canvas renders an object as nothing — so a template
@@ -2869,7 +2874,7 @@ func outputParserNode() node.Definition {
 		Description: "Constrains the final answer to a JSON shape the model fills in.",
 		Category:    "AI",
 		Group:       []node.NodeGroup{node.GroupTransform},
-		Icon:        &node.NodeIcon{Light: "builtin:arrow-down-up"},
+		Icon:        &node.NodeIcon{Light: "builtin:braces"},
 		IconColor:   "#a855f7",
 		Inputs:      nil,
 		Outputs:     []workflow.Port{{Name: "parser", Kind: workflow.ConnectionOutputParser}},

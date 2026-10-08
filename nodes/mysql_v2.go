@@ -44,7 +44,7 @@ func mysqlV2Node() node.Definition {
 		Description: "Selects, inserts, updates and deletes rows, or runs SQL you write. Works with MariaDB too.",
 		Category:    "Database",
 		Group:       []node.NodeGroup{node.GroupInput},
-		Icon:        &node.NodeIcon{Light: "builtin:database"},
+		Icon:        &node.NodeIcon{Light: "builtin:server"},
 		IconColor:   "#0284c7",
 		Subtitle:    "{{ $parameter.operation }}",
 		Inputs:      mainInput(),

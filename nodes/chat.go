@@ -20,7 +20,7 @@ func chatTrigger() node.Definition {
 	return node.Definition{
 		Type:        ChatTriggerNodeType,
 		Group:       []node.NodeGroup{node.GroupTrigger},
-		Icon:        &node.NodeIcon{Light: "builtin:message-circle"},
+		Icon:        &node.NodeIcon{Light: "builtin:messages-square"},
 		IconColor:   "#14b8a6",
 		Version:     workflow.V(1),
 		DisplayName: "When chat message received",

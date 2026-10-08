@@ -40,7 +40,7 @@ func extractFromFileNode() node.Definition {
 		Description: "Extracts text from a PDF with a text layer, a UTF-8 text file, or JSON. Scanned PDFs need OCR, which this node does not run.",
 		Category:    "Core",
 		Group:       []node.NodeGroup{node.GroupTransform},
-		Icon:        &node.NodeIcon{Light: "builtin:archive"},
+		Icon:        &node.NodeIcon{Light: "builtin:file-output"},
 		IconColor:   "#f97316",
 		Subtitle:    "{{ $parameter.operation }}",
 		Inputs:      mainInput(),

@@ -1,38 +1,57 @@
 import type { Component } from 'svelte';
 
+import Archive from '@lucide/svelte/icons/archive';
 import ArrowDownUp from '@lucide/svelte/icons/arrow-down-up';
 import ArrowRight from '@lucide/svelte/icons/arrow-right';
-import Archive from '@lucide/svelte/icons/archive';
+import Axis3d from '@lucide/svelte/icons/axis-3d';
 import Bot from '@lucide/svelte/icons/bot';
 import Box from '@lucide/svelte/icons/box';
-import CalendarClock from '@lucide/svelte/icons/calendar-clock';
+import Boxes from '@lucide/svelte/icons/boxes';
+import Braces from '@lucide/svelte/icons/braces';
+import Brain from '@lucide/svelte/icons/brain';
 import Calculator from '@lucide/svelte/icons/calculator';
+import CalendarClock from '@lucide/svelte/icons/calendar-clock';
 import CircleHelp from '@lucide/svelte/icons/circle-help';
 import ClipboardList from '@lucide/svelte/icons/clipboard-list';
-import Repeat from '@lucide/svelte/icons/repeat';
-import Scissors from '@lucide/svelte/icons/scissors';
-import Send from '@lucide/svelte/icons/send';
-import StickyNote from '@lucide/svelte/icons/sticky-note';
 import Clock from '@lucide/svelte/icons/clock';
 import Code from '@lucide/svelte/icons/code';
+import CodeXml from '@lucide/svelte/icons/code-xml';
+import CopyMinus from '@lucide/svelte/icons/copy-minus';
 import CornerDownLeft from '@lucide/svelte/icons/corner-down-left';
 import Database from '@lucide/svelte/icons/database';
+import DatabaseSearch from '@lucide/svelte/icons/database-search';
+import FileOutput from '@lucide/svelte/icons/file-output';
 import Filter from '@lucide/svelte/icons/filter';
 import Folder from '@lucide/svelte/icons/folder';
 import Globe from '@lucide/svelte/icons/globe';
+import Group from '@lucide/svelte/icons/group';
+import HardDrive from '@lucide/svelte/icons/hard-drive';
 import Layers from '@lucide/svelte/icons/layers';
 import Link from '@lucide/svelte/icons/link';
+import ListEnd from '@lucide/svelte/icons/list-end';
 import Mail from '@lucide/svelte/icons/mail';
+import MemoryStick from '@lucide/svelte/icons/memory-stick';
 import Merge from '@lucide/svelte/icons/merge';
 import MessageCircle from '@lucide/svelte/icons/message-circle';
+import MessagesSquare from '@lucide/svelte/icons/messages-square';
 import MousePointerClick from '@lucide/svelte/icons/mouse-pointer-click';
 import OctagonAlert from '@lucide/svelte/icons/octagon-alert';
 import Pause from '@lucide/svelte/icons/pause';
 import PencilLine from '@lucide/svelte/icons/pencil-line';
+import Repeat from '@lucide/svelte/icons/repeat';
+import Route from '@lucide/svelte/icons/route';
+import Scissors from '@lucide/svelte/icons/scissors';
+import Send from '@lucide/svelte/icons/send';
+import Server from '@lucide/svelte/icons/server';
+import Sigma from '@lucide/svelte/icons/sigma';
+import Signpost from '@lucide/svelte/icons/signpost';
 import Sparkles from '@lucide/svelte/icons/sparkles';
 import Split from '@lucide/svelte/icons/split';
+import SquareTerminal from '@lucide/svelte/icons/square-terminal';
+import StickyNote from '@lucide/svelte/icons/sticky-note';
 import Table from '@lucide/svelte/icons/table';
 import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
+import Ungroup from '@lucide/svelte/icons/ungroup';
 import Webhook from '@lucide/svelte/icons/webhook';
 import Workflow from '@lucide/svelte/icons/workflow';
 import Wrench from '@lucide/svelte/icons/wrench';
@@ -78,8 +97,12 @@ const GLYPHS: Record<string, Component> = {
 	archive: Archive,
 	'arrow-down-up': ArrowDownUp,
 	'arrow-right': ArrowRight,
+	'axis-3d': Axis3d,
 	bot: Bot,
 	box: Box,
+	boxes: Boxes,
+	braces: Braces,
+	brain: Brain,
 	// An older name the server may still send for the alert glyph; both map to
 	// the same lucide icon so a cached catalogue and a fresh one agree.
 	'alert-triangle': TriangleAlert,
@@ -87,32 +110,46 @@ const GLYPHS: Record<string, Component> = {
 	'octagon-alert': OctagonAlert,
 	'calendar-clock': CalendarClock,
 	calculator: Calculator,
-	brain: Sparkles,
 	clock: Clock,
 	code: Code,
+	'code-xml': CodeXml,
+	'copy-minus': CopyMinus,
 	'circle-help': CircleHelp,
 	'clipboard-list': ClipboardList,
 	database: Database,
+	'database-search': DatabaseSearch,
+	'file-output': FileOutput,
 	filter: Filter,
 	folder: Folder,
 	form: ClipboardList,
 	'git-branch': Split,
 	'git-merge': Merge,
 	globe: Globe,
+	group: Group,
+	'hard-drive': HardDrive,
 	layers: Layers,
 	link: Link,
+	'list-end': ListEnd,
 	mail: Mail,
 	'message-circle': MessageCircle,
-	'memory-stick': Archive,
+	'messages-square': MessagesSquare,
+	'memory-stick': MemoryStick,
 	'mouse-pointer-click': MousePointerClick,
 	pause: Pause,
 	pencil: PencilLine,
 	reply: CornerDownLeft,
 	repeat: Repeat,
+	route: Route,
 	scissors: Scissors,
 	send: Send,
+	server: Server,
+	sigma: Sigma,
+	signpost: Signpost,
+	sparkles: Sparkles,
+	'square-terminal': SquareTerminal,
 	'sticky-note': StickyNote,
 	table: Table,
+	ungroup: Ungroup,
 	webhook: Webhook,
 	workflow: Workflow,
 	wrench: Wrench
@@ -322,6 +359,37 @@ export function mainPorts(ports: Port[] | null | undefined): Port[] {
 
 export function attachmentPorts(ports: Port[] | null | undefined): Port[] {
 	return (ports ?? []).filter(isAttachment);
+}
+
+/**
+ * The definition an import placeholder is drawn with: only the ports its edges
+ * use.
+ *
+ * A placeholder's definition is the widest member of the arity family the
+ * import registered — main in and out plus twelve AI ports each way — three
+ * times wider than the node it stands in for, with every label printed over
+ * its neighbours. A placeholder never runs, so an unwired port has nothing to
+ * offer. Inputs and outputs are matched separately because both sides have a
+ * port called `main`: a tool wired only by its AI output keeps no main input,
+ * and so draws as the sub-node circle it stands in for. Only when nothing is
+ * wired at all does the tile keep a plain main in and out, so it can still be
+ * wired by hand.
+ */
+export function placeholderDefinition(
+	definition: Definition,
+	wiredInputs: ReadonlySet<string | null | undefined>,
+	wiredOutputs: ReadonlySet<string | null | undefined>
+): Definition {
+	const inputs = (definition.inputs ?? []).filter((port) => wiredInputs.has(port.name));
+	const outputs = (definition.outputs ?? []).filter((port) => wiredOutputs.has(port.name));
+	if (inputs.length === 0 && outputs.length === 0) {
+		return {
+			...definition,
+			inputs: mainPorts(definition.inputs).slice(0, 1),
+			outputs: mainPorts(definition.outputs).slice(0, 1)
+		};
+	}
+	return { ...definition, inputs, outputs };
 }
 
 /**

@@ -36,7 +36,7 @@ const (
 	sqlOperationTransaction = "transaction"
 )
 
-func databaseNode(nodeType, executorID, displayName, credentialType string) node.Definition {
+func databaseNode(nodeType, executorID, displayName, credentialType, icon string) node.Definition {
 	return node.Definition{
 		Type: nodeType,
 		// Each database node accepts exactly its own driver's credential, and
@@ -48,7 +48,7 @@ func databaseNode(nodeType, executorID, displayName, credentialType string) node
 		Description: "Runs SQL against a " + displayName + " database you configure with a credential.",
 		Category:    "Database",
 		Group:       []node.NodeGroup{node.GroupInput},
-		Icon:        &node.NodeIcon{Light: "builtin:database"},
+		Icon:        &node.NodeIcon{Light: icon},
 		IconColor:   "#0284c7",
 		Subtitle:    "{{ $parameter.operation }}",
 		Inputs:      mainInput(),
@@ -97,15 +97,15 @@ func databaseNode(nodeType, executorID, displayName, credentialType string) node
 }
 
 func postgresNode() node.Definition {
-	return databaseNode(PostgresNodeType, PostgresExecutorID, "PostgreSQL", "postgres")
+	return databaseNode(PostgresNodeType, PostgresExecutorID, "PostgreSQL", "postgres", "builtin:database")
 }
 
 func mysqlNode() node.Definition {
-	return databaseNode(MySQLNodeType, MySQLExecutorID, "MySQL", "mysql")
+	return databaseNode(MySQLNodeType, MySQLExecutorID, "MySQL", "mysql", "builtin:server")
 }
 
 func sqliteNode() node.Definition {
-	return databaseNode(SQLiteNodeType, SQLiteExecutorID, "SQLite", "sqlite")
+	return databaseNode(SQLiteNodeType, SQLiteExecutorID, "SQLite", "sqlite", "builtin:hard-drive")
 }
 
 // DatabaseCredentialType maps a database node type to the credential type it
