@@ -9,7 +9,7 @@ labels:
     - rag
 parent: EPIC-8rbys7
 created: "2026-09-23T01:17:54Z"
-updated: "2026-09-23T01:17:54Z"
+updated: "2026-10-08T16:15:00Z"
 ---
 
 # Description
@@ -36,9 +36,9 @@ The importer re-routes `X → store(insert)` main onto the attached Document Loa
 - The hand-authored fixtures in `internal/interop/n8n/testdata/n8n_rag_*.json` omit that main edge, so `TestHandAuthoredRAGFixturesImportWithoutPlaceholders` passes anyway.
 
 # Acceptance Criteria
-- [ ] An n8n main edge into an insert-mode vector store is re-routed onto the attached Default Data Loader (or the store keeps a main input), with an info note
-- [ ] Templates 3647, 16706 and 5908, from their real JSON, import with the ingest path connected and no held-back edges
-- [ ] The hand-authored RAG fixtures are replaced or complemented by the real template JSON as regression fixtures
+- [x] An n8n main edge into an insert-mode vector store is re-routed onto the attached Default Data Loader (or the store keeps a main input), with an info note
+- [ ] Templates 3647, 16706 and 5908, from their real JSON, import with the ingest path connected and no held-back edges (ingest path: met for all three and 18957. 3647, 5908 and 18957 hold nothing back. 16706 still holds back its retrieval side, see Progress)
+- [x] The hand-authored RAG fixtures are replaced or complemented by the real template JSON as regression fixtures (complemented: the real JSON cannot be committed, see Fix)
 
 # Implementation Plan
 
@@ -59,3 +59,20 @@ Related (from the audit): EPIC-hkypt5 (doing). FEAT-wwxwvq and FEAT-yxpj0d are d
 - `nodes/rag.go:333`: n8n's `retrieve` mode is folded into getMany, so no `ai_vectorStore` output exists.
 
 # Attachments
+
+## Fix (2026-10-08)
+
+`importConnections` (`internal/interop/n8n/n8n.go`) now re-routes the edge. When a main edge cannot land on its target, the target declares a `document` input, and an `ai_document` edge names a loader for that target, the edge goes to the loader's main input instead. Each re-routed edge adds a `lossy` issue on the store that names the source and the loader. A store with no loader attached still holds the edge back, because the items have nowhere honest to go. Export does the inverse: a main edge into a loader that serves a store is written back onto that store, so the round trip opens in n8n with the items on the store's main input.
+
+Fixtures: the real template JSON is user content, so it is never committed (`.pine/memory/licensing.md`). Two changes stand in for it instead:
+- The four `testdata/n8n_rag_*.json` fixtures are rewired to n8n's real shape, with the items on the store's main input rather than on the loader. `TestHandAuthoredRAGFixturesImportWithoutPlaceholders` also fails now on any held-back edge.
+- `TestRealRAGTemplatesKeepTheirIngestPath` imports 3647, 16706, 5908 and 18957 from their real JSON, read from `KILASFLOW_N8N_TEMPLATES_DIR` (`<id>.json`, exactly as api.n8n.io returns it). It skips when the variable is unset. Run against freshly fetched copies, all four pass, and the test logs whatever non-ingest edges are still held back.
+
+Tests:
+- `TestMainEdgeIntoAnInsertStoreLandsOnItsDataLoader`: two sources go to the loader, the issue is lossy, and the graph compiles.
+- `TestMainEdgeIntoAnInsertStoreWithoutALoaderIsStillHeldBack`
+- `TestReRoutedIngestEdgeExportsBackOntoTheStore`
+
+## Progress
+
+What is left is outside the ingest path. In 16706, the second "Postgres PGVector Store" carries no `mode`, so n8n's default `retrieve` applies. It feeds "Answer questions with a vector store" (toolVectorStore) over `ai_vectorStore`. That edge and the store's `ai_embedding` edge are still held back, because KilasFlow has no retrieve mode and no `ai_vectorStore` output (`nodes/rag.go`). FEAT-zm3wh2 (vector store retrieve mode and Vector Store Tool) owns that. Close this ticket once FEAT-zm3wh2 lands and `TestRealRAGTemplatesKeepTheirIngestPath/16706` logs nothing held back.
