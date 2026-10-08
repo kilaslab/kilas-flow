@@ -191,6 +191,13 @@ when the node runs, as a `SyntaxError` with its line, not when it is saved.
 
 ## Differences from n8n
 
+- **The legacy Function and Function Item nodes are not mapped.** n8n's
+  `n8n-nodes-base.function` and `n8n-nodes-base.functionItem`, which its Code
+  node replaced, import as "no equivalent" placeholders, and the workflow does
+  not run until they are replaced. Their bodies read `items` and `item` rather
+  than `$input`, so a body moves into a Code node as "Run once for all items"
+  (Function) or "Run once for each item" (Function Item), with `item` read as
+  `$json`.
 - **It is an interpreter.** goja has no JIT, so CPU-heavy code — a tight loop
   of arithmetic, a hand-written parser, hashing in JavaScript — runs ten to
   fifty times slower than on V8. Code that shapes data runs at ordinary speed:

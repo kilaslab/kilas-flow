@@ -76,8 +76,8 @@ function errorMessage(error: unknown): string | null {
 /**
  * A failed run, worded for the person chatting.
  *
- * The engine's message is built for logs: `execute node "agent": node "AI
- * Agent": model turn 1: … 404: {"error":{"message":"model 'x' not found"}}`.
+ * The engine's message is built for logs: `execute node "AI Agent": model
+ * turn 1: … 404: {"error":{"message":"model 'x' not found"}}`.
  * The panel names the node once, puts the provider's own sentence first, and
  * keeps the step that failed as a quieter detail line.
  */
@@ -87,8 +87,16 @@ function chatFailure(execution: ExecutionResource, nodes: NamedNode[]): ChatRepl
 		.find((run) => run.status === 'failed');
 	const raw = errorMessage(execution.error) ?? errorMessage(failedRun?.error) ?? `The run ${execution.status}.`;
 
-	let message = raw.replace(/^execute node "[^"]*":\s*/, '');
+	// The run's error opens with `execute node "<name>": `, and an executor's
+	// own error usually opens with `node "<name>": ` after it; the inner one
+	// wins when both are there.
+	let message = raw;
 	let node: string | undefined;
+	const executed = /^execute node "([^"]*)":\s*/.exec(message);
+	if (executed) {
+		node = executed[1] || undefined;
+		message = message.slice(executed[0].length);
+	}
 	const named = /^node "([^"]+)":\s*/.exec(message);
 	if (named) {
 		node = named[1];

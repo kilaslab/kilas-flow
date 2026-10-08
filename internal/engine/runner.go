@@ -638,10 +638,17 @@ func ensureRequestMaps(request *Request, graph preparedGraph) {
 // A disabled trigger is not among them. A workflow routinely carries a trigger
 // its author switched off, and starting from it would run the very thing they
 // turned off.
+//
+// Nor is a node with no ports at all. A sticky note is documentation on the
+// canvas: nothing feeds it, but it is not a start either, and seeding it ran
+// its no-op executor and listed it among the run's nodes as a success.
 func (state *runState) seed(graph preparedGraph) {
 	roots := make([]string, 0, 4)
 	for nodeID, node := range graph.nodes {
 		if len(graph.incoming[nodeID]) > 0 || node.Disabled {
+			continue
+		}
+		if annotation(node) {
 			continue
 		}
 		roots = append(roots, nodeID)
@@ -659,6 +666,13 @@ func (state *runState) seed(graph preparedGraph) {
 	for index := len(roots) - 1; index >= 0; index-- {
 		state.pending = append(state.pending, pendingInvocation{nodeID: roots[index], input: workflow.NodeInput{}})
 	}
+}
+
+// annotation reports a node with no ports at all: a sticky note, which is
+// documentation on the canvas and never a step. Nothing feeds it, so without
+// this both the seed and the fallback below would read it as ready.
+func annotation(node workflow.IRNode) bool {
+	return len(node.Definition.Inputs) == 0 && len(node.Definition.Outputs) == 0
 }
 
 // next returns the invocation to run next.
@@ -690,7 +704,7 @@ func (state *runState) next(graph preparedGraph) (pendingInvocation, bool, error
 		if _, done := state.completed[nodeID]; done {
 			continue
 		}
-		if graph.nodes[nodeID].Disabled {
+		if graph.nodes[nodeID].Disabled || annotation(graph.nodes[nodeID]) {
 			continue
 		}
 		if !dependenciesComplete(graph.incoming[nodeID], state.completed) {
@@ -965,11 +979,11 @@ func (state *runState) push(graph preparedGraph, node workflow.IRNode, output wo
 // A node is reached by a branch delivering items to it, so one that nothing
 // delivered to did not run. Recording it as skipped is what keeps the
 // difference between "did not run" and "ran and produced nothing" visible in
-// the trace.
+// the trace. A sticky note is neither: it is not a step, and is not listed.
 func (state *runState) recordSkips(graph preparedGraph, request *Request) {
 	skipped := make([]string, 0, len(graph.nodes))
-	for nodeID := range graph.nodes {
-		if _, done := state.completed[nodeID]; done {
+	for nodeID, node := range graph.nodes {
+		if _, done := state.completed[nodeID]; done || annotation(node) {
 			continue
 		}
 		skipped = append(skipped, nodeID)
@@ -1349,7 +1363,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 			// before it failed is usually how its author finds out why.
 			state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: cause, Attempt: attempt, ErrorCode: code,
 				Console: capture.consoleOutput(), StartedAt: started}, request)
-			return nil, fmt.Errorf("execute node %q: %w", node.ID, cause)
+			return nil, nodeFailure(node, cause)
 		}
 		// Tolerated: the node emits error items rather than aborting, and the
 		// run carries on. The items are not the input passed through — a
@@ -1479,7 +1493,7 @@ func (runner *Runner) invoke(ctx context.Context, graph preparedGraph, node work
 				// The execution was cancelled while waiting; stop here rather
 				// than burning the remaining attempts.
 				state.record(NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: ctx.Err(), Attempt: attempt + 1, ErrorCode: "execution.cancelled"}, request)
-				return nil, nil, "", attempt, nil, fmt.Errorf("execute node %q: %w", node.ID, ctx.Err())
+				return nil, nil, "", attempt, nil, nodeFailure(node, ctx.Err())
 			}
 		}
 	}
@@ -1820,6 +1834,18 @@ type itemErrorFields interface {
 // run's own error text keeps.
 type itemMessage interface {
 	ItemMessage() string
+}
+
+// nodeFailure is the run's error for a node that stopped it, naming the node
+// by the name its author gave it. The id is an internal key — "n2", or an n8n
+// UUID on an imported workflow — and reads as nothing to the person looking at
+// the canvas. Most executors already open their error with the node's name, so
+// that is not said twice.
+func nodeFailure(node workflow.IRNode, cause error) error {
+	if strings.HasPrefix(cause.Error(), fmt.Sprintf("node %q: ", node.Name)) {
+		return fmt.Errorf("execute %w", cause)
+	}
+	return fmt.Errorf("execute node %q: %w", node.Name, cause)
 }
 
 // itemMessageOf is the message-alone text of a tolerated failure: what the

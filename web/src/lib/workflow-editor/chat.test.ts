@@ -156,6 +156,21 @@ describe('chatReplyFromExecution failures', () => {
 	});
 });
 
+describe('chatReplyFromExecution failures named by the run', () => {
+	it('reads the node name from the run error when no node run carries it', () => {
+		const reply = chatReplyFromExecution(
+			execution({
+				status: 'failed',
+				error: { message: 'execute node "Call billing": upstream said no' },
+				nodeRuns: []
+			}),
+			'chat',
+			[]
+		);
+		expect(reply).toEqual({ kind: 'error', node: 'Call billing', text: 'upstream said no' });
+	});
+});
+
 describe('chatHasMemory', () => {
 	it('is true only when a memory sub-node is wired to something', () => {
 		const nodes = [
