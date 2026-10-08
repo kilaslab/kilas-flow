@@ -1432,6 +1432,64 @@ func TestReturnIntermediateStepsControlsTheOutputShape(t *testing.T) {
 	}
 }
 
+func TestAMalformedToolCallIsAnsweredAndKeptInTheStepsWithoutRunningTheTool(t *testing.T) {
+	t.Parallel()
+
+	// The provider truncated the first call's arguments. The calculator used
+	// to run with {} in their place, and the step showed {} rather than what
+	// the model had sent.
+	const raw = `{"a":1,"b":`
+	encodedRaw, _ := json.Marshal(raw)
+	var bodies []map[string]any
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		bodies = append(bodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		if len(bodies) == 1 {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_7","type":"function","function":{"name":"plus","arguments":` + string(encodedRaw) + `}}]},"finish_reason":"tool_calls"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"3"},"finish_reason":"stop"}]}`))
+	}))
+	defer provider.Close()
+
+	input := agentModelInput(provider.URL)
+	input["tools"] = []workflow.Item{{JSON: map[string]any{"$ai": map[string]any{
+		"kind": "calculator", "name": "plus", "description": "adds",
+		"parameters": map[string]any{"expression": map[string]any{"mode": "expression", "value": "{{ $json.a }} + {{ $json.b }}"}},
+	}}}}
+	output, err := runAgentNode(t, map[string]any{"prompt": "hi", "returnIntermediateSteps": true}, input, bearerResolver(), nil)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	encoded, err := json.Marshal(output[0][0].JSON["intermediateSteps"])
+	if err != nil {
+		t.Fatalf("encode intermediateSteps: %v", err)
+	}
+	var steps []map[string]any
+	if err := json.Unmarshal(encoded, &steps); err != nil || len(steps) != 1 {
+		t.Fatalf("steps = %s (%v), want one step for the one call", encoded, err)
+	}
+	action, _ := steps[0]["action"].(map[string]any)
+	if action["toolInput"] != raw {
+		t.Errorf("toolInput = %#v, want the raw arguments the model sent", action["toolInput"])
+	}
+	observation, _ := steps[0]["observation"].(string)
+	if !strings.Contains(observation, "arguments were not valid JSON") || strings.Contains(observation, "result") {
+		t.Errorf("observation = %q, want the parse failure, not a tool result", observation)
+	}
+
+	if len(bodies) != 2 {
+		t.Fatalf("provider saw %d requests, want the model asked again", len(bodies))
+	}
+	messages, _ := bodies[1]["messages"].([]any)
+	toolMessage, _ := messages[len(messages)-1].(map[string]any)
+	if content, _ := toolMessage["content"].(string); !strings.Contains(content, "arguments were not valid JSON") {
+		t.Errorf("tool message = %#v, want the model told its arguments did not parse", toolMessage)
+	}
+}
+
 func TestToolNameDerivesFromTheCanvasName(t *testing.T) {
 	t.Parallel()
 

@@ -217,6 +217,137 @@ func TestAgentReportsAnUnknownToolToTheModel(t *testing.T) {
 	}
 }
 
+func TestAgentNamesTheAvailableToolsWhenTheModelCallsAnUnknownOne(t *testing.T) {
+	t.Parallel()
+
+	// A model told only that a name is wrong tends to answer from its own
+	// arithmetic instead of retrying; the valid names give it the retry.
+	calculator := &fakeTool{name: "calculator", result: "7006561"}
+	wikipedia := &fakeTool{name: "wikipedia"}
+	model := &fakeModel{responses: []ai.ModelResponse{
+		toolTurn("calculator_v2", `{"expression":"1234*5678-91"}`),
+		answer("Understood."),
+	}}
+	sink, events := collect()
+
+	if _, err := ai.NewLoopRuntime().Run(context.Background(), ai.AgentRequest{
+		Model: model, ModelName: "test-model", Input: "Go", Tools: []ai.Tool{calculator, wikipedia},
+	}, sink); err != nil {
+		t.Fatalf("Run() error = %v, want the run to recover", err)
+	}
+	second := model.requests[1].Messages
+	last := second[len(second)-1]
+	if last.Role != ai.RoleTool || last.ToolCallID != "call-1" {
+		t.Fatalf("tool turn = %#v, want the unknown call answered", last)
+	}
+	if !strings.Contains(last.Content, `"calculator_v2"`) || !strings.Contains(last.Content, "available tools: calculator, wikipedia") {
+		t.Errorf("tool turn = %q, want the wrong name and the valid ones", last.Content)
+	}
+	if len(calculator.calls) != 0 || len(wikipedia.calls) != 0 {
+		t.Errorf("tools ran %v / %v, want neither invoked for an unknown name", calculator.calls, wikipedia.calls)
+	}
+	var failed *ai.Event
+	for index := range *events {
+		if (*events)[index].Kind == ai.EventToolFailed {
+			failed = &(*events)[index]
+		}
+	}
+	if failed == nil || !strings.Contains(failed.Error, "available tools: calculator, wikipedia") {
+		t.Errorf("failure event = %#v, want the same message the model was given", failed)
+	}
+}
+
+func TestAgentAnswersMalformedToolArgumentsInsteadOfRunningTheTool(t *testing.T) {
+	t.Parallel()
+
+	// The arguments a provider truncated mid-object: running the tool with {}
+	// in their place made an HTTP tool fire its request with no input.
+	const raw = `{"expression": "12*(3+`
+	calculator := &fakeTool{name: "calculator", result: "7006561"}
+	model := &fakeModel{responses: []ai.ModelResponse{
+		toolTurn("calculator", raw),
+		answer("7006561"),
+	}}
+	sink, events := collect()
+
+	result, err := ai.NewLoopRuntime().Run(context.Background(), ai.AgentRequest{
+		Model: model, ModelName: "test-model", Input: "what is 1234*5678 minus 91?", Tools: []ai.Tool{calculator},
+	}, sink)
+	if err != nil {
+		t.Fatalf("Run() error = %v, want the model to get a chance to retry", err)
+	}
+	if result.Output != "7006561" {
+		t.Errorf("output = %q, want the model's answer after the retry turn", result.Output)
+	}
+	if len(calculator.calls) != 0 {
+		t.Fatalf("tool ran with %v, want it not invoked on unparseable arguments", calculator.calls)
+	}
+
+	second := model.requests[1].Messages
+	last := second[len(second)-1]
+	if last.Role != ai.RoleTool || last.ToolCallID != "call-1" || last.Name != "calculator" {
+		t.Fatalf("tool turn = %#v, want the malformed call answered", last)
+	}
+	var probe any
+	parseErr := json.Unmarshal([]byte(raw), &probe)
+	if parseErr == nil {
+		t.Fatal("the fixture's arguments parsed; the test needs malformed ones")
+	}
+	for _, want := range []string{"arguments were not valid JSON", raw, parseErr.Error()} {
+		if !strings.Contains(last.Content, want) {
+			t.Errorf("tool turn = %q, want it to contain %q", last.Content, want)
+		}
+	}
+	// The assistant turn keeps what the model actually sent, which is what
+	// the node's intermediate steps are built from.
+	if calls := second[len(second)-2].ToolCalls; len(calls) != 1 || string(calls[0].Arguments) != raw {
+		t.Errorf("assistant turn calls = %#v, want the raw arguments kept", calls)
+	}
+
+	var started, failed *ai.Event
+	for index := range *events {
+		switch (*events)[index].Kind {
+		case ai.EventToolStarted:
+			started = &(*events)[index]
+		case ai.EventToolFailed:
+			failed = &(*events)[index]
+		case ai.EventToolCompleted:
+			t.Errorf("event %#v, want no completion for a tool that never ran", (*events)[index])
+		}
+	}
+	if started == nil {
+		t.Fatal("no tool-started event for the malformed call")
+	}
+	// The event detail travels as JSON, so the raw text rides as a string
+	// rather than breaking the event it belongs to.
+	var detail string
+	if err := json.Unmarshal(started.Detail, &detail); err != nil || detail != raw {
+		t.Errorf("started detail = %s (%v), want the raw arguments as a JSON string", started.Detail, err)
+	}
+	if failed == nil || !strings.Contains(failed.Error, "arguments were not valid JSON") {
+		t.Errorf("failure event = %#v, want the parse failure reported", failed)
+	}
+}
+
+func TestAgentStillRunsAToolCalledWithNoArguments(t *testing.T) {
+	t.Parallel()
+
+	// No arguments at all is how some providers call a parameterless tool;
+	// that is not a malformed call.
+	clock := &fakeTool{name: "now", result: "12:00"}
+	model := &fakeModel{responses: []ai.ModelResponse{toolTurn("now", ""), answer("It is noon.")}}
+	sink, _ := collect()
+
+	if _, err := ai.NewLoopRuntime().Run(context.Background(), ai.AgentRequest{
+		Model: model, ModelName: "test-model", Input: "Time?", Tools: []ai.Tool{clock},
+	}, sink); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(clock.calls) != 1 {
+		t.Fatalf("tool calls = %v, want the parameterless tool invoked once", clock.calls)
+	}
+}
+
 func TestAgentStopsAtTheIterationBound(t *testing.T) {
 	t.Parallel()
 

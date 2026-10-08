@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -170,7 +171,7 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 			}
 			result.ToolCalls++
 			sink.Emit(Event{
-				Kind: EventToolStarted, Iteration: iteration, Tool: call.Name, Detail: call.Arguments,
+				Kind: EventToolStarted, Iteration: iteration, Tool: call.Name, Detail: argumentsDetail(call.Arguments),
 			})
 
 			// The format tool is defined to the model but never invocable
@@ -198,7 +199,20 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 			if !found {
 				// Telling the model beats failing the run: a model that invents
 				// a tool name can usually recover when told the name is wrong.
-				message := fmt.Sprintf("tool %q is not available", call.Name)
+				// Told only that, it tends to answer from its own guess, so the
+				// names it can call go with the message.
+				message := unknownToolMessage(call.Name, definitions)
+				sink.Emit(Event{Kind: EventToolFailed, Iteration: iteration, Tool: call.Name, Error: message})
+				toolTurn := Message{Role: RoleTool, ToolCallID: call.ID, Name: call.Name, Content: message}
+				messages = append(messages, toolTurn)
+				continue
+			}
+			// Arguments that do not parse are the model's mistake to correct.
+			// Invoking the tool anyway would run it with input the model never
+			// gave — an HTTP tool would send its request regardless — so the
+			// call is answered with the parse error instead.
+			if parseErr := argumentsError(call.Arguments); parseErr != nil {
+				message := fmt.Sprintf("arguments were not valid JSON: %s (%v); call %s again with a valid JSON object", call.Arguments, parseErr, call.Name)
 				sink.Emit(Event{Kind: EventToolFailed, Iteration: iteration, Tool: call.Name, Error: message})
 				toolTurn := Message{Role: RoleTool, ToolCallID: call.ID, Name: call.Name, Content: message}
 				messages = append(messages, toolTurn)
@@ -361,6 +375,39 @@ func appendSessionMemory(ctx context.Context, request AgentRequest, turns []Mess
 		return fmt.Errorf("append memory: %w", err)
 	}
 	return nil
+}
+
+// unknownToolMessage answers a call to a name no attached tool has, listing
+// the names the model was offered so it can retry with one of them.
+func unknownToolMessage(name string, definitions []ToolDefinition) string {
+	if len(definitions) == 0 {
+		return fmt.Sprintf("tool %q is not available; this agent has no tools", name)
+	}
+	names := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
+		names = append(names, definition.Name)
+	}
+	return fmt.Sprintf("tool %q is not available; available tools: %s", name, strings.Join(names, ", "))
+}
+
+// argumentsError reports why a tool call's argument text is not JSON. No text
+// at all is not an error: it is how a parameterless tool is called.
+func argumentsError(arguments json.RawMessage) error {
+	if len(bytes.TrimSpace(arguments)) == 0 || json.Valid(arguments) {
+		return nil
+	}
+	var value any
+	return json.Unmarshal(arguments, &value)
+}
+
+// argumentsDetail is a call's arguments as event detail. Detail must be JSON,
+// so text that does not parse travels as a JSON string rather than taking the
+// event that carries it down with it.
+func argumentsDetail(arguments json.RawMessage) json.RawMessage {
+	if argumentsError(arguments) != nil {
+		return jsonString(string(arguments))
+	}
+	return arguments
 }
 
 func jsonString(value string) json.RawMessage {

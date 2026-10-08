@@ -1,7 +1,7 @@
 ---
 id: BUG-6d6wbg
 title: 'Agent tool calls: malformed arguments silently become {} and run; unknown tool names get no list of valid tools'
-status: todo
+status: done
 priority: medium
 labels:
     - ai
@@ -9,7 +9,7 @@ labels:
     - robustness
 parent: EPIC-8rbys7
 created: "2026-09-23T01:56:13Z"
-updated: "2026-09-23T01:56:13Z"
+updated: "2026-10-08T15:50:00Z"
 ---
 
 # Description
@@ -84,8 +84,8 @@ none
 
 
 # Acceptance Criteria
-- [ ] Invalid JSON arguments produce a tool message ("arguments were not valid JSON: <raw>"), the tool is not invoked, and the raw string is kept in the step and event
-- [ ] An unknown tool name returns the list of available tool names
+- [x] Invalid JSON arguments produce a tool message ("arguments were not valid JSON: <raw>"), the tool is not invoked, and the raw string is kept in the step and event
+- [x] An unknown tool name returns the list of available tool names
 
 # Implementation Plan
 
@@ -96,3 +96,20 @@ See each finding's suggested fix above.
 # Related Files
 
 # Attachments
+
+## Fix
+
+**Root cause.** `OpenAICompatible` replaced any tool-call argument text that did not parse with `{}` — in `Stream` when assembling fragments and in `wireMessage.toMessage` for a plain response — so `LoopRuntime` never saw the mistake and invoked the tool with input the model never gave. The unknown-tool branch in `LoopRuntime.Run` answered `tool "x" is not available` with nothing for the model to retry with.
+
+**Change.**
+- `internal/ai/openai.go`: `toolCallArguments` keeps the model's argument text as sent; only empty text (how a parameterless tool is called) becomes `{}`. `wireMessageFrom` replays arguments that do not parse as `{}`, because Ollama refuses a conversation whose tool-call arguments it cannot decode; the tool result answering the call quotes the raw text.
+- `internal/ai/agent.go`: after the tool lookup, `argumentsError` checks the arguments; unparseable ones are answered with `arguments were not valid JSON: <raw> (<parse error>); call <tool> again with a valid JSON object` as the tool result plus an `ai.tool.failed` event, and `Invoke` is skipped. The `ai.tool.started` detail carries the raw text as a JSON string (`argumentsDetail`), since event detail must be JSON. An unknown name is answered by `unknownToolMessage`: `tool "x" is not available; available tools: a, b` (every name defined to the model, in attachment order).
+- `internal/ai/ai.go`: the `ToolCall.Arguments` doc now says the text can be unparseable.
+- The intermediate step keeps the raw string with no change to `nodes/ai.go`: `agentSteps` already falls back to the raw text when arguments do not parse.
+- Side effect on the Structured Output Parser path (code not touched): a malformed format-tool call now reaches `parseFormatArguments` as raw text, so the repair message says "output is not valid JSON … raw output: …" where it used to report a schema mismatch against `{}`.
+
+**Proving tests.**
+- `internal/ai/ai_test.go`: `TestAgentAnswersMalformedToolArgumentsInsteadOfRunningTheTool` (the tool is not invoked; the tool result has the message, raw text and parse error; the assistant turn keeps the raw text; the started event's detail is the raw text as a JSON string; failed event, no completed event), `TestAgentNamesTheAvailableToolsWhenTheModelCallsAnUnknownOne`, `TestAgentStillRunsAToolCalledWithNoArguments` (guards the empty-arguments case).
+- `internal/ai/openai_test.go`: `TestOpenAICompatibleKeepsMalformedToolArgumentsRatherThanSubstitutingEmptyOnes` (complete + stream; empty arguments still `{}`), `TestOpenAICompatibleReplaysAMalformedToolCallWithValidArguments`.
+- `nodes/ai_test.go`: `TestAMalformedToolCallIsAnsweredAndKeptInTheStepsWithoutRunningTheTool` (end to end through the AI Agent node: `toolInput` is the raw string, the observation is the parse failure, and the second provider request carries it).
+- `go test ./internal/ai/... ./nodes/` and `go vet ./internal/ai/... ./nodes/` pass.

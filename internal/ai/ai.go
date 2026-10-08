@@ -55,8 +55,12 @@ func (message Message) OpensATurn() bool {
 
 // ToolCall is one tool invocation a model requested.
 type ToolCall struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Arguments is the argument text exactly as the model sent it. That is
+	// usually a JSON object, but text that does not parse is kept rather than
+	// replaced, so the runtime can answer the call with the parse error; code
+	// that needs JSON checks it first.
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
 
