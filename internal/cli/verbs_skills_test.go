@@ -354,6 +354,125 @@ func TestSkillsCheckReportsASkillTheBinaryDoesNotShip(t *testing.T) {
 	}
 }
 
+// TestSkillsCheckLeavesOtherSkillsAlone is the shared-directory case: a real
+// project keeps other skills beside KilasFlow's — this repository keeps pine in
+// both .agents/skills and .claude/skills — and a check that counted them as
+// drift would fail in every such project, with nothing but deleting them to
+// clear it. Only a directory that is KilasFlow's own, by its name prefix or by
+// its kilasflow_skills_version stamp, can be an extra.
+func TestSkillsCheckLeavesOtherSkillsAlone(t *testing.T) {
+	work, home := skillsTestEnv(t)
+	root := filepath.Join(work, "installed")
+	target := "dir:" + root
+
+	if code, stdout, stderr := skillsCLI(t, home, "skills", "install", "--target", target, "--json"); code != ExitOK {
+		t.Fatalf("install exited %d: %s%s", code, stdout, stderr)
+	}
+
+	foreign := map[string]string{
+		"pine":    "---\nname: pine\ndescription: Use when working in a repository that has a .pine/ directory.\n---\n\n# Pine\n",
+		"no-yaml": "# A skill with no frontmatter at all\n",
+	}
+	for name, body := range foreign {
+		dir := filepath.Join(root, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("create %s: %v", dir, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s's SKILL.md: %v", name, err)
+		}
+	}
+
+	code, stdout, stderr := skillsCLI(t, home, "skills", "check", "--target", target, "--json")
+	if code != ExitOK {
+		t.Fatalf("check failed with only foreign skills beside the bundle, exit %d: %s%s", code, stdout, stderr)
+	}
+
+	// A skill without the prefix is still KilasFlow's when it carries the
+	// bundle's stamp: the router, using-kilasflow-skills, is named that way.
+	stamped := filepath.Join(root, "using-kilasflow-retired")
+	if err := os.MkdirAll(stamped, 0o755); err != nil {
+		t.Fatalf("create %s: %v", stamped, err)
+	}
+	if err := os.WriteFile(filepath.Join(stamped, "SKILL.md"), []byte("---\nname: using-kilasflow-retired\nkilasflow_skills_version: 1\n---\n"), 0o644); err != nil {
+		t.Fatalf("write the stamped skill's SKILL.md: %v", err)
+	}
+
+	code, stdout, stderr = skillsCLI(t, home, "skills", "check", "--target", target, "--json")
+	if code == ExitOK {
+		t.Fatalf("check passed with a stamped skill this build does not ship: %s%s", stdout, stderr)
+	}
+	failure := failureObject(t, stdout)
+	if !strings.Contains(field(t, failure, "message"), "using-kilasflow-retired") {
+		t.Fatalf("the drift does not name the stamped skill: %s", stdout)
+	}
+	if strings.Contains(stdout, "pine") || strings.Contains(stdout, "no-yaml") {
+		t.Fatalf("the drift names a skill that is not KilasFlow's: %s", stdout)
+	}
+}
+
+// TestSkillsProjectScopeResolvesToTheCheckoutRoot pins project scope to the
+// root of the checkout rather than the directory the caller stands in. Claude
+// Code reads <root>/.claude/skills, and an install from a subdirectory that
+// landed in a nested copy would be one the team never shares. The root is the
+// nearest directory holding .git — a directory in a clone, a file in a linked
+// worktree — and a working directory outside any checkout is its own root.
+func TestSkillsProjectScopeResolvesToTheCheckoutRoot(t *testing.T) {
+	for _, gitEntry := range []string{"directory", "file"} {
+		t.Run(".git is a "+gitEntry, func(t *testing.T) {
+			work, home := skillsTestEnv(t)
+			project := filepath.Join(work, "proj")
+			deeper := filepath.Join(project, "sub", "deeper")
+			if err := os.MkdirAll(deeper, 0o755); err != nil {
+				t.Fatalf("create %s: %v", deeper, err)
+			}
+
+			marker := filepath.Join(project, ".git")
+			var err error
+			if gitEntry == "directory" {
+				err = os.Mkdir(marker, 0o755)
+			} else {
+				err = os.WriteFile(marker, []byte("gitdir: /elsewhere/.git/worktrees/proj\n"), 0o644)
+			}
+			if err != nil {
+				t.Fatalf("create %s: %v", marker, err)
+			}
+
+			t.Chdir(deeper)
+			// The root, read back from the working directory rather than
+			// reconstructed, so a symlinked temporary directory compares equal.
+			current, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("read the working directory: %v", err)
+			}
+			root := filepath.Dir(filepath.Dir(current))
+
+			code, stdout, stderr := skillsCLI(t, home, "skills", "install", "--target", "claude", "--dry-run", "--json")
+			if code != ExitOK {
+				t.Fatalf("skills install --dry-run exited %d, want 0: %s%s", code, stdout, stderr)
+			}
+			if got, want := field(t, envelopeData(t, stdout), "path"), filepath.Join(root, ".claude", "skills"); got != want {
+				t.Fatalf("project scope from a subdirectory resolved to %q, want %q", got, want)
+			}
+
+			// A relative dir:<path> resolves under the same root.
+			code, stdout, stderr = skillsCLI(t, home, "skills", "install", "--target", "dir:tools/skills", "--dry-run", "--json")
+			if code != ExitOK {
+				t.Fatalf("skills install --target dir:tools/skills exited %d, want 0: %s%s", code, stdout, stderr)
+			}
+			if got, want := field(t, envelopeData(t, stdout), "path"), filepath.Join(root, "tools", "skills"); got != want {
+				t.Fatalf("a relative dir:<path> from a subdirectory resolved to %q, want %q", got, want)
+			}
+
+			// check looks where install writes.
+			_, stdout, _ = skillsCLI(t, home, "skills", "check", "--target", "claude", "--json")
+			if !strings.Contains(stdout, filepath.Join(root, ".claude", "skills")) {
+				t.Fatalf("check from a subdirectory does not look under the checkout root %s: %s", root, stdout)
+			}
+		})
+	}
+}
+
 // TestSkillsShowPrintsTheDocumentAndItsReferences covers the read side: a
 // terminal gets the file itself, frontmatter included, because that is what an
 // agent loads and what the file on disk looks like.

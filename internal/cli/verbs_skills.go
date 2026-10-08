@@ -82,6 +82,16 @@ const (
 
 	skillsScopeProject = "project"
 	skillsScopeUser    = "user"
+	// skillsScopeHelp is the --scope help both install and check print, so the
+	// two verbs describe one root the same way.
+	skillsScopeHelp = "which root the target resolves under: " + skillsScopeProject +
+		" (the checkout's root: the nearest directory at or above the working directory that holds .git, else the working directory) or " +
+		skillsScopeUser + " (the home directory)"
+
+	// skillsNamePrefix is the prefix every domain skill of the bundle carries.
+	// With the kilasflow_skills_version stamp it is how a check tells a skill
+	// some build of KilasFlow shipped from one that merely shares the directory.
+	skillsNamePrefix = "kilasflow-"
 
 	// skillsIndexFile is the generated index a harness reads without parsing
 	// markdown. It travels with the bundle and lands at the install root.
@@ -118,10 +128,11 @@ type skillsDestination struct {
 
 // resolveSkillsDestination turns --target and --scope into one directory.
 //
-// Project scope is the default and resolves under the checkout: installing the
-// skills is the first thing a session does in a repository, and writing them
-// there is what makes a team share one copy. User scope resolves under the home
-// directory, for a harness that reads its skills from there.
+// Project scope is the default and resolves under the checkout's root:
+// installing the skills is the first thing a session does in a repository, and
+// writing them there is what makes a team share one copy — wherever in the tree
+// the caller happens to stand. User scope resolves under the home directory, for
+// a harness that reads its skills from there.
 //
 // A relative dir:<path> resolves the same way, so `--target dir:.agents/skills
 // --scope user` means the user's own copy of the generic directory rather than
@@ -168,8 +179,8 @@ func resolveSkillsDestination(ctx *Context, target, scope string) (skillsDestina
 	return skillsDestination{Target: target, Scope: scope, Dir: filepath.Join(root, relative)}, nil
 }
 
-// skillsScopeRoot is the directory a target resolves under: the checkout for
-// project scope, the home directory for user scope.
+// skillsScopeRoot is the directory a target resolves under: the checkout's root
+// for project scope, the home directory for user scope.
 func skillsScopeRoot(ctx *Context, scope string) (string, error) {
 	switch scope {
 	case skillsScopeProject:
@@ -178,7 +189,7 @@ func skillsScopeRoot(ctx *Context, scope string) (string, error) {
 			return "", outputWriteError("could not read the working directory: %v", err)
 		}
 
-		return dir, nil
+		return projectRoot(dir), nil
 	case skillsScopeUser:
 		home := strings.TrimSpace(getenv(ctx.Env, "HOME"))
 		if home == "" {
@@ -189,6 +200,31 @@ func skillsScopeRoot(ctx *Context, scope string) (string, error) {
 	}
 
 	return "", usageError("unknown --scope %q: pass %s or %s", scope, skillsScopeProject, skillsScopeUser)
+}
+
+// projectRoot is the root of the checkout dir is in: the nearest directory,
+// from dir upward, that holds .git — a directory in a clone, a file in a linked
+// worktree or a submodule — which is the answer `git rev-parse --show-toplevel`
+// gives, without needing git on the PATH of a distroless image. Outside any
+// checkout it is dir itself, so an install from a scratch directory still lands
+// where the caller is standing.
+//
+// The walk matters because the harnesses read the root, not the working
+// directory: Claude Code loads <root>/.claude/skills, and an install run from
+// sub/deeper that wrote sub/deeper/.claude/skills would be a nested copy nobody
+// else on the team loads.
+func projectRoot(dir string) string {
+	for current := dir; ; {
+		if _, err := os.Lstat(filepath.Join(current, ".git")); err == nil {
+			return current
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return dir
+		}
+		current = parent
+	}
 }
 
 // skillsFile is one file of the bundle inside the binary, named the way a
@@ -483,7 +519,7 @@ type skillsInstallFlags struct {
 func registerSkillsInstallFlags(fs *flag.FlagSet) any {
 	flags := &skillsInstallFlags{}
 	fs.StringVar(&flags.target, "target", skillsTargetAgents, "where to install: "+targetList()+", or "+skillsDirTarget+"<path>")
-	fs.StringVar(&flags.scope, "scope", skillsScopeProject, "which root the target resolves under: "+skillsScopeProject+" (the checkout) or "+skillsScopeUser+" (the home directory)")
+	fs.StringVar(&flags.scope, "scope", skillsScopeProject, skillsScopeHelp)
 	fs.BoolVar(&flags.force, "force", false, "overwrite files that differ from this binary's bundle")
 	fs.BoolVar(&flags.dryRun, "dry-run", false, "report where the bundle would go and write nothing")
 
@@ -638,7 +674,7 @@ type skillsCheckFlags struct {
 func registerSkillsCheckFlags(fs *flag.FlagSet) any {
 	flags := &skillsCheckFlags{}
 	fs.StringVar(&flags.target, "target", skillsTargetAgents, "which installation to check: "+targetList()+", or "+skillsDirTarget+"<path>")
-	fs.StringVar(&flags.scope, "scope", skillsScopeProject, "which root the target resolves under: "+skillsScopeProject+" (the checkout) or "+skillsScopeUser+" (the home directory)")
+	fs.StringVar(&flags.scope, "scope", skillsScopeProject, skillsScopeHelp)
 
 	return flags
 }
@@ -650,8 +686,9 @@ func registerSkillsCheckFlags(fs *flag.FlagSet) any {
 // another version (version), a file whose bytes differ (content), and a skill
 // directory the binary does not ship at all (extra). The last one is why a byte
 // comparison alone is not enough: every file of the binary's bundle can be
-// present and identical while the harness still loads a skill this build knows
-// nothing about.
+// present and identical while the harness still loads a KilasFlow skill this
+// build knows nothing about. Another tool's skill in the same directory is not
+// an extra: it was never this bundle's to compare.
 type skillsDrift struct {
 	Kind      string `json:"kind"`
 	File      string `json:"file"`
@@ -850,7 +887,15 @@ func compareInstalled(dir string, files []skillsFile) []skillsDrift {
 	return drift
 }
 
-// extraSkills names installed skill directories the bundle does not hold.
+// extraSkills names installed KilasFlow skill directories the bundle does not
+// hold.
+//
+// A harness directory is shared: a project keeps other skills beside this
+// bundle — this repository keeps pine in .agents/skills — and those are not
+// drift, because no build of KilasFlow shipped them and no install, forced or
+// not, could reconcile them. So an extra is only a directory that is
+// KilasFlow's own (see kilasflowSkill): a skill some build shipped and this one
+// no longer does.
 func extraSkills(dir string, loaded []skills.Skill) ([]skillsDrift, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -862,10 +907,14 @@ func extraSkills(dir string, loaded []skills.Skill) ([]skillsDrift, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(dir, entry.Name(), skillsSkillBody)); err != nil {
+		body := filepath.Join(dir, entry.Name(), skillsSkillBody)
+		if _, err := os.Stat(body); err != nil {
 			continue
 		}
 		if _, shipped := findSkill(loaded, entry.Name()); shipped {
+			continue
+		}
+		if !kilasflowSkill(entry.Name(), body) {
 			continue
 		}
 
@@ -879,6 +928,25 @@ func extraSkills(dir string, loaded []skills.Skill) ([]skillsDrift, error) {
 	}
 
 	return drift, nil
+}
+
+// kilasflowSkill reports whether an installed skill directory is KilasFlow's
+// own: named with the bundle's prefix, or carrying the kilasflow_skills_version
+// stamp every SKILL.md of the bundle declares. The stamp is what covers the
+// router, using-kilasflow-skills, whose name does not start with the prefix. A
+// SKILL.md that cannot be read is judged by its name alone, because a check
+// that cannot see the stamp has no grounds to claim the skill.
+func kilasflowSkill(name, body string) bool {
+	if strings.HasPrefix(name, skillsNamePrefix) {
+		return true
+	}
+
+	data, err := os.ReadFile(body)
+	if err != nil {
+		return false
+	}
+
+	return skills.Stamped(data)
 }
 
 // driftMessage names what differs, and how much of it does.

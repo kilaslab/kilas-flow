@@ -125,6 +125,41 @@ func TestFrontmatterContract(t *testing.T) {
 	}
 }
 
+// TestStampedTellsKilasFlowSkillsFromOthers pins the marker `skills check` uses
+// to tell this bundle's skills from another tool's in a shared harness
+// directory: the key's presence, whatever its value, and nothing else.
+func TestStampedTellsKilasFlowSkillsFromOthers(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"current stamp", "---\nname: x\nkilasflow_skills_version: 1\n---\n", true},
+		{"older stamp", "---\nname: x\nkilasflow_skills_version: 0\n---\n", true},
+		{"stamp that is not a number", "---\nname: x\nkilasflow_skills_version: one\n---\n", true},
+		{"another tool's skill", "---\nname: pine\ndescription: Use when a repository has a .pine/ directory.\n---\n", false},
+		{"no frontmatter", "# Just prose\n", false},
+		{"unclosed frontmatter", "---\nkilasflow_skills_version: 1\n", false},
+	}
+	for _, c := range cases {
+		if got := Stamped([]byte(c.body)); got != c.want {
+			t.Errorf("%s: Stamped = %v, want %v", c.name, got, c.want)
+		}
+	}
+
+	// Every skill the bundle ships carries the stamp, so the marker covers the
+	// router too, whose name has no kilasflow- prefix.
+	for _, skill := range testBundle(t) {
+		data, err := os.ReadFile(filepath.Join(testRepoRoot(t), skill.Path))
+		if err != nil {
+			t.Fatalf("read %s: %v", skill.Path, err)
+		}
+		if !Stamped(data) {
+			t.Errorf("%s is not stamped", skill.Path)
+		}
+	}
+}
+
 // The bundle must pass its own checker: whitespace-tolerant fixtures prove the
 // rules fire, and this proves the shipped content is not a violation.
 func TestBundleChecksPass(t *testing.T) {

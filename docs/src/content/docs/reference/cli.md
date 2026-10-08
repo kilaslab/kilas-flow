@@ -610,7 +610,7 @@ makes them work from the distroless image, where there is nothing to read but
 kilasflow skills list                      # names, versions, triggers
 kilasflow skills show kilasflow-triggers   # the SKILL.md itself
 kilasflow skills show kilasflow-triggers --reference WEBHOOK_DELIVERY.md
-kilasflow skills install                   # ./.agents/skills, project scope
+kilasflow skills install                   # <checkout root>/.agents/skills, project scope
 kilasflow skills install --target claude --scope user
 kilasflow skills check
 kilasflow skills export --format tar --out kilasflow-skills.tar
@@ -618,10 +618,14 @@ kilasflow skills export --format tar --out kilasflow-skills.tar
 
 - `install` takes `--target claude|codex|agents|dir:<path>` and `--scope
   project|user`. **Project scope is the default** and resolves under the
-  checkout; user scope resolves under `HOME`. A relative `dir:<path>` resolves
+  checkout's root — the nearest directory at or above the working directory
+  that holds `.git`, the answer `git rev-parse --show-toplevel` gives — so an
+  install from `sub/deeper` lands in `<root>/.agents/skills` where the harness
+  and the rest of the team read it. Outside any checkout the root is the working
+  directory. User scope resolves under `HOME`. A relative `dir:<path>` resolves
   under the scope root as well, and an absolute one is taken as given. The
-  default destination is `./.agents/skills`, the generic harness directory this
-  repository keeps the pine skill in.
+  default destination is `<root>/.agents/skills`, the generic harness directory
+  this repository keeps the pine skill in.
 - What an install writes is one directory per skill — `SKILL.md` and its
   `references/*.md` — plus the generated `index.json` at the root: byte for byte
   the files the binary carries, `0644` under `0755` directories, because the
@@ -638,10 +642,14 @@ kilasflow skills export --format tar --out kilasflow-skills.tar
   file and both versions. Drift is what tells a caller to re-install rather than
   to re-read, so it is a failure with a code and not a warning. The whole list
   travels under `error.detail.issues`, each with a `kind` of `missing`,
-  `unreadable`, `version`, `content` or `extra` — the last one for a skill
-  directory the binary does not ship, which is the one drift a byte comparison
-  cannot see. Nothing is ever repaired: a check that updated silently is a check
-  whose answer nobody can trust.
+  `unreadable`, `version`, `content` or `extra` — the last one for a KilasFlow
+  skill directory the binary does not ship, which is the one drift a byte
+  comparison cannot see. A directory counts as KilasFlow's when its name starts
+  with `kilasflow-` or its `SKILL.md` carries `kilasflow_skills_version`; any
+  other skill sharing the harness directory (pine, say) is left alone, so the
+  check passes in a project that keeps more than this bundle. Nothing is ever
+  repaired: a check that updated silently is a check whose answer nobody can
+  trust.
 - `export --format json` (the default) writes the index a harness reads without
   parsing markdown, and `--format tar` writes the whole bundle as one
   deterministic archive — path order, no timestamps, no owner — so two exports
