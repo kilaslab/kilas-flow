@@ -29,8 +29,9 @@ import (
 // through an endpoint the session is legitimately allowed to call.
 //
 // So the document itself is checked, at every point where a confined caller can
-// give one to the server: a create, a save, a publish, a restore, a run and a
-// retry. The check is the same one in every place.
+// give one to the server or make one live: a create, a save, a publish, an
+// activation, a restore, a run and a retry. The check is the same one in every
+// place.
 //
 // What it asks differs by caller, and deliberately:
 //
@@ -132,11 +133,16 @@ func (handler *Workflows) confinedDocumentProblem(ctx context.Context, document 
 // carries, from the revision its owner published.
 //
 // The active revision is the right source and the latest draft is the fallback.
-// Activation and publishing are refused to embed sessions by the routing
-// middleware, so the active revision is the last document a trusted caller
-// authored — and the point of minting the confinement here rather than deriving
-// it per request is that a revision poisoned before this check existed can no
-// longer authorise itself.
+// An embed session can make a revision active only with a scope its host
+// minted on purpose — workflow:publish for a named revision, workflow:activate
+// for the latest — and either way the revision is checked against the
+// session's own confinement first (confinedVersionProblem, and
+// confinedStoredProblem in Activate). So the active revision is either one the
+// owner authored or one held to a confinement minted from such a revision: a
+// session can narrow what the next session is minted with, never widen it. And
+// the point of minting the confinement here rather than deriving it per request
+// is that a revision poisoned before this check existed can no longer
+// authorise itself.
 //
 // A workflow that has never been activated confines its session to whatever its
 // latest draft references. That draft predates the session, so it was authored
@@ -153,8 +159,10 @@ func embedConfinementOf(stored workflow.StoredWorkflow) embed.Confinement {
 // make the workflow's own or run: a publish, a restore that appends it as a new
 // draft, or a run pinned to it.
 //
-// Those endpoints are inside a session's write authority — publishing is how a
-// draft becomes the version production traffic runs — so a revision saved
+// Those endpoints are inside a session's authority — a restore under
+// workflow:write, a run under workflow:run, and a publish, which is how a draft
+// becomes the version production traffic runs, under workflow:publish — so a
+// revision saved
 // before the confinement existed, or saved by an owner against broader rules,
 // must be re-checked at the moment it becomes live rather than trusted because
 // it is already stored.

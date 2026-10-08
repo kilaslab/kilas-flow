@@ -61,6 +61,8 @@ which is why a host forwards this response to its page rather than rebuilding it
 | `workflow:read` | load the one workflow, list its executions, read the catalogue and the credential picker |
 | `workflow:write` | save that workflow's document; implies `workflow:read` |
 | `workflow:run` | run that workflow; implies `workflow:read` |
+| `workflow:publish` | publish a revision of that workflow, pinning it as the version production traffic runs; implies `workflow:read`, not write. Embed sessions only |
+| `workflow:activate` | activate and deactivate that workflow, through the same compile checks as the dashboard; implies `workflow:read`, not write or publish. Embed sessions only |
 | `datastore:read` | read the one datastore's definition and rows |
 | `datastore:write` | write rows in that datastore; implies `datastore:read` |
 

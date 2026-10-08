@@ -483,7 +483,7 @@ func (store *GORMAuthStore) CreateScopedAPIKey(ctx context.Context, tenant Tenan
 	if tenant.ID == "" {
 		return APIKey{}, "", fmt.Errorf("an API key needs a tenant")
 	}
-	normalized, err := embed.NormalizeScopes(scopes)
+	normalized, err := embed.NormalizeKeyScopes(scopes)
 	if err != nil && len(scopes) > 0 {
 		return APIKey{}, "", fmt.Errorf("create API key: %w", err)
 	}
@@ -787,8 +787,9 @@ func formatScopes(scopes []embed.Scope) *string {
 }
 
 // parseScopes reads that column back, ignoring anything that is not a scope
-// this build knows: a row written by a future version must not hand a key an
-// authority this one cannot reason about.
+// this build knows a key may hold: a row written by a future version must not
+// hand a key an authority this one cannot reason about, and the embed-only
+// scopes are not a key's to hold.
 func parseScopes(recorded string) []embed.Scope {
 	scopes := []embed.Scope{}
 	for _, field := range strings.Split(recorded, ",") {
@@ -796,7 +797,7 @@ func parseScopes(recorded string) []embed.Scope {
 		if scope == "" {
 			continue
 		}
-		if normalized, err := embed.NormalizeScopes([]embed.Scope{scope}); err == nil && len(normalized) == 1 {
+		if normalized, err := embed.NormalizeKeyScopes([]embed.Scope{scope}); err == nil && len(normalized) == 1 {
 			scopes = append(scopes, normalized[0])
 		}
 	}

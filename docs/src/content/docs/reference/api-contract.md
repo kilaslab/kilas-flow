@@ -334,7 +334,8 @@ default-deny boundary is part of the public contract:
 | `/executions/{id}/**` | Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to |
 | `POST /workflows/import` | Deny — importing creates a new workflow, outside any session's single-workflow authority |
 | `POST /workflows/convert` | Allow with `workflow:read` — it translates pasted n8n JSON and saves nothing; the paste reaches the workflow only through a save the session's scopes govern |
-| `POST /workflows/{id}/activate`, `/deactivate` | Deny — activation publishes a deployment-wide endpoint; an owner action, not an embed one |
+| `POST /workflows/{id}/versions/{versionId}/publish` on the session's workflow | Allow with `workflow:publish` only — `workflow:write` alone is refused |
+| `POST /workflows/{id}/activate`, `/deactivate` on the session's workflow | Allow with `workflow:activate` only — activation registers deployment-wide triggers, so no other scope grants it; the request meets the same compile and catalogue checks as the dashboard's |
 | `DELETE /workflows/{id}` | Deny |
 | Any `/workflows/{other-id}/**` | Deny — scoped to a different workflow |
 | `GET /workflows` (list), `POST /embed-sessions`, schedules, credential writes, credential-type endpoints | Deny — none belongs to an embedded editor |

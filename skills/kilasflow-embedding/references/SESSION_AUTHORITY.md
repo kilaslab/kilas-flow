@@ -19,17 +19,19 @@ exclusion list (`permits`).
 | that one workflow, read | needs `workflow:read` |
 | that one workflow, saved | needs `workflow:write` |
 | that one workflow, run | needs `workflow:run` |
+| that one workflow, publish a revision | needs `workflow:publish`; `workflow:write` alone is refused |
+| that one workflow, activate or deactivate | needs `workflow:activate`; the activate handler's compile and catalogue checks still run |
 | the executions of that workflow | needs `workflow:read`, with `workflowId` equal to the session's |
 | one execution and its event stream | the scope is checked here, ownership in the handler |
 | a different workflow, or listing every workflow | refused: scoped to a different workflow |
-| activate, deactivate, delete, import | refused outright, at any scope |
+| delete, import | refused outright, at any scope |
 | managing datastores, or another datastore's id | refused; another datastore reads as unknown |
 | that datastore's definition and rows | `datastore:read` / `datastore:write` |
 | anything else, including routes added tomorrow | refused |
 
 ## Confinement
 
-A save, a publish, a restore and a run are checked against the **confinement**
+A save, a publish, an activation, a restore and a run are checked against the **confinement**
 minted into the token from the revision the workflow's owner published, so a
 `workflow:write` session cannot introduce a node that reaches outside what that
 revision referenced and thereby widen its own authority (`embedConfinementOf`,

@@ -33,6 +33,21 @@ const (
 	ScopeRead  Scope = "workflow:read"
 	ScopeWrite Scope = "workflow:write"
 	ScopeRun   Scope = "workflow:run"
+	// ScopePublish grants publishing a revision of the session's one workflow:
+	// pinning it as the version production traffic runs, which turns the
+	// workflow on if it was off. Write does not imply it — saving a draft and
+	// putting it in front of production traffic are different decisions, and a
+	// host opts its customers into the second by minting this scope.
+	//
+	// It is an embed-session scope only: a scoped API key is refused it at
+	// minting (NormalizeKeyScopes), and publishing stays with the tenant-wide
+	// key, as it was before this scope existed.
+	ScopePublish Scope = "workflow:publish"
+	// ScopeActivate grants activating and deactivating the session's one
+	// workflow: the switch that registers its triggers and takes them down.
+	// Neither write nor publish implies it, and it implies neither of them.
+	// Like ScopePublish it belongs to embed sessions only.
+	ScopeActivate Scope = "workflow:activate"
 	// ScopeDatastoreRead grants reads of one datastore's definition and rows.
 	ScopeDatastoreRead Scope = "datastore:read"
 	// ScopeDatastoreWrite grants row writes in one datastore. It implies
@@ -182,12 +197,25 @@ func (session Session) Allows(scope Scope) bool {
 			return true
 		}
 		// Write implies read: a session that can save must be able to load.
-		if scope == ScopeRead && (held == ScopeWrite || held == ScopeRun) {
+		// So do run, publish and activate: each acts on a workflow the session
+		// has to be able to load to know what it is acting on.
+		if scope == ScopeRead && impliesRead(held) {
 			return true
 		}
 		if scope == ScopeDatastoreRead && held == ScopeDatastoreWrite {
 			return true
 		}
+	}
+	return false
+}
+
+// impliesRead names the workflow scopes that carry workflow:read with them.
+// The editor's scopeAllows (web/src/lib/embed/session.svelte.ts) mirrors this
+// list, so the two halves agree on which controls a session can use.
+func impliesRead(held Scope) bool {
+	switch held {
+	case ScopeWrite, ScopeRun, ScopePublish, ScopeActivate:
+		return true
 	}
 	return false
 }
@@ -460,9 +488,9 @@ func scopesMatchSubject(scopes []Scope, workflow bool) error {
 }
 
 // NormalizeScopes validates and canonicalises a scope list against the one
-// vocabulary this product has: an agent token and an embed session are refused
-// and accepted by the same rule, so a scope that works in one works in the
-// other.
+// vocabulary this product has. An embed session accepts every scope in it; an
+// agent token accepts every scope but the two embed-only ones, publish and
+// activate, which NormalizeKeyScopes refuses by name.
 func NormalizeScopes(scopes []Scope) ([]Scope, error) {
 	if len(scopes) == 0 {
 		// A session with no scopes could do nothing, so an empty request is a
@@ -473,7 +501,7 @@ func NormalizeScopes(scopes []Scope) ([]Scope, error) {
 	normalized := make([]Scope, 0, len(scopes))
 	for _, scope := range scopes {
 		switch scope {
-		case ScopeRead, ScopeWrite, ScopeRun, ScopeDatastoreRead, ScopeDatastoreWrite:
+		case ScopeRead, ScopeWrite, ScopeRun, ScopePublish, ScopeActivate, ScopeDatastoreRead, ScopeDatastoreWrite:
 		default:
 			return nil, fmt.Errorf("scope %q is not supported", scope)
 		}
@@ -484,6 +512,26 @@ func NormalizeScopes(scopes []Scope) ([]Scope, error) {
 		normalized = append(normalized, scope)
 	}
 	sort.Slice(normalized, func(left, right int) bool { return normalized[left] < normalized[right] })
+	return normalized, nil
+}
+
+// NormalizeKeyScopes is NormalizeScopes for a scoped API key.
+//
+// A key keeps the vocabulary it had before publish and activate became embed
+// scopes: its arm of the authority gate refuses publishing and activation
+// whatever it holds, because those stay with the tenant-wide key (§3.2 of the
+// agent-surface design). Minting a key with either scope is therefore refused
+// by name, rather than stored as an authority the gate would never honour.
+func NormalizeKeyScopes(scopes []Scope) ([]Scope, error) {
+	normalized, err := NormalizeScopes(scopes)
+	if err != nil {
+		return nil, err
+	}
+	for _, scope := range normalized {
+		if scope == ScopePublish || scope == ScopeActivate {
+			return nil, fmt.Errorf("scope %q is for embed sessions only: an API key cannot publish or change activation, which stay with the tenant-wide key", scope)
+		}
+	}
 	return normalized, nil
 }
 

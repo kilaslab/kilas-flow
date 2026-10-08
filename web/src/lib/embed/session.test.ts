@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { apiDownload, apiFetch, setEmbedToken } from '$lib/api/http';
-import { SCOPE_PUBLISH, acceptEmbedSession, sanitizeBranding, scopeAllows, type EmbedSession } from './session.svelte';
+import { SCOPE_ACTIVATE, SCOPE_PUBLISH, acceptEmbedSession, embedControls, sanitizeBranding, scopeAllows, type EmbedSession } from './session.svelte';
 
 function session(scopes: string[]): EmbedSession {
 	return { token: 't', workflowId: 'wf-1', scopes, branding: {}, locale: 'en', origin: 'https://host.example' };
@@ -34,28 +34,81 @@ describe('scopeAllows', () => {
 		expect(scopeAllows(session(['workflow:write']), 'workflow:write')).toBe(true);
 	});
 
-	it('refuses publishing to every scope a host can mint today', () => {
-		// Activation publishes a webhook endpoint for the whole deployment, so
-		// it is an owner action. A host that wants its customers to publish has
-		// to be granted the publish scope explicitly, and no combination of the
-		// three scopes the server currently accepts adds up to it.
+	it('refuses publishing and activation to the everyday editor scopes', () => {
+		// Publishing pins the revision production traffic runs and activation
+		// turns the workflow on, so each is a grant of its own: no combination
+		// of read, write and run adds up to either, exactly as on the server.
 		for (const scopes of [['workflow:read'], ['workflow:write'], ['workflow:run'], ['workflow:read', 'workflow:write', 'workflow:run']]) {
 			expect(scopeAllows(session(scopes), SCOPE_PUBLISH)).toBe(false);
+			expect(scopeAllows(session(scopes), SCOPE_ACTIVATE)).toBe(false);
 		}
+	});
+
+	it('names the scopes the server mints', () => {
+		expect(SCOPE_PUBLISH).toBe('workflow:publish');
+		expect(SCOPE_ACTIVATE).toBe('workflow:activate');
 	});
 
 	it('permits publishing only to a session minted with the publish scope', () => {
 		expect(scopeAllows(session([SCOPE_PUBLISH]), SCOPE_PUBLISH)).toBe(true);
+		expect(scopeAllows(session([SCOPE_ACTIVATE]), SCOPE_PUBLISH)).toBe(false);
 	});
 
-	it('lets the publish scope imply read, the way write and run already do', () => {
+	it('permits activation only to a session minted with the activate scope', () => {
+		expect(scopeAllows(session([SCOPE_ACTIVATE]), SCOPE_ACTIVATE)).toBe(true);
+		expect(scopeAllows(session([SCOPE_PUBLISH]), SCOPE_ACTIVATE)).toBe(false);
+	});
+
+	it('lets publish and activate imply read, the way write and run already do', () => {
 		expect(scopeAllows(session([SCOPE_PUBLISH]), 'workflow:read')).toBe(true);
+		expect(scopeAllows(session([SCOPE_ACTIVATE]), 'workflow:read')).toBe(true);
 	});
 
-	it('does not let the publish scope imply write', () => {
+	it('does not let publish or activate imply write or run', () => {
 		// Publishing an existing revision and rewriting the canvas are separate
 		// grants: a host may want the first without the second.
-		expect(scopeAllows(session([SCOPE_PUBLISH]), 'workflow:write')).toBe(false);
+		for (const scope of [SCOPE_PUBLISH, SCOPE_ACTIVATE]) {
+			expect(scopeAllows(session([scope]), 'workflow:write')).toBe(false);
+			expect(scopeAllows(session([scope]), 'workflow:run')).toBe(false);
+		}
+	});
+});
+
+describe('embedControls', () => {
+	it('keeps publish and activation hidden from an ordinary editor session', () => {
+		expect(embedControls(session(['workflow:read', 'workflow:write', 'workflow:run']))).toEqual({
+			canRead: true,
+			canWrite: true,
+			canRun: true,
+			canPublish: false,
+			canActivate: false
+		});
+	});
+
+	it('shows the publish controls on the publish scope alone', () => {
+		expect(embedControls(session(['workflow:write', SCOPE_PUBLISH]))).toEqual({
+			canRead: true,
+			canWrite: true,
+			canRun: false,
+			canPublish: true,
+			canActivate: false
+		});
+	});
+
+	it('shows the activation controls on the activate scope alone', () => {
+		expect(embedControls(session([SCOPE_ACTIVATE]))).toEqual({
+			canRead: true,
+			canWrite: false,
+			canRun: false,
+			canPublish: false,
+			canActivate: true
+		});
+	});
+
+	it('shows both when the host grants both', () => {
+		const controls = embedControls(session(['workflow:read', SCOPE_PUBLISH, SCOPE_ACTIVATE]));
+		expect(controls.canPublish).toBe(true);
+		expect(controls.canActivate).toBe(true);
 	});
 });
 

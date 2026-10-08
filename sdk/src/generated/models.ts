@@ -833,7 +833,7 @@ export interface EmbedSessionBody {
      */
   origin: string;
   /**
-     * workflow:read, workflow:write, workflow:run, datastore:read, datastore:write
+     * workflow:read, workflow:write, workflow:run, workflow:publish, workflow:activate, datastore:read, datastore:write. workflow:publish pins a revision as the version production traffic runs and workflow:activate turns the workflow on and off; neither is implied by write.
      * @nullable
      */
   scopes: string[] | null;

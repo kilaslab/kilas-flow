@@ -59,7 +59,7 @@ func (handler *EmbedSessions) WithDatastores(store *datastore.Engine) *EmbedSess
 type embedSessionBody struct {
 	WorkflowID  string         `json:"workflowId,omitempty" doc:"Workflow this session may open; exactly one of this and datastoreId"`
 	DatastoreID string         `json:"datastoreId,omitempty" doc:"Datastore this session may touch; exactly one of this and workflowId"`
-	Scopes      []string       `json:"scopes" doc:"workflow:read, workflow:write, workflow:run, datastore:read, datastore:write"`
+	Scopes      []string       `json:"scopes" doc:"workflow:read, workflow:write, workflow:run, workflow:publish, workflow:activate, datastore:read, datastore:write. workflow:publish pins a revision as the version production traffic runs and workflow:activate turns the workflow on and off; neither is implied by write."`
 	Origin      string         `json:"origin" minLength:"1" doc:"Exact origin of the page that will frame the editor"`
 	TTLSeconds  int            `json:"ttlSeconds,omitempty" doc:"Session lifetime; capped by the server"`
 	Branding    embed.Branding `json:"branding,omitempty" doc:"Validated white-label values; never markup"`

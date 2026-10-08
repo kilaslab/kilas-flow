@@ -43,6 +43,7 @@
 		active,
 		canRestore = false,
 		canPublish = false,
+		canUnpublish = false,
 		onRestored,
 		onPublished,
 		onUnpublished,
@@ -68,6 +69,8 @@
 		active: boolean;
 		canRestore?: boolean;
 		canPublish?: boolean;
+		/** Unpublishing is deactivation, so it has its own flag rather than riding on publish. */
+		canUnpublish?: boolean;
 		onRestored: (workflow: WorkflowResource) => void;
 		onPublished: (workflow: WorkflowResource, version: WorkflowVersionSummaryResource) => void;
 		onUnpublished: (workflow: WorkflowResource) => void;
@@ -483,11 +486,11 @@
 									>
 										<Upload aria-hidden="true" class="size-3.5" />{m.versions_publish()}
 									</button>
-									{#if selected.published && active}
-										<button type="button" class="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-warning transition-colors hover:bg-warning/10 disabled:opacity-40" disabled={busy} onclick={() => void unpublish()}>
-											{m.versions_unpublish()}
-										</button>
-									{/if}
+								{/if}
+								{#if canUnpublish && selected.published && active}
+									<button type="button" class="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-warning transition-colors hover:bg-warning/10 disabled:opacity-40" disabled={busy} onclick={() => void unpublish()}>
+										{m.versions_unpublish()}
+									</button>
 								{/if}
 								<button type="button" class="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted" onclick={backToDraft}>
 									{m.versions_back_to_draft()}

@@ -532,7 +532,7 @@ func (handler *Auth) CreateKey(ctx context.Context, input *createAPIKeyInput) (*
 	for _, scope := range input.Body.Scopes {
 		scopes = append(scopes, embed.Scope(strings.TrimSpace(scope)))
 	}
-	normalized, err := embed.NormalizeScopes(scopes)
+	normalized, err := embed.NormalizeKeyScopes(scopes)
 	if err != nil {
 		if len(scopes) > 0 {
 			return nil, huma.Error422UnprocessableEntity(err.Error())

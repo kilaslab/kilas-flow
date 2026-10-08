@@ -101,7 +101,7 @@ function schemaName(schema) {
 }
 
 // Embed verdict per operation, mirroring permits() in
-// internal/api/middleware/embed.go: default-deny, scoped to the session's
+// internal/api/middleware/scope.go: default-deny, scoped to the session's
 // single workflow, with the catalogue readable because it carries no tenant
 // data. Paths here are the full served paths (the /api/v1 prefix included).
 function embedVerdict(method, path) {
@@ -125,7 +125,15 @@ function embedVerdict(method, path) {
 		const action = rest.slice('/workflows/'.length).split('/')[1] ?? '';
 		if (action === 'run') return 'Allow with `workflow:run` — on the session\u2019s workflow only.';
 		if (action === 'duplicate') return 'Deny — a copy is a new workflow, outside any session\u2019s single-workflow authority.';
-		if (action === 'activate' || action === 'deactivate') return 'Deny — activation publishes a deployment-wide endpoint; an owner action, not an embed one.';
+		if (action === 'activate') {
+			return 'Allow with `workflow:activate` only — on the session’s workflow, through the same compile and catalogue checks as the dashboard. No other scope grants it: activation registers deployment-wide triggers, so a host opts in by minting the scope.';
+		}
+		if (action === 'deactivate') {
+			return 'Allow with `workflow:activate` only — on the session’s workflow. `workflow:publish` does not grant it: taking a workflow offline is the activation switch.';
+		}
+		if (rest.endsWith('/publish') && method === 'POST') {
+			return 'Allow with `workflow:publish` only — on the session’s workflow; `workflow:write` alone is refused. Publishing pins the revision production traffic runs, so a host opts in by minting the scope.';
+		}
 		if (method === 'GET') return 'Allow with `workflow:read` — on the session\u2019s workflow only.';
 		if (method === 'DELETE') return 'Deny — an embed session cannot delete a workflow.';
 		return 'Allow with `workflow:write` — on the session\u2019s workflow only.';
