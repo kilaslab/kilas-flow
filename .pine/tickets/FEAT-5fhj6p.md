@@ -1,7 +1,7 @@
 ---
 id: FEAT-5fhj6p
 title: Run the epic acceptance scenario as an executable suite
-status: blocked
+status: todo
 priority: high
 labels:
     - e2e
