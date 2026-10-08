@@ -156,3 +156,5 @@ Still open: validated examples per skill (2) and the AI-agents skill (4).
 
 List-form claims (2026-10-08, 23:56): `TestNoSkillListsAShippedVerbAsMissing` checks every verb path written before "have no verb(s)" in a `not_shipped` entry. It found that kilasflow-credentials, -embedding and -triggers (and earlier -datastore and -operations) denied the shipped credential, datastore and tenant-delete verbs. All five now name only what is absent: schedule writes, pack install and tenant create. The skills tests, the index check and `skills-check` pass.
 
+Criterion 4 measured (2026-10-08, 23:58): the SKILL.md files still cite 230 repo source paths (`internal/…`, `nodes/…`, `cmd/…`, `web/src/…`), in kilasflow-expressions, kilasflow-datastore, kilasflow-operations' references and others. Each has to be swapped for a docs page or a `skills show --reference` file before the AI-agents skill is written.
+
