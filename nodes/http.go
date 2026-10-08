@@ -349,7 +349,9 @@ func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, p
 		return nil, fmt.Errorf("node %q: read response: %w", ir.Name, err)
 	}
 	if !boolValue(parameters["neverError"]) && response.StatusCode >= 400 {
-		return nil, fmt.Errorf("node %q: request failed with status %d", ir.Name, response.StatusCode)
+		// The body read above is what the service said went wrong, so the
+		// error carries it, with the request it answered.
+		return nil, newHTTPStatusError(ir.Name, method, target, response, contents, truncated)
 	}
 
 	format := textValue(parameters["responseFormat"], "autodetect")
@@ -391,6 +393,82 @@ func (executor *HTTPExecutor) sendOne(ctx context.Context, ir workflow.IRNode, p
 		item.JSON = responseEnvelope(response, nil, "", truncated)
 	}
 	return []workflow.Item{item}, nil
+}
+
+// httpErrorBodyLimit bounds how much of a failed response's body its error
+// carries. The error travels into the run's own error, its trace row, a log
+// line and every error item, so an HTML error page or a dump is cut here
+// rather than carried whole; a kilobyte holds any API's error object.
+const httpErrorBodyLimit = 1024
+
+// HTTPStatusError is a response the node failed on because of its status: a
+// 4xx or a 5xx while Never Fail is off.
+//
+// It names what n8n's NodeApiError names — the status, the request and what
+// the service answered — because `request failed with status 500` alone left
+// the user unable to tell which call failed or why. The URL is the scheme and
+// host alone, as a transport error's is (safehttp.RedactURL): the path and the
+// query are where a secret sits, and httpQueryAuth has just written one into
+// the query.
+type HTTPStatusError struct {
+	// Node is the failing node's name, which the run's error starts with.
+	Node       string
+	StatusCode int
+	Method     string
+	URL        string
+	// Body is the response body as text, cut to httpErrorBodyLimit.
+	Body string
+	// Truncated says the body was cut, here or by the policy's size bound.
+	Truncated bool
+}
+
+func newHTTPStatusError(node, method string, target *url.URL, response *http.Response, contents []byte, truncated bool) *HTTPStatusError {
+	body := strings.ToValidUTF8(strings.TrimSpace(string(contents)), "�")
+	if len(body) > httpErrorBodyLimit {
+		// Cutting at a byte count can split a rune; the partial one is dropped.
+		body = strings.ToValidUTF8(body[:httpErrorBodyLimit], "")
+		truncated = true
+	}
+	return &HTTPStatusError{
+		Node: node, StatusCode: response.StatusCode, Method: method,
+		URL: safehttp.RedactURL(target.String()), Body: body, Truncated: truncated,
+	}
+}
+
+func (err *HTTPStatusError) Error() string {
+	text := fmt.Sprintf("node %q: request failed with status %d (%s %s)", err.Node, err.StatusCode, err.Method, err.URL)
+	if err.Body != "" {
+		text += ": " + err.Body
+		if err.Truncated {
+			text += "…"
+		}
+	}
+	return text
+}
+
+// description is n8n's NodeApiError description: the status and the body.
+func (err *HTTPStatusError) description() string {
+	if err.Body == "" {
+		return fmt.Sprintf("%d - %s", err.StatusCode, http.StatusText(err.StatusCode))
+	}
+	return fmt.Sprintf("%d - %s", err.StatusCode, err.Body)
+}
+
+// ItemErrorFields is what an error item carries beside the message and the
+// node's name. `httpCode` is text, as n8n's NodeApiError writes it, and is
+// what an imported flow branches on for a 404 or a 429.
+func (err *HTTPStatusError) ItemErrorFields() map[string]any {
+	fields := map[string]any{
+		"httpCode":    strconv.Itoa(err.StatusCode),
+		"description": err.description(),
+		"method":      err.Method,
+		"url":         err.URL,
+		"body":        err.Body,
+	}
+	if err.Truncated {
+		fields["truncated"] = true
+	}
+	return fields
 }
 
 // decodeItems turns one response body into the items n8n would produce.

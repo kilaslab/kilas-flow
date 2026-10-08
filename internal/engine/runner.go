@@ -1704,12 +1704,30 @@ func errorItem(node workflow.IRNode, item workflow.Item, cause error, withInput 
 	if node.Definition.ErrorAsMessage {
 		fields[ErrorItemKey] = itemMessageOf(node, cause)
 	} else {
-		fields[ErrorItemKey] = map[string]any{
-			"message": cause.Error(),
-			"node":    node.Name,
+		descriptor := map[string]any{}
+		var detailed itemErrorFields
+		if errors.As(cause, &detailed) {
+			for key, value := range detailed.ItemErrorFields() {
+				descriptor[key] = value
+			}
 		}
+		// The message and the node are the runner's, and an error's own
+		// fields never stand in for them.
+		descriptor["message"] = cause.Error()
+		descriptor["node"] = node.Name
+		fields[ErrorItemKey] = descriptor
 	}
 	return workflow.Item{JSON: fields, Binary: item.Binary}
+}
+
+// itemErrorFields is an error that knows more about itself than its text. An
+// HTTP Request's failed status does: n8n's error item carries the status as
+// `httpCode` and the service's answer beside the message, and a flow branches
+// on them, so they are written into the error object with it. Only text
+// values are scrubbed of a node's secrets (scrubbedError.As), so an error
+// puts anything a service answered in a string.
+type itemErrorFields interface {
+	ItemErrorFields() map[string]any
 }
 
 // itemMessage is an error that knows the text its error item carries when
