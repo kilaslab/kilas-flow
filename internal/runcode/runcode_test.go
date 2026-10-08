@@ -178,6 +178,86 @@ func TestCompilationFailureIsReportedWithoutServerPaths(t *testing.T) {
 	}
 }
 
+// A compile error is about the body the user wrote, so it names the line they
+// can see in the editor — not the line of the program the wrapper generated
+// around it, which sits 31 lines further down and which they never see.
+func TestACompileErrorNamesTheLineInTheUsersOwnCode(t *testing.T) {
+	compiler := requireToolchain(t)
+	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), sharedModules(t), runcode.DefaultLimits())
+
+	_, err := runner.Run(context.Background(), "out := items\n_ = out\nreturn itemz, nil\n// done", nil)
+	var compileErr *runcode.CompileError
+	if !errors.As(err, &compileErr) {
+		t.Fatalf("error = %T (%v), want a CompileError", err, err)
+	}
+	if want := "undefined: itemz (line 3, column 8)"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want it to contain %q", err, want)
+	}
+	// The wrapper's file and the build's package header are the server's
+	// business; neither is anything a user can act on.
+	for _, leaked := range []string{"main.go", "# kilasflow.usercode"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Errorf("error = %q, leaked the wrapper's %q", err, leaked)
+		}
+	}
+}
+
+// Some mistakes in the body are only noticed at the wrapper's code after it:
+// a function with no final return is reported at its closing brace. That brace
+// is not a line the user wrote, so it is named as the end of their code rather
+// than as a line number one past it.
+func TestACompileErrorAfterTheLastLineIsNamedAsTheEndOfTheCode(t *testing.T) {
+	compiler := requireToolchain(t)
+	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), sharedModules(t), runcode.DefaultLimits())
+
+	_, err := runner.Run(context.Background(), "if len(items) > 0 {\n\treturn items, nil\n}", nil)
+	var compileErr *runcode.CompileError
+	if !errors.As(err, &compileErr) {
+		t.Fatalf("error = %T (%v), want a CompileError", err, err)
+	}
+	if want := "missing return (at the end of the code)"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want it to contain %q", err, want)
+	}
+}
+
+// A panic is the Go runtime telling the user what went wrong and where; the
+// sandbox used to keep that on standard error and report only the exit status
+// it ended with. The message and the user's own line are what they need.
+func TestAPanicReportsItsMessageAndTheLineInTheUsersCode(t *testing.T) {
+	compiler := requireToolchain(t)
+	runner := runcode.NewRunner(compiler, runcode.NewMemoryCache(), sharedModules(t), runcode.DefaultLimits())
+
+	for name, test := range map[string]struct{ source, want string }{
+		"in the body": {
+			source: "var m map[string]any\nm[\"boom\"] = 1\nreturn items, nil",
+			want:   "panic: assignment to entry in nil map (line 2)",
+		},
+		// The panic is raised inside the standard library; the line that
+		// matters is the user's call into it.
+		"in a call the body made": {
+			source: "count := -1\n_ = count\n_ = strings.Repeat(\"x\", count)\nreturn items, nil",
+			want:   "panic: strings: negative Repeat count (line 3)",
+		},
+		// A closure is the body's code too, and the innermost of its lines is
+		// the one that failed.
+		"in a closure": {
+			source: "at := func(values []int) int {\n\treturn values[5]\n}\n_ = at([]int{1})\nreturn items, nil",
+			want:   "panic: runtime error: index out of range [5] with length 1 (line 2)",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := runner.Run(context.Background(), test.source, nil)
+			var executionErr *runcode.ExecutionError
+			if !errors.As(err, &executionErr) {
+				t.Fatalf("error = %T (%v), want an ExecutionError", err, err)
+			}
+			if err.Error() != test.want {
+				t.Errorf("error = %q, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestARunnerWithNoCompilerReportsThatClearly(t *testing.T) {
 	t.Parallel()
 

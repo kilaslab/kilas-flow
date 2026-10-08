@@ -89,3 +89,41 @@ func TestAZeroToolchainCompilerNamesTheDefaultBinary(t *testing.T) {
 		t.Errorf("binaryName() on a nil compiler = %q, want the default", name)
 	}
 }
+
+// A Go runtime crash is read from standard error as the runtime printed it.
+// These are the shapes the toolchain-backed tests cannot produce on demand:
+// output the body wrote before failing, a chain of re-panics, a fatal error
+// that is not a panic, and a crash in a module that has no user body at all.
+func TestACrashIsReadFromWhatTheGoRuntimePrinted(t *testing.T) {
+	for name, test := range map[string]struct{ stderr, want string }{
+		"output written before the panic": {
+			stderr: "panic: this is only a log line\nstill logging\npanic: boom\n\ngoroutine 1 [running]:\n" +
+				"main.run(...)\n\tkilasflow.usercode/code.go:4\nmain.main()\n\tkilasflow.usercode/code.go:14 +0x8",
+			want: "panic: boom (line 4)",
+		},
+		"a re-panic inside a deferred closure": {
+			stderr: "panic: first [recovered]\n\tpanic: second\n\ngoroutine 1 [running]:\n" +
+				"main.run.func1()\n\tkilasflow.usercode/code.go:2 +0x2\npanic({0x1, 0x2})\n\truntime/panic.go:787 +0x9\n" +
+				"main.run(...)\n\tkilasflow.usercode/code.go:5\nmain.main()\n\tkilasflow.usercode/code.go:9 +0x8",
+			want: "panic: first [recovered]\n\tpanic: second (line 2)",
+		},
+		"a deadlock": {
+			stderr: "fatal error: all goroutines are asleep - deadlock!\n\ngoroutine 1 [chan receive]:\n" +
+				"main.run(...)\n\tkilasflow.usercode/code.go:3\nmain.main()\n\tkilasflow.usercode/code.go:7 +0x4",
+			want: "fatal error: all goroutines are asleep - deadlock! (line 3)",
+		},
+		// A pack's module has no body, so there is no user line to name, and its
+		// own main.go is not the Code node's.
+		"a module with no user body": {
+			stderr: "panic: pack failed\n\ngoroutine 1 [running]:\nmain.main()\n\t/build/pack/main.go:12 +0x8",
+			want:   "panic: pack failed",
+		},
+		"no crash at all": {stderr: "just some logging", want: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := describeCrash(test.stderr); got != test.want {
+				t.Errorf("describeCrash() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

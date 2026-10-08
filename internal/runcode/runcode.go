@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -284,7 +286,7 @@ func (compiler *ToolchainCompiler) Compile(ctx context.Context, source string) (
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
-		return nil, &CompileError{Detail: sanitizeBuildOutput(stderr.String(), directory)}
+		return nil, &CompileError{Detail: atUserLines(sanitizeBuildOutput(stderr.String(), directory), source)}
 	}
 
 	module, err := os.ReadFile(output)
@@ -318,6 +320,55 @@ func sanitizeBuildOutput(output, directory string) string {
 	return output
 }
 
+// bodyFile is the file name the wrapper gives the user's body.
+//
+// A //line directive in Wrap puts the body's first line at line 1 of this
+// file, so the compiler's errors and the runtime's stack traces both count
+// lines the way the editor does. Everything after the body keeps counting in
+// the same file, which is how a mistake noticed only at the wrapper's closing
+// brace is recognisable as being past the user's last line.
+const bodyFile = "code.go"
+
+// buildPosition matches one compiler message about the body: "./code.go:3:8:
+// undefined: itemz", or the same indented under another message, as "other
+// declaration of" notes are.
+var buildPosition = regexp.MustCompile(`^(\s*)(?:\./)?` + regexp.QuoteMeta(bodyFile) + `:(\d+)(?::(\d+))?: (.*)$`)
+
+// atUserLines restates build output in terms of the body a user wrote.
+//
+// The build's package header names a module the user never declared and is
+// dropped. A message about the body says which of its lines it is about, and
+// one that falls past the last line — "missing return" is reported at the
+// wrapper's closing brace — says it is at the end of the code rather than
+// naming a line the user cannot find. Anything else the toolchain said is kept
+// as it was.
+func atUserLines(output, source string) string {
+	lines := strings.Count(source, "\n") + 1
+	kept := make([]string, 0, strings.Count(output, "\n")+1)
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "# kilasflow.usercode") {
+			continue
+		}
+		match := buildPosition.FindStringSubmatch(line)
+		if match == nil {
+			kept = append(kept, line)
+			continue
+		}
+		indent, number, column, message := match[1], match[2], match[3], match[4]
+		at, _ := strconv.Atoi(number)
+		switch {
+		case at > lines:
+			line = fmt.Sprintf("%s%s (at the end of the code)", indent, message)
+		case column != "":
+			line = fmt.Sprintf("%s%s (line %d, column %s)", indent, message, at, column)
+		default:
+			line = fmt.Sprintf("%s%s (line %d)", indent, message, at)
+		}
+		kept = append(kept, line)
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
 // Wrap turns a user's function body into a complete program.
 //
 // The data contract is stdin/stdout JSON rather than a host-function ABI: it
@@ -330,6 +381,10 @@ func sanitizeBuildOutput(output, directory string) string {
 // fine and then fail at run time inside the sandbox, which is a far better
 // guarantee than "it would not have compiled". The blank assignments keep Go
 // from rejecting the ones a given body does not use.
+//
+// The body starts at line 1 of bodyFile, so a compile error or a panic names
+// the line the user sees rather than one 31 lines further down a program they
+// never see.
 func Wrap(source string) string {
 	return `package main
 
@@ -362,6 +417,7 @@ type Item struct {
 }
 
 func run(items []Item) ([]Item, error) {
+//line ` + bodyFile + `:1:1
 ` + source + `
 }
 

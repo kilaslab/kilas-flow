@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -253,6 +255,15 @@ func (runner *Runner) Sandbox(ctx context.Context, module []byte, call Call) (Ou
 						"%s ran out of memory inside its %d-page (%s) memory limit",
 						subject, limits.MemoryPages, memorySize(limits.MemoryPages)))
 				}
+				// Or it is the Go runtime's own crash — a panic, or a fatal
+				// error such as a deadlock — whose message is the one thing that
+				// tells a user what went wrong. It exits with status 2 and says
+				// the rest only on standard error.
+				if exit.ExitCode() == goCrashStatus {
+					if crash := describeCrash(outcome.Stderr); crash != "" {
+						return outcome, &ExecutionError{Detail: crash}
+					}
+				}
 				return outcome, &ExecutionError{Detail: fmt.Sprintf("%s exited with status %d", subject, exit.ExitCode())}
 			}
 		}
@@ -298,6 +309,68 @@ func ranOutOfMemory(stderr string) bool {
 		}
 	}
 	return false
+}
+
+// goCrashStatus is the exit status the Go runtime ends a program with after an
+// unrecovered panic or a fatal error.
+const goCrashStatus = 2
+
+// describeCrash reads a Go runtime crash from a module's standard error: the
+// panic or fatal error message, and the line of the user's body it happened
+// on when a frame of that body is on the stack. It returns "" when standard
+// error holds no such crash.
+//
+// Like ranOutOfMemory this is Go-runtime-specific and only a reading of what
+// the guest printed: a guest that prints a crash it did not have mislabels its
+// own failure and nothing else. The last crash header is the one used, because
+// a body may write to standard error before it fails and the runtime's report
+// always comes last. The header's continuation lines are kept — a panic value
+// with a newline in it, or a chain of re-panics — up to the blank line that
+// separates the message from the stack.
+func describeCrash(stderr string) string {
+	lines := strings.Split(stderr, "\n")
+	start := -1
+	for index, line := range lines {
+		if strings.HasPrefix(line, "panic: ") || strings.HasPrefix(line, "fatal error: ") {
+			start = index
+		}
+	}
+	if start < 0 {
+		return ""
+	}
+	end := start + 1
+	for end < len(lines) && strings.HasPrefix(lines[end], "\t") {
+		end++
+	}
+	message := strings.TrimSpace(strings.Join(lines[start:end], "\n"))
+	if line := crashLine(lines[end:]); line > 0 {
+		return fmt.Sprintf("%s (line %d)", message, line)
+	}
+	return message
+}
+
+// crashLine finds the innermost frame of the user's body in a Go stack trace
+// and returns its line, or 0 when the body is not on the stack.
+//
+// A frame is a function line followed by an indented "file:line +offset" line.
+// The body is the function run, closures inside it included; the wrapper's
+// main is in the same file but is never the frame that matters.
+func crashLine(trace []string) int {
+	for index := 0; index+1 < len(trace); index++ {
+		function := trace[index]
+		if !strings.HasPrefix(function, "main.run(") && !strings.HasPrefix(function, "main.run.") {
+			continue
+		}
+		location, _, _ := strings.Cut(strings.TrimSpace(trace[index+1]), " ")
+		separator := strings.LastIndex(location, ":")
+		if separator < 0 || path.Base(location[:separator]) != bodyFile {
+			continue
+		}
+		if line, err := strconv.Atoi(location[separator+1:]); err == nil && line > 0 {
+			return line
+		}
+	}
+	return 0
 }
 
 // memorySize renders a page count the way an operator reads it.
