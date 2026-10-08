@@ -34,7 +34,7 @@ kilasflow_nodes:
 kilasflow_expression_roots:
   - $json
 kilasflow_not_shipped:
-  - 'No guarded write verbs: credential create, update and delete, datastore create, rename, delete, columns and clear, schedule create, update and delete, pack install, and tenant create and delete have no verbs yet'
+  - 'No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes)'
   - 'No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet'
   - 'No storage substitution for the datastore: one database serves every tenant, and there is no interface a host implements'
 ---
@@ -106,7 +106,7 @@ what are you doing?
 
 ## Not shipped yet
 
-- No guarded write verbs: credential create, update and delete, datastore create, rename, delete, columns and clear, schedule create, update and delete, pack install, and tenant create and delete have no verbs yet — the operations are served, so reach each one with `kilasflow api <operation-id>` and `--path`/`--body` until a verb exists for it.
+- No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes) — the operations are served, so reach each one with `kilasflow api <operation-id>` and `--path`/`--body` until a verb exists for it.
 - No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet — pass it yourself with `kilasflow api insert-datastore-row --header Idempotency-Key=<key>` (and the same on `upsert-datastore-row`), and treat a write you cannot key as one that a retry performs twice.
 - No storage substitution for the datastore: one database serves every tenant, and there is no interface a host implements — size the server's database for the tables the tenant writes, and treat a datastore as tenant data that lives in that database rather than in a store the host supplies.
 

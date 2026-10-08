@@ -79,8 +79,8 @@
         "$json"
       ],
       "notShipped": [
-        "No guarded write verbs: credential create, update and delete, datastore create, rename, delete, columns and clear, schedule create, update and delete, pack install, and tenant create and delete have no verbs yet",
         "No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet",
+        "No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes)",
         "No storage substitution for the datastore: one database serves every tenant, and there is no interface a host implements"
       ],
       "references": [
@@ -369,7 +369,7 @@
       "nodes": [],
       "expressionRoots": [],
       "notShipped": [
-        "No guarded write verbs: credential create, update and delete, datastore create, rename, delete, columns and clear, schedule create, update and delete, pack install, and tenant create and delete have no verbs yet",
+        "No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes)",
         "No skills verbs: kilasflow skills list, show, install, check and export do not ship in this bundle yet",
         "No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch"
       ],

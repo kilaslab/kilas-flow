@@ -27,7 +27,7 @@ kilasflow_nodes: []
 kilasflow_expression_roots: []
 kilasflow_not_shipped:
   - 'No skills verbs: kilasflow skills list, show, install, check and export do not ship in this bundle yet'
-  - 'No guarded write verbs: credential create, update and delete, datastore create, rename, delete, columns and clear, schedule create, update and delete, pack install, and tenant create and delete have no verbs yet'
+  - 'No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes)'
   - 'No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch'
 ---
 
@@ -87,7 +87,7 @@ what are you doing?
 ## Not shipped yet
 
 - No skills verbs: kilasflow skills list, show, install, check and export do not ship in this bundle yet — the bundle is written and gated in the repository, and `kilasflow help` lists no `skills` path, so a harness installs the files by hand until that ticket lands.
-- No guarded write verbs: credential create, update and delete, datastore create, rename, delete, columns and clear, schedule create, update and delete, pack install, and tenant create and delete have no verbs yet — every one of those operations is served, so reach it with `kilasflow api <operation-id>`, `--path` for a placeholder and `--body @file.json` for a body, and treat the missing `--yes` guard as your own responsibility to ask the user first.
+- No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes) — every one of those operations is served, so reach it with `kilasflow api <operation-id>`, `--path` for a placeholder and `--body @file.json` for a body, and treat the missing `--yes` guard as your own responsibility to ask the user first.
 - No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch — the design lists a `tenant api-keys` verb and it is deliberately absent, because the only key operation under a tenant path mints a credential for somebody else, and listing the caller's own keys is the flat `list-api-keys` operation.
 
 ## Anti-patterns

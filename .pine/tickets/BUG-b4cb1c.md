@@ -135,5 +135,7 @@ The binary now does what cli.md says. Every verb that sends a request with no ba
 
 CLI-11 (2026-10-08): the `mcp serve` example in cli.md no longer passes `--token "$KILASFLOW_TOKEN"` on the command line, where a process listing shows it. It relies on `KILASFLOW_TOKEN` from the environment, which the verb already reads.
 
-Criterion 4, partly (2026-10-08): `TestEveryVerbCliMdRunsExists` (internal/cli/docs_examples_test.go) checks, without a server, that every `kilasflow …` line in cli.md's code blocks names a verb of the live command tree (up to three words, e.g. `datastore columns add`). It passes today, and a planted `kilasflow apix` made it fail. Still open: running the examples themselves against a test server in CI, and CLI-3.
+Criterion 4, partly (2026-10-08): `TestEveryVerbCliMdRunsExists` (internal/cli/docs_examples_test.go) checks, without a server, that every `kilasflow …` line in cli.md's code blocks names a verb of the live command tree (up to three words, e.g. `datastore columns add`). It passes today, and a planted `kilasflow apix` made it fail. Still open: running the examples themselves against a test server in CI.
+
+CLI-3 (2026-10-08): kilasflow-datastore and kilasflow-operations said the credential, datastore and tenant-delete writes "have no verbs yet", though each ships as a guarded verb. Their `not_shipped` entry, frontmatter and body both, now names only what is absent: schedule create/update/delete, pack install and tenant create, which matches cli.md's list. The index is regenerated, and `skills-check` and the skills tests pass.
 
