@@ -3671,9 +3671,12 @@ func TestChatTriggerImportsEveryPublishedVersionAndExportsEditorOnly(t *testing.
 }
 
 // TestImportRefusesANonToolsAgent is the pre-1.82 selector trap. A workflow
-// carrying parameters.agent naming anything but the Tools Agent must arrive
-// as a placeholder that names the node and the agent type — never as a Tools
-// Agent that would silently run a workflow the author never wrote.
+// carrying parameters.agent naming an agent whose loop differs from the
+// Tools Agent's — the SQL agent here — must arrive as a placeholder that
+// names the node and the agent type, never as a Tools Agent that would
+// silently run a workflow the author never wrote. The Conversational and
+// OpenAI Functions agents are the exception, covered by
+// TestImportMapsToolCallingLegacyAgentsWithANote.
 func TestImportRefusesANonToolsAgent(t *testing.T) {
 	t.Parallel()
 
@@ -3693,21 +3696,23 @@ func TestImportRefusesANonToolsAgent(t *testing.T) {
 	}`
 	}
 
-	refused := importFixture(t, fixture("conversationalAgent"))
-	node := nodeByName(refused.Document, "Old Agent")
-	if node.Type != n8n.UnsupportedNodeType {
-		t.Fatalf("a conversationalAgent imported as %q, want the unsupported placeholder", node.Type)
-	}
-	var named bool
-	for _, issue := range refused.Unsupported {
-		if issue.Severity == n8n.SeverityBlocking &&
-			issue.NodeName == "Old Agent" &&
-			strings.Contains(issue.Reason, "conversationalAgent") {
-			named = true
+	for _, agent := range []string{"sqlAgent", "planAndExecuteAgent", "reActAgent"} {
+		refused := importFixture(t, fixture(agent))
+		node := nodeByName(refused.Document, "Old Agent")
+		if node.Type != n8n.UnsupportedNodeType {
+			t.Fatalf("a %s imported as %q, want the unsupported placeholder", agent, node.Type)
 		}
-	}
-	if !named {
-		t.Errorf("no blocking diagnostic names the node and the agent type: %#v", refused.Unsupported)
+		var named bool
+		for _, issue := range refused.Unsupported {
+			if issue.Severity == n8n.SeverityBlocking &&
+				issue.NodeName == "Old Agent" &&
+				strings.Contains(issue.Reason, agent) {
+				named = true
+			}
+		}
+		if !named {
+			t.Errorf("no blocking diagnostic names the node and the %s agent type: %#v", agent, refused.Unsupported)
+		}
 	}
 
 	// The Tools Agent by name, and the post-1.82 graph with no selector at
