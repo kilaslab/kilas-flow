@@ -114,6 +114,11 @@ type ModelRequest struct {
 	// MaxRetries bounds how many times a refused or unreachable request is
 	// re-sent. Zero means one attempt and no retry.
 	MaxRetries int
+	// ReasoningEffort is how hard a thinking model may think — "none",
+	// "low", "medium", "high" — sent as `reasoning_effort`, which Ollama's
+	// OpenAI-compatible API also reads ("none" turns its thinking off).
+	// Empty sends nothing and leaves the provider's default.
+	ReasoningEffort string
 	// Timeout bounds one attempt, the way a provider's own timeout option
 	// does. It is a transport concern the adapter applies, not a bound on
 	// the whole conversation: an agent that takes three tool turns is three
@@ -253,6 +258,9 @@ type AgentRequest struct {
 	PresencePenalty  *float64
 	MaxTokens        int
 	MaxRetries       int
+	// ReasoningEffort goes to every model request of the run; empty sends
+	// nothing. See ModelRequest.ReasoningEffort.
+	ReasoningEffort string
 	// RequestTimeout bounds one model request, not the whole run. The
 	// runtime passes it to the model adapter, which applies it per attempt.
 	RequestTimeout time.Duration

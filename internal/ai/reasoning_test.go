@@ -195,3 +195,38 @@ func TestLeakedReasoningTokensNeverReachTheOutput(t *testing.T) {
 		}
 	}
 }
+
+// TestAReasoningEffortIsSentOnlyWhenSet: the agent's effort reaches every
+// model request as `reasoning_effort`, and an agent that never set one sends
+// no such key, so a provider that rejects it is unaffected.
+func TestAReasoningEffortIsSentOnlyWhenSet(t *testing.T) {
+	t.Parallel()
+
+	for _, effort := range []string{"none", ""} {
+		t.Run("effort="+effort, func(t *testing.T) {
+			t.Parallel()
+			var received map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				_ = json.Unmarshal(body, &received)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+			}))
+			defer server.Close()
+
+			if _, err := ai.NewLoopRuntime().Run(context.Background(), ai.AgentRequest{
+				Model:     ai.NewOpenAICompatible(server.Client(), server.URL, ""),
+				ModelName: "gemma4", Input: "hi", ReasoningEffort: effort,
+			}, nil); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			value, found := received["reasoning_effort"]
+			if effort == "" && found {
+				t.Fatalf("reasoning_effort = %#v, want no key when none was set", value)
+			}
+			if effort != "" && value != effort {
+				t.Fatalf("reasoning_effort = %#v, want %q", value, effort)
+			}
+		})
+	}
+}

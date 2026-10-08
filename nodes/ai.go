@@ -95,6 +95,7 @@ const (
 	ModelOptionPresencePenalty  = "presencePenalty"
 	ModelOptionTimeout          = "timeout"
 	ModelOptionMaxRetries       = "maxRetries"
+	ModelOptionReasoningEffort  = "reasoningEffort"
 )
 
 // samplingOptionKeys are the options that go to the provider as sampling
@@ -402,6 +403,20 @@ func chatModelNode() node.Definition {
 						Key: ModelOptionMaxRetries, Label: "Max Retries", Kind: node.PropertyNumber, Default: float64(defaultModelMaxRetries),
 						TypeOptions: &node.TypeOptions{MinValue: numberBound(0)},
 						Description: "How many times a rate-limited or failed request is sent again, with exponential backoff.",
+					},
+					// A local thinking model reasons for 10–50 s before
+					// every answer unless told otherwise; this is the only
+					// way to tell it. Sent as `reasoning_effort`, which
+					// Ollama's /v1 reads as its think setting.
+					{
+						Key: ModelOptionReasoningEffort, Label: "Reasoning Effort", Kind: node.PropertyOptions, Default: "medium",
+						Options: []node.PropertyOption{
+							{Label: "None", Value: "none"},
+							{Label: "Low", Value: "low"},
+							{Label: "Medium", Value: "medium"},
+							{Label: "High", Value: "high"},
+						},
+						Description: "How long a reasoning model may think before it answers. None turns thinking off, which makes a local thinking model many times faster.",
 					},
 				},
 			},
@@ -803,6 +818,11 @@ func executeChatModel(ctx context.Context, ir workflow.IRNode, _ workflow.NodeIn
 	// The transport options stay out of the request body: this server checks
 	// the timeout against the deployment's ceiling and performs the retries.
 	copyPresentOptions(descriptor, options, []string{ModelOptionTimeout, ModelOptionMaxRetries})
+	// A word rather than a number, so it is copied as written; absent stays
+	// absent and the provider keeps its own default.
+	if effort := strings.TrimSpace(textValue(options[ModelOptionReasoningEffort], "")); effort != "" {
+		descriptor[ModelOptionReasoningEffort] = effort
+	}
 	return workflow.NodeOutput{{{JSON: map[string]any{descriptorKey: descriptor}}}}, nil
 }
 
@@ -1110,6 +1130,7 @@ type resolvedModel struct {
 	topP             *float64
 	frequencyPenalty *float64
 	presencePenalty  *float64
+	reasoningEffort  string
 }
 
 // resolveModel performs the steps every model consumer repeats: read the
@@ -1196,6 +1217,7 @@ func (backend *modelBackend) resolveModel(ctx context.Context, nodeName string, 
 		topP:             presentNumber(descriptor, ModelOptionTopP),
 		frequencyPenalty: presentNumber(descriptor, ModelOptionFrequencyPenalty),
 		presencePenalty:  presentNumber(descriptor, ModelOptionPresencePenalty),
+		reasoningEffort:  strings.TrimSpace(textValue(descriptor[ModelOptionReasoningEffort], "")),
 	}, nil
 }
 
@@ -1367,6 +1389,7 @@ func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 			TopP:             model.topP,
 			FrequencyPenalty: model.frequencyPenalty,
 			PresencePenalty:  model.presencePenalty,
+			ReasoningEffort:  model.reasoningEffort,
 		}
 		if hasMemory && executor.memory != nil {
 			sessionID, policy, err := resolveMemorySession(ir.Name, memoryDescriptor, item, input, request, index)

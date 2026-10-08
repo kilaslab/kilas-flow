@@ -2596,3 +2596,52 @@ func TestAChatModelStreamsByDefaultAsItsDefinitionSays(t *testing.T) {
 		t.Fatalf("descriptor stream = %#v, want false when the node turned it off", descriptor["stream"])
 	}
 }
+
+// TestTheChatModelsReasoningEffortReachesTheProvider: a local thinking model
+// spent 10–50 s of hidden reasoning on every turn — 46 s for structured output
+// that took 2 s without — and the node had no way to turn it off. The option
+// goes to the provider as `reasoning_effort`, which Ollama's /v1 also reads
+// ("none" turns its thinking off).
+func TestTheChatModelsReasoningEffortReachesTheProvider(t *testing.T) {
+	t.Parallel()
+
+	executors := engine.NewRegistry()
+	if err := nodes.RegisterExecutors(executors, localPolicy(), sqlGuard(), ai.NewLoopRuntime(), nil, nil); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+	definition, _ := aiRegistry(t).Lookup(nodes.ChatModelNodeType, workflow.V(1))
+	ir := workflow.IRNode{
+		ID: "model", Name: "Local Model", Type: nodes.ChatModelNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{
+			"model": "gemma4", "baseUrl": "http://127.0.0.1:11434/v1",
+			"options": map[string]any{"reasoningEffort": "none"},
+		},
+		Definition: definition,
+	}
+	output, err := runExecutor(t, executors, nodes.ChatModelExecutorID, ir, workflow.NodeInput{}, engine.Request{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	descriptor, _ := output[0][0].JSON["$ai"].(map[string]any)
+	if descriptor["reasoningEffort"] != "none" {
+		t.Fatalf("descriptor = %#v, want the reasoning effort carried as written", descriptor)
+	}
+
+	var received map[string]any
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &received)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer provider.Close()
+
+	input := agentModelInput(provider.URL)
+	input["model"][0].JSON["$ai"].(map[string]any)["reasoningEffort"] = "none"
+	if _, err := runAgentNode(t, map[string]any{"prompt": "hi"}, input, bearerResolver(), nil); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if received["reasoning_effort"] != "none" {
+		t.Fatalf("request reasoning_effort = %#v, want the node's option sent", received["reasoning_effort"])
+	}
+}

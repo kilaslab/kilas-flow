@@ -103,7 +103,8 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 			Temperature: request.Temperature, TopP: request.TopP,
 			FrequencyPenalty: request.FrequencyPenalty, PresencePenalty: request.PresencePenalty,
 			MaxTokens: request.MaxTokens, MaxRetries: request.MaxRetries,
-			Timeout: request.RequestTimeout,
+			ReasoningEffort: request.ReasoningEffort,
+			Timeout:         request.RequestTimeout,
 		}
 		sink.Emit(Event{Kind: EventModelStarted, Iteration: iteration, Model: request.ModelName})
 

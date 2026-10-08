@@ -200,7 +200,7 @@ func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, s
 		Model: request.Model, Stream: stream,
 		Temperature: request.Temperature, TopP: request.TopP,
 		FrequencyPenalty: request.FrequencyPenalty, PresencePenalty: request.PresencePenalty,
-		MaxTokens: request.MaxTokens,
+		MaxTokens: request.MaxTokens, ReasoningEffort: request.ReasoningEffort,
 	}
 	if stream {
 		// A provider reports token usage on a streamed run only when asked to.
@@ -437,6 +437,7 @@ type chatRequest struct {
 	FrequencyPenalty *float64       `json:"frequency_penalty,omitempty"`
 	PresencePenalty  *float64       `json:"presence_penalty,omitempty"`
 	MaxTokens        int            `json:"max_tokens,omitempty"`
+	ReasoningEffort  string         `json:"reasoning_effort,omitempty"`
 	Stream           bool           `json:"stream,omitempty"`
 	StreamOptions    *streamOptions `json:"stream_options,omitempty"`
 }
