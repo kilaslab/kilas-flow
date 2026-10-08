@@ -7,9 +7,11 @@ labels:
     - n8n
     - importer
     - rag
+deps:
+    - FEAT-zm3wh2
 parent: EPIC-8rbys7
 created: "2026-09-23T01:17:54Z"
-updated: "2026-10-08T16:15:00Z"
+updated: "2026-10-08T16:37:18Z"
 ---
 
 # Description

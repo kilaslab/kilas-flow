@@ -1,6 +1,6 @@
 ---
 topic: n8n-reference
-updated: 2026-09-21T13:40:19Z
+updated: 2026-10-08T16:37:34Z
 ---
 
 # n8n-reference
@@ -10,3 +10,4 @@ updated: 2026-09-21T13:40:19Z
 - 2026-09-05: Sparse-checkout patterns in the n8n reference are cone-mode, so a pattern must name a DIRECTORY; a file path is accepted silently and matches nothing. Three such dead patterns existed (ParameterInput.vue, ParameterInputList.vue, app/components/canvas) and were deleted rather than replaced — the NDV parameter components live under features/ndv/parameters/components/ and the canvas under features/workflows/canvas, both already materialised. After any sparse-checkout change, assert every pattern resolves to at least one file. (cites: .pine/memory/n8n-reference.md)
 - 2026-09-05: The WAHA OpenAPI documents are vendored byte-for-byte at third_party/waha/ (openapi-202409.json, openapi-202502.json) with the upstream MIT LICENSE and PROVENANCE.md beside them. They are the only third-party bytes in this repository. The node-pack generator must read these vendored files, never a live WAHA server: operation and resource names in real customer workflow JSON are a pure function of these exact bytes, and the two files differ in indentation (spaces vs tabs) which must not be normalised. (cites: third_party/waha/PROVENANCE.md)
 - 2026-09-21: Cluster AI sub-nodes (embeddings with mode=cluster, like chat models) must PortsFor Inputs:nil. The compiler requires an incoming main edge whenever Inputs include main, so an imported embeddingsOpenAi with only ai_embedding out otherwise fails compile. Cluster Execute must emit one stream matching that PortsFor, not the native sequential two-port output. (cites: nodes/pgvector.go, internal/workflow/compiler.go)
+- 2026-10-08: workflow.Compile checks a graph's shape (topology, ports, agent tool names) only once no node-configuration issue exists, and an n8n import never carries credentials, so compiling an import as saved hides every shape refusal. The importer asks workflow.ShapeRefusals on a copy with stand-in credentials. Any direct workflow.Compile outside internal/workflow must take its catalogue from workflow.CatalogFor (guardrail TestEveryCompileSiteIsTenantScoped); a report-only check belongs in a workflow-package helper like IllegalCycles or ShapeRefusals. (cites: internal/workflow/shape.go)
