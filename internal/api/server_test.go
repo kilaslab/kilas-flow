@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -162,6 +163,45 @@ func TestDocsUIHasNoExternalDependencies(t *testing.T) {
 
 	if !strings.Contains(body, api.ScalarBundlePath) {
 		t.Errorf("docs page does not load the vendored bundle from %s", api.ScalarBundlePath)
+	}
+}
+
+// The vendored bundle still offers Agent Scalar ("Ask AI"), which uploads the
+// document to Scalar's servers, a "Generate MCP" link out, and a registry it
+// fetches from api.scalar.com. None of it can work under the page's CSP, so it
+// logged four violations per load and offered a chat that could never answer.
+// The page also stays dark like the app instead of opening light.
+func TestDocsUIOffersNoThirdPartyFeatures(t *testing.T) {
+	h := newTestServer(t, api.Deps{DB: stubPinger{}})
+
+	body := get(t, h, "/docs").Body.String()
+	start := strings.Index(body, "data-configuration='")
+	if start < 0 {
+		t.Fatal("docs page carries no Scalar configuration")
+	}
+	raw := body[start+len("data-configuration='"):]
+	raw = raw[:strings.Index(raw, "'")]
+
+	var configuration struct {
+		Agent              struct{ Disabled bool } `json:"agent"`
+		MCP                struct{ Disabled bool } `json:"mcp"`
+		ShowDeveloperTools string                  `json:"showDeveloperTools"`
+		DarkMode           bool                    `json:"darkMode"`
+	}
+	if err := json.Unmarshal([]byte(html.UnescapeString(raw)), &configuration); err != nil {
+		t.Fatalf("configuration %q is not JSON: %v", raw, err)
+	}
+	if !configuration.Agent.Disabled {
+		t.Error("Agent Scalar is enabled; it uploads the document to a third party")
+	}
+	if !configuration.MCP.Disabled {
+		t.Error("the MCP feature is enabled; it links out to Scalar")
+	}
+	if configuration.ShowDeveloperTools != "never" {
+		t.Errorf("showDeveloperTools = %q, want never; its Share and Deploy menus publish to Scalar", configuration.ShowDeveloperTools)
+	}
+	if !configuration.DarkMode {
+		t.Error("the docs page opens light while the app is dark")
 	}
 }
 

@@ -1,7 +1,7 @@
 ---
 id: BUG-2n4rfz
 title: /docs shows Scalar 'Ask AI', 'Generate MCP' and registry search blocked by the page CSP (4 console errors)
-status: todo
+status: done
 priority: low
 labels:
     - docs
@@ -32,9 +32,9 @@ A self-hosted reference with no third-party AI or upload affordances and no cons
 The console shows 4 errors: "Connecting to 'https://api.scalar.com/vector/registry/curated' violates … connect-src 'self'". "Ask AI" opens a chat that says "By messaging Agent Scalar your OpenAPI document will be temporarily uploaded to Scalar's servers" and can't work here. "Generate MCP" links out to Scalar. /docs is also always light while the app is dark.
 
 # Acceptance Criteria
-- [ ] The Scalar configuration hides the agent, MCP and registry features
-- [ ] There are no console errors on /docs
-- [ ] /docs follows the app's dark theme
+- [x] The Scalar configuration hides the agent, MCP and registry features
+- [x] There are no console errors on /docs
+- [x] /docs follows the app's dark theme
 
 # Implementation Plan
 
@@ -43,6 +43,13 @@ Extend the Scalar configuration to hide the AI agent, MCP and registry features 
 # Notes
 
 Related (from the audit): none
+
+# Fix (2026-10-08)
+
+`internal/api/docs.go` `docsConfiguration` now also sets `agent.disabled`, `mcp.disabled`, `showDeveloperTools: "never"` and `darkMode: true` (option names confirmed in the vendored @scalar/api-reference 1.67.0 bundle and Scalar's configuration docs). Agent Scalar was also what fetched `api.scalar.com/vector/registry/curated`. The developer toolbar that Scalar shows on localhost carried Share and Deploy menus that publish the document to Scalar, so it is off too.
+
+- Test: `TestDocsUIOffersNoThirdPartyFeatures` (internal/api/server_test.go) parses the page's configuration and checks all four settings. It failed before the change.
+- Live self-test with playwright-cli against the built binary (`make build-web`, port 18990): the console on /docs has 0 errors and 0 warnings (only Scalar's version info line), `body.dark-mode` is set, and no Ask AI, Generate MCP, Developer Tools, Share or Deploy control is on the page.
 
 # Related Files
 

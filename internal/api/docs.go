@@ -77,7 +77,15 @@ type docsData struct {
 // withDefaultFonts:false stops it requesting webfonts from fonts.scalar.com.
 // The CSP would block them anyway, but suppressing the attempt keeps the
 // browser console clean instead of logging fourteen violations per page load.
-const docsConfiguration = `{"withDefaultFonts":false,"hideModels":false}`
+//
+// agent and mcp are disabled for the same reason and a worse one: Agent
+// Scalar ("Ask AI") uploads the document to Scalar's servers and fetches a
+// registry from api.scalar.com, and "Generate MCP" links out to Scalar. None
+// of it can work under docsCSP, and a self-hosted reference must not offer it.
+// showDeveloperTools:never removes the toolbar Scalar shows on localhost, whose
+// Share and Deploy menus publish the document to Scalar's registry.
+// darkMode opens the page dark like the app; its toggle still switches.
+const docsConfiguration = `{"withDefaultFonts":false,"hideModels":false,"agent":{"disabled":true},"mcp":{"disabled":true},"showDeveloperTools":"never","darkMode":true}`
 
 // docsCSP confines the documentation page to same-origin resources.
 //
