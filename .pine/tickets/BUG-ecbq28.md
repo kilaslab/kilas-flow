@@ -8,7 +8,7 @@ labels:
     - reasoning-models
 parent: EPIC-8rbys7
 created: "2026-09-23T01:56:13Z"
-updated: "2026-09-23T01:56:13Z"
+updated: "2026-10-08T16:30:00Z"
 ---
 
 # Description
@@ -93,10 +93,10 @@ none
 
 
 # Acceptance Criteria
-- [ ] Reasoning from a tool-calling turn is preserved and sent back on the next turn (or thinking is disabled inside the loop)
-- [ ] Reasoning and channel tokens (`<think>`, `<channel|>`) never reach `output`
+- [x] Reasoning from a tool-calling turn is preserved and sent back on the next turn (or thinking is disabled inside the loop)
+- [x] Reasoning and channel tokens (`<think>`, `<channel|>`) never reach `output`
 - [ ] The chat model nodes have a Reasoning Effort / Think option, sent as `reasoning_effort` (or the provider's equivalent)
-- [ ] Reasoning is optionally surfaced as a field or event for debugging
+- [x] Reasoning is optionally surfaced as a field or event for debugging
 
 # Implementation Plan
 
@@ -109,3 +109,21 @@ Related tickets: FEAT-kwxxd0
 # Related Files
 
 # Attachments
+
+## Fix
+
+2026-10-08, three commits on the BUG-ecbq28 branch.
+
+- **AI-3, round trip.** `internal/ai/openai.go` reads `reasoning` and `reasoning_content`, streamed (`delta.*`) and not (`message.*`), into the new `ai.Message.Reasoning`. `Message.ReasoningField` (not in JSON) records which name it came under, and `wireMessageFrom` replays the thinking under that same name, exactly as received. An assistant turn with empty content is now marshalled with `content: ""` instead of no key. `appendSessionMemory` strips reasoning, so it only goes back within the run whose tool turn produced it.
+- **AI-3, leaks.** `withoutLeakedReasoning`/`splitLeakedReasoning` run on every decoded or stream-assembled turn. They cut `<think>…</think>` and gemma4's `<|channel>thought\n…<channel|>` out of the content. A closing tag with no opening (the template opened it in the prompt) counts everything before it as thinking, and an unclosed opening tag counts everything after it. The answer is trimmed. What was cut out becomes `Message.Reasoning` only when the provider sent none, and it is never sent back because it has no `ReasoningField`.
+- **AI-4, option.** `ai.ModelRequest`/`ai.AgentRequest` gain `ReasoningEffort`, which goes on the wire as `reasoning_effort,omitempty`. `kilasflow.chatModel`'s Options collection gains `reasoningEffort` (none/low/medium/high). The descriptor carries it as written, and the agent forwards it on every turn. Ollama's `/v1` maps `reasoning_effort` onto its think setting (`"none"` sets think false; checked against ollama `openai/openai.go` `ThinkingFromReasoningEffort` via Context7), so this one field covers both OpenAI-compatible endpoints and Ollama.
+- **Surfacing.** `ai.Event.Reasoning` is set on `ai.model.completed`. Since `eventDetail` marshals the whole event, it reaches the execution events. `Message.Reasoning` also appears as `reasoning` in `AgentResult.Messages`.
+
+Tests: `internal/ai/reasoning_test.go` covers both field names, streamed and not, the `content:""` key, the event, six leak shapes streamed and not, and effort sent only when set. `nodes/ai_test.go` `TestTheChatModelsReasoningEffortReachesTheProvider`. `go test ./internal/ai/... ./nodes/ ./internal/interop/n8n/` and `go vet ./internal/ai/... ./nodes/` pass.
+
+## Progress
+
+Remaining for criterion 3 (left unticked):
+- `kilasflow.lmChatOpenAi` and `kilasflow.lmChatOpenRouter` do not offer `reasoningEffort` yet. Their Options are pinned to `nodes/testdata/n8n_chat_model_options.json`, which lists it under `_unadopted`. Adopting it means recording n8n's own member (default, values, model-name gating) in that file, wiring `executeProviderChatModel` to copy it as a string the way `executeChatModel` now does, and mapping it in `internal/interop/n8n`.
+- The Basic LLM Chain (`ChainExecutor`) does not forward `model.reasoningEffort` in its `ai.ModelRequest`. This was left alone on purpose because BUG-9dw5me is rewriting that request building. It is a one-field addition once that work lands.
+- Live stream deltas (`ai.model.delta`) still carry leaked tags as they arrive. Only the assembled turn, and so `output`, is cleaned. A tag can be split across frames, so filtering deltas needs a small buffering state machine.

@@ -104,7 +104,8 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 			Temperature: request.Temperature, TopP: request.TopP,
 			FrequencyPenalty: request.FrequencyPenalty, PresencePenalty: request.PresencePenalty,
 			MaxTokens: request.MaxTokens, MaxRetries: request.MaxRetries,
-			Timeout: request.RequestTimeout,
+			ReasoningEffort: request.ReasoningEffort,
+			Timeout:         request.RequestTimeout,
 		}
 		sink.Emit(Event{Kind: EventModelStarted, Iteration: iteration, Model: request.ModelName})
 
@@ -129,7 +130,7 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 		usage := response.Usage
 		sink.Emit(Event{
 			Kind: EventModelCompleted, Iteration: iteration, Model: request.ModelName,
-			Usage: &usage,
+			Usage: &usage, Reasoning: response.Message.Reasoning,
 		})
 
 		assistant := response.Message
@@ -350,7 +351,8 @@ func appendSessionMemory(ctx context.Context, request AgentRequest, turns []Mess
 	// Only turns that can be replayed are stored. A tool result or an
 	// assistant turn asking for tools is meaningful only beside the message
 	// that introduced it, and a stored picture would be re-sent with every
-	// later turn of the conversation.
+	// later turn of the conversation. Thinking is sent back only within the
+	// run whose tool turn it produced, so it is not stored either.
 	remembered := make([]Message, 0, len(turns))
 	for _, turn := range turns {
 		if turn.Role != RoleUser && turn.Role != RoleAssistant {
@@ -360,6 +362,7 @@ func appendSessionMemory(ctx context.Context, request AgentRequest, turns []Mess
 			continue
 		}
 		turn.Images = nil
+		turn.Reasoning, turn.ReasoningField = "", ""
 		remembered = append(remembered, turn)
 	}
 	if len(remembered) == 0 {

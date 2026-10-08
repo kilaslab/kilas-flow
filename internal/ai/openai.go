@@ -93,7 +93,7 @@ func (model *OpenAICompatible) Stream(ctx context.Context, request ModelRequest,
 		return ModelResponse{}, model.statusError(response)
 	}
 
-	var content strings.Builder
+	var content, reasoning strings.Builder
 	assembled := ModelResponse{Message: Message{Role: RoleAssistant}}
 	toolCalls := map[int]*ToolCall{}
 	scanner := bufio.NewScanner(response.Body)
@@ -123,6 +123,16 @@ func (model *OpenAICompatible) Stream(ctx context.Context, request ModelRequest,
 		choice := chunk.Choices[0]
 		if choice.FinishReason != "" {
 			assembled.FinishReason = choice.FinishReason
+		}
+		// Thinking streams ahead of the answer under whichever name the
+		// provider gives it. It is assembled to be sent back with the turn,
+		// never emitted as content.
+		if text := choice.Delta.Reasoning; text != "" {
+			reasoning.WriteString(text)
+			assembled.Message.ReasoningField = wireReasoning
+		} else if text := choice.Delta.ReasoningContent; text != "" {
+			reasoning.WriteString(text)
+			assembled.Message.ReasoningField = wireReasoningContent
 		}
 		if text := choice.Delta.Content; text != "" {
 			content.WriteString(text)
@@ -154,6 +164,8 @@ func (model *OpenAICompatible) Stream(ctx context.Context, request ModelRequest,
 	}
 
 	assembled.Message.Content = content.String()
+	assembled.Message.Reasoning = reasoning.String()
+	assembled.Message = withoutLeakedReasoning(assembled.Message)
 	for index := 0; index < len(toolCalls); index++ {
 		call, found := toolCalls[index]
 		if !found || call.Name == "" {
@@ -186,7 +198,7 @@ func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, s
 		Model: request.Model, Stream: stream,
 		Temperature: request.Temperature, TopP: request.TopP,
 		FrequencyPenalty: request.FrequencyPenalty, PresencePenalty: request.PresencePenalty,
-		MaxTokens: request.MaxTokens,
+		MaxTokens: request.MaxTokens, ReasoningEffort: request.ReasoningEffort,
 	}
 	if stream {
 		// A provider reports token usage on a streamed run only when asked to.
@@ -423,6 +435,7 @@ type chatRequest struct {
 	FrequencyPenalty *float64       `json:"frequency_penalty,omitempty"`
 	PresencePenalty  *float64       `json:"presence_penalty,omitempty"`
 	MaxTokens        int            `json:"max_tokens,omitempty"`
+	ReasoningEffort  string         `json:"reasoning_effort,omitempty"`
 	Stream           bool           `json:"stream,omitempty"`
 	StreamOptions    *streamOptions `json:"stream_options,omitempty"`
 }
@@ -438,10 +451,22 @@ type wireMessage struct {
 	Name       string         `json:"name,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
+	// A reasoning model's thinking arrives under one of two names: Ollama and
+	// OpenRouter say `reasoning`, DeepSeek and vLLM `reasoning_content`. A
+	// replayed turn carries it back under the name it came in.
+	Reasoning        string `json:"reasoning,omitempty"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 	// Images never carry their own JSON: MarshalJSON folds them into the
 	// content parts, and a decoded response has none.
 	Images []string `json:"-"`
 }
+
+// The wire names a provider's thinking arrives under, as
+// Message.ReasoningField records them.
+const (
+	wireReasoning        = "reasoning"
+	wireReasoningContent = "reasoning_content"
+)
 
 // MarshalJSON writes the text-only shape unless the turn carries images, in
 // which case content becomes the part list the OpenAI API expects —
@@ -451,6 +476,15 @@ type wireMessage struct {
 func (wire wireMessage) MarshalJSON() ([]byte, error) {
 	type plain wireMessage
 	if len(wire.Images) == 0 {
+		if wire.Role == string(RoleAssistant) && wire.Content == "" {
+			// An assistant turn that only called tools is replayed with an
+			// empty content rather than none: gemma4 on Ollama, handed the
+			// turn without the key, answered the tool's result wrongly.
+			return json.Marshal(struct {
+				plain
+				Content string `json:"content"`
+			}{plain: plain(wire)})
+		}
 		return json.Marshal(plain(wire))
 	}
 	parts := make([]map[string]any, 0, len(wire.Images)+1)
@@ -479,6 +513,14 @@ func wireMessageFrom(message Message) wireMessage {
 		Name: message.Name, ToolCallID: message.ToolCallID,
 		Images: message.Images,
 	}
+	// The thinking goes back exactly as it was received, under the same
+	// name. Thinking recovered from leaked tags has no name and stays here.
+	switch message.ReasoningField {
+	case wireReasoning:
+		wire.Reasoning = message.Reasoning
+	case wireReasoningContent:
+		wire.ReasoningContent = message.Reasoning
+	}
 	for _, call := range message.ToolCalls {
 		arguments := string(call.Arguments)
 		// Arguments that never parsed are replayed as {}: Ollama refuses a
@@ -500,10 +542,39 @@ func (wire wireMessage) toMessage() Message {
 		Role: Role(wire.Role), Content: wire.Content,
 		Name: wire.Name, ToolCallID: wire.ToolCallID,
 	}
+	if wire.Reasoning != "" {
+		message.Reasoning, message.ReasoningField = wire.Reasoning, wireReasoning
+	} else if wire.ReasoningContent != "" {
+		message.Reasoning, message.ReasoningField = wire.ReasoningContent, wireReasoningContent
+	}
 	for _, call := range wire.ToolCalls {
 		message.ToolCalls = append(message.ToolCalls, ToolCall{
 			ID: call.ID, Name: call.Function.Name, Arguments: toolCallArguments(call.Function.Arguments),
 		})
+	}
+	return withoutLeakedReasoning(message)
+}
+
+// reasoningTags delimit thinking that leaked into a turn's content because
+// the provider did not parse it out: DeepSeek-style think blocks, and gemma4's
+// thought channel.
+var reasoningTags = []struct{ open, close string }{
+	{"<think>", "</think>"},
+	{"<|channel>", "<channel|>"},
+}
+
+// withoutLeakedReasoning takes leaked thinking out of a turn's content, so
+// the answer a workflow reads is the answer alone. What was taken out becomes
+// the turn's reasoning when the provider sent none of its own; it is never
+// sent back, since no provider sent it as a field.
+func withoutLeakedReasoning(message Message) Message {
+	answer, leaked, found := splitLeakedReasoning(message.Content)
+	if !found {
+		return message
+	}
+	message.Content = answer
+	if message.Reasoning == "" {
+		message.Reasoning = leaked
 	}
 	return message
 }
@@ -518,6 +589,44 @@ func toolCallArguments(text string) json.RawMessage {
 		return json.RawMessage(`{}`)
 	}
 	return json.RawMessage(text)
+}
+
+// splitLeakedReasoning separates leaked thinking from the answer. A closing
+// tag with no opening before it means the chat template opened the block in
+// the prompt — gemma4 streamed "…Let me re-run the calculation.<channel|>The
+// result is …" — so everything before it is thinking. An opening tag that
+// never closes is an answer cut off mid-thought.
+func splitLeakedReasoning(content string) (answer, reasoning string, found bool) {
+	var thoughts []string
+	for _, tag := range reasoningTags {
+		for {
+			start := strings.Index(content, tag.open)
+			end := strings.Index(content, tag.close)
+			var thought string
+			if end >= 0 && (start < 0 || start > end) {
+				thought, content = content[:end], content[end+len(tag.close):]
+			} else if start >= 0 && end > start {
+				thought = content[start+len(tag.open) : end]
+				content = content[:start] + content[end+len(tag.close):]
+			} else if start >= 0 {
+				thought, content = content[start+len(tag.open):], content[:start]
+			} else {
+				break
+			}
+			found = true
+			// gemma4 labels its channel: `<|channel>thought\n…`.
+			if rest, labelled := strings.CutPrefix(thought, "thought"); labelled && (rest == "" || rest[0] == '\n') {
+				thought = rest
+			}
+			if thought = strings.TrimSpace(thought); thought != "" {
+				thoughts = append(thoughts, thought)
+			}
+		}
+	}
+	if !found {
+		return content, "", false
+	}
+	return strings.TrimSpace(content), strings.Join(thoughts, "\n\n"), true
 }
 
 type wireToolCall struct {
@@ -553,8 +662,10 @@ type chatCompletion struct {
 type chatCompletionChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string `json:"content"`
-			ToolCalls []struct {
+			Content          string `json:"content"`
+			Reasoning        string `json:"reasoning"`
+			ReasoningContent string `json:"reasoning_content"`
+			ToolCalls        []struct {
 				Index    int    `json:"index"`
 				ID       string `json:"id"`
 				Function struct {
