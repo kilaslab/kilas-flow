@@ -29,6 +29,8 @@ export type CanvasActions = {
 	removeEdge: (edgeID: string) => void;
 	/** Opens the inline rename editor on this node (F2, or a double click). */
 	rename: (nodeID: string) => void;
+	/** Selects the node and opens its inspector (a double click, as in n8n). */
+	open: (nodeID: string) => void;
 	/** Writes back the size a sticky note was dragged to. */
 	resize: (nodeID: string, width: number, height: number) => void;
 };

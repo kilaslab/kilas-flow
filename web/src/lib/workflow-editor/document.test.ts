@@ -13,6 +13,7 @@ import {
 	resolveDefinition,
 	uniqueNodeName,
 	toWorkflowInput,
+	toggleNodesDisabled,
 	updateNodeProperty,
 	workflowDocumentEquals
 } from './document';
@@ -398,5 +399,29 @@ describe('upstreamNodeNames', () => {
 		expect(upstreamNodeNames(graph, 'a')).toEqual([]);
 		expect(upstreamNodeNames(graph, 'c')).not.toContain('Model');
 		expect(upstreamNodeNames(graph, 'c')).not.toContain('Unrelated');
+	});
+});
+
+// UXE-10: D disables the selection, the way n8n's D does.
+describe('toggleNodesDisabled', () => {
+	const node = (id: string, disabled?: boolean) => ({ id, name: id, type: 'kilasflow.set', typeVersion: 1, position: { x: 0, y: 0 }, ...(disabled === undefined ? {} : { disabled }) });
+	const doc = (...nodes: ReturnType<typeof node>[]): Document => ({ schemaVersion: 1, name: 'w', nodes, connections: [], settings: {} }) as unknown as Document;
+
+	it('disables every named node when any of them is enabled', () => {
+		const next = toggleNodesDisabled(doc(node('a'), node('b', true), node('c')), ['a', 'b']);
+		expect(next.nodes?.map((n) => n.disabled)).toEqual([true, true, undefined]);
+	});
+
+	it('enables them again when all of them are disabled, dropping the flag', () => {
+		const next = toggleNodesDisabled(doc(node('a', true), node('b', true)), ['a', 'b']);
+		expect(next.nodes?.map((n) => 'disabled' in n)).toEqual([false, false]);
+	});
+
+	it('leaves the other nodes as the same objects, and an empty selection alone', () => {
+		const start = doc(node('a'), node('b'));
+		const next = toggleNodesDisabled(start, ['a']);
+		expect(next.nodes?.[1]).toBe(start.nodes?.[1]);
+		expect(toggleNodesDisabled(start, [])).toBe(start);
+		expect(toggleNodesDisabled(start, ['missing'])).toBe(start);
 	});
 });

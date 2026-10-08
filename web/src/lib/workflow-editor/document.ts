@@ -110,63 +110,149 @@ export function resolveDefinition(
 }
 
 export function documentFromCanvas(document: Document, definitions: Definition[], validationIssues: CanvasValidationIssue[] = []): CanvasDocument {
-	const nodeIssues = new Map(validationIssues.filter((issue) => issue.nodeID).map((issue) => [issue.nodeID!, issue.message]));
-	const edgeIssues = new Map(validationIssues.filter((issue) => issue.connectionID).map((issue) => [issue.connectionID!, issue.message]));
-	const labels = new Map((document.nodes ?? []).map((node) => [node.id, node.name]));
-	const nodes = (document.nodes ?? []).map<EditorFlowNode>((workflowNode) => {
-		const definition =
-			resolveDefinition(workflowNode.type, workflowNode.typeVersion, definitions) ?? unavailableDefinition(workflowNode, document.connections ?? []);
-		// The workflow node is shared, not cloned: the draft is immutable at
-		// every mutation boundary, so the node object can never change under a
-		// component that is reading it — and deep-cloning every node here is
-		// what made one keystroke cost a full-canvas copy. Only the annotation
-		// geometry below is derived, and it is derived from the parameters.
-		const annotation = isAnnotation(definition);
-		return {
-			id: workflowNode.id,
-			type: 'workflow',
-			position: { ...workflowNode.position },
-			// A sticky note is a rectangle behind the graph, not a tile: it
-			// carries its own size and takes no part in the flow.
-			...(annotation
-				? {
-						style: `width: ${positiveSize(workflowNode.parameters?.width, 240)}px; height: ${positiveSize(workflowNode.parameters?.height, 160)}px`,
-						zIndex: -1
-					}
-				: {}),
-			data: { definition, workflowNode, validationMessage: nodeIssues.get(workflowNode.id) },
-			ariaLabel: nodeIssues.has(workflowNode.id) ? `${workflowNode.name}: ${nodeIssues.get(workflowNode.id)}` : workflowNode.name
-		};
-	});
-	const edges = (document.connections ?? []).map<EditorFlowEdge>((connection) => {
-		const validationMessage = edgeIssues.get(connection.id);
-		// An attachment carries configuration, not items. It is drawn as a dashed
-		// curve from below rather than a stepped line with an arrow, so the two
-		// connection kinds cannot be mistaken for each other at a glance.
-		const attachment = connection.kind !== 'main';
-		// Named by the nodes' names, not their ids: a screen reader announcing a
-		// connection has to say what it connects, and a UUID says nothing.
-		const from = `${labels.get(connection.source.nodeId) ?? connection.source.nodeId} ${connection.source.port}`;
-		const to = `${labels.get(connection.target.nodeId) ?? connection.target.nodeId} ${connection.target.port}`;
-		return {
-			id: connection.id,
-			type: attachment ? 'default' : 'smoothstep',
-			class: attachment ? 'kf-edge-attachment' : undefined,
-			...(attachment ? {} : { markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: 'var(--xy-edge-stroke)' } }),
-			source: connection.source.nodeId,
-			sourceHandle: connection.source.port,
-			target: connection.target.nodeId,
-			targetHandle: connection.target.port,
-			data: { connection: clone(connection), validationMessage },
-			...(validationMessage ? { style: 'stroke: var(--destructive); stroke-width: 2px' } : {}),
-			ariaLabel: `${from} to ${to}${validationMessage ? `: ${validationMessage}` : ''}`
-		};
-	});
+	const { nodeIssues, edgeIssues } = issuesByTarget(validationIssues);
+	const labels = nodeLabels(document);
+	const nodes = (document.nodes ?? []).map((workflowNode) => projectNode(workflowNode, document, definitions, nodeIssues.get(workflowNode.id)));
+	const edges = (document.connections ?? []).map((connection) => projectEdge(connection, labels, edgeIssues.get(connection.id)));
 
 	return {
 		nodes,
 		edges,
 		toDocument: (base) => documentFromFlow(base, nodes, edges)
+	};
+}
+
+/**
+ * What built each projected node's and edge's `data`, so a later projection
+ * can tell whether the object Svelte Flow holds still describes the document.
+ * Keyed by `data` because Flow copies its nodes (`{...node, measured}`) but
+ * never their data.
+ */
+const projectedFrom = new WeakMap<object, { source: WorkflowNode | Connection; definitions: Definition[] | null }>();
+
+/**
+ * documentFromCanvas for a canvas that is already on screen.
+ *
+ * A keystroke in the inspector replaces one node object in the draft, and
+ * re-projecting the rest cost a rebuild of every node — and, because Svelte
+ * Flow keys its measurements to the object it was given, a re-measure of
+ * every tile (BUG-pzkpfr). Here every node and connection the document
+ * carried over by reference keeps the very object Flow holds, measurements
+ * included; only what changed is rebuilt, and arrays in which nothing changed
+ * come back as they were.
+ *
+ * `selection` is what the editor holds selected; it is written onto the
+ * objects whose flag disagrees, and onto nothing else.
+ */
+export function reconcileCanvas(
+	held: { nodes: EditorFlowNode[]; edges: EditorFlowEdge[] },
+	document: Document,
+	definitions: Definition[],
+	validationIssues: CanvasValidationIssue[],
+	selection: { nodeIDs: ReadonlySet<string>; edgeIDs: ReadonlySet<string> }
+): { nodes: EditorFlowNode[]; edges: EditorFlowEdge[] } {
+	const { nodeIssues, edgeIssues } = issuesByTarget(validationIssues);
+	const heldNodes = new Map(held.nodes.map((node) => [node.id, node]));
+	const nodes = (document.nodes ?? []).map((workflowNode) => {
+		const message = nodeIssues.get(workflowNode.id);
+		const current = heldNodes.get(workflowNode.id);
+		const origin = current ? projectedFrom.get(current.data) : undefined;
+		const fresh =
+			current && origin && origin.source === workflowNode && origin.definitions === definitions && current.data.validationMessage === message
+				? current
+				: projectNode(workflowNode, document, definitions, message);
+		return withSelected(fresh, selection.nodeIDs.has(workflowNode.id));
+	});
+
+	const labels = nodeLabels(document);
+	const heldEdges = new Map(held.edges.map((edge) => [edge.id, edge]));
+	const edges = (document.connections ?? []).map((connection) => {
+		const message = edgeIssues.get(connection.id);
+		const current = heldEdges.get(connection.id);
+		const reusable =
+			current && projectedFrom.get(current.data!)?.source === connection && current.data?.validationMessage === message && current.ariaLabel === edgeLabel(connection, labels, message);
+		return withSelected(reusable ? current : projectEdge(connection, labels, message), selection.edgeIDs.has(connection.id));
+	});
+
+	return { nodes: sameItems(nodes, held.nodes) ? held.nodes : nodes, edges: sameItems(edges, held.edges) ? held.edges : edges };
+}
+
+function withSelected<T extends { selected?: boolean }>(item: T, selected: boolean): T {
+	return item.selected === selected ? item : { ...item, selected };
+}
+
+function sameItems<T>(next: T[], held: T[]): boolean {
+	return next.length === held.length && next.every((item, index) => item === held[index]);
+}
+
+function issuesByTarget(validationIssues: CanvasValidationIssue[]) {
+	return {
+		nodeIssues: new Map(validationIssues.filter((issue) => issue.nodeID).map((issue) => [issue.nodeID!, issue.message])),
+		edgeIssues: new Map(validationIssues.filter((issue) => issue.connectionID).map((issue) => [issue.connectionID!, issue.message]))
+	};
+}
+
+function nodeLabels(document: Document): Map<string, string> {
+	return new Map((document.nodes ?? []).map((node) => [node.id, node.name]));
+}
+
+function projectNode(workflowNode: WorkflowNode, document: Document, definitions: Definition[], validationMessage: string | undefined): EditorFlowNode {
+	const resolved = resolveDefinition(workflowNode.type, workflowNode.typeVersion, definitions);
+	const definition = resolved ?? unavailableDefinition(workflowNode, document.connections ?? []);
+	// The workflow node is shared, not cloned: the draft is immutable at
+	// every mutation boundary, so the node object can never change under a
+	// component that is reading it — and deep-cloning every node here is
+	// what made one keystroke cost a full-canvas copy. Only the annotation
+	// geometry below is derived, and it is derived from the parameters.
+	const annotation = isAnnotation(definition);
+	const data: EditorNodeData = { definition, workflowNode, validationMessage };
+	// A placeholder's ports are read off the document's connections, so it is
+	// never reused: a new wire can change them without touching the node.
+	projectedFrom.set(data, { source: workflowNode, definitions: resolved ? definitions : null });
+	return {
+		id: workflowNode.id,
+		type: 'workflow',
+		position: { ...workflowNode.position },
+		// A sticky note is a rectangle behind the graph, not a tile: it
+		// carries its own size and takes no part in the flow.
+		...(annotation
+			? {
+					style: `width: ${positiveSize(workflowNode.parameters?.width, 240)}px; height: ${positiveSize(workflowNode.parameters?.height, 160)}px`,
+					zIndex: -1
+				}
+			: {}),
+		data,
+		ariaLabel: validationMessage ? `${workflowNode.name}: ${validationMessage}` : workflowNode.name
+	};
+}
+
+function edgeLabel(connection: Connection, labels: Map<string, string>, validationMessage: string | undefined): string {
+	// Named by the nodes' names, not their ids: a screen reader announcing a
+	// connection has to say what it connects, and a UUID says nothing.
+	const from = `${labels.get(connection.source.nodeId) ?? connection.source.nodeId} ${connection.source.port}`;
+	const to = `${labels.get(connection.target.nodeId) ?? connection.target.nodeId} ${connection.target.port}`;
+	return `${from} to ${to}${validationMessage ? `: ${validationMessage}` : ''}`;
+}
+
+function projectEdge(connection: Connection, labels: Map<string, string>, validationMessage: string | undefined): EditorFlowEdge {
+	// An attachment carries configuration, not items. It is drawn as a dashed
+	// curve from below rather than a stepped line with an arrow, so the two
+	// connection kinds cannot be mistaken for each other at a glance.
+	const attachment = connection.kind !== 'main';
+	const data = { connection: clone(connection), validationMessage };
+	projectedFrom.set(data, { source: connection, definitions: null });
+	return {
+		id: connection.id,
+		type: attachment ? 'default' : 'smoothstep',
+		class: attachment ? 'kf-edge-attachment' : undefined,
+		...(attachment ? {} : { markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: 'var(--xy-edge-stroke)' } }),
+		source: connection.source.nodeId,
+		sourceHandle: connection.source.port,
+		target: connection.target.nodeId,
+		targetHandle: connection.target.port,
+		data,
+		...(validationMessage ? { style: 'stroke: var(--destructive); stroke-width: 2px' } : {}),
+		ariaLabel: edgeLabel(connection, labels, validationMessage)
 	};
 }
 
@@ -404,6 +490,29 @@ export function updateNodeSize(document: Document, nodeID: string, width: number
 	});
 	if (!found) return document;
 	return { ...document, nodes };
+}
+
+/**
+ * n8n's D: disables the named nodes, or enables them again when every one of
+ * them is already disabled. Enabling drops the flag rather than writing
+ * `false`, so a node toggled twice saves exactly as it was. Nodes not named
+ * keep their identity, which the canvas projection relies on.
+ */
+export function toggleNodesDisabled(document: Document, nodeIDs: readonly string[]): Document {
+	const named = new Set(nodeIDs);
+	const targets = (document.nodes ?? []).filter((node) => named.has(node.id));
+	if (targets.length === 0) return document;
+	const disable = targets.some((node) => !node.disabled);
+	return {
+		...document,
+		nodes: (document.nodes ?? []).map((node) => {
+			if (!named.has(node.id)) return node;
+			if (disable) return { ...node, disabled: true };
+			// eslint-disable-next-line @typescript-eslint/no-unused-vars
+			const { disabled, ...enabled } = node;
+			return enabled;
+		})
+	};
 }
 
 function rewriteNodeReferences(node: WorkflowNode, from: string, to: string): WorkflowNode {
