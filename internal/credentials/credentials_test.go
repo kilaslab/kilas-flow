@@ -544,6 +544,33 @@ func TestADatabaseCredentialRefusesToSignAnHTTPRequest(t *testing.T) {
 	}
 }
 
+// TestADatabaseCredentialFormDefaultsToAVerifiedConnection keeps the form in
+// step with sqlnode, which verifies the server's certificate when the field is
+// empty: a new credential starts on the same mode an empty one gets.
+func TestADatabaseCredentialFormDefaultsToAVerifiedConnection(t *testing.T) {
+	t.Parallel()
+
+	for id, want := range map[string]struct{ key, value string }{
+		"postgres": {"sslMode", "verify-full"},
+		"mysql":    {"tls", "true"},
+	} {
+		credentialType, _ := credentials.Default().Get(id)
+		found := false
+		for _, field := range credentialType.Fields() {
+			if field.Key != want.key {
+				continue
+			}
+			found = true
+			if field.Default != want.value {
+				t.Errorf("%s %s default = %q, want %q", id, want.key, field.Default, want.value)
+			}
+		}
+		if !found {
+			t.Errorf("%s has no %s field", id, want.key)
+		}
+	}
+}
+
 // TestRegistryRefusesDuplicatesAndUnknownSecrets keeps the registry honest.
 func TestRegistryRefusesDuplicatesAndUnknownSecrets(t *testing.T) {
 	t.Parallel()

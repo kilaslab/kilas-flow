@@ -817,9 +817,16 @@ func liveCredential(t *testing.T, env, credentialType string) *stubCredentials {
 		t.Fatalf("%s is not a URL: %v", env, err)
 	}
 	password, _ := parsed.User.Password()
+	// A throwaway server's certificate is self-signed or absent, and an empty
+	// field now means a verified connection, so the gate reads TLS off the DSN
+	// and otherwise asks for none: sslmode for PostgreSQL, tls for MySQL.
 	sslMode := parsed.Query().Get("sslmode")
 	if sslMode == "" {
 		sslMode = "disable"
+	}
+	tlsMode := parsed.Query().Get("tls")
+	if tlsMode == "" {
+		tlsMode = "false"
 	}
 	return &stubCredentials{credential: engine.Credential{
 		ID: "cred-db", Name: "Integration", Type: credentialType,
@@ -827,7 +834,7 @@ func liveCredential(t *testing.T, env, credentialType string) *stubCredentials {
 			"host": parsed.Hostname(), "port": parsed.Port(),
 			"database": strings.TrimPrefix(parsed.Path, "/"),
 			"user":     parsed.User.Username(), "password": password,
-			"sslMode": sslMode,
+			"sslMode": sslMode, "tls": tlsMode,
 		},
 	}}
 }

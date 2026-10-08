@@ -43,8 +43,8 @@ A credential type is one `credentials.Type` value:
 | `httpQueryAuth` | any fixed-query-parameter API | `name`, `value` (secret) | one query parameter, name from a field |
 | `httpCustomAuth` | n8n's Custom Auth | `json` (secret) | a JSON template merged into the request's headers and query parameters |
 | `jwtAuth` | verifying inbound JSON Web Tokens | `keyType`, `secret` (secret), `publicKey`, `privateKey` (secret), `algorithm` | none: it verifies callers, it does not sign outbound requests |
-| `postgres` | PostgreSQL | `host`, `port`, `database`, `user`, `password` (secret), `sslMode` | none: a database connection |
-| `mysql` | MySQL and MariaDB | `host`, `port`, `database`, `user`, `password` (secret), `tls` | none: a database connection |
+| `postgres` | PostgreSQL | `host`, `port`, `database`, `user`, `password` (secret), `sslMode` (empty means `verify-full`) | none: a database connection |
+| `mysql` | MySQL and MariaDB | `host`, `port`, `database`, `user`, `password` (secret), `tls` (empty means `true`, verified) | none: a database connection |
 | `sqlite` | a SQLite file on the server | `path` | none: a file, not a host |
 | `telegramApi` | Telegram Bot API | `accessToken` (secret), `baseUrl` | path placement: the Bot API puts the token in the request path |
 | `wahaApi` | a self-hosted WAHA instance | `baseUrl`, `apiKey` (secret) | one fixed header whose name the type declares |

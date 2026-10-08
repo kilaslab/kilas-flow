@@ -9,6 +9,7 @@ package sqlnode
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -370,6 +371,10 @@ func Open(ctx context.Context, driver Driver, fields map[string]string, guard Gu
 
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
+		var unverified *tls.CertificateVerificationError
+		if errors.As(err, &unverified) {
+			return nil, fmt.Errorf("connect to %s database: %s: %w", driver, unverifiedHint(driver), err)
+		}
 		return nil, fmt.Errorf("connect to %s database: %w", driver, err)
 	}
 	connection := &Connection{db: db, driver: driver, dialect: guardDialect(driver)}
@@ -621,6 +626,18 @@ func resolveBackslashRule(ctx context.Context, db *sql.DB, driver Driver, dialec
 	return dialect
 }
 
+// unverifiedHint names the field that relaxes certificate verification, for
+// the error a credential gets when the server's certificate does not verify.
+// Verification is the default, so a server with a self-signed certificate
+// that used to connect lands here, and the message is how its owner finds the
+// opt-out rather than a reason to turn TLS off altogether.
+func unverifiedHint(driver Driver) string {
+	if driver == DriverMySQL {
+		return "the server's certificate could not be verified; set TLS to skip-verify to encrypt without verifying it"
+	}
+	return "the server's certificate could not be verified; set SSL mode to require to encrypt without verifying it"
+}
+
 // postgresDSN assembles the driver's URL from credential fields and an
 // already-checked host and port, so the dialler and the DSN can never
 // disagree about the address.
@@ -628,10 +645,12 @@ func postgresDSN(fields map[string]string, host, port string) string {
 	values := url.Values{}
 	sslMode := strings.TrimSpace(fields["sslMode"])
 	if sslMode == "" {
-		// Defaulting to require rather than disable: a workflow database is
-		// usually remote, and silently sending credentials in the clear is not
-		// a default anyone would choose deliberately.
-		sslMode = "require"
+		// verify-full, not require: require encrypts to whoever answers, so
+		// anyone on the path can present a certificate of their own and read
+		// the password off the connection. A workflow database is usually
+		// remote, which is exactly where that matters. require, disable and
+		// the rest stay available, but only when the credential says so.
+		sslMode = "verify-full"
 	}
 	values.Set("sslmode", sslMode)
 
@@ -675,10 +694,14 @@ func mysqlDSN(fields map[string]string, host, port string) (string, error) {
 		// early and everything after is read as the driver's own grammar.
 		return "", fmt.Errorf("%w: a MySQL host must not contain any of ( ) ? & / @", ErrForbiddenTarget)
 	}
-	parameters := "?parseTime=true"
-	if tls := strings.TrimSpace(fields["tls"]); tls != "" {
-		parameters += "&tls=" + url.QueryEscape(tls)
+	// TLS with the certificate verified unless the credential says otherwise:
+	// the driver's own default is no TLS at all, which sends the password in
+	// the clear. false, skip-verify and preferred remain explicit choices.
+	tlsMode := strings.TrimSpace(fields["tls"])
+	if tlsMode == "" {
+		tlsMode = "true"
 	}
+	parameters := "?parseTime=true&tls=" + url.QueryEscape(tlsMode)
 	return fmt.Sprintf("%s:%s@tcp(%s)/%s%s",
 		user, fields["password"], net.JoinHostPort(host, port),
 		database, parameters), nil

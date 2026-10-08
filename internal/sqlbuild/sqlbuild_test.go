@@ -644,10 +644,13 @@ func openLive(t *testing.T, env string, driver sqlnode.Driver) *sqlnode.Connecti
 	password, _ := parsed.User.Password()
 	endpoint := parsed.Hostname() + ":" + parsed.Port()
 	guard := sqlnode.Guard{Policy: safehttp.Policy{AllowedPrivateEndpoints: []string{endpoint}}}
+	// TLS off for both drivers: an empty field means a verified connection,
+	// which a throwaway server cannot offer.
 	connection, err := sqlnode.Open(context.Background(), driver, map[string]string{
 		"host": parsed.Hostname(), "port": parsed.Port(),
 		"database": strings.TrimPrefix(parsed.Path, "/"),
-		"user":     parsed.User.Username(), "password": password, "sslMode": "disable",
+		"user":     parsed.User.Username(), "password": password,
+		"sslMode": "disable", "tls": "false",
 	}, guard)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
