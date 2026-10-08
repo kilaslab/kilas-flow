@@ -284,11 +284,49 @@ func TestOpenAIChatModelReportsTheOptionsItCannotCarry(t *testing.T) {
 	t.Parallel()
 
 	result := importFixture(t, providerModelFixture("@n8n/n8n-nodes-langchain.lmChatOpenAi", 1.2,
-		`{"model": {"__rl": true, "mode": "list", "value": "gpt-4o-mini"}, "options": {"temperature": 0.1, "reasoningEffort": "low"}}`))
-	if issue, found := issueOn(result, "options.reasoningEffort"); !found || issue.Severity != n8n.SeverityDropped {
-		t.Errorf("reasoningEffort issue = %+v (found %v), want dropped", issue, found)
+		`{"model": {"__rl": true, "mode": "list", "value": "gpt-4o-mini"}, "options": {"temperature": 0.1, "responsesApiEnabled": true}}`))
+	if issue, found := issueOn(result, "options.responsesApiEnabled"); !found || issue.Severity != n8n.SeverityDropped {
+		t.Errorf("responsesApiEnabled issue = %+v (found %v), want dropped", issue, found)
 	}
 	if _, found := issueOn(result, "options.temperature"); found {
 		t.Error("temperature was reported, but it is carried")
+	}
+}
+
+// TestOpenAIChatModelCarriesItsReasoningEffort: the provider nodes offer
+// n8n's Reasoning Effort under the same name, so an imported effort reaches
+// the model rather than being reported as dropped, and goes back out on export.
+func TestOpenAIChatModelCarriesItsReasoningEffort(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, providerModelFixture("@n8n/n8n-nodes-langchain.lmChatOpenAi", 1.2,
+		`{"model": {"__rl": true, "mode": "list", "value": "gpt-5-mini"}, "options": {"reasoningEffort": "low"}}`))
+	if issue, found := issueOn(result, "options.reasoningEffort"); found {
+		t.Errorf("reasoningEffort reported as %+v, but it is carried", issue)
+	}
+	carried := false
+	for _, imported := range result.Document.Nodes {
+		if imported.Type != "kilasflow.lmChatOpenAi" {
+			continue
+		}
+		options, _ := imported.Parameters["options"].(map[string]any)
+		carried = options["reasoningEffort"] == "low"
+	}
+	if !carried {
+		t.Fatalf("imported nodes = %+v, want options.reasoningEffort low on the OpenAI model", result.Document.Nodes)
+	}
+
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	for _, candidate := range exported.Document.Nodes {
+		if candidate.Name != "Model" {
+			continue
+		}
+		options, _ := candidate.Parameters["options"].(map[string]any)
+		if options["reasoningEffort"] != "low" {
+			t.Errorf("exported options = %#v, want reasoningEffort low back on n8n's OpenAI node", options)
+		}
 	}
 }

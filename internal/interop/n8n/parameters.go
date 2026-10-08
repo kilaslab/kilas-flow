@@ -5063,6 +5063,10 @@ var n8nChatModelOptionKeys = []string{
 	"presencePenalty", "temperature", "timeout", "topP",
 }
 
+// n8nReasoningEffortOption is the one word-valued option the provider chat
+// models share with n8n's OpenAI node, under the same name on both sides.
+const n8nReasoningEffortOption = "reasoningEffort"
+
 // openAICompatibleProvider is one n8n chat-model node whose provider publishes
 // an OpenAI-compatible endpoint, so the node is a model name, a base URL and
 // the same sampling options, and the mapping costs one table entry rather
@@ -5418,6 +5422,11 @@ func chatModelToKilas(node Node, defaultModel string) (map[string]any, []Unsuppo
 			carried[key] = value
 		}
 	}
+	// A word, so it is not among the numeric keys. n8n declares it on its
+	// OpenAI node only; both provider nodes here carry it under the same name.
+	if effort := stringParameter(options, n8nReasoningEffortOption); effort != "" {
+		carried[n8nReasoningEffortOption] = effort
+	}
 	if len(carried) > 0 {
 		parameters["options"] = carried
 	}
@@ -5438,7 +5447,8 @@ func chatModelToKilas(node Node, defaultModel string) (map[string]any, []Unsuppo
 	// Anything else in the collection is named, not lost quietly.
 	leftovers := make([]string, 0)
 	for key := range options {
-		if !slices.Contains(n8nChatModelOptionKeys, key) && key != "baseURL" && key != "responseFormat" {
+		if !slices.Contains(n8nChatModelOptionKeys, key) && key != "baseURL" && key != "responseFormat" &&
+			key != n8nReasoningEffortOption {
 			leftovers = append(leftovers, key)
 		}
 	}
@@ -5525,6 +5535,20 @@ func chatModelToN8N(node workflow.Node, asLocator bool, defaultBaseURL string) (
 		for _, key := range n8nChatModelOptionKeys {
 			if value, ok := numberParameter(stored, key); ok {
 				options[key] = value
+			}
+		}
+		if effort := stringParameter(stored, n8nReasoningEffortOption); effort != "" {
+			// n8n's OpenAI node reads it; its OpenRouter node has no such
+			// option, so there the effort is named rather than written into a
+			// collection n8n's editor would not show.
+			if asLocator {
+				options[n8nReasoningEffortOption] = effort
+			} else {
+				lossy = append(lossy, Lossy{
+					Severity: SeverityLossy, Field: "options." + n8nReasoningEffortOption,
+					Reason: fmt.Sprintf("this model was given a reasoning effort of %q. n8n's OpenRouter Chat Model has no "+
+						"Reasoning Effort option, so the export leaves it out and the model uses its own default.", effort),
+				})
 			}
 		}
 	}
