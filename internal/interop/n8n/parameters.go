@@ -147,16 +147,15 @@ func setToKilas(node Node) (map[string]any, []Unsupported) {
 					continue
 				}
 				identifier, _ := fields["id"].(string)
+				declared := assignmentTypeOf(fields["type"])
 				if assignmentTypeIsNull(fields["type"]) {
-					issues = append(issues, Unsupported{
-						Field: fmt.Sprintf("assignments.assignments[%d].type", index),
-						Reason: "this field was assigned n8n's null type, which this server has no type " +
-							"for; it is carried as a string assignment holding null, which writes the " +
-							"same value",
-					})
+					var issue Unsupported
+					declared, issue = nullAssignmentType(fields["value"])
+					issue.Field = fmt.Sprintf("assignments.assignments[%d].type", index)
+					issues = append(issues, issue)
 				}
 				entries = append(entries, assignmentEntry(node, index, identifier, name,
-					assignmentTypeOf(fields["type"]), fromN8NValue(fields["value"])))
+					declared, fromN8NValue(fields["value"])))
 			}
 		}
 	}
@@ -366,24 +365,62 @@ func assignmentTypeOf(declared any) string {
 	case property.AssignmentString, property.AssignmentNumber, property.AssignmentBoolean,
 		property.AssignmentArray, property.AssignmentObject:
 		return name
-	case "null":
-		// n8n's null assignment type. This server has no such type, and a
-		// string row holding nil *is* null once the executor stops turning nil
-		// into "" — so the row is carried as a string assignment whose value is
-		// null, which is the same field value n8n writes. Named as lossy rather
-		// than done quietly: the editor shows the type as `string`, and a user
-		// comparing the two nodes should know why.
-		return string(property.AssignmentString)
 	default:
+		// n8n's `null` type lands here too; nullAssignmentType decides how
+		// those rows are carried instead.
 		return string(property.AssignmentString)
 	}
 }
 
-// assignmentTypeIsNull reports n8n's null assignment type, which this server
-// carries as a string row holding null.
+// assignmentTypeIsNull reports n8n's null assignment type.
 func assignmentTypeIsNull(declared any) bool {
 	name, _ := declared.(string)
 	return strings.TrimSpace(name) == "null"
+}
+
+// nullAssignmentType decides how a row of n8n's `null` assignment type is
+// carried, and says so.
+//
+// n8n has no conversion for that type: its Set writes the value exactly as it
+// arrives, so the `{}` template 5170 stores under it comes out as an object.
+// This server has no such type. Carrying the row as a string, as it used to,
+// wrote the text "{}" while the report claimed the row wrote null.
+//
+// A literal is carried as the type that already holds it unchanged, which
+// writes the same value and gives the editor a control that fits. An
+// expression's result is not known until it runs, so its row declares no type
+// at all: the executor writes an untyped row as it arrives, which is n8n's
+// behaviour exactly, and the exporter writes it back as `null`.
+func nullAssignmentType(value any) (string, Unsupported) {
+	const prefix = "this field was assigned n8n's null type, which writes its value without converting it; " +
+		"this server has no such type, so "
+	if text, isText := value.(string); !isText || !strings.HasPrefix(text, "=") {
+		if declared := literalAssignmentType(value); declared != "" {
+			return declared, Unsupported{Reason: prefix + fmt.Sprintf(
+				"it is carried as an assignment of type %q, which writes the same value", declared)}
+		}
+	}
+	return "", Unsupported{Reason: prefix + "the row is carried with no declared type, which also writes the value " +
+		"as it arrives; the editor shows the row as a string, and saving the node's fields there makes it one"}
+}
+
+// literalAssignmentType is the assignment type whose run-time reading leaves
+// this literal exactly as it is, or "" for null, which every type writes as
+// null anyway.
+func literalAssignmentType(value any) string {
+	switch value.(type) {
+	case map[string]any:
+		return string(property.AssignmentObject)
+	case []any:
+		return string(property.AssignmentArray)
+	case float64, int, json.Number:
+		return string(property.AssignmentNumber)
+	case bool:
+		return string(property.AssignmentBoolean)
+	case string:
+		return string(property.AssignmentString)
+	}
+	return ""
 }
 
 // setToN8N writes the rows back in the order and with the types they carry.
@@ -422,7 +459,9 @@ func setToN8N(node workflow.Node) (map[string]any, []Lossy) {
 		}
 		declared, _ := fields["type"].(string)
 		if declared == "" {
-			declared = string(property.AssignmentString)
+			// A row with no declared type is written as it arrives, which is
+			// what n8n's `null` type does; it is also how such a row came in.
+			declared = "null"
 		}
 		entries = append(entries, map[string]any{
 			"id":    identifier,

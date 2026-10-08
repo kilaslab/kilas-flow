@@ -378,6 +378,8 @@ func TestSetWritesN8nsValuesForEmptyAndTextualInput(t *testing.T) {
 		"a missing number is null":  {map[string]any{"name": "n", "type": "number", "value": absent}, nil},
 		"a missing boolean is null": {map[string]any{"name": "n", "type": "boolean", "value": absent}, nil},
 		"a missing string is null":  {map[string]any{"name": "n", "type": "string", "value": absent}, nil},
+		// A row with no declared type (how n8n's null type is carried) too.
+		"a missing untyped value is null": {map[string]any{"name": "n", "value": absent}, nil},
 		// Text that carries the value is read as the declared type.
 		"text that is a number":    {map[string]any{"name": "n", "type": "number", "value": "12"}, float64(12)},
 		"text that is a fraction":  {map[string]any{"name": "n", "type": "number", "value": "7.5"}, float64(7.5)},
