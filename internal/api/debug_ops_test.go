@@ -513,3 +513,30 @@ func mustJSON(t *testing.T, value any) json.RawMessage {
 	}
 	return encoded
 }
+
+// get → edit → validate is the loop the CLI is built for, and the document
+// get returns carries the workflow's id. Validate refused it ("unexpected
+// property body.id"), so an agent had to know to strip a field before asking
+// whether its edit was sound (BUG-6gkd12). The id is accepted and ignored: a
+// save goes to the workflow its path names, never to one the body claims.
+func TestADocumentReadBackFromGetValidatesAsItIs(t *testing.T) {
+	server, keys := newAuthenticatedAPI(t, "acme")
+	key := keys["acme"]
+	id := server.createWorkflowAs(t, key, "Round trip")
+
+	read := server.callJSON(t, http.MethodGet, "/api/v1/workflows/"+id, key, nil, http.StatusOK)
+	latest, _ := read["latestVersion"].(map[string]any)
+	document, _ := latest["document"].(map[string]any)
+	if document["id"] != id {
+		t.Fatalf("latestVersion.document = %#v, want the document get returns, id included", document)
+	}
+
+	answer := server.callJSON(t, http.MethodPost, "/api/v1/workflows/validate", key, document, http.StatusOK)
+	if answer["valid"] != true {
+		t.Errorf("validate(the document get returned) = %#v, want valid", answer)
+	}
+	saved := server.callJSON(t, http.MethodPut, "/api/v1/workflows/"+id, key, document, http.StatusOK)
+	if saved["id"] != id {
+		t.Errorf("saving the read-back document = %#v, want the same workflow", saved)
+	}
+}

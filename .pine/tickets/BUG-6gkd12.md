@@ -92,7 +92,7 @@ none
 - [ ] Node `notes`/`notesInFlow` are part of the canonical node and round-trip
 - [ ] Workflow `settings.executionOrder` is exported; tags round-trip
 - [ ] A node's authored `typeVersion` is kept when the translator can write it (If ≥ 2.2 is not downgraded)
-- [ ] The document returned by `workflow get` passes `workflow validate` unchanged (`id` is accepted and ignored)
+- [x] The document returned by `workflow get` passes `workflow validate` unchanged (`id` is accepted and ignored)
 
 # Implementation Plan
 
@@ -105,3 +105,10 @@ Related tickets: BUG-gaavr5
 # Related Files
 
 # Attachments
+
+## Progress (2026-10-08)
+
+Done, TPL-15: `workflowDocumentInput` (internal/api/handlers/workflows.go) accepts `id` and never reads it, because the workflow a request acts on is the one its path names. The document `GET /workflows/{id}` returns now validates and saves unchanged. `TestADocumentReadBackFromGetValidatesAsItIs` (internal/api/debug_ops_test.go) failed with the ticket's `unexpected property body.id` first. The web client model and SDK types are regenerated; the API reference is unchanged.
+
+Open, TPL-12: node `notes`/`notesInFlow` in the canonical node, export of `settings.executionOrder` and tags, and keeping an authored `typeVersion` (If ≥ 2.2) on export. The status stays todo for these.
+

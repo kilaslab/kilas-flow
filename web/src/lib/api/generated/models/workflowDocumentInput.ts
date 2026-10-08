@@ -16,6 +16,8 @@ export interface WorkflowDocumentInput {
   baseVersionId?: string;
   /** @nullable */
   connections: Connection[] | null;
+  /** Ignored. The workflow a request acts on is the one its path names; accepted so a document read back from get can be sent unchanged */
+  id?: string;
   name: string;
   /** @nullable */
   nodes: Node[] | null;
