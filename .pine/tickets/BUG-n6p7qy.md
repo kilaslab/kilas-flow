@@ -9,7 +9,7 @@ labels:
     - subworkflow
 parent: EPIC-8rbys7
 created: "2026-09-23T01:56:13Z"
-updated: "2026-09-23T01:56:13Z"
+updated: "2026-10-08T15:59:05Z"
 ---
 
 # Description
@@ -85,8 +85,8 @@ BUG-6jvcs5 (done) introduced this wording for the inactive-target case only.
 
 
 # Acceptance Criteria
-- [ ] The tool schema comes from the trigger's `workflowInputs` (names and types), with a per-field model/fixed choice in the UI
-- [ ] "not active" is used only when the lookup failed; a runtime failure returns "the sub-workflow failed: <error>"
+- [ ] The tool schema comes from the trigger's `workflowInputs` (names and types), with a per-field model/fixed choice in the UI (schema derivation done; the per-field choice exists only as "a key written in Workflow inputs is fixed", there is no NDV toggle yet, see Progress)
+- [x] "not active" is used only when the lookup failed; a runtime failure returns "the sub-workflow failed: <error>"
 
 # Implementation Plan
 
@@ -99,3 +99,47 @@ Related tickets: BUG-6jvcs5, BUG-tcqkad
 # Related Files
 
 # Attachments
+
+## Fix
+
+**Root cause.**
+- AI-6: `workflowTool.Definition` built its schema only from `$fromAI` calls, and fell back to `{input: object}` otherwise. Nothing on the runtime side could read another workflow's trigger without running it, so the tool never knew what its target declared.
+- AI-7: `workflowTool.Invoke` wrapped every `InvokeWorkflow` error in the "not active … tell the user the tool is unavailable" text. The engine returned a child's run failure as a plain `fmt.Errorf("sub-workflow %q failed: %w")`, so a caller could not tell it from a lookup failure.
+
+**Change.**
+- `internal/engine/runner.go`: new `SubworkflowError{WorkflowID, Err}`. Its text is the same `sub-workflow "…" failed: …` as before, so traces and the Execute Sub-workflow node read the same. New optional `WorkflowDescriber` interface: `SubworkflowTrigger(ctx, parent, workflowID) (workflow.Node, bool, error)`.
+- `internal/engine/service.go`: `invokeWorkflow` returns `*SubworkflowError` when the child ran and failed. `Service.SubworkflowTrigger` reads the target's trigger, using the same tenant clause and active revision a call would use, so an inactive target reports `repository.ErrNotFound`. `ExecutionStore` gains `ActiveDocument`.
+- `internal/repository/executions.go`: the active-revision lookup moved out of `StartChild` into `activeCallableVersion`. `StartChild` and the new `ActiveDocument` both use it.
+- `nodes/ai.go`:
+  - `workflowToolFrom` (now given the agent's ctx) reads the target's declared inputs once per agent run via `declaredWorkflowInputs`. This happens only when `workflowId` is fixed in the node, not when it is an expression. A target that cannot be read declares nothing, and the call itself reports why.
+  - `Definition` offers each declared input as a typed property (string/number/boolean/object; array with `items: {}`; any untyped), marked required, merged with any `$fromAI` properties (a `$fromAI` key of the same name wins).
+  - The per-field model/fixed choice: a key written in Workflow inputs is fixed and not offered. Workflow inputs written as one expression fix every field. With no declared inputs and no `$fromAI`, the tool still offers `{input: object}`.
+  - The Workflow inputs description says this.
+  - `workflowToolFailure` words a failure by cause:
+    - `*engine.SubworkflowError` → `node "…": the sub-workflow "…" failed: <child error>`
+    - `repository.ErrNotFound` → the existing "not active" text
+    - anything else (cycle, depth) → passed on as it is.
+- Not changed: the trigger still does not enforce its declared fields (its own doc says they are "never a filter"), and the criteria do not ask for it.
+
+**Tests.**
+- `internal/engine/subworkflow_test.go` `TestACallerCanReadATargetsInputsAndTellALookupFailureFromAFailedRun`. Through a real service and SQLite, it checks that:
+  - the runtime's invoker describes a target's trigger
+  - an inactive target is a not-found, both when described and when called
+  - a child that fails is a `*SubworkflowError` carrying the child's error, with the old wording.
+- `nodes/ai_tools_test.go` `TestWorkflowToolOffersTheSubworkflowsDeclaredInputs`. It checks that:
+  - `tempC`/`roundTo` are offered as required numbers, `unit` (fixed in Workflow inputs) is not offered, and there is no `input` object
+  - a passthrough target keeps `{input: object}`
+  - the sub-workflow receives `{tempC: 37, roundTo: 1, unit: "F"}`.
+- `nodes/ai_tools_test.go` `TestWorkflowToolWordsAFailedCallByItsCause`. A failed run reaches the model as `the sub-workflow "wf_child" failed: execute node "set": …` with no "not active"/"unavailable" in it. A not-found still says "not active".
+- `go test ./internal/ai/... ./nodes/... ./internal/engine/... ./internal/repository/...` pass, and `go vet ./...` is clean.
+
+## Progress
+
+Criterion 2 is done. For criterion 1, the backend half is done: the schema comes from the trigger's declared names and types. A per-field model/fixed choice also exists, but only through the Workflow inputs JSON: a key written there is fixed, and a key left out is the model's.
+
+Left: the NDV toggle per field ("defined by model" / fixed) that the finding suggests. The editor already has a resource-mapper control (`web/src/lib/workflow-editor/resource-mapper.ts`, `node.PropertyResourceMapper`), and n8n's Workflow Tool v2 stores `workflowInputs` in that shape (`{mappingMode, value, schema}`). Building the toggle means three things:
+1. Turn `workflowInputs` into a resource mapper whose schema loader lists the selected workflow's trigger fields.
+2. Add a per-column "let the model define" switch to that control, stored as a `$fromAI` value the way n8n does.
+3. Accept both the old plain-JSON shape and the mapper shape in `modelDefinedInputs` / `workflowToolInput`.
+
+That is frontend and storage-shape work, outside this backend fix.

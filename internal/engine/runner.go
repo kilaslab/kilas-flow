@@ -42,6 +42,38 @@ type WorkflowInvoker interface {
 	InvokeWorkflow(ctx context.Context, parent ExecutionContext, call WorkflowCall) (WorkflowCallResult, error)
 }
 
+// WorkflowDescriber reads the trigger another workflow of the same tenant
+// starts from when it is called, so a caller can learn what it expects before
+// calling it: an agent's Workflow Tool offers the model the inputs the target
+// declares instead of an open object the model has to guess the names for.
+//
+// Optional beside WorkflowInvoker rather than part of it, because only that
+// tool reads it. False with no error means the target starts from no
+// sub-workflow trigger of its own; a target that is not active reports
+// repository.ErrNotFound, the same refusal a call to it gets.
+type WorkflowDescriber interface {
+	SubworkflowTrigger(ctx context.Context, parent ExecutionContext, workflowID string) (workflow.Node, bool, error)
+}
+
+// SubworkflowError is a sub-workflow that was found and ran, and failed.
+//
+// Typed so a caller can tell it from a call that never started — a target that
+// is not active, a cycle, the depth limit — which is the author's to fix. This
+// one may be the caller's own input: an agent hands the model the child's
+// error so it can retry with other arguments rather than give up.
+type SubworkflowError struct {
+	WorkflowID string
+	Err        error
+}
+
+func (failure *SubworkflowError) Error() string {
+	// Named with the workflow, because "node X failed" inside a sub-workflow
+	// reads as a failure of the caller otherwise.
+	return fmt.Sprintf("sub-workflow %q failed: %v", failure.WorkflowID, failure.Err)
+}
+
+func (failure *SubworkflowError) Unwrap() error { return failure.Err }
+
 // ExecutionContext is the identity a node may read: the `$execution`
 // expression root exposes ID, Mode and the resume links, while tenant and
 // workflow are available to executors that need to scope storage, such as
