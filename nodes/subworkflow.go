@@ -98,6 +98,11 @@ func executeWorkflowNode() node.Definition {
 		SharedSettings: sharedSettings(),
 		ExecutorID:     ExecuteWorkflowExecutorID,
 		Validate:       validateExecuteWorkflowConfiguration,
+		// "All items", the default, is one call with the whole batch: split
+		// into one-item calls to tolerate failures item by item, the workflow
+		// would run once per item and see a batch of one each time. "Each
+		// item" reports each item's outcome itself.
+		WholeBatch: true,
 	}
 }
 
@@ -221,23 +226,43 @@ func executeExecuteWorkflow(ctx context.Context, ir workflow.IRNode, input workf
 		return workflow.NodeOutput{produced}, nil
 	}
 
+	// One call per item. The node is whole-batch, so a node that continues on
+	// failure goes on past a failed item here and reports every item's
+	// outcome, as n8n does inside its item loop; the runner routes the failed
+	// ones. Without tolerance the first failure fails the node.
 	out := make([]workflow.Item, 0, len(items))
+	var outcomes engine.ItemOutcomes
+	failed := false
 	for index, item := range items {
-		perItem, err := expression.Resolve(ir.Parameters, expressionContext(item, input, request, index))
-		if err != nil {
-			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
-		}
-		produced, err := callSubworkflow(ctx, ir, request, perItem, projectSubworkflowInput(perItem, []workflow.Item{item}), wait)
-		if err != nil {
-			return nil, fmt.Errorf("node %q: item %d: %w", ir.Name, index+1, err)
-		}
-		if !wait {
-			out = append(out, item)
-			continue
+		produced, err := callSubworkflowItem(ctx, ir, input, request, item, index, wait)
+		if err != nil && !request.TolerateItemFailures {
+			return nil, err
 		}
 		out = append(out, produced...)
+		outcomes = append(outcomes, engine.ItemOutcome{Items: produced, Err: err})
+		failed = failed || err != nil
+	}
+	if failed {
+		return nil, outcomes
 	}
 	return workflow.NodeOutput{out}, nil
+}
+
+// callSubworkflowItem runs the called workflow for one item, resolving the
+// node's parameters against it. Fire and forget passes the item through.
+func callSubworkflowItem(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request, item workflow.Item, index int, wait bool) ([]workflow.Item, error) {
+	perItem, err := expression.Resolve(ir.Parameters, expressionContext(item, input, request, index))
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+	}
+	produced, err := callSubworkflow(ctx, ir, request, perItem, projectSubworkflowInput(perItem, []workflow.Item{item}), wait)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: item %d: %w", ir.Name, index+1, err)
+	}
+	if !wait {
+		return []workflow.Item{item}, nil
+	}
+	return produced, nil
 }
 
 // mappedSubworkflowItems evaluates the declared input fields per incoming item.

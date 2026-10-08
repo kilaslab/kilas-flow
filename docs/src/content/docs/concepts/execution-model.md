@@ -204,6 +204,14 @@ deliberately *not* passed through unchanged — a downstream node has to be able
 tell a tolerated failure from a success, and identical items would make that
 impossible.
 
+To get there, a tolerant node runs one item at a time, so one failing item does
+not discard the others. A node whose answer depends on the whole batch is never
+split this way. Aggregate, Summarize, Limit, Remove Duplicates, Sort, Respond to
+Webhook, the Code nodes and Execute Workflow each run as one call and give the
+same output with `continueOnFail` as without it. A failure there belongs to the
+whole call. The per-item modes (the Code nodes' **Run Once for Each Item**,
+Execute Workflow's **Each Item**) still continue past a failed item.
+
 A node whose code failed while running its whole batch as one call — the Code
 node in **Run Once for All Items** mode — emits a single error item for that
 call instead, as n8n's Code node does, so the node after it runs once; the
