@@ -129,7 +129,7 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 		usage := response.Usage
 		sink.Emit(Event{
 			Kind: EventModelCompleted, Iteration: iteration, Model: request.ModelName,
-			Usage: &usage,
+			Usage: &usage, Reasoning: response.Message.Reasoning,
 		})
 
 		assistant := response.Message

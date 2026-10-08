@@ -84,16 +84,29 @@ func TestReasoningFromAToolTurnIsSentBackOnTheNextTurn(t *testing.T) {
 				defer server.Close()
 
 				calculator := &fakeTool{name: "calculator", result: `{"result":7006561}`}
+				sink, events := collect()
 				result, err := ai.NewLoopRuntime().Run(context.Background(), ai.AgentRequest{
 					Model:     ai.NewOpenAICompatible(server.Client(), server.URL, ""),
 					ModelName: "gemma4", Input: "what is 1234*5678 minus 91?",
 					Tools: []ai.Tool{calculator}, Stream: stream,
-				}, nil)
+				}, sink)
 				if err != nil {
 					t.Fatalf("Run() error = %v", err)
 				}
 				if result.Output != "The result is 7006561." {
 					t.Fatalf("output = %q, want the answer", result.Output)
+				}
+				// The thinking is billed in the usage but was visible
+				// nowhere; the completed turn's event carries it for
+				// debugging.
+				var surfaced string
+				for _, event := range *events {
+					if event.Kind == ai.EventModelCompleted && event.Iteration == 1 {
+						surfaced = event.Reasoning
+					}
+				}
+				if surfaced != "Multiply first, then subtract." {
+					t.Errorf("model completed event reasoning = %q, want the turn's thinking", surfaced)
 				}
 
 				sent := requests()

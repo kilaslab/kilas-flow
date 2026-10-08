@@ -204,6 +204,9 @@ type Event struct {
 	Tool      string `json:"tool,omitempty"`
 	// Delta carries streamed content for EventModelDelta.
 	Delta string `json:"delta,omitempty"`
+	// Reasoning carries a thinking model's reasoning for EventModelCompleted.
+	// It is billed in the usage and otherwise visible nowhere.
+	Reasoning string `json:"reasoning,omitempty"`
 	// Detail carries tool arguments or results, already redacted by the caller
 	// that publishes it.
 	Detail json.RawMessage `json:"detail,omitempty"`
