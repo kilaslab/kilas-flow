@@ -26,13 +26,14 @@
     {"name": "maxTokens", "type": "number", "default": -1},
     {"name": "maxRetries", "type": "number", "default": 2},
     {"name": "presencePenalty", "type": "number", "default": 0, "minValue": -2, "maxValue": 2},
+    {"name": "reasoningEffort", "type": "options", "default": "medium", "values": ["low", "medium", "high"], "declaredOn": ["lmChatOpenAi"], "shownWhenModelMatches": "(^o1([-\\d]+)?$)|(^o[3-9].*)|(^gpt-5.*)", "sentAs": "reasoning_effort, only when low, medium or high"},
     {"name": "temperature", "type": "number", "default": 0.7, "minValue": 0, "maxValue": 2},
     {"name": "topP", "type": "number", "default": 1, "minValue": 0, "maxValue": 1}
   ],
+  "_reasoningEffortNote": "Adopted 2026-10-08 (BUG-ecbq28). n8n declares it on lmChatOpenAi only, shown only for a model name matching `shownWhenModelMatches`. This server offers it on both provider nodes, unconditionally, and adds `none` to n8n's three values, because a local or routed thinking model is where the effort matters most and the model name cannot be checked against a gateway's catalogue. Absent stays absent: it is sent only when the user adds it.",
   "_unadopted": {
     "responseFormat": "n8n sends `response_format: {type}` as a model kwarg. This server has no JSON-mode plumbing through ai.ModelRequest yet, and declaring an option that is collected and never sent would be worse than not offering it.",
     "baseURL": "an option on n8n's OpenAI node for versions below 1.1 only, hidden at 1.1 and above. This server carries the address as a top-level `baseUrl` parameter instead, because the model list loader reads parameters and cannot see a collection member or a credential field.",
-    "reasoningEffort": "gated on a model-name regex and only meaningful for o-series and gpt-5 models; p5-4 does not need it.",
     "responsesApiEnabled": "n8n 1.3+ switches to OpenAI's Responses API. That is a different wire protocol, not an option on this one."
   }
 }

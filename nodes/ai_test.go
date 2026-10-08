@@ -509,8 +509,9 @@ func TestTheChatModelOptionsMatchWhatTheReferenceWasRecordedAsSaying(t *testing.
 			TimeoutDefault float64 `json:"timeoutDefault"`
 		} `json:"nodes"`
 		Options []struct {
-			Name    string  `json:"name"`
-			Default float64 `json:"default"`
+			Name string `json:"name"`
+			// A number for the sampling options, a word for reasoningEffort.
+			Default any `json:"default"`
 		} `json:"options"`
 	}
 	raw, err := os.ReadFile(filepath.Join("testdata", "n8n_chat_model_options.json"))
@@ -2855,5 +2856,82 @@ func TestTheChatModelsReasoningEffortReachesTheProvider(t *testing.T) {
 	}
 	if received["reasoning_effort"] != "none" {
 		t.Fatalf("request reasoning_effort = %#v, want the node's option sent", received["reasoning_effort"])
+	}
+}
+
+// TestTheProviderChatModelsForwardTheirReasoningEffort: the OpenAI and
+// OpenRouter nodes offer the same Reasoning Effort as the OpenAI-compatible
+// one, carry it in the descriptor as written, and the agent sends it as
+// `reasoning_effort`.
+func TestTheProviderChatModelsForwardTheirReasoningEffort(t *testing.T) {
+	t.Parallel()
+
+	for _, provider := range []struct {
+		nodeType, executorID, credentialType string
+	}{
+		{nodes.OpenAIChatModelNodeType, nodes.OpenAIChatModelExecutorID, nodes.OpenAICredentialType},
+		{nodes.OpenRouterChatModelNodeType, nodes.OpenRouterChatModelExecutorID, nodes.OpenRouterCredentialType},
+	} {
+		t.Run(provider.nodeType, func(t *testing.T) {
+			t.Parallel()
+
+			definition, _ := aiRegistry(t).Get(provider.nodeType, workflow.V(1))
+			declared := false
+			for _, parameter := range definition.Parameters {
+				for _, field := range parameter.Fields {
+					if parameter.Key == "options" && field.Key == nodes.ModelOptionReasoningEffort {
+						declared = true
+					}
+				}
+			}
+			if !declared {
+				t.Fatalf("%s does not declare options.%s", provider.nodeType, nodes.ModelOptionReasoningEffort)
+			}
+
+			var received map[string]any
+			server := answerOnce(&received, 0)
+			defer server.Close()
+			resolver := &stubCredentials{credential: engine.Credential{
+				ID: "cred-key", Name: "Provider", Type: provider.credentialType,
+				Fields: map[string]string{"apiKey": "sk-secret"}, AllowedDomains: []string{"127.0.0.1"},
+			}}
+			descriptor := runProviderModel(t, provider.nodeType, provider.executorID, provider.credentialType,
+				map[string]any{
+					"model": modelLocator("gpt-test"), "baseUrl": server.URL, "stream": false,
+					"options": map[string]any{nodes.ModelOptionReasoningEffort: "low"},
+				}, resolver)
+			if got := descriptor.JSON["$ai"].(map[string]any)[nodes.ModelOptionReasoningEffort]; got != "low" {
+				t.Fatalf("descriptor reasoningEffort = %#v, want it carried as written", got)
+			}
+
+			executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil)
+			if _, err := runAgentWith(t, executor, descriptor, resolver); err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			if received["reasoning_effort"] != "low" {
+				t.Fatalf("request reasoning_effort = %#v, want the node's option sent", received["reasoning_effort"])
+			}
+		})
+	}
+}
+
+// TestTheChainForwardsTheModelsReasoningEffort: the Basic LLM Chain sends the
+// connected model's reasoning effort, as the agent does, so a chain on a local
+// thinking model can turn its thinking off.
+func TestTheChainForwardsTheModelsReasoningEffort(t *testing.T) {
+	t.Parallel()
+
+	var bodies []map[string]any
+	provider := countingProvider(t, &bodies)
+	defer provider.Close()
+
+	input := chainModelInput(provider.URL, workflow.Item{JSON: map[string]any{"question": "Why?"}})
+	input["model"][0].JSON["$ai"].(map[string]any)[nodes.ModelOptionReasoningEffort] = "none"
+	if _, err := runChainNode(t, map[string]any{"promptType": "auto", "inputField": "question"},
+		input, bearerResolver(), nil); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(bodies) != 1 || bodies[0]["reasoning_effort"] != "none" {
+		t.Fatalf("requests = %#v, want one carrying reasoning_effort none", bodies)
 	}
 }

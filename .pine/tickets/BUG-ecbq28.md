@@ -1,14 +1,14 @@
 ---
 id: BUG-ecbq28
 title: 'Reasoning models: `reasoning` dropped between tool turns (wrong answers), channel tokens leak, no think/effort option'
-status: todo
+status: done
 priority: high
 labels:
     - ai
     - reasoning-models
 parent: EPIC-8rbys7
 created: "2026-09-23T01:56:13Z"
-updated: "2026-10-08T16:30:00Z"
+updated: "2026-10-08T18:00:00Z"
 ---
 
 # Description
@@ -95,7 +95,7 @@ none
 # Acceptance Criteria
 - [x] Reasoning from a tool-calling turn is preserved and sent back on the next turn (or thinking is disabled inside the loop)
 - [x] Reasoning and channel tokens (`<think>`, `<channel|>`) never reach `output`
-- [ ] The chat model nodes have a Reasoning Effort / Think option, sent as `reasoning_effort` (or the provider's equivalent)
+- [x] The chat model nodes have a Reasoning Effort / Think option, sent as `reasoning_effort` (or the provider's equivalent)
 - [x] Reasoning is optionally surfaced as a field or event for debugging
 
 # Implementation Plan
@@ -119,11 +119,14 @@ Related tickets: FEAT-kwxxd0
 - **AI-4, option.** `ai.ModelRequest`/`ai.AgentRequest` gain `ReasoningEffort`, which goes on the wire as `reasoning_effort,omitempty`. `kilasflow.chatModel`'s Options collection gains `reasoningEffort` (none/low/medium/high). The descriptor carries it as written, and the agent forwards it on every turn. Ollama's `/v1` maps `reasoning_effort` onto its think setting (`"none"` sets think false; checked against ollama `openai/openai.go` `ThinkingFromReasoningEffort` via Context7), so this one field covers both OpenAI-compatible endpoints and Ollama.
 - **Surfacing.** `ai.Event.Reasoning` is set on `ai.model.completed`. Since `eventDetail` marshals the whole event, it reaches the execution events. `Message.Reasoning` also appears as `reasoning` in `AgentResult.Messages`.
 
-Tests: `internal/ai/reasoning_test.go` covers both field names, streamed and not, the `content:""` key, the event, six leak shapes streamed and not, and effort sent only when set. `nodes/ai_test.go` `TestTheChatModelsReasoningEffortReachesTheProvider`. `go test ./internal/ai/... ./nodes/ ./internal/interop/n8n/` and `go vet ./internal/ai/... ./nodes/` pass.
+- **AI-4, everywhere else (follow-up commit).** `kilasflow.lmChatOpenAi` and `kilasflow.lmChatOpenRouter` declare the same `reasoningEffort` member (one `reasoningEffortOption()` shared by all three chat model nodes: none/low/medium/high, default medium), and `executeProviderChatModel` copies it into the descriptor through the same `copyReasoningEffort` helper as `executeChatModel`. The Basic LLM Chain's `ai.ModelRequest` now carries `ReasoningEffort: model.reasoningEffort`, as the agent's does. n8n's member is recorded in `nodes/testdata/n8n_chat_model_options.json` under `options` (n8n 2.34.0: `lmChatOpenAi` only, low/medium/high, default medium, shown for model names matching `(^o1([-\d]+)?$)|(^o[3-9].*)|(^gpt-5.*)`, sent as `reasoning_effort`), with `_reasoningEffortNote` saying why this server offers it on both nodes, ungated, with `none` added; it is gone from `_unadopted`. The pin test's recorded default is now `any` so a word default compares. The importer (`chatModelToKilas`) carries `options.reasoningEffort` as a string instead of reporting it dropped; export writes it back on n8n's OpenAI node and names it as lossy on the OpenRouter node, which has no such option in n8n.
+
+Tests: `internal/ai/reasoning_test.go` covers both field names, streamed and not, the `content:""` key, the event, six leak shapes streamed and not, and effort sent only when set. `nodes/ai_test.go` `TestTheChatModelsReasoningEffortReachesTheProvider`. `go test ./internal/ai/... ./nodes/ ./internal/interop/n8n/` and `go vet ./internal/ai/... ./nodes/` pass. Follow-up: `nodes/ai_test.go` `TestTheProviderChatModelsForwardTheirReasoningEffort` (both provider nodes: declared, carried in the descriptor, sent as `reasoning_effort`), `TestTheChainForwardsTheModelsReasoningEffort`, and the pin test against the new record; `internal/interop/n8n/chatmodel_import_test.go` `TestOpenAIChatModelCarriesItsReasoningEffort` (import carries it, export writes it back), with `TestOpenAIChatModelReportsTheOptionsItCannotCarry` now using `responsesApiEnabled` as the option that is dropped. `go test ./nodes/ ./internal/ai/... ./internal/interop/...` and `go vet` on the same pass.
 
 ## Progress
 
-Remaining for criterion 3 (left unticked):
-- `kilasflow.lmChatOpenAi` and `kilasflow.lmChatOpenRouter` do not offer `reasoningEffort` yet. Their Options are pinned to `nodes/testdata/n8n_chat_model_options.json`, which lists it under `_unadopted`. Adopting it means recording n8n's own member (default, values, model-name gating) in that file, wiring `executeProviderChatModel` to copy it as a string the way `executeChatModel` now does, and mapping it in `internal/interop/n8n`.
-- The Basic LLM Chain (`ChainExecutor`) does not forward `model.reasoningEffort` in its `ai.ModelRequest`. This was left alone on purpose because BUG-9dw5me is rewriting that request building. It is a one-field addition once that work lands.
+All four criteria are met. Criterion 3 was closed by the follow-up commit: the two provider chat model nodes offer and forward `reasoningEffort`, the Basic LLM Chain forwards the model's effort, and an n8n import carries it.
+
+Not done, outside the criteria:
+- The provider nodes' Reasoning Effort is not hidden for model names n8n would hide it for. This server shows it on every model, on purpose (see `_reasoningEffortNote`).
 - Live stream deltas (`ai.model.delta`) still carry leaked tags as they arrive. Only the assembled turn, and so `output`, is cleaned. A tag can be split across frames, so filtering deltas needs a small buffering state machine.

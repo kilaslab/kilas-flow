@@ -319,6 +319,7 @@ func chatModelOptions(provider chatModelProvider) node.PropertyDefinition {
 				TypeOptions: &node.TypeOptions{MinValue: numberBound(-2), MaxValue: numberBound(2)},
 				Description: "Positive values push the model towards topics it has not raised yet.",
 			},
+			reasoningEffortOption(),
 			{
 				Key: ModelOptionTemperature, Label: "Sampling Temperature", Kind: node.PropertyNumber, Default: float64(0.7),
 				TypeOptions: &node.TypeOptions{MinValue: numberBound(0), MaxValue: numberBound(2)},
@@ -335,6 +336,37 @@ func chatModelOptions(provider chatModelProvider) node.PropertyDefinition {
 				Description: "Nucleus sampling. Alter this or the temperature, not both.",
 			},
 		},
+	}
+}
+
+// reasoningEffortOption is the Reasoning Effort member all three chat model
+// nodes carry. A local thinking model reasons for 10–50 s before every answer
+// unless told otherwise, and this is the only way to tell it. Sent as
+// `reasoning_effort`, which Ollama's /v1 reads as its think setting.
+//
+// n8n declares it on its OpenAI node only, with low/medium/high, shown for
+// o-series and gpt-5 model names. Here it is on every chat model and not gated
+// on the name, because a gateway's or a local server's model names say nothing
+// about whether the model thinks; `none` is added so thinking can be turned off.
+func reasoningEffortOption() node.PropertyDefinition {
+	return node.PropertyDefinition{
+		Key: ModelOptionReasoningEffort, Label: "Reasoning Effort", Kind: node.PropertyOptions, Default: "medium",
+		Options: []node.PropertyOption{
+			{Label: "None", Value: "none"},
+			{Label: "Low", Value: "low"},
+			{Label: "Medium", Value: "medium"},
+			{Label: "High", Value: "high"},
+		},
+		Description: "How long a reasoning model may think before it answers. None turns thinking off, which makes a local thinking model many times faster.",
+	}
+}
+
+// copyReasoningEffort puts the Options collection's reasoning effort in the
+// descriptor. A word rather than a number, so it is copied as written; absent
+// stays absent and the provider keeps its own default.
+func copyReasoningEffort(descriptor, options map[string]any) {
+	if effort := strings.TrimSpace(textValue(options[ModelOptionReasoningEffort], "")); effort != "" {
+		descriptor[ModelOptionReasoningEffort] = effort
 	}
 }
 
@@ -415,20 +447,7 @@ func chatModelNode() node.Definition {
 					{Key: ModelOptionTopP, Label: "Top P", Kind: node.PropertyNumber},
 					{Key: ModelOptionFrequencyPenalty, Label: "Frequency Penalty", Kind: node.PropertyNumber},
 					{Key: ModelOptionPresencePenalty, Label: "Presence Penalty", Kind: node.PropertyNumber},
-					// A local thinking model reasons for 10–50 s before
-					// every answer unless told otherwise; this is the only
-					// way to tell it. Sent as `reasoning_effort`, which
-					// Ollama's /v1 reads as its think setting.
-					{
-						Key: ModelOptionReasoningEffort, Label: "Reasoning Effort", Kind: node.PropertyOptions, Default: "medium",
-						Options: []node.PropertyOption{
-							{Label: "None", Value: "none"},
-							{Label: "Low", Value: "low"},
-							{Label: "Medium", Value: "medium"},
-							{Label: "High", Value: "high"},
-						},
-						Description: "How long a reasoning model may think before it answers. None turns thinking off, which makes a local thinking model many times faster.",
-					},
+					reasoningEffortOption(),
 				},
 			},
 		},
@@ -875,11 +894,7 @@ func executeChatModel(ctx context.Context, ir workflow.IRNode, _ workflow.NodeIn
 	// The transport options stay out of the request body: this server checks
 	// the timeout against the deployment's ceiling and performs the retries.
 	copyPresentOptions(descriptor, options, []string{ModelOptionTimeout, ModelOptionMaxRetries})
-	// A word rather than a number, so it is copied as written; absent stays
-	// absent and the provider keeps its own default.
-	if effort := strings.TrimSpace(textValue(options[ModelOptionReasoningEffort], "")); effort != "" {
-		descriptor[ModelOptionReasoningEffort] = effort
-	}
+	copyReasoningEffort(descriptor, options)
 	return workflow.NodeOutput{{{JSON: map[string]any{descriptorKey: descriptor}}}}, nil
 }
 
@@ -911,6 +926,7 @@ func executeProviderChatModel(provider chatModelProvider) engine.ExecutorFunc {
 		// timeout is checked against the deployment's ceiling and the retries
 		// are performed here, so neither may reach the provider's request body.
 		copyPresentOptions(descriptor, options, []string{ModelOptionTimeout, ModelOptionMaxRetries})
+		copyReasoningEffort(descriptor, options)
 		return workflow.NodeOutput{{{JSON: map[string]any{descriptorKey: descriptor}}}}, nil
 	}
 }
@@ -1832,6 +1848,7 @@ func (executor *ChainExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 			MaxTokens:        model.maxTokens,
 			MaxRetries:       model.maxRetries,
 			Timeout:          model.timeout,
+			ReasoningEffort:  model.reasoningEffort,
 		}
 		// Cancelled explicitly rather than deferred: this is a loop, and a
 		// deferred cancel would hold every item's context alive until the
