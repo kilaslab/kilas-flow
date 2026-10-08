@@ -435,6 +435,11 @@ type preparedGraph struct {
 	nodes    map[string]workflow.IRNode
 	incoming map[string][]workflow.IREdge
 	outgoing map[string][]workflow.IREdge
+	// listed is each edge's position in the compiled graph, which keeps the
+	// order the workflow lists its connections in. Delivery does not follow
+	// it, so a cosmetic reordering of the saved JSON cannot reorder an agent's
+	// tools; the `$('X')` walk does, because n8n's does (connectedOutputs).
+	listed map[workflow.IREdge]int
 }
 
 // prepareGraph builds the scheduling shape Run and Resume share from a
@@ -465,13 +470,15 @@ func prepareGraph(ir workflow.IR, triggerNodeID string) (preparedGraph, error) {
 	}
 	incoming := make(map[string][]workflow.IREdge, len(nodes))
 	outgoing := make(map[string][]workflow.IREdge, len(nodes))
-	for _, edge := range ir.Edges {
+	listed := make(map[workflow.IREdge]int, len(ir.Edges))
+	for index, edge := range ir.Edges {
 		if _, sourceLive := active[edge.Source.NodeID]; !sourceLive {
 			continue
 		}
 		if _, targetLive := active[edge.Target.NodeID]; !targetLive {
 			continue
 		}
+		listed[edge] = index
 		incoming[edge.Target.NodeID] = append(incoming[edge.Target.NodeID], edge)
 		outgoing[edge.Source.NodeID] = append(outgoing[edge.Source.NodeID], edge)
 	}
@@ -512,7 +519,7 @@ func prepareGraph(ir workflow.IR, triggerNodeID string) (preparedGraph, error) {
 			return a.Target.NodeID < b.Target.NodeID
 		})
 	}
-	return preparedGraph{nodes: nodes, incoming: incoming, outgoing: outgoing}, nil
+	return preparedGraph{nodes: nodes, incoming: incoming, outgoing: outgoing, listed: listed}, nil
 }
 
 // Run executes every node of one compiled graph exactly once.
