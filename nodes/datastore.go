@@ -332,12 +332,13 @@ func validateDatastoreConfiguration(n workflow.Node) error {
 }
 
 // refuseDatastoreColumnExpressions refuses expression markers in column-name
-// slots: every filter condition's keyName, the increment's counterColumn, a
-// mapper value that is itself a marker (its keys would then come from the
-// incoming item), and matching column entries. Values stay
-// expression-capable — that is what binding is for — and the engine
-// re-checks every resolved name against the catalogue before it is quoted,
-// so a literal that names no column still fails.
+// and operator slots: every filter condition's keyName and condition, a
+// condition row that is itself a marker (its keyName and condition would then
+// come from the incoming item), the increment's counterColumn, a mapper value
+// that is itself a marker (its keys likewise), and matching column entries.
+// Values stay expression-capable — that is what binding is for — and the
+// engine re-checks every resolved name against the catalogue before it is
+// quoted, so a literal that names no column still fails.
 func refuseDatastoreColumnExpressions(parameters map[string]any) error {
 	filters, present := parameters["filters"]
 	if present && filters != nil && expression.IsExpression(filters) {
@@ -394,6 +395,15 @@ func datastoreFilterRows(value any) ([]datastore.NodeFilterCondition, error) {
 	}
 	conditions := make([]datastore.NodeFilterCondition, 0, len(list))
 	for index, entry := range list {
+		// A marker is a map too, so the whole-row check comes before the
+		// shape check: read as a row, it has no keyName and passes as an
+		// equality, then resolves into whatever row the item spells.
+		if expression.IsExpression(entry) {
+			return nil, fmt.Errorf("filters.conditions[%d] is built from an expression, and a condition row cannot be: "+
+				"an expression here resolves the row's column and operator from the incoming item, so a value "+
+				"arriving from a webhook would choose which rows this reads or writes; "+
+				"write the column and condition literally and keep the expression in the value", index)
+		}
 		fields, ok := entry.(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("filters.conditions[%d] must be a condition row", index)
@@ -401,6 +411,12 @@ func datastoreFilterRows(value any) ([]datastore.NodeFilterCondition, error) {
 		if expression.IsExpression(fields["keyName"]) {
 			return nil, fmt.Errorf("filters.conditions[%d].keyName is built from an expression, and a column name cannot be: "+
 				"resolve the column to a literal name and keep the expression in the value", index)
+		}
+		// The operator decides which rows match as much as the column does:
+		// eq turned into neq by the item addresses every other row.
+		if expression.IsExpression(fields["condition"]) {
+			return nil, fmt.Errorf("filters.conditions[%d].condition is built from an expression, and an operator cannot be: "+
+				"choose the condition from the list and keep the expression in the value", index)
 		}
 		keyName, _ := fields["keyName"].(string)
 		condition := datastore.CondEq

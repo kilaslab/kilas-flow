@@ -2,6 +2,7 @@ package nodes_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -334,29 +335,12 @@ func TestDatastoreColumnExpressionsAreRefusedAtSaveAndAtRun(t *testing.T) {
 		t.Fatalf("RegisterAll() error = %v", err)
 	}
 	marker := map[string]any{"mode": "expression", "value": "{{ $json.column }}"}
-	document := func(parameters map[string]any) workflow.Document {
-		return workflow.Document{
-			SchemaVersion: workflow.CurrentSchemaVersion,
-			ID:            "wf_ds", Name: "Datastore",
-			Nodes: []workflow.Node{
-				{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
-				{ID: "ds", Name: "Data table", Type: nodes.DatastoreNodeType, TypeVersion: workflow.V(1),
-					Parameters: parameters},
-			},
-			Connections: []workflow.Connection{{
-				ID: "c1", Kind: workflow.ConnectionMain,
-				Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
-				Target: workflow.Endpoint{NodeID: "ds", Port: "main"},
-			}},
-			Settings: map[string]any{},
-		}
-	}
 	parameters := map[string]any{
 		"resource": "row", "operation": nodes.DatastoreOperationGet, "match": "any",
 		"dataTableId": datastoreLocator("id", "datastore_x"),
 		"filters":     datastoreConditions(map[string]any{"keyName": marker, "condition": "eq", "keyValue": "hello"}),
 	}
-	_, err := workflow.Compile(document(parameters), registry)
+	_, err := workflow.Compile(datastoreDocument(parameters), registry)
 	if err == nil || !strings.Contains(err.Error(), "filters.conditions[0].keyName") {
 		t.Fatalf("Compile() = %v, want a refusal naming filters.conditions[0].keyName", err)
 	}
@@ -381,6 +365,113 @@ func TestDatastoreColumnExpressionsAreRefusedAtSaveAndAtRun(t *testing.T) {
 	}
 	if len(remaining.Rows) != 0 {
 		t.Fatalf("rows = %+v, want the refused run to commit nothing", remaining.Rows)
+	}
+}
+
+// datastoreDocument is a manual trigger feeding one Data table step node with
+// the given parameters, for proving what a save refuses.
+func datastoreDocument(parameters map[string]any) workflow.Document {
+	return workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_ds", Name: "Datastore",
+		Nodes: []workflow.Node{
+			{ID: "manual", Name: "Manual", Type: "kilasflow.manual", TypeVersion: workflow.V(1)},
+			{ID: "ds", Name: "Data table", Type: nodes.DatastoreNodeType, TypeVersion: workflow.V(1),
+				Parameters: parameters},
+		},
+		Connections: []workflow.Connection{{
+			ID: "c1", Kind: workflow.ConnectionMain,
+			Source: workflow.Endpoint{NodeID: "manual", Port: "main"},
+			Target: workflow.Endpoint{NodeID: "ds", Port: "main"},
+		}},
+		Settings: map[string]any{},
+	}
+}
+
+// TestDatastoreConditionTakesItsColumnAndOperatorFromTheNode proves an
+// incoming item supplies only a condition's value. A condition row written as
+// one expression, or an operator written as one, resolves its column and
+// comparison from the item, so a webhook body could turn "delete the row
+// titled keep" into "delete every row not titled keep". Both are refused at
+// save and again at run, before anything resolves, and nothing is deleted;
+// the same body against a value expression deletes exactly the row it names.
+func TestDatastoreConditionTakesItsColumnAndOperatorFromTheNode(t *testing.T) {
+	t.Parallel()
+	registry := node.NewRegistry()
+	if err := nodes.RegisterAll(registry); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	marker := func(template string) map[string]any {
+		return map[string]any{"mode": "expression", "value": template}
+	}
+	// The attacker's body: a value, and the column and operator it would
+	// like the condition to use with it.
+	body := workflow.NodeInput{"main": []workflow.Item{
+		{JSON: map[string]any{"column": "title", "op": "neq", "value": "keep"}},
+	}}
+	seeded := func(t *testing.T) (*datastore.Engine, string) {
+		t.Helper()
+		store := datastoreEngine(t)
+		id := datastoreTable(t, store, "Guarded")
+		for _, title := range []string{"keep", "drop", "other"} {
+			if _, err := store.Insert(context.Background(), "tenant-a", id, map[string]any{"title": title}); err != nil {
+				t.Fatalf("Insert(%s) error = %v", title, err)
+			}
+		}
+		return store, id
+	}
+	titles := func(t *testing.T, store *datastore.Engine, id string) string {
+		t.Helper()
+		page, err := store.List(context.Background(), "tenant-a", id, datastore.RowQuery{ReturnAll: true})
+		if err != nil {
+			t.Fatalf("List() error = %v", err)
+		}
+		names := make([]string, 0, len(page.Rows))
+		for _, row := range page.Rows {
+			names = append(names, fmt.Sprint(row["title"]))
+		}
+		return strings.Join(names, ",")
+	}
+
+	cases := []struct {
+		name string
+		row  any
+		path string
+	}{
+		{"a whole row", marker(`{{ ({ keyName: $json.column, condition: $json.op, keyValue: $json.value }) }}`),
+			"filters.conditions[0] is built from an expression"},
+		{"an operator", map[string]any{"keyName": "title", "condition": marker(`{{ $json.op }}`), "keyValue": marker(`{{ $json.value }}`)},
+			"filters.conditions[0].condition is built from an expression"},
+	}
+	for _, tc := range cases {
+		store, id := seeded(t)
+		parameters := datastoreRowParams(id, nodes.DatastoreOperationDelete, map[string]any{
+			"filters": map[string]any{"conditions": []any{tc.row}},
+		})
+		if _, err := workflow.Compile(datastoreDocument(parameters), registry); err == nil || !strings.Contains(err.Error(), tc.path) {
+			t.Errorf("%s: Compile() = %v, want a refusal naming %q", tc.name, err, tc.path)
+		}
+		_, err := nodes.NewDatastoreExecutor(store).Execute(context.Background(), datastoreNode(t, parameters, nil), body, datastoreRequest())
+		if err == nil || !strings.Contains(err.Error(), tc.path) {
+			t.Errorf("%s: Execute() = %v, want a refusal naming %q", tc.name, err, tc.path)
+		}
+		if got := titles(t, store, id); got != "keep,drop,other" {
+			t.Errorf("%s: rows = %s, want every row untouched", tc.name, got)
+		}
+	}
+
+	// The column and operator written on the node, the value from the item:
+	// the body's column and op change nothing, and only "keep" goes.
+	store, id := seeded(t)
+	parameters := datastoreRowParams(id, nodes.DatastoreOperationDelete, map[string]any{
+		"filters": datastoreConditions(map[string]any{"keyName": "title", "condition": "eq", "keyValue": marker(`{{ $json.value }}`)}),
+	})
+	if _, err := workflow.Compile(datastoreDocument(parameters), registry); err != nil {
+		t.Fatalf("Compile() with a value expression = %v, want it saved", err)
+	}
+	runDatastore(t, store, datastoreNode(t, parameters, nil), body)
+	if got := titles(t, store, id); got != "drop,other" {
+		t.Fatalf("rows = %s, want only the row the value names deleted", got)
 	}
 }
 

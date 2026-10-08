@@ -1002,6 +1002,17 @@ func datastoreToolParams(operation string, extra map[string]any) map[string]any 
 // the argument schema the provider was offered for the tool.
 func runDatastoreToolAgent(t *testing.T, store *stubDatastoreStore, descriptor map[string]any, arguments string) ([]engine.NodeEvent, map[string]any) {
 	t.Helper()
+	published, schema, err := tryDatastoreToolAgent(t, store, descriptor, arguments)
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want the agent to finish its turn", err)
+	}
+	return published, schema
+}
+
+// tryDatastoreToolAgent is runDatastoreToolAgent returning the agent's own
+// failure, for proving a tool is refused where the agent builds it.
+func tryDatastoreToolAgent(t *testing.T, store *stubDatastoreStore, descriptor map[string]any, arguments string) ([]engine.NodeEvent, map[string]any, error) {
+	t.Helper()
 	name, _ := descriptor["name"].(string)
 	var (
 		mu     sync.Mutex
@@ -1036,16 +1047,14 @@ func runDatastoreToolAgent(t *testing.T, store *stubDatastoreStore, descriptor m
 	executor := nodes.NewAgentExecutor(ai.NewLoopRuntime(), localPolicy(), nil, nodes.WithDatastoreStore(store))
 	request := datastoreToolAgentRequest("tenant-a")
 	request.Events = func(event engine.NodeEvent) { published = append(published, event) }
-	if _, err := executor.Execute(context.Background(), agentIR(t, map[string]any{"prompt": "Do it."}), workflow.NodeInput{
+	_, err := executor.Execute(context.Background(), agentIR(t, map[string]any{"prompt": "Do it."}), workflow.NodeInput{
 		"main":  {{JSON: map[string]any{}}},
 		"model": {modelItem(provider.URL)},
 		"tools": {toolItem(descriptor)},
-	}, request); err != nil {
-		t.Fatalf("Execute() error = %v, want the agent to finish its turn", err)
-	}
+	}, request)
 	mu.Lock()
 	defer mu.Unlock()
-	return published, schema
+	return published, schema, err
 }
 
 // datastoreToolEvent returns the detail of the first event of one kind.
@@ -1889,6 +1898,64 @@ func TestDatastoreToolWriteTakesItsStructureLiterally(t *testing.T) {
 			Execution: engine.ExecutionContext{ID: "exec-1", TenantID: "tenant-a", WorkflowID: "wf_tool"},
 		}); err == nil {
 			t.Errorf("Execute(%v) built the tool, want it refused", parameters)
+		}
+	}
+}
+
+// TestDatastoreToolDescriptorIsCheckedWhereTheAgentBuildsIt proves the tool's
+// rules hold for a descriptor that never passed the tool's save or its own
+// executor: one that reaches the agent by any other route arrives as it is.
+// Each descriptor below is one the tool executor would have refused; handed
+// straight to the agent, each is refused where the tool is built, and
+// nothing is written.
+func TestDatastoreToolDescriptorIsCheckedWhereTheAgentBuildsIt(t *testing.T) {
+	t.Parallel()
+	marker := func(template string) map[string]any {
+		return map[string]any{"mode": "expression", "value": template}
+	}
+	unvalidated := func(operation string, parameters map[string]any) map[string]any {
+		return map[string]any{
+			"kind": "datastore", "name": "customers", "description": "Works on customers.",
+			"nodeName": "Customers", "datastoreId": "ds_customers", "datastoreName": "customers",
+			"columns": []any{
+				map[string]any{"name": "name", "type": "string"},
+				map[string]any{"name": "city", "type": "string"},
+				map[string]any{"name": "plan", "type": "string"},
+			},
+			"operation": operation, "parameters": parameters,
+		}
+	}
+	cases := []struct {
+		name       string
+		descriptor map[string]any
+		arguments  string
+		want       string
+	}{
+		{"match read from the model's arguments", unvalidated("update", datastoreToolParams("update", map[string]any{
+			"columns": datastoreManualColumns(map[string]any{"plan": datastoreToolFromAI(`$fromAI('plan', 'the plan')`)}),
+			"filters": datastoreConditions(
+				map[string]any{"keyName": "name", "condition": "eq", "keyValue": "Budi"},
+				map[string]any{"keyName": "name", "condition": "neq", "keyValue": "Budi"},
+			),
+			"match": marker(`{{ $json.plan === 'free' ? 'all' : 'any' }}`),
+		})), `{"plan":"hacked"}`, "match is an expression"},
+		{"a condition row written as an expression", unvalidated("delete", datastoreToolParams("delete", map[string]any{
+			"filters": map[string]any{"conditions": []any{
+				marker(`{{ ({ keyName: 'name', condition: 'neq', keyValue: 'Budi' }) }}`),
+			}},
+		})), `{}`, "filters.conditions[0]"},
+		{"a write its parameters do not perform", unvalidated("insert", datastoreToolParams("insert", nil)),
+			`{}`, `carries operation "insert", but its parameters perform get`},
+	}
+	for _, tc := range cases {
+		store := datastoreToolCustomers()
+		original := store.rowsOf("tenant-a", "ds_customers")
+		_, _, err := tryDatastoreToolAgent(t, store, tc.descriptor, tc.arguments)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: Execute() = %v, want the tool refused where it is built, naming %q", tc.name, err, tc.want)
+		}
+		if rows := store.rowsOf("tenant-a", "ds_customers"); fmt.Sprint(rows) != fmt.Sprint(original) {
+			t.Errorf("%s: rows = %v, want them untouched", tc.name, rows)
 		}
 	}
 }
