@@ -336,7 +336,8 @@ func appendSessionMemory(ctx context.Context, request AgentRequest, turns []Mess
 	// Only turns that can be replayed are stored. A tool result or an
 	// assistant turn asking for tools is meaningful only beside the message
 	// that introduced it, and a stored picture would be re-sent with every
-	// later turn of the conversation.
+	// later turn of the conversation. Thinking is sent back only within the
+	// run whose tool turn it produced, so it is not stored either.
 	remembered := make([]Message, 0, len(turns))
 	for _, turn := range turns {
 		if turn.Role != RoleUser && turn.Role != RoleAssistant {
@@ -346,6 +347,7 @@ func appendSessionMemory(ctx context.Context, request AgentRequest, turns []Mess
 			continue
 		}
 		turn.Images = nil
+		turn.Reasoning, turn.ReasoningField = "", ""
 		remembered = append(remembered, turn)
 	}
 	if len(remembered) == 0 {

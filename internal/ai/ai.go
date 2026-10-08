@@ -41,6 +41,17 @@ type Message struct {
 	ToolCallID string `json:"toolCallId,omitempty"`
 	// Name is the tool that produced a tool-role message.
 	Name string `json:"name,omitempty"`
+	// Reasoning is the thinking a reasoning model returned beside an
+	// assistant turn. It is kept so a tool-call turn can be replayed with the
+	// thinking that produced it: gemma4 replayed without it answered a
+	// calculator result wrongly in most runs. It never becomes the answer.
+	Reasoning string `json:"reasoning,omitempty"`
+	// ReasoningField is the wire field the provider sent Reasoning under —
+	// `reasoning` (Ollama, OpenRouter) or `reasoning_content` (DeepSeek,
+	// vLLM) — so it goes back exactly as received. Empty means the thinking
+	// was recovered from leaked tags in the content, which no provider sent
+	// as a field and which is therefore never sent back.
+	ReasoningField string `json:"-"`
 }
 
 // OpensATurn reports whether a message can be the first of a conversation
