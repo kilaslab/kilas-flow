@@ -741,6 +741,15 @@ func TestOnErrorContinueRegularOutputBecomesContinueOnFail(t *testing.T) {
 		if node.Name == "Branchy" && node.OnError != "continueRegularOutput" {
 			t.Errorf("exported onError = %q, want continueRegularOutput", node.OnError)
 		}
+		if node.Name == "Call" && node.OnError != "continueErrorOutput" {
+			t.Errorf("exported onError = %q, want continueErrorOutput", node.OnError)
+		}
+	}
+	// The error edge goes back out in the slot it arrived in: one past the
+	// HTTP node's single item output, so the round trip is a no-op.
+	slots := exported.Document.Connections["Call"]["main"]
+	if len(slots) != 2 || len(slots[1]) != 1 || slots[1][0].Node != "Branchy" {
+		t.Errorf("exported Call main slots = %#v, want the error branch back at index 1", slots)
 	}
 }
 

@@ -1,7 +1,7 @@
 ---
 id: BUG-rbask0
 title: 'Sticky notes: node names unreadable on stickies (dark theme), selected sticky covers nodes, raw colour number, markdown links raw'
-status: todo
+status: done
 priority: high
 labels:
     - editor
@@ -10,7 +10,7 @@ labels:
     - accessibility
 parent: EPIC-8rbys7
 created: "2026-09-23T01:48:15Z"
-updated: "2026-09-23T01:48:15Z"
+updated: "2026-10-08T15:58:00Z"
 ---
 
 # Description
@@ -122,10 +122,28 @@ FEAT-jvembs (done; chose the "safe markdown subset")
 
 
 # Acceptance Criteria
-- [ ] Node labels reach AA contrast wherever the node sits (dark sticky variants, or a label chip)
-- [ ] A selected sticky stays below the steps it contains
-- [ ] Sticky colour is a palette control, not a number field
-- [ ] Markdown links render as safe links (new tab, `rel=noopener`), images as alt-text chips, and lists as lists
+- [x] Node labels reach AA contrast wherever the node sits (dark sticky variants, or a label chip)
+- [x] A selected sticky stays below the steps it contains
+- [x] Sticky colour is a palette control, not a number field
+- [x] Markdown links render as safe links (new tab, `rel=noopener`), images as alt-text chips, and lists as lists
+
+## Verification (2026-10-08)
+
+Fix commit: `bf512d6`.
+
+- **Node labels reach AA contrast (met).** Sticky fills are theme-tinted (`web/src/app.css` `--kf-sticky-*`). Measured in the app on a colour-5 sticky that contains four steps:
+  - Dark theme: the fill is `rgb(22,40,63)`, node labels reach 12.92:1 and the note text 12.17:1.
+  - Light theme (`data-theme="light"`): the fill is `rgb(219,234,254)`, node labels reach 14.31:1 and the note text 12.21:1.
+
+  AA for normal text is 4.5:1. Screenshots: `03-sticky-selected-dark.png` and `14-sticky-light.png`.
+- **A selected sticky stays below its steps (met).** The canvas sets `elevateNodesOnSelect={false}` (`workflow-editor.svelte:1263`). In the app, after the sticky is selected its node keeps `z-index: -1`, the contained Call API stays at 0, and every step stays visible on top of the note.
+- **Colour is a palette control (met).** `properties-panel.svelte:291` renders a radiogroup of `STICKY_SWATCHES`. Test: `sticky.test.ts` "offers one swatch per palette index for the inspector control". In the app, the sticky's panel shows a "Colour" radiogroup of 7 swatches with "Colour 5" checked, and no number field (`15-sticky-colour-control.png`).
+- **Markdown links, images and lists (met).** Links render at `canvas-node.svelte:158`. Tests: `sticky.test.ts:43`, `:54` and `:62`. In the app:
+  - `[the docs](https://docs.n8n.io/)` renders as a link with `target="_blank"` and `rel="noopener noreferrer nofollow"`.
+  - `![diagram](…)` renders as a "diagram" chip.
+  - `- one` and `- two` render as bullets.
+
+Self-test setup: `make build-web` + `go build ./cmd/kilasflow` from this branch, served on 127.0.0.1:18095 with an isolated SQLite file (`KILASFLOW_DATABASE_DSN=/tmp/kf-verify/data/kilasflow.db`), driven with playwright-cli. Probe workflows were imported through `POST /api/v1/workflows/import`. Screenshots are in `/tmp/kf-verify/` and are not committed.
 
 # Implementation Plan
 

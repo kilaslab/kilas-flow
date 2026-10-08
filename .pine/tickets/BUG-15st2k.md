@@ -9,7 +9,7 @@ labels:
     - rendering
 parent: EPIC-8rbys7
 created: "2026-09-23T01:48:15Z"
-updated: "2026-09-23T01:48:15Z"
+updated: "2026-10-08T15:58:00Z"
 ---
 
 # Description
@@ -143,11 +143,33 @@ none
 
 
 # Acceptance Criteria
-- [ ] The agent's AI sub-node handles are spaced by count and their labels never overlap
+- [x] The agent's AI sub-node handles are spaced by count and their labels never overlap
 - [ ] A placeholder renders only the ports its edges use (or its original type's ports), as a sub-node circle when it only has AI outputs, labelled with a friendly name from the original type
-- [ ] IF/Switch output labels are offset from the wires, and steps after labelled outputs get extra horizontal gap
+- [x] IF/Switch output labels are offset from the wires, and steps after labelled outputs get extra horizontal gap
 - [ ] Every node type has a distinct glyph; No Operation doesn't reuse the Unsupported "?"; app nodes can show brand artwork via the icon route
-- [ ] A subtitle that evaluates to empty (":") is hidden
+- [x] A subtitle that evaluates to empty (":") is hidden
+
+## Verification (2026-10-08): still open
+
+Fix commit: `690a2da`. Three of the five criteria are met. Two are not: the placeholder still draws an unused port, and glyphs are not distinct per type.
+
+- **AI sub-node handles spaced, labels never overlap (met).** `attachmentLabelRows` (`web/src/lib/workflow-editor/node-visual.ts:221`) spreads the labels over as many rows as the spacing needs (`canvas-node.svelte:111`). Tests: `node-visual.test.ts` `describe('attachmentLabelRows')`. In the app, an AI Agent with a chat model, a memory and two tools shows "Chat M…" and "Tools" on row 1 and "Memory" and "Output…" on row 2, with no overlap, and the fill buttons sit below the label rows (`02-agent-ports-zoom.png`). The dashed edges still run vertically through the labels, which is cosmetic only.
+- **Placeholder (NOT met).** The placeholder draws only the ports that have edges (`canvas-node.svelte:69`), renders as a sub-node circle, and shows the friendly subtitle "Tool Serp Api" (`friendlyOriginalType`, `node-visual.ts:237`). However, the fallback runs separately for each side. When no input is wired, `keep()` puts back the first main input even though the placeholder's only edge is an AI output. So an imported SerpAPI tool still draws a main input handle on its left that no edge uses (`02-agent-ports-zoom.png`). Fix: fall back to the plain main in/out only when the placeholder has no wired port at all, and add a test (pull the port selection out of `canvas-node.svelte` into a pure helper).
+- **IF/Switch labels offset from wires, extra gap after labelled outputs (met).** Output labels sit above the wire (`canvas-node.svelte:296`). `positionAfter` uses `BRANCH_COLUMN` (`document.ts:57`) after a `hasLabelledOutputs` node (`ports.ts:76`), and Tidy adds `extraWidth` (`layout.ts:59,100`). In the app, "Success"/"Error" and "true"/"false" sit above their wires (`07-callapi-settings-onerror.png`). This verification also applied the same offset to the execution replay node (`execution-canvas-node.svelte`), where "done"/"loop" and "Success"/"Error" were still centred on the wire and read as struck through (`13-loop-tag-run-selector.png` shows the fixed replay).
+- **Distinct glyph per type (NOT met).** Done: the fallback cube is gone. `glyphs.json` is checked from both sides by `nodes/glyphs_test.go` `TestEveryBuiltinIconNameIsShippedInGlyphs` and `node-visual.test.ts` "shipped glyphs". No Operation now uses `builtin:arrow-right` (`nodes/flow.go:364`) instead of the Unsupported "?". Not done: the served catalogue (`GET /api/v1/node-types`, 62 types) still has several types sharing one glyph:
+  - `git-branch`: IF, Switch, Split Out
+  - `archive`: Aggregate, Summarize, Remove Duplicates, Extract From File
+  - `brain`: OpenAI Chat Model, OpenAI-Compatible Chat Model, OpenRouter Chat Model, Embeddings
+  - `database`: MySQL, PostgreSQL, SQLite, Postgres PGVector Store
+  - `message-circle`: When chat message received, WAHA, WAHA Trigger
+  - `scissors`: Limit, Recursive Character Text Splitter
+  - `arrow-down-up`: Sort, Structured Output Parser
+  - `layers`: Default Data Loader, Vector Store
+
+  A node sharing a glyph with its own trigger or tool variant (Gmail and Gmail Trigger, HTTP Request and HTTP Request Tool) is arguably fine. No brand artwork is shipped for the app nodes (Gmail, Google Drive, Telegram). The icon route from FEAT-5rvtzc exists but no definition uses it.
+- **Empty subtitle hidden (met).** `nodeSubtitle` strips separator runs at either end before it decides the line is empty (`node-visual.ts`). This verification added the test `node-visual.test.ts` "hides a line that renders only its separators". The Chat button moved to the bottom-right (`workflow-editor.svelte:1333`), so it no longer covers the zoom controls (LEAD-8 d, confirmed in the app).
+
+Self-test setup: `make build-web` + `go build ./cmd/kilasflow` from this branch, served on 127.0.0.1:18095 with an isolated SQLite file (`KILASFLOW_DATABASE_DSN=/tmp/kf-verify/data/kilasflow.db`), driven with playwright-cli. Probe workflows were imported through `POST /api/v1/workflows/import`. Screenshots are in `/tmp/kf-verify/` and are not committed.
 
 # Implementation Plan
 

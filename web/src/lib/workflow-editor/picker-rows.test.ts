@@ -69,4 +69,32 @@ describe('buildPickerRows', () => {
 		// Enter inserts Embeddings — the row the list showed highlighted.
 		expect(flat[0].definition.displayName).toBe('Embeddings');
 	});
+
+	it('walks the rows in the order the list draws them, for every audited query', () => {
+		// The keyboard walks rows.flat and the list draws rows.groups. When the
+		// ranking interleaves categories they used to disagree: ArrowDown from
+		// the first AI row jumped to a Core row drawn further down, skipping the
+		// AI row right under it. Enter on a fresh query inserts flat[0], which
+		// must be both the best-ranked match and the row drawn first.
+		// "e" ranks Embeddings, Edit Image, AI Agent, … — AI, Core, AI — so the
+		// second drawn row is AI Agent, not the Core row ranked second.
+		const expected: Record<string, { drawn: string[]; enter: string }> = {
+			e: { drawn: ['Embeddings', 'AI Agent', 'Data table Tool', 'Edit Image', 'Merge', 'Data table'], enter: 'Embeddings' },
+			a: { drawn: ['AI Agent', 'Data table Tool', 'Embeddings', 'Edit Image', 'Merge', 'Data table'], enter: 'AI Agent' },
+			ai: { drawn: ['AI Agent', 'Embeddings', 'Data table Tool'], enter: 'AI Agent' },
+			da: { drawn: ['Data table', 'Data table Tool'], enter: 'Data table' },
+			me: { drawn: ['Merge'], enter: 'Merge' }
+		};
+		for (const [query, want] of Object.entries(expected)) {
+			const ranked = searchCatalog(catalog, query);
+			const { flat, groups } = buildPickerRows(ranked);
+			const drawn = groups.flatMap((group) => group.rows);
+
+			expect(flat, `query "${query}"`).toEqual(drawn);
+			expect(flat.map((row) => row.index), `query "${query}"`).toEqual(flat.map((_, index) => index));
+			expect(flat.map((row) => row.definition.displayName), `query "${query}"`).toEqual(want.drawn);
+			expect(flat[0].definition, `query "${query}"`).toBe(ranked[0]);
+			expect(flat[0].definition.displayName, `query "${query}"`).toBe(want.enter);
+		}
+	});
 });

@@ -22,6 +22,7 @@
 		nodeVisual,
 		portOffset
 	} from '$lib/workflow-editor/node-visual';
+	import { portLabel, resolvedPorts } from '$lib/workflow-editor/ports';
 
 	/**
 	 * The replay node keeps the editor node's geometry and ports so a graph reads
@@ -39,10 +40,15 @@
 	const accent = $derived(statusAccent(status));
 	const reached = $derived(status !== 'skipped');
 
-	const mainInputs = $derived(mainPorts(data.definition.inputs));
-	const mainOutputs = $derived(mainPorts(data.definition.outputs));
-	const attachmentInputs = $derived(attachmentPorts(data.definition.inputs));
-	const attachmentOutputs = $derived(attachmentPorts(data.definition.outputs));
+	// Resolved, not declared: the ports a configuration adds — a Switch's
+	// rules, a Merge's inputs, the Error output of a node on "continue using
+	// error output" — carry edges in the replay too, and an edge whose handle
+	// is missing is silently not drawn (the failed items' branch vanished).
+	const ports = $derived(resolvedPorts(node, data.definition));
+	const mainInputs = $derived(mainPorts(ports.inputs));
+	const mainOutputs = $derived(mainPorts(ports.outputs));
+	const attachmentInputs = $derived(attachmentPorts(ports.inputs));
+	const attachmentOutputs = $derived(attachmentPorts(ports.outputs));
 	const showOutputLabels = $derived(mainOutputs.length > 1);
 
 	// A distinct glyph per status: hue alone cannot separate failed from
@@ -121,7 +127,9 @@
 			<span class="kf-port"></span>
 		</Handle>
 		{#if showOutputLabels}
-			<span class="pointer-events-none absolute left-full ml-2.5 -translate-y-1/2 font-mono text-[0.625rem] text-muted-foreground" style={`top: ${top}`}>{port.name}</span>
+			<!-- Above the wire, as in the editor: centred on the handle the outgoing
+			     edge struck the label through. -->
+			<span class="pointer-events-none absolute left-full ml-2.5 max-w-20 -translate-y-full truncate whitespace-nowrap font-mono text-[0.625rem] text-muted-foreground" style={`top: calc(${top} - 0.375rem)`}>{portLabel(port)}</span>
 		{/if}
 	{/each}
 

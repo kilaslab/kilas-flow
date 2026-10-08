@@ -190,6 +190,23 @@ describe('edgeItemCounts', () => {
 		expect(counts.get('c-true')).toBe(1);
 		expect(counts.get('c-false')).toBe(2);
 	});
+
+	it('counts the error branch of a node that continues using its error output', () => {
+		// The `error` port is not in the definition — the compiler adds it under
+		// onError: continueErrorOutput — so the replay's count (and its handle)
+		// must come from the resolved ports, or the failed items' edge vanishes.
+		const call: Node = { id: 'call', name: 'Call', type: 'kilasflow.set', typeVersion: 1, position: { x: 0, y: 0 }, settings: { onError: 'continueErrorOutput' } };
+		const branch: Connection[] = [
+			{ id: 'c-ok', kind: 'main', source: { nodeId: 'call', port: 'main' }, target: { nodeId: 'yes', port: 'main' } },
+			{ id: 'c-error', kind: 'main', source: { nodeId: 'call', port: 'error' }, target: { nodeId: 'no', port: 'main' } }
+		];
+		const counts = edgeItemCounts(branch, [call, ...nodes], definitions, [
+			nodeRun({ nodeId: 'call', output: [[], [{ json: { error: 'refused' } }]] })
+		]);
+
+		expect(counts.get('c-ok')).toBe(0);
+		expect(counts.get('c-error')).toBe(1);
+	});
 });
 
 describe('formatDuration', () => {

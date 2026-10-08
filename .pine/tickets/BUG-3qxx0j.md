@@ -1,14 +1,14 @@
 ---
 id: BUG-3qxx0j
 title: 'Extract From File: fromJson rejected, absent operation becomes pdf, xlsx/csv import silently then fail'
-status: todo
+status: done
 priority: high
 labels:
     - n8n
     - importer
 parent: EPIC-8rbys7
 created: "2026-09-23T01:17:54Z"
-updated: "2026-09-23T01:17:54Z"
+updated: "2026-10-08T15:58:00Z"
 ---
 
 # Description
@@ -37,10 +37,21 @@ Map `fromJson`→`json`. Default an absent operation to `csv`, not `pdf`. Report
 - A node with no `operation` (n8n's CSV default) imports with the operation absent and silently takes KilasFlow's default, `pdf`.
 
 # Acceptance Criteria
-- [ ] `fromJson` maps to `json`
-- [ ] An absent operation is treated as n8n's default, `csv`
-- [ ] Any operation the node cannot run is a blocking import issue, never a silent run-time failure
-- [ ] csv, xlsx and binaryToPropery are implemented (they cover most of the remainder)
+- [x] `fromJson` maps to `json`
+- [x] An absent operation is treated as n8n's default, `csv`
+- [x] Any operation the node cannot run is a blocking import issue, never a silent run-time failure
+- [x] csv, xlsx and binaryToPropery are implemented (they cover most of the remainder)
+
+## Verification (2026-10-08)
+
+Fix commit: `2f3fa05`.
+
+- **`fromJson` maps to `json` (met).** `extractFromFileToKilas` (`internal/interop/n8n/parameters.go:3774`). Test: `TestImportExtractFromFileOperations` (`internal/interop/n8n/extract_import_test.go:13`) covers fromJson, json and extractFromJson, which all become `json`.
+- **An absent operation becomes `csv` (met).** The code checks whether the key is present before reading its text form (`parameters.go:3764-3767`). The same test covers "", which becomes `csv`.
+- **An operation the node cannot run is a blocking import issue (met).** The `default` branch adds a `SeverityBlocking` issue on `operation` (`parameters.go:3785-3790`). The same test asserts it for ods, fromIcs, rtf, xml, html and xls.
+- **csv, xlsx and binaryToPropery implemented (met).** The readers are in `nodes/extract.go` (`ExtractOperationCSV`, `ExtractOperationXLSX`, `binarytoproperty`), and the importer normalises both spellings, `binaryToPropery` and `binaryToProperty`. Test: `TestExtractFromFileReadsCSVAndXLSXAndBinary` (`nodes/extract_test.go:127`).
+
+`go test ./nodes ./internal/interop/n8n` passes on this branch. No playwright check was needed: the change is in the importer and the node runtime, and has no editor surface.
 
 # Implementation Plan
 
