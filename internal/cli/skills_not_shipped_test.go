@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io/fs"
 	"regexp"
 	"strings"
 	"testing"
@@ -46,4 +47,36 @@ func notShippedSection(body string) (string, bool) {
 		after = after[:next]
 	}
 	return after, true
+}
+
+// The other half of the drift: a skill that tells an agent to run a verb the
+// binary does not have sends it into a usage error. Every `kilasflow <verb>`
+// a skill's prose or reference files quote has to be a path of the live
+// command tree (BUG-x28fsx).
+func TestEveryVerbASkillQuotesExists(t *testing.T) {
+	paths := map[string]bool{}
+	for _, verb := range registry() {
+		paths[verb.Path] = true
+	}
+	quoted := regexp.MustCompile("`kilasflow ([a-z][a-z-]*)(?: ([a-z][a-z-]*))?")
+	err := fs.WalkDir(skills.BundleFS(), ".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".md") {
+			return err
+		}
+		data, err := fs.ReadFile(skills.BundleFS(), path)
+		if err != nil {
+			return err
+		}
+		for _, match := range quoted.FindAllStringSubmatch(string(data), -1) {
+			first, second := match[1], match[2]
+			if paths[first] || (second != "" && paths[first+" "+second]) {
+				continue
+			}
+			t.Errorf("%s quotes `kilasflow %s %s`, which is not a verb this binary has", path, first, second)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk the skills bundle: %v", err)
+	}
 }
