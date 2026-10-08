@@ -3,7 +3,7 @@
 	"settings_intro": "Akun, kunci API untuk panggilan server-ke-server, dan instans ini.",
 	"settings_account": "Akun",
 	"settings_account_loading": "Memuat akun…",
-	"settings_account_auth_off": "Autentikasi tampaknya nonaktif di instans ini — setiap panggilan API tanpa autentikasi, jadi tidak ada akun yang bisa ditampilkan. Aktifkan autentikasi di server untuk masuk.",
+	"settings_account_auth_off": "Autentikasi nonaktif di instans ini, jadi tidak ada akun yang bisa ditampilkan: API melayani setiap panggilan tanpa kredensial. Aktifkan autentikasi di server untuk masuk.",
 	"settings_email": "Email",
 	"settings_tenant": "Tenant",
 	"settings_signed_in_as": "sebagai {kind}",
@@ -23,8 +23,6 @@
 	"settings_creating": "Membuat…",
 	"settings_create_key_action": "Buat kunci",
 	"settings_cancel": "Batal",
-	"settings_keys_need_auth": "Kunci API memerlukan autentikasi",
-	"settings_keys_need_auth_body": "Instans ini menonaktifkan autentikasi, jadi kunci tidak dapat diterbitkan. Aktifkan autentikasi di server terlebih dahulu.",
 	"settings_keys_empty_title": "Belum ada kunci API",
 	"settings_keys_empty_body": "Buat satu untuk memanggil API dari backend atau tugas CI.",
 	"settings_key_created": "· dibuat {at}",
@@ -42,5 +40,8 @@
 	"settings_version": "Versi",
 	"settings_error_unexpected_key": "Respons kunci API tidak terduga",
 	"settings_error_unexpected_identity": "Respons identitas tidak terduga",
-	"settings_error_unexpected_health": "Respons health tidak terduga"
+	"settings_error_unexpected_health": "Respons health tidak terduga",
+	"settings_account_unavailable": "Akun Anda tidak dapat dimuat.",
+	"settings_keys_auth_off": "Autentikasi nonaktif, jadi API menerima panggilan tanpa kunci. Kunci yang Anda buat sekarang diberlakukan setelah autentikasi diaktifkan.",
+	"settings_keys_auth_off_empty_body": "Buat sekarang agar siap dipakai: kunci diberlakukan setelah autentikasi diaktifkan di server."
 }

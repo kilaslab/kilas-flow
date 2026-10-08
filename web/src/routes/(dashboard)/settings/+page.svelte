@@ -63,19 +63,24 @@
 
 	onMount(() => void loadKeys());
 
-	const identity = createGetMe<PrincipalResource>(() => ({
-		query: {
-			retry: false,
-			select: (response) => {
-				if (response.status !== 200) throw new Error(m.settings_error_unexpected_identity());
-				return response.data;
-			}
-		}
-	}));
 	const health = createGetHealth<HealthOutputBody>(() => ({
 		query: {
 			select: (response) => {
 				if (response.status !== 200) throw new Error(m.settings_error_unexpected_health());
+				return response.data;
+			}
+		}
+	}));
+	// The health probe says whether auth is on, so /auth/me is only asked when
+	// there can be someone signed in: with auth off it answered 401 on every
+	// visit, and that 401 was how this page used to learn the mode. An
+	// unreadable probe still asks, which keeps the account visible.
+	const identity = createGetMe<PrincipalResource>(() => ({
+		query: {
+			retry: false,
+			enabled: health.isSuccess ? health.data.authEnabled : health.isError,
+			select: (response) => {
+				if (response.status !== 200) throw new Error(m.settings_error_unexpected_identity());
 				return response.data;
 			}
 		}
@@ -91,7 +96,7 @@
 	let revokingBusy = $state(false);
 	let pageError = $state<string | null>(null);
 
-	const authOff = $derived(listFailure !== null || identity.isError);
+	const authOff = $derived(health.data?.authEnabled === false);
 
 	async function submitCreate() {
 		const trimmed = label.trim();
@@ -185,12 +190,14 @@
 	<div class="mt-6 grid gap-6">
 		<section aria-label={m.settings_account()} class="rounded-xl border border-border bg-card p-4">
 			<h2 class="text-sm font-semibold">{m.settings_account()}</h2>
-			{#if identity.isPending}
-				<p class="mt-1 text-xs text-muted-foreground">{m.settings_account_loading()}</p>
-			{:else if identity.isError}
+			{#if authOff}
 				<p class="mt-1 text-xs leading-5 text-muted-foreground">
 					{m.settings_account_auth_off()}
 				</p>
+			{:else if identity.isPending}
+				<p class="mt-1 text-xs text-muted-foreground">{m.settings_account_loading()}</p>
+			{:else if identity.isError}
+				<p class="mt-1 text-xs leading-5 text-muted-foreground">{m.settings_account_unavailable()}</p>
 			{:else if identity.data}
 				<dl class="mt-2 grid gap-1 text-xs">
 					{#if identity.data.email}
@@ -211,6 +218,9 @@
 				<div>
 					<h2 class="text-sm font-semibold">{m.settings_api_keys()}</h2>
 					<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{m.settings_api_keys_description()}</p>
+					{#if authOff}
+						<p role="note" class="mt-1 text-xs leading-5 text-muted-foreground">{m.settings_keys_auth_off()}</p>
+					{/if}
 				</div>
 				<Dialog.Root bind:open={createOpen} onOpenChange={(open) => !open && closeCreate()}>
 					<Dialog.Trigger>
@@ -270,8 +280,8 @@
 					rows={2}
 					onRetry={() => void loadKeys()}
 					emptyIcon={KeyRound}
-					emptyTitle={authOff ? m.settings_keys_need_auth() : m.settings_keys_empty_title()}
-					emptyBody={authOff ? m.settings_keys_need_auth_body() : m.settings_keys_empty_body()}
+					emptyTitle={m.settings_keys_empty_title()}
+					emptyBody={authOff ? m.settings_keys_auth_off_empty_body() : m.settings_keys_empty_body()}
 				>
 					<ul aria-label={m.settings_api_keys()} class="divide-y divide-border overflow-hidden rounded-lg border border-border">
 						{#each rows as key (key.id)}

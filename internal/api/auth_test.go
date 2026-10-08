@@ -628,6 +628,34 @@ func TestAFailedLoginSaysNothingAboutWhoHasAnAccount(t *testing.T) {
 
 // An installation that has not turned authentication on keeps working exactly
 // as it did, under the default tenant its data is already stored against.
+// The SPA reads whether authentication is on from the public health probe
+// instead of inferring it from a 401 on /auth/me, which logged a failed request
+// on every page of a default install (BUG-719gaz).
+func TestHealthSaysWhetherAuthenticationIsOn(t *testing.T) {
+	healthAuth := func(t *testing.T, handler http.Handler) any {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("GET /api/v1/health = %d, want 200", recorder.Code)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode health: %v (body: %s)", err, recorder.Body)
+		}
+		return body["authEnabled"]
+	}
+
+	off, _, _ := newWorkflowAPI(t)
+	if got := healthAuth(t, off); got != false {
+		t.Errorf("health authEnabled with authentication off = %v, want false", got)
+	}
+	on, _ := newAuthenticatedAPI(t, "acme")
+	if got := healthAuth(t, on.handler); got != true {
+		t.Errorf("health authEnabled with authentication on = %v, want true", got)
+	}
+}
+
 func TestAnInstallationWithAuthenticationOffIsUnchanged(t *testing.T) {
 	handler, _, _ := newWorkflowAPI(t)
 

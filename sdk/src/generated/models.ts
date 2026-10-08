@@ -1129,6 +1129,8 @@ export interface ExpressionGrammar {
 export interface HealthOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** Whether the API requires a credential. When false every call is served without one, and API keys are only enforced once authentication is enabled */
+  authEnabled: boolean;
   /** Always "ok" when the process is serving traffic */
   status: string;
   /** KilasFlow version */

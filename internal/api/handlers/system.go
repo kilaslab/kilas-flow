@@ -32,9 +32,10 @@ type FleetReporter interface {
 
 // System serves liveness and readiness probes.
 type System struct {
-	version string
-	db      Pinger
-	fleet   FleetReporter
+	version     string
+	db          Pinger
+	fleet       FleetReporter
+	authEnabled bool
 }
 
 // NewSystem builds the system handler.
@@ -49,11 +50,21 @@ func (s *System) WithFleet(fleet FleetReporter) *System {
 	return s
 }
 
+// WithAuthEnabled reports from the health probe whether this instance requires
+// a credential. The probe is public in both modes, so a client learns the mode
+// before it has signed in instead of inferring it from a 401 on /auth/me.
+func (s *System) WithAuthEnabled(enabled bool) *System {
+	s.authEnabled = enabled
+
+	return s
+}
+
 // HealthOutput is the liveness response.
 type HealthOutput struct {
 	Body struct {
-		Status  string `json:"status" example:"ok" doc:"Always \"ok\" when the process is serving traffic"`
-		Version string `json:"version" example:"0.1.0" doc:"KilasFlow version"`
+		Status      string `json:"status" example:"ok" doc:"Always \"ok\" when the process is serving traffic"`
+		Version     string `json:"version" example:"0.1.0" doc:"KilasFlow version"`
+		AuthEnabled bool   `json:"authEnabled" example:"true" doc:"Whether the API requires a credential. When false every call is served without one, and API keys are only enforced once authentication is enabled"`
 	}
 }
 
@@ -156,6 +167,7 @@ func (s *System) Health(ctx context.Context, _ *struct{}) (*HealthOutput, error)
 	out := &HealthOutput{}
 	out.Body.Status = "ok"
 	out.Body.Version = s.version
+	out.Body.AuthEnabled = s.authEnabled
 
 	return out, nil
 }

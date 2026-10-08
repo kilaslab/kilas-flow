@@ -7,7 +7,8 @@
 	import PanelLeftClose from '@lucide/svelte/icons/panel-left-close';
 	import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open';
 
-	import { getMe, logout } from '$lib/api/generated/auth/auth';
+	import { logout } from '$lib/api/generated/auth/auth';
+	import { authMode } from '$lib/dashboard/auth-mode';
 	import type { PrincipalResource } from '$lib/api/generated/models';
 	import DashboardNav from '$lib/components/dashboard/dashboard-nav.svelte';
 	import LocaleSwitcher from '$lib/components/dashboard/locale-switcher.svelte';
@@ -35,14 +36,11 @@
 	const STORAGE_KEY = 'kilasflow.sidebar.collapsed';
 
 	onMount(() => {
-		void getMe()
-			.then((response) => {
-				if (response.status === 200) principal = response.data;
-			})
-			.catch(() => {
-				// Auth-off deployments 404/401 here: the shell simply shows
-				// no user menu rather than an error.
-			});
+		// Auth-off deployments never reach /auth/me: the health probe says the
+		// mode, so the shell shows no user menu without a failed request.
+		void authMode.principal().then((signedIn) => {
+			principal = signedIn;
+		});
 		try {
 			sidebarCollapsed = localStorage.getItem(STORAGE_KEY) === 'true';
 		} catch {
