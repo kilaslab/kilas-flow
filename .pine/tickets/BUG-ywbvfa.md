@@ -1,6 +1,6 @@
 ---
 id: BUG-ywbvfa
-title: "Focus, hover and pressed states are inconsistent: three focus styles, and the primary button's ring is invisible"
+title: 'Focus, hover and pressed states are inconsistent: three focus styles, and the primary button''s ring is invisible'
 status: todo
 priority: high
 labels:
@@ -8,9 +8,11 @@ labels:
     - accessibility
     - focus
     - visual-revamp
+deps:
+    - FEAT-p75n7j
 parent: EPIC-3en6xr
 created: "2026-09-23T03:05:16Z"
-updated: "2026-09-23T03:05:16Z"
+updated: "2026-10-08T16:58:19Z"
 ---
 
 # Description
