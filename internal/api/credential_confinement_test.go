@@ -256,7 +256,8 @@ func TestAFixedHostCredentialReadsBackWithItsDefaultScope(t *testing.T) {
 	for _, entry := range recorder {
 		switch entry.ID {
 		case "openAiApi":
-			found[entry.ID] = reflect.DeepEqual(entry.DefaultDomains, []string{"api.openai.com"})
+			// The host of its base URL, which defaults to api.openai.com.
+			found[entry.ID] = entry.DefaultDomainsFrom == "url"
 		case "openRouterApi":
 			found[entry.ID] = reflect.DeepEqual(entry.DefaultDomains, []string{"openrouter.ai"})
 		case "telegramApi":

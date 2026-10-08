@@ -173,9 +173,13 @@ func RegisterAll(registry *Registry) error {
 					Description: "The token BotFather gave you, in the form 123456:ABC-DEF…",
 				},
 				{
-					Key: "baseUrl", Label: "Base URL", Kind: property.KindString, Required: true,
+					// Optional: a credential that leaves it empty reads this
+					// default wherever the field is used (the probe, a pack's
+					// `$credentials.baseUrl`, the scope below), so a token
+					// alone is a complete Telegram credential, as the docs say.
+					Key: "baseUrl", Label: "Base URL", Kind: property.KindString,
 					Default:     "https://api.telegram.org",
-					Description: "Where the Bot API lives. Change it only when you run Telegram's own local Bot API server.",
+					Description: "Where the Bot API lives. Leave it empty unless you run Telegram's own local Bot API server.",
 				},
 			},
 			Secrets: []string{"accessToken"},
@@ -185,6 +189,9 @@ func RegisterAll(registry *Registry) error {
 			// what distinguishes it from a credential that cannot sign an HTTP
 			// request at all, which is still refused.
 			Authenticate: &Authentication{Placement: PlacementPath},
+			// getMe is the Bot API's own "who am I" call: it needs nothing but
+			// the token, changes nothing, and refuses a revoked token.
+			Test: &TestRequest{URL: "{{ baseUrl }}/bot{credential.accessToken}/getMe"},
 			// The token goes wherever baseUrl says, so the default scope is
 			// that host rather than api.telegram.org: a local Bot API server
 			// keeps working with no domains typed, and the token still cannot
@@ -218,12 +225,20 @@ func RegisterAll(registry *Registry) error {
 		},
 		{
 			ID: "openAiApi", DisplayName: "OpenAI",
-			Description: "An OpenAI API key.",
+			Description: "An OpenAI API key, or the key and address of an OpenAI-compatible endpoint.",
 			Properties: []property.PropertyDefinition{
 				{
 					Key: "apiKey", Label: "API key", Kind: property.KindString, Required: true,
 					TypeOptions: &property.TypeOptions{Password: true},
-					Description: "A key from platform.openai.com, in the form sk-…",
+					Description: "A key from platform.openai.com, in the form sk-…, or the key an OpenAI-compatible endpoint expects.",
+				},
+				{
+					// n8n's key is `url`, so an imported credential keeps the
+					// endpoint it named. A chat model whose own base URL is left
+					// at OpenAI's reads this one instead.
+					Key: "url", Label: "Base URL", Kind: property.KindString,
+					Default:     "https://api.openai.com/v1",
+					Description: "Leave it empty for OpenAI. Set it to reach an OpenAI-compatible endpoint, such as a gateway or a local Ollama at http://localhost:11434/v1.",
 				},
 			},
 			Secrets: []string{"apiKey"},
@@ -232,10 +247,13 @@ func RegisterAll(registry *Registry) error {
 			// imported workflow names `openAiApi` — so the two have to be the
 			// same type, and a stored payload of one must read as the other.
 			Authenticate: &Authentication{Placement: PlacementBearer, Value: "{{ apiKey }}"},
-			Test:         &TestRequest{URL: "https://api.openai.com/v1/models"},
-			// An owner who reaches OpenAI through a gateway lists the gateway;
-			// an empty list means OpenAI itself and nowhere else.
-			DefaultDomains: []string{"api.openai.com"},
+			Test:         &TestRequest{URL: "{{ url }}/models"},
+			// The key goes wherever the base URL says, so the default scope is
+			// that host: OpenAI itself when the field is empty, and the gateway
+			// or compatible endpoint the owner named otherwise. A workflow
+			// editor cannot edit a credential, so it still cannot aim the key
+			// at a host the owner never chose.
+			DefaultDomainsFrom: "url",
 		},
 		{
 			ID: "openRouterApi", DisplayName: "OpenRouter",

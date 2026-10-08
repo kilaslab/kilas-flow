@@ -321,6 +321,47 @@ func expand(template string, fields map[string]string) string {
 	return result
 }
 
+// expandURL is expand for a URL template that joins a field to a path, as in
+// `{{ url }}/models`: a base URL saved with a trailing slash would otherwise
+// probe `/v1//models`, which a strict router answers 404.
+func expandURL(template string, fields map[string]string) string {
+	result := template
+	for key, value := range fields {
+		joined := strings.TrimRight(strings.TrimSpace(value), "/") + "/"
+		result = strings.ReplaceAll(result, "{{ "+key+" }}/", joined)
+		result = strings.ReplaceAll(result, "{{"+key+"}}/", joined)
+	}
+	return expand(result, fields)
+}
+
+// WithDefaults returns the fields with every declared default filled in where
+// the credential left the field empty. The caller's map is not modified.
+//
+// A field with a default is optional because the default is what an empty
+// value means, so every reader of the field has to read it the same way: the
+// probe, a pack template reading `$credentials`, and the scope DefaultDomains
+// derives.
+func (credentialType Type) WithDefaults(fields map[string]string) map[string]string {
+	filled := make(map[string]string, len(fields)+len(credentialType.Properties))
+	for key, value := range fields {
+		filled[key] = value
+	}
+	for _, declared := range credentialType.Properties {
+		fallback, _ := declared.Default.(string)
+		if fallback != "" && strings.TrimSpace(filled[declared.Key]) == "" {
+			filled[declared.Key] = fallback
+		}
+	}
+	return filled
+}
+
+// WithDefaults is Type.WithDefaults for a type named by ID. An unregistered
+// type's fields come back as a copy, unchanged.
+func WithDefaults(typeID string, fields map[string]string) map[string]string {
+	credentialType, _ := Default().Get(typeID)
+	return credentialType.WithDefaults(fields)
+}
+
 // sortedKeys returns a map's keys in a stable order, so two applications of the
 // same request are identical.
 func sortedKeys(values map[string]string) []string {
@@ -400,7 +441,10 @@ func RunTest(ctx context.Context, credentialType Type, record Record, fields map
 	if credentialType.Test == nil {
 		return "", fmt.Errorf("this credential type has no test defined")
 	}
-	target := expand(credentialType.Test.URL, fields)
+	// An optional field left empty probes the address its type declares, the
+	// one a node using the credential falls back to.
+	fields = credentialType.WithDefaults(fields)
+	target := expandURL(credentialType.Test.URL, fields)
 	if target == "" {
 		return "", fmt.Errorf("this credential type's test has no URL")
 	}

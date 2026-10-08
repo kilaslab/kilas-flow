@@ -92,7 +92,7 @@ the type:
 
 | Type | An empty list means |
 | --- | --- |
-| `openAiApi` | `api.openai.com` only |
+| `openAiApi` | the host of the credential's own **Base URL** — `api.openai.com` by default, or the gateway or OpenAI-compatible endpoint you set |
 | `openRouterApi` | `openrouter.ai` only |
 | `googleDriveOAuth2Api`, `gmailOAuth2` | the Google API and sign-in hosts |
 | `telegramApi` | the host of the credential's own **Base URL** — `api.telegram.org` by default, or your local Bot API server |
@@ -102,8 +102,16 @@ the type:
 A type whose service lives at one address declares it, and an empty list on that
 type means that address rather than everywhere. Without it, anyone who could
 edit a workflow could point an OpenAI key at a server they run and read it off
-the wire. A list you type always **replaces** the default rather than adding to
-it: to reach OpenAI through a gateway, list the gateway's host.
+the wire. A type whose address is part of the credential is held to the host its
+owner set, and a workflow editor cannot edit a credential. A list you type
+always **replaces** the default rather than adding to it.
+
+An OpenAI credential's **Base URL** (n8n's `url`, default
+`https://api.openai.com/v1`) is where its test goes and where an OpenAI Chat
+Model sends its calls while the node's own Base URL is left at OpenAI's, so a
+local Ollama or a gateway is configured once, on the credential. A node that
+names a different Base URL still wins, and the call is still held to the
+credential's scope.
 
 The default is resolved **wherever the scope is checked**, not written into
 stored rows, so a credential saved before its type had a default is held to it
@@ -305,6 +313,15 @@ that from becoming a way to read a stored secret:
 Tests are also capped per tenant: at most four run at once across every
 credential and type, and one more is answered `429`. The per-credential slot
 answers `409` as before.
+
+Not every type has a test. OpenAI (`GET {url}/models`), OpenRouter, Telegram
+(`GET {baseUrl}/bot<token>/getMe`) and the Google types are probed over HTTP,
+and the database types by connecting. A type with neither — the generic HTTP
+types and `jwtAuth` — answers `untestable: true` rather than a failure, and
+`GET /api/v1/credential-types` marks each type `testable` so the editor leaves
+Test off one it cannot probe. An optional field left empty is probed at its
+declared default, so a Telegram credential with no Base URL tests against
+`api.telegram.org`.
 
 The tests that exist are chosen carefully. OpenRouter is probed at `/key` rather
 than `/models`, because OpenRouter serves its model catalogue unauthenticated —

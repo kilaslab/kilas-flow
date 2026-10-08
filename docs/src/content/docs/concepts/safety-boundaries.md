@@ -131,10 +131,11 @@ replacement: a credential permitted to reach `example.com` still cannot reach it
 if the deployment's outbound policy refuses the resolved address.
 
 An empty list is not always "any host". A type whose service lives at one
-address is held to it — an OpenAI key to `api.openai.com`, an OpenRouter key to
-`openrouter.ai`, a Google credential to Google's hosts — and a type that names
-its own server is held to that server's host: a Telegram credential to its Bot
-API base URL, a WAHA credential to its instance. The default is applied where the
+address is held to it — an OpenRouter key to `openrouter.ai`, a Google
+credential to Google's hosts — and a type that names its own server is held to
+that server's host: an OpenAI credential to its Base URL (`api.openai.com`
+unless set), a Telegram credential to its Bot API base URL, a WAHA credential to
+its instance. The default is applied where the
 scope is checked, so credentials stored before it existed are covered too. Only
 the generic HTTP types, and pack types that declare no default, still mean any
 host when their list is empty.

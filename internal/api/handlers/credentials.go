@@ -32,6 +32,11 @@ type CredentialTypeResource struct {
 	// DefaultDomainsFrom names the field whose URL host is the default scope,
 	// for a type whose address is part of the credential.
 	DefaultDomainsFrom string `json:"defaultDomainsFrom,omitempty" doc:"Field whose URL host is the default scope when the credential is saved with no allowed domains"`
+	// Testable says whether the test endpoints can probe this type. A type
+	// with no probe answers untestable rather than failed, and an editor that
+	// knows in advance can leave the Test action off instead of offering one
+	// that cannot pass.
+	Testable bool `json:"testable" doc:"Whether this server can test a credential of this type; one that cannot is answered untestable"`
 }
 
 // CredentialResource is one stored credential.
@@ -241,9 +246,20 @@ func (handler *Credentials) ListTypes(context.Context, *struct{}) (*credentialTy
 			ID: definition.ID, DisplayName: definition.DisplayName,
 			Description: definition.Description, Fields: definition.Fields,
 			DefaultDomains: definition.DefaultDomains, DefaultDomainsFrom: definition.DefaultDomainsFrom,
+			Testable: testable(definition.ID),
 		})
 	}
 	return &credentialTypeListOutput{Body: resources}, nil
+}
+
+// testable mirrors probe's branches: a database type is tested by connecting,
+// and any other type only by the HTTP probe it declares.
+func testable(typeID string) bool {
+	if _, isDatabase := sqlnode.DriverForCredential(typeID); isDatabase {
+		return true
+	}
+	credentialType, known := credentials.Default().Get(typeID)
+	return known && credentialType.Test != nil
 }
 
 // List returns every credential in the tenant.
