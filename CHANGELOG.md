@@ -312,6 +312,77 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Fixed
 
+- HTTP Request: a 4xx/5xx failure names its status code, method, host and
+  response body (cut to 1 KiB), and its error item carries `httpCode`,
+  `description`, `method`, `url` and `body` in n8n's shape, with credential
+  values scrubbed.
+- Node runs record when they started and finished, so durations are real
+  instead of 0 ms, retries included.
+- `kilasflow exec trace` of a finished run streams every event and ends on the
+  run's own outcome; a gap in the history is marked `truncated`.
+- Merge in Choose Branch mode waits for both inputs; Always Output Data looks
+  only at the first output, as n8n does; batch-shaped nodes (Aggregate,
+  Summarize, Limit, Remove Duplicates and others) run as one call under
+  continue-on-fail.
+- A Wait set to continue using its error output resumes, and every refused
+  resume fails on the waiting node instead of leaving the replay all green.
+- The execution page shows a timer Wait as "Resumes at <time>" with no
+  approval buttons, and a stopped Wait reads Cancelled.
+- A run's error names the failing node by its name, and sticky notes are no
+  longer listed among a run's nodes.
+- The error workflow runs whether or not it is active, its payload carries
+  `execution.url` and the last node's name, and the failed run records which
+  error workflow it started.
+- n8n import: Switch v1/v2 rules keep every rule and branch; a Set row of
+  type `null` writes its value unconverted; httpRequestTool imports as the
+  HTTP tool; a Workflow Tool calling its own workflow validates; Conversational
+  and OpenAI Functions agents import as Tools Agents; a main edge into an
+  insert-mode vector store lands on its data loader; provider chat models keep
+  their model name and report each option they drop; connections keep n8n's
+  order, which `$('X')` follows; and every graph-shape refusal run and
+  activate will make is reported as blocking at import.
+- n8n export declares `executionOrder: "v1"` and keeps an If node's 2.x
+  version.
+- AI: an agent's malformed tool arguments go back to the model as an error
+  instead of running the tool with `{}`, and an unknown tool name is answered
+  with the valid ones; the Structured Output Parser enforces the full JSON
+  Schema, nullable types included; a Workflow Tool offers its sub-workflow's
+  typed inputs; `$fromAI` in an expression's literal text is not asked of the
+  model; the Basic LLM Chain sends an item's images to a vision model;
+  reasoning is sent back on the next tool turn and leaked think tokens are
+  stripped from the answer.
+- Go Code node: a panic reports its message and line, compile errors point at
+  the user's own lines, and `workflow validate` reports a compile error before
+  anything runs.
+- Code (JavaScript): `TextEncoder#encodeInto` reports `read` in UTF-16 code
+  units and stops at a whole character.
+- Editor: Cmd+A, edge selection, wheel panning and n8n's shortcuts work, and
+  Cmd+S saves from inside a field; typing in the inspector rebuilds only the
+  edited node (24 ms instead of 106 ms per key at 300 nodes); the minimap, zoom
+  controls, Chat button and inspector no longer cover one another at
+  1024–1440 px; a placeholder draws only the ports its edges use and every node
+  type has its own glyph; revision preview fits the view; save and leave
+  messages no longer show revision ids or a native confirm.
+- Data tables: one header per column with its type, localized datetimes, and
+  an export file named after the table.
+- With authentication off, pages no longer call `/auth/me`, and `/login`
+  steps aside.
+- Credential tests say a type is untestable instead of "Test failed"; OpenAI
+  credentials take a base URL; Telegram's base URL is optional and has a probe.
+- `/docs` opens dark, offers no Ask AI, MCP, registry, Share or Deploy
+  features, and logs no CSP errors.
+- An embedded editor reads the credential type catalogue instead of logging a
+  403 on every load; embeds publish only with `workflow:publish` and activate
+  only with `workflow:activate`.
+- Boot warnings use the configured log format, and `KILASFLOW_ENCRYPTION_KEY`
+  is not reported as ignored.
+- CLI: `skills check` compares only KilasFlow's own skills and
+  `skills install --scope project` lands at the project root; `debug eval`
+  reads a node's input at a chosen run and item; the document `workflow get`
+  prints validates and saves unchanged; a verb run with no server URL exits 2.
+- The published workflow JSON Schema accepts every connection kind the engine
+  does.
+
 - The Webhook node's panel shows the address that answers, with your host and
   a copy button, instead of `/webhook/<path>`. That path is not a route: the
   live address carries a minted route, so the URL the panel used to show
@@ -446,6 +517,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 
 ### Security
+
+- Database credentials verify the server certificate by default: an empty
+  Postgres `sslMode` means `verify-full` and an empty MySQL `tls` means
+  verified TLS. A server with a self-signed certificate now needs the opt-out
+  named in the error (`require`, `skip-verify`).
+- A Data table condition takes its column and operator from the node, never
+  from the incoming item; a whole-row condition written as one expression is
+  refused at save.
+- A node with several credentials resolves them in its declared order, and a
+  field value is never expanded again as a template.
 
 - An embedded guest editor or a narrowed agent token can no longer send a
   credential it may use to a host of its own and read the secret. Three rules
