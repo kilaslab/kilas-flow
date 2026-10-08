@@ -146,6 +146,7 @@ today, and the CLI can be complete on day one.
 
 ```bash
 kilasflow api --list                            # every id this server serves
+kilasflow api create-workflow --schema          # its parameters and body schema; calls nothing
 kilasflow api get-workflow --path id=wf_01J8ZP
 kilasflow api run-workflow --path id=wf_1 --body '{"input":{"n":1}}'
 kilasflow api export-datastore-rows --path id=ds_1 --out rows.csv

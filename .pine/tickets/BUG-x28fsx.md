@@ -126,7 +126,7 @@ none
 # Acceptance Criteria
 - [x] Every `not_shipped`/"not yet" claim and every verb path mentioned in the prose is checked against `kilasflow help --json` by a drift gate in `go test ./...`
 - [ ] Each skill carries one minimal, complete, validated example (canonical document plus stored property shapes), validated in CI through `workflow validate`
-- [ ] `kilasflow api <op> --schema` (or similar) prints an operation's request schema
+- [x] `kilasflow api <op> --schema` (or similar) prints an operation's request schema
 - [ ] A `kilasflow-ai-agents` skill (ports, models, tools, memory, RAG) plus coverage of loops, binary data and sub-workflows; citations point to docs or `skills show --reference`, not repo source paths
 
 # Implementation Plan
@@ -150,5 +150,7 @@ Two of the stale `not_shipped` claims are corrected by hand. Criterion 1's drift
 
 Gate, partly (criterion 1): `TestNoSkillCallsAShippedVerbUnshipped` (internal/cli/skills_not_shipped_test.go) fails when any skill's `kilasflow_not_shipped` entry, or its '## Not shipped yet' section, calls a verb of the live command tree unshipped. Run against the skills from before this fix, it names all six stale claims. `TestEveryVerbASkillQuotesExists` checks every `kilasflow <verb>` that a skill's prose or reference files quote against the same tree. It passes today, and a planted `kilasflow exec rewind` made it fail.
 
-Still open: validated examples per skill (2), `api <op> --schema` (3), and the AI-agents skill (4).
+`kilasflow api <op> --schema` (criterion 3) prints the operation's method, path template, parameters and JSON request-body schema, with every `$ref` resolved, from the served OpenAPI document. It calls nothing, so it needs no confirmation (`operationSchema` in internal/cli/openapi.go). `TestAPISchemaPrintsAnOperationsParametersAndBodyWithoutCallingIt` failed first. Against a live server, `api create-workflow --schema` resolves the nested node schema.
+
+Still open: validated examples per skill (2) and the AI-agents skill (4).
 

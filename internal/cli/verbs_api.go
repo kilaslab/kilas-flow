@@ -71,6 +71,7 @@ func apiGuardVerb(id string, wrapped Verb) Verb {
 // to do with the body that comes back.
 type apiFlags struct {
 	list     bool
+	schema   bool
 	paths    *pairFlags
 	query    *pairFlags
 	header   *pairFlags
@@ -88,6 +89,7 @@ func registerAPIFlags(fs *flag.FlagSet) any {
 	}
 
 	fs.BoolVar(&flags.list, "list", false, "print every operation id the running server serves, sorted")
+	fs.BoolVar(&flags.schema, "schema", false, "print what the operation takes — its parameters and its request body's schema — and call nothing")
 	fs.Var(flags.paths, "path", "fill one path placeholder, as name=value (repeatable)")
 	fs.Var(flags.query, "query", "add one query parameter, as name=value (repeatable)")
 	fs.Var(flags.header, "header", "add one request header, as name=value (repeatable)")
@@ -139,6 +141,28 @@ func runAPI(ctx *Context, args []string) error {
 		if len(args) > 1 {
 			return usageError("one operation id at a time; got %q and %q", args[0], args[1])
 		}
+	}
+
+	// --schema reads the served document and calls nothing, so it needs no
+	// confirmation and no authority, whatever the operation would do.
+	if flags.schema {
+		if flags.list {
+			return usageError("--schema describes one operation; it does not combine with --list")
+		}
+		operations, err := ctx.Client.Operations(ctx.Ctx)
+		if err != nil {
+			return err
+		}
+		operation, known := operations[args[0]]
+		if !known {
+			return unknownOperationError(args[0])
+		}
+		schema, err := operationSchema(ctx.Client.document, operation)
+		if err != nil {
+			return err
+		}
+		ctx.Data = schema
+		return nil
 	}
 
 	// An operation id a guarded verb wraps is guarded whichever name reached

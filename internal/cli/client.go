@@ -49,6 +49,9 @@ type Client struct {
 	// requirement, which server.go sets only when auth is on. It is valid
 	// exactly when operations is non-nil.
 	authEnabled bool
+	// document is the served OpenAPI document the index was built from, kept
+	// for `api <op> --schema`.
+	document []byte
 }
 
 // Response is the successful half of an HTTP round trip.

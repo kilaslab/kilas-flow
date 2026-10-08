@@ -1076,3 +1076,59 @@ func stringSlice(t *testing.T, value any) []string {
 
 	return out
 }
+
+// `api <op> --schema` answers "what does this operation take" from the served
+// document, with the body's $ref resolved, and calls nothing: an agent writing
+// a body for the escape hatch had to read the whole OpenAPI document to find
+// it (BUG-x28fsx).
+func TestAPISchemaPrintsAnOperationsParametersAndBodyWithoutCallingIt(t *testing.T) {
+	document := `{
+	  "openapi": "3.1.0",
+	  "paths": {
+	    "/api/v1/workflows/{id}": {
+	      "put": {
+	        "operationId": "update-workflow",
+	        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+	        "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/WorkflowDocumentInput"}}}}
+	      }
+	    }
+	  },
+	  "components": {"schemas": {
+	    "WorkflowDocumentInput": {"type": "object", "required": ["name"], "properties": {
+	      "name": {"type": "string"},
+	      "settings": {"$ref": "#/components/schemas/Settings"}
+	    }},
+	    "Settings": {"type": "object", "additionalProperties": true}
+	  }}
+	}`
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		operationsPath: jsonBody(http.StatusOK, document),
+	})
+	srv := stubAPI(t, api.routesFor(t))
+
+	code, _, stdout, stderr := runCLI(t, Env{
+		Args: []string{"api", "update-workflow", "--schema", "--json", "--url", srv.URL},
+	})
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+	}
+	data, _ := envelope(t, stdout)["data"].(map[string]any)
+	if data["method"] != "PUT" || data["path"] != "/api/v1/workflows/{id}" {
+		t.Errorf("data = %v, want the operation's method and path template", data)
+	}
+	parameters, _ := data["parameters"].([]any)
+	if len(parameters) != 1 || parameters[0].(map[string]any)["name"] != "id" {
+		t.Errorf("parameters = %v, want the path parameter", data["parameters"])
+	}
+	body, _ := data["body"].(map[string]any)
+	properties, _ := body["properties"].(map[string]any)
+	settings, _ := properties["settings"].(map[string]any)
+	if body["type"] != "object" || settings["type"] != "object" {
+		t.Errorf("body = %v, want the request schema with every $ref resolved", body)
+	}
+	for _, call := range api.calls {
+		if call.Path != operationsPath {
+			t.Errorf("--schema called %s %s; it must read the document and nothing else", call.Method, call.Path)
+		}
+	}
+}

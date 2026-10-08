@@ -68,6 +68,7 @@ func (c *Client) Operations(ctx context.Context) (map[string]Operation, error) {
 	}
 	c.operations = index
 	c.authEnabled = authEnabled
+	c.document = resp.Body
 
 	return index, nil
 }
@@ -219,4 +220,83 @@ func fillPath(template, id string, params map[string]string) (string, error) {
 	}
 
 	return target, nil
+}
+
+// apiSchema is the payload of `api <op> --schema`: what one operation takes,
+// read from the served document.
+type apiSchema struct {
+	Operation  string `json:"operation"`
+	Method     string `json:"method"`
+	Path       string `json:"path"`
+	Parameters []any  `json:"parameters"`
+	// Body is the JSON request body's schema with every $ref resolved, or nil
+	// for an operation that takes none.
+	Body any `json:"body"`
+}
+
+// operationSchema describes one operation from the served document, resolving
+// each $ref into the component it names. A component that refers back to
+// itself is left as its $ref the second time, so a recursive schema ends.
+func operationSchema(document []byte, operation Operation) (apiSchema, error) {
+	var doc struct {
+		Paths      map[string]map[string]json.RawMessage `json:"paths"`
+		Components struct {
+			Schemas map[string]any `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(document, &doc); err != nil {
+		return apiSchema{}, &ExitError{Code: ExitFailure, ErrCode: "unexpected_shape", Message: "the server's OpenAPI document is not JSON: " + err.Error()}
+	}
+	var item struct {
+		Parameters  []any `json:"parameters"`
+		RequestBody struct {
+			Content map[string]struct {
+				Schema any `json:"schema"`
+			} `json:"content"`
+		} `json:"requestBody"`
+	}
+	if raw, found := doc.Paths[operation.Path][strings.ToLower(operation.Method)]; found {
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return apiSchema{}, &ExitError{Code: ExitFailure, ErrCode: "unexpected_shape", Message: "the server's OpenAPI operation is not readable: " + err.Error()}
+		}
+	}
+	var walk func(any, map[string]bool) any
+	walk = func(value any, seen map[string]bool) any {
+		switch typed := value.(type) {
+		case map[string]any:
+			if ref, ok := typed["$ref"].(string); ok {
+				name, local := strings.CutPrefix(ref, "#/components/schemas/")
+				if component, known := doc.Components.Schemas[name]; local && known && !seen[name] {
+					next := map[string]bool{name: true}
+					for key := range seen {
+						next[key] = true
+					}
+					return walk(component, next)
+				}
+				return typed
+			}
+			out := make(map[string]any, len(typed))
+			for key, item := range typed {
+				out[key] = walk(item, seen)
+			}
+			return out
+		case []any:
+			out := make([]any, len(typed))
+			for index, item := range typed {
+				out[index] = walk(item, seen)
+			}
+			return out
+		}
+		return value
+	}
+	resolve := func(value any) any { return walk(value, map[string]bool{}) }
+
+	schema := apiSchema{Operation: operation.ID, Method: operation.Method, Path: operation.Path, Parameters: []any{}}
+	for _, parameter := range item.Parameters {
+		schema.Parameters = append(schema.Parameters, resolve(parameter))
+	}
+	if content, found := item.RequestBody.Content["application/json"]; found {
+		schema.Body = resolve(content.Schema)
+	}
+	return schema, nil
 }
