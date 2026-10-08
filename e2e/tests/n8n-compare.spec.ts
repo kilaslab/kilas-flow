@@ -804,9 +804,13 @@ test('the editor-validated tier refuses with user-facing diagnostics', async ({ 
 		[manual(), node('node', 'Embeddings', 'kilasflow.embeddings', 1, { model: 'text-embedding-3-small' })],
 		[conn('c1', 'manual', 'main', 'node', 'main')]
 	);
+	// Not an editor-validated refusal: the text arrives on the item, so the run
+	// is accepted and the Embeddings node fails it by name (BUG-x94b3d).
 	const embeddingsAttempt = await startRun(server.baseURL, embeddingsId);
-	expect(embeddingsAttempt.status).toBe(422);
-	expect(errorText(embeddingsAttempt.body)).toContain('no text to embed');
+	expect(embeddingsAttempt.status).toBe(202);
+	const embeddingsRecord = await waitForExecution(server.baseURL, embeddingsAttempt.body.id);
+	expect(embeddingsRecord.status).toBe('failed');
+	expect(JSON.stringify(nodeRun(embeddingsRecord, 'node').error)).toContain('no text to embed');
 
 	const storeId = await createWorkflow(
 		server.baseURL,

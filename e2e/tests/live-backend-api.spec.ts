@@ -174,38 +174,45 @@ test('four REST-shaped CRUD endpoints over one datastore share their rows', asyn
 	const locator = datastoreLocator('id', store.id);
 	const stamp = randomBytes(3).toString('hex');
 	const sku = `SKU-${stamp}`;
-	const [create, get, update, remove] = await mintWebhookWorkflows(baseURL, 4, `live api orders ${stamp}`);
+	const [create, get, update, remove, flaggedRespond] = await mintWebhookWorkflows(baseURL, 5, `live api orders ${stamp}`);
 
 	// One shape per verb: webhook -> data table row operation -> Respond with
 	// the node's own first item, so the caller receives the row itself.
+	//
+	// A read that matches nothing hands on zero items, and a node that receives
+	// no items does not run, whatever its own settings (n8n's rule, BUG-4ch186).
+	// So Always Output Data goes on the Data table node, as it would in n8n: an
+	// empty result becomes one empty item, the Respond node runs on it, and the
+	// caller gets JSON either way. On the Respond node the flag changes nothing,
+	// and the caller gets n8n's answer for a run that never reached its Respond
+	// node: 200 with an empty body (BUG-cnhq1f). flagOn picks which one.
 	const shape = (
 		minted: MintedWebhookWorkflow,
 		method: string,
 		path: string,
 		operation: string,
-		parameters: JsonObject
+		parameters: JsonObject,
+		flagOn: 'rows' | 'respond' = 'rows'
 	): JsonObject => ({
 		schemaVersion: 1,
-		name: `orders ${operation} ${stamp}`,
+		name: `orders ${operation} ${stamp}${flagOn === 'respond' ? ' (flag on respond)' : ''}`,
 		nodes: [
 			webhookNode(minted.nodeId, { path, httpMethod: method }),
-			specNode('rows', 'Data table', 'kilasflow.datastore', {
-				resource: 'row',
-				operation,
-				dataTableId: locator,
-				...parameters
-			}),
+			{
+				...specNode('rows', 'Data table', 'kilasflow.datastore', {
+					resource: 'row',
+					operation,
+					dataTableId: locator,
+					...parameters
+				}),
+				settings: flagOn === 'rows' ? { alwaysOutputData: true } : {}
+			},
 			{
 				...specNode('respond', 'Respond', 'kilasflow.respondToWebhook', {
 					respondWith: 'firstIncomingItem',
 					responseCode: 200
 				}),
-				// A read that matches nothing delivers zero items, which would
-				// prune the Respond node and leave the caller with an empty 200
-				// body. An API endpoint answers JSON either way, so the node
-				// runs on the empty delivery and its executor substitutes the
-				// empty item.
-				settings: { alwaysOutputData: true }
+				settings: flagOn === 'respond' ? { alwaysOutputData: true } : {}
 			}
 		],
 		connections: [specConn('c1', minted.nodeId, 'rows'), specConn('c2', 'rows', 'respond')],
@@ -213,6 +220,13 @@ test('four REST-shaped CRUD endpoints over one datastore share their rows', asyn
 	});
 
 	const marker = (value: string): JsonObject => ({ mode: 'expression', value });
+	const bySku: JsonObject = {
+		filters: {
+			conditions: [conditionRow('sku', 'eq', marker('{{ $json.body.sku ?? $json.query.sku }}'))]
+		},
+		match: 'any',
+		returnAll: true
+	};
 	const shaped: Array<[MintedWebhookWorkflow, JsonObject]> = [
 		[
 			create,
@@ -223,16 +237,8 @@ test('four REST-shaped CRUD endpoints over one datastore share their rows', asyn
 				})
 			})
 		],
-		[
-			get,
-			shape(get, 'GET', `orders-get-${stamp}`, 'get', {
-				filters: {
-					conditions: [conditionRow('sku', 'eq', marker('{{ $json.body.sku ?? $json.query.sku }}'))]
-				},
-				match: 'any',
-				returnAll: true
-			})
-		],
+		[get, shape(get, 'GET', `orders-get-${stamp}`, 'get', bySku)],
+		[flaggedRespond, shape(flaggedRespond, 'GET', `orders-get-flagged-${stamp}`, 'get', bySku, 'respond')],
 		[
 			update,
 			shape(update, 'PUT', `orders-update-${stamp}`, 'update', {
@@ -290,11 +296,23 @@ test('four REST-shaped CRUD endpoints over one datastore share their rows', asyn
 	const secondRead = await call(get, { method: 'GET' }, `?sku=${encodeURIComponent(sku)}`);
 	expect(secondRead.body.qty).toBe(5);
 
-	// delete -> get: nothing matches, and the Respond node answers with the
-	// empty item rather than leaving the caller without an answer.
+	// delete -> get: nothing matches. The Data table node's Always Output Data
+	// hands on the empty item, so the Respond node runs and answers with it
+	// rather than leaving the caller without a JSON answer.
 	await call(remove, { method: 'DELETE', json: { sku } });
 	const thirdRead = await call(get, { method: 'GET' }, `?sku=${encodeURIComponent(sku)}`);
 	expect(thirdRead.body).toEqual({});
+
+	// The same read with the flag on the Respond node instead: the node gets no
+	// items and does not run, and the caller gets what n8n sends when a run
+	// never reaches its Respond node, a 200 with an empty body.
+	const before = await executionIds(baseURL, flaggedRespond.workflowId);
+	const unanswered = await deliver(baseURL, `${flaggedRespond.url}?sku=${encodeURIComponent(sku)}`, { method: 'GET' });
+	expect(unanswered.status).toBe(200);
+	expect(unanswered.text).toBe('');
+	const unansweredRecord = await waitForTriggerExecution(baseURL, flaggedRespond.workflowId, 'webhook', before);
+	expect(unansweredRecord.status).toBe('succeeded');
+	expect(unansweredRecord.nodeRuns?.find((run) => run.nodeId === 'respond')?.status).toBe('skipped');
 });
 
 test('the builder lifecycle: conflict, versions, restore, publish, delete, paging', async ({ server }) => {

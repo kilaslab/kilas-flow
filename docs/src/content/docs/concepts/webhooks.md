@@ -147,7 +147,13 @@ out, be retried, and duplicate its side effects. Events already retained for the
 execution are replayed to the waiter, so a response published before anything
 subscribed is not missed. A run that finished successfully without reaching a
 Respond node is answered `200` with an empty body, which is n8n's own answer; a
-run that failed is answered `500 {"message":"Error in workflow"}`.
+run that failed is answered `500 {"message":"Error in workflow"}`. A Respond
+node counts as not reached when the branch before it delivered no items. A
+lookup that matches nothing is the usual case. Always Output Data on the
+Respond node does not change this, because a node that receives no items does
+not run, as in n8n. For an endpoint that must answer JSON either way, set
+Always Output Data on the node whose empty result would stop the branch. That
+node then hands on one empty item, and the Respond node answers with `{}`.
 
 **Filtered** is not a mode but is worth knowing about. A trigger restricted to
 certain event types answers `200 {"filtered": true, …}` for an update it was

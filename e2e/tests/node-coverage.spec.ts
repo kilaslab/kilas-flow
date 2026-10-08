@@ -22,6 +22,11 @@ import { readExecutionEvents, waitForExecution } from '../helpers/seed';
 //                cluster needs a live LLM endpoint, the remote databases need
 //                a live database. The last tier — executed against the real
 //                service — belongs to the capstone suite, not this one.
+//   run-failed — accepted (202), then the run fails on the node with a named
+//                reason. This is for a node whose missing input is carried by
+//                the items, not the document: a manual run's input or the node
+//                upstream can supply the text or the file, so validation has
+//                nothing to refuse (BUG-x94b3d).
 //
 // The catalogue is read live, so a node added by a later ticket appears as
 // uncovered without anyone updating this file: the report test below fails on
@@ -93,10 +98,8 @@ const VALIDATION_COVERAGE = [
 	'kilasflow.workflowTool@1',
 	'kilasflow.outputParser@1',
 	'kilasflow.mcpClientTool@1',
-	'kilasflow.embeddings@1',
 	'kilasflow.vectorStore@1',
 	'kilasflow.vectorStorePGVector@1',
-	'kilasflow.extractFromFile@1',
 	'kilasflow.googleDrive@1',
 	'kilasflow.googleDriveTrigger@1',
 	'kilasflow.gmail@1',
@@ -108,7 +111,12 @@ const VALIDATION_COVERAGE = [
 	'kilasflow.mysql@2'
 ];
 
-// Explicit, justified exclusions from both tiers. Empty today: everything the
+// Every catalogue entry this suite covers through a run that is accepted and
+// then fails on that node with a named reason, as "type@version". What these
+// nodes lack arrives with the items, so only the run can tell.
+const RUN_FAILURE_COVERAGE = ['kilasflow.embeddings@1', 'kilasflow.extractFromFile@1'];
+
+// Explicit, justified exclusions from every tier. Empty today: everything the
 // server advertises is either run or refused above. An entry here must name
 // its reason, so the list cannot silently accumulate bare node types.
 const EXCLUDED: Record<string, string> = {
@@ -214,6 +222,16 @@ async function runToSuccess(baseURL: string, workflowId: string): Promise<any> {
 	return record;
 }
 
+// Starts a run the server accepts and waits for it to fail: the run-failed
+// tier, for a node whose missing input only the items can show.
+async function runToFailure(baseURL: string, workflowId: string): Promise<any> {
+	const started = await startRun(baseURL, workflowId);
+	expect(started.status).toBe(202);
+	const record = await waitForExecution(baseURL, started.body.id);
+	expect(record.status).toBe('failed');
+	return record;
+}
+
 function nodeRun(record: any, nodeId: string): any {
 	const run = (record.nodeRuns as any[]).find((entry) => entry.nodeId === nodeId);
 	expect(run, `node ${nodeId} has a recorded run`).toBeDefined();
@@ -230,7 +248,7 @@ function itemJson(record: any, nodeId: string, port = 0, index = 0): any {
 test('the coverage report names every catalogue entry this suite touches', async ({ server }) => {
 	const catalogue = await listNodeTypes(server.baseURL);
 	expect(catalogue.length).toBeGreaterThan(0);
-	const touched = new Set([...RUN_COVERAGE, ...VALIDATION_COVERAGE, ...Object.keys(EXCLUDED)]);
+	const touched = new Set([...RUN_COVERAGE, ...VALIDATION_COVERAGE, ...RUN_FAILURE_COVERAGE, ...Object.keys(EXCLUDED)]);
 	const missing = catalogue.filter(
 		(entry) => !entry.unavailable && !touched.has(`${entry.type}@${entry.version}`)
 	);
@@ -926,10 +944,15 @@ test('embeddings refuse without text; the internal vector store still needs pgve
 		[manual(), node('emb', 'Embeddings', 'kilasflow.embeddings', 1, { model: 'text-embedding-3-small' })],
 		[conn('c1', 'manual', 'main', 'emb', 'main')]
 	);
-	const embeddingsAttempt = await startRun(server.baseURL, embeddingsId);
-	expect(embeddingsAttempt.status).toBe(422);
-	expect(errorText(embeddingsAttempt.body)).toContain('no text to embed');
+	// Whether an item carries text is known only when the item arrives: a
+	// manual run's input or the node upstream can supply it. So the run is
+	// accepted, and the Embeddings node fails it by name. Embeddings stopped
+	// needing pgvector in 018af94, so SQLite no longer refuses them up front.
+	const embeddingsRecord = await runToFailure(server.baseURL, embeddingsId);
+	expect(JSON.stringify(nodeRun(embeddingsRecord, 'emb').error)).toContain('no text to embed');
 
+	// The internal vector store has nowhere to write on SQLite, which the
+	// document alone shows, so that one is still refused before the run.
 	const storeId = await createWorkflow(
 		server.baseURL,
 		'Coverage Vector Store',
@@ -968,9 +991,10 @@ test('extract from file, customer pgvector and google nodes fail closed without 
 		[manual(), node('extract', 'Extract', 'kilasflow.extractFromFile', 1, { operation: 'text' })],
 		[conn('c1', 'manual', 'main', 'extract', 'main')]
 	);
-	const extractAttempt = await startRun(server.baseURL, extractId);
-	expect(extractAttempt.status).toBe(422);
-	expect(errorText(extractAttempt.body)).toMatch(/binary property|binary storage/i);
+	// The file arrives on the item, so the run is accepted and the node fails
+	// it by name: without binary storage, or without the binary property.
+	const extractRecord = await runToFailure(server.baseURL, extractId);
+	expect(JSON.stringify(nodeRun(extractRecord, 'extract').error)).toMatch(/binary property|binary storage/i);
 
 	const pgId = await createWorkflow(
 		server.baseURL,

@@ -382,6 +382,92 @@ func TestWebhookAnswersEmptyWhenNoResponseNodeWasReached(t *testing.T) {
 	}
 }
 
+// A Respond to Webhook node whose branch delivered no items is not run, whatever
+// its own Always Output Data says (BUG-4ch186). The caller then gets n8n's
+// answer for a run that never reached its Respond node: 200 with an empty body,
+// which n8n's webhook-helpers sends as `{ data: undefined, responseCode }`.
+// The flag that makes such an endpoint answer JSON belongs on the node whose
+// empty result stops the branch: that node then hands on one empty item, and
+// the Respond node runs on it (BUG-cnhq1f).
+func TestWebhookWhoseRespondNodeIsSkippedAnswersAsN8nDoes(t *testing.T) {
+	nothingMatches := []any{map[string]any{"field": "absent", "operator": "equals", "value": "yes"}}
+	cases := []struct {
+		name          string
+		filterFlag    bool
+		respondFlag   bool
+		wantBody      string
+		wantRespondAs execution.Status
+	}{
+		{"flag on the Respond node", false, true, "", execution.StatusSkipped},
+		{"flag on the node before it", true, false, "{}", execution.StatusSucceeded},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			h := newHarness(t)
+			filter := workflow.Node{
+				ID: "filter", Name: "Filter", Type: nodes.FilterNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"conditions": nothingMatches},
+				Settings:   map[string]any{},
+			}
+			respond := workflow.Node{
+				ID: "respond", Name: "Respond to Webhook", Type: nodes.RespondNodeType, TypeVersion: workflow.V(1),
+				Parameters: map[string]any{"respondWith": nodes.RespondWithFirstIncomingItem, "responseCode": float64(200)},
+				Settings:   map[string]any{},
+			}
+			if testCase.filterFlag {
+				filter.Settings["alwaysOutputData"] = true
+			}
+			if testCase.respondFlag {
+				respond.Settings["alwaysOutputData"] = true
+			}
+			active := h.activate(t, webhookDocument("Nothing matches", map[string]any{
+				"path": "lookup", "httpMethod": http.MethodGet, "responseMode": "responseNode",
+			}, filter, respond))
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				deadline := time.Now().Add(2 * time.Second)
+				for time.Now().Before(deadline) {
+					if worked, _ := h.runtime.RunOnce(context.Background()); !worked {
+						time.Sleep(5 * time.Millisecond)
+					}
+				}
+			}()
+			recorder := httptest.NewRecorder()
+			h.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, h.url(t, active), nil))
+			<-done
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body: %s)", recorder.Code, recorder.Body)
+			}
+			if got := strings.TrimSpace(recorder.Body.String()); got != testCase.wantBody {
+				t.Fatalf("body = %q, want %q", got, testCase.wantBody)
+			}
+			record, err := h.runtime.Get(context.Background(), h.tenant, h.lastExecution(t))
+			if err != nil {
+				t.Fatalf("Get() error = %v", err)
+			}
+			if record.Status != execution.StatusSucceeded {
+				t.Fatalf("execution status = %s, want succeeded", record.Status)
+			}
+			respondRuns := 0
+			for _, run := range record.NodeRuns {
+				if run.NodeID != "respond" {
+					continue
+				}
+				respondRuns++
+				if run.Status != testCase.wantRespondAs {
+					t.Fatalf("Respond node run = %s, want %s", run.Status, testCase.wantRespondAs)
+				}
+			}
+			if respondRuns != 1 {
+				t.Fatalf("Respond node has %d trace rows, want 1", respondRuns)
+			}
+		})
+	}
+}
+
 // TestWebhookBindsEveryMethodTheNodeSelected covers the precedence between the
 // two parameters that name a method.
 //

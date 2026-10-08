@@ -64,6 +64,15 @@ edge is legal only when its target is a node whose definition declares
 `LoopEntry`, so a loop somebody built on purpose compiles and an accidental
 cycle does not.
 
+Compilation judges the document, not the items. What a node needs from the
+items it receives is a run-time fact, because a manual run's input or the node
+upstream can supply it. An Embeddings node with no `text` on its item, or an
+Extract From File node with no file on its item, therefore compiles: the run is
+queued with `202`, and then fails on that node with the reason named ("item 1
+carries no text to embed", "item 1 has no binary property \"data\""). A
+requirement the document alone shows is still refused before the run. One
+example is the internal Vector Store on an install without pgvector.
+
 ## Running is asynchronous, always
 
 `POST /api/v1/workflows/{id}/run` writes a queued execution record and returns
