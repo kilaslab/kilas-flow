@@ -1306,6 +1306,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 			// Stamped item by item as it is assembled, as runPerItem stamps.
 			sources := lineageSources(graph.incoming[node.ID], input)
 			assembled := state.assembleOutcomes(node, sources, input, outcomes, policy.onError)
+			state.withEmptyItem(node, sources, input, assembled)
 			run := NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: outcomes.first(), Attempt: attempt, ErrorCode: "node.partial",
 				Response: capture.response, Console: capture.consoleOutput()}
 			if outcomes.failed() == len(outcomes) {
@@ -1326,6 +1327,10 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 		// downstream node has to be able to tell a tolerated failure from a
 		// success.
 		output = toleratedOutput(node, input, cause, policy.onError)
+		// A failure routed to the error output leaves the first output empty,
+		// and Always Output Data treats that as it would a success that
+		// returned nothing there.
+		state.withEmptyItem(node, lineageSources(graph.incoming[node.ID], input), input, output)
 		// Stamped exactly as a success would have been: each error item stands
 		// for the input item that failed, and pairs with it.
 		state.stampProvenance(node, graph.incoming[node.ID], input, output)
@@ -1340,9 +1345,7 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 		return nil, fmt.Errorf("node %q returned %d output streams, want %d", node.ID, got, want)
 	}
 	output = withErrorPort(node, cloneOutput(output))
-	if settingBool(node.Settings, "alwaysOutputData") {
-		output = withEmptyItem(output)
-	}
+	state.withEmptyItem(node, lineageSources(graph.incoming[node.ID], input), input, output)
 	// Provenance the executor did not set is inferred by position, but only
 	// when that inference is actually sound: exactly one incoming item port
 	// that delivered, and a matching item count. An executor that reorders or
@@ -1540,6 +1543,10 @@ func (runner *Runner) resolveItems(ctx context.Context, graph preparedGraph, req
 		}
 		state.stampPerItem(node, sources, item, assembled, before)
 	}
+	// Always Output Data looks at the run, not at one item's call: a node
+	// whose every item went to its error output still ran, and its first
+	// output is empty.
+	state.withEmptyItem(node, sources, input, assembled)
 	run := NodeRun{NodeID: node.ID, Input: cloneInput(input), Error: firstCause, Response: capture.response, Console: capture.consoleOutput()}
 	if firstCause != nil {
 		run.ErrorCode = "node.partial"
@@ -1620,19 +1627,30 @@ func mergeOutput(assembled workflow.NodeOutput, output workflow.NodeOutput) {
 	}
 }
 
-// withEmptyItem is Always Output Data: a node that produced nothing still hands
-// downstream an item, so the branch does not silently stop.
-func withEmptyItem(output workflow.NodeOutput) workflow.NodeOutput {
-	if len(output) == 0 {
-		return output
+// withEmptyItem is Always Output Data, applied to a node that ran: when its
+// first output has no items, one empty item goes there, so the branch on that
+// output does not silently stop.
+//
+// Only the first output is looked at, and only it gets the item, which is
+// n8n's rule: an IF that sent everything to `false` also runs its `true`
+// branch on the empty item, and a node whose items all went to its error
+// output also runs its success branch. The other outputs stay as the node
+// returned them.
+//
+// The item stands for the node's whole input, as n8n's does. One input item
+// is the item it descends from; several have no single one, and the lineage
+// says so rather than naming the first.
+func (state *runState) withEmptyItem(node workflow.IRNode, sources []workflow.IREdge, input workflow.NodeInput, output workflow.NodeOutput) {
+	if !settingBool(node.Settings, "alwaysOutputData") || len(output) == 0 || len(output[0]) > 0 {
+		return
 	}
-	for _, port := range output {
-		if len(port) > 0 {
-			return output
+	var from *workflow.Item
+	if len(sources) == 1 {
+		if incoming := input[sources[0].Target.Port]; len(incoming) == 1 {
+			from = &incoming[0]
 		}
 	}
-	output[0] = []workflow.Item{{JSON: map[string]any{}}}
-	return output
+	output[0] = []workflow.Item{{JSON: map[string]any{}, Paired: state.lineageOf(node, sources, 0, from)}}
 }
 
 // firstItemOnly is Execute Once: the node sees the first item of its main input
