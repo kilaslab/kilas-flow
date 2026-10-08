@@ -16,7 +16,6 @@ package n8n
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
 	"sort"
@@ -1040,8 +1039,8 @@ func cycleIssues(document workflow.Document, catalog workflow.Catalog, sourceByI
 // share.
 //
 // Like cycleIssues it asks the compiler rather than restating its rules, so
-// the report and the run cannot disagree: the document the import saves is
-// compiled, and each workflow.invalid_topology it is refused with becomes a
+// the report and the run cannot disagree: workflow.ShapeRefusals compiles the
+// document the import saves, and each refusal of its graph's wiring becomes a
 // blocking entry (BUG-t9e3k5). A cycle is left to cycleIssues, which names
 // the loop's path. The compiler names nodes by id, which an n8n workflow
 // never shows its author, so each one is renamed in the reason.
@@ -1052,13 +1051,8 @@ func cycleIssues(document workflow.Document, catalog workflow.Catalog, sourceByI
 // stop at its missing credentials and say nothing about its shape, so the
 // check compiles a copy whose required credentials are attached as stand-ins.
 func topologyIssues(document workflow.Document, catalog workflow.Catalog, sourceByID map[string]Node) []ImportIssue {
-	document = withStandInCredentials(document, catalog)
-	if document.ID == "" {
-		document.ID = "n8n-import"
-	}
-	_, err := workflow.Compile(document, catalog)
-	var refused *workflow.ValidationErrors
-	if !errors.As(err, &refused) {
+	refusals := workflow.ShapeRefusals(withStandInCredentials(document, catalog), catalog)
+	if len(refusals) == 0 {
 		return nil
 	}
 	nameByID := make(map[string]string, len(document.Nodes))
@@ -1073,16 +1067,13 @@ func topologyIssues(document workflow.Document, catalog workflow.Catalog, source
 	}
 	var issues []ImportIssue
 	seen := map[string]bool{}
-	for _, refusal := range refused.Issues {
-		if !shapeRefusal(refusal) {
-			continue
-		}
+	for _, refusal := range refusals {
 		reason := named(refusal.Message)
-		if key := refusal.NodeID + "\x00" + reason; seen[key] {
+		key := refusal.NodeID + "\x00" + reason
+		if seen[key] {
 			continue
-		} else {
-			seen[key] = true
 		}
+		seen[key] = true
 		issue := ImportIssue{
 			Severity: SeverityBlocking, Field: "topology",
 			Reason: reason + ". Run and activate refuse this workflow until it is fixed.",
@@ -1118,21 +1109,6 @@ func withStandInCredentials(document workflow.Document, catalog workflow.Catalog
 	}
 	document.Nodes = nodes
 	return document
-}
-
-// shapeRefusal reports a compile refusal of how the graph is wired: its
-// topology, or a port that must be connected, is full, or takes the wrong node.
-// A cycle is cycleIssues' to name. An unknown node type is already blocking as
-// its placeholder, and a node's configuration is reported by its converter.
-func shapeRefusal(refusal workflow.ValidationError) bool {
-	switch refusal.Code {
-	case workflow.ErrorInvalidTopology:
-		return !strings.Contains(refusal.Message, "must not contain a cycle")
-	case workflow.ErrorPortRequired, workflow.ErrorPortFull, workflow.ErrorPortNotAllowed,
-		workflow.ErrorIncompatiblePort, workflow.ErrorUnknownPort:
-		return true
-	}
-	return false
 }
 
 // withDefaultSeverity fills in the severity of issues raised by the per-node
