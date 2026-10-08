@@ -90,3 +90,68 @@ func TestDollarNodeReadsTheOutputTheNodeIsConnectedTo(t *testing.T) {
 		}
 	}
 }
+
+// BUG-5xkexq: two paths back to X can enter the same input of one node — Gate
+// true → A → Join and Gate false → B → Join. n8n walks the connections into
+// that input in the order the workflow lists them, so the one through B,
+// listed first, is met first and Join and everything after it read Gate's
+// false output. The walk used to meet them by node ID, which put A first.
+func TestDollarNodeWalksEdgesIntoOneInputInTheOrderTheWorkflowListsThem(t *testing.T) {
+	gate := stepType("test.gate", "Gate")
+	gate.Outputs = []workflow.Port{{Name: "true", Kind: workflow.ConnectionMain}, {Name: "false", Kind: workflow.ConnectionMain}}
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.step", "Step"), gate)
+	node := func(id, name, typeID string, y float64) workflow.Node {
+		return workflow.Node{ID: id, Name: name, Type: typeID, TypeVersion: workflow.V(1), Position: workflow.Position{X: 200, Y: y}}
+	}
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion, ID: "wf_node_branch_order", Name: "Two paths into one input",
+		Nodes: []workflow.Node{
+			node("start", "Start", "test.start", 0),
+			node("gate", "Gate", "test.gate", 0),
+			node("a", "A", "test.step", 0),
+			node("b", "B", "test.step", 100),
+			node("join", "Join", "test.step", 0),
+			node("after", "After", "test.step", 0),
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "start", "main", "gate"),
+			mainEdge("c2", "gate", "true", "a"),
+			mainEdge("c3", "gate", "false", "b"),
+			mainEdge("c4", "b", "main", "join"),
+			mainEdge("c5", "a", "main", "join"),
+			mainEdge("c6", "join", "main", "after"),
+		},
+		Settings: map[string]any{},
+	})
+	read := map[string][]string{}
+	executors := withExecutors(t, map[string]engine.ExecutorFunc{
+		"test.start": func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return workflow.NodeOutput{{{JSON: map[string]any{}}}}, nil
+		},
+		"test.gate": func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			item := func(v string) workflow.Item { return workflow.Item{JSON: map[string]any{"v": v}} }
+			return workflow.NodeOutput{{item("t1")}, {item("f1")}}, nil
+		},
+		"test.step": func(_ context.Context, node workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+			context := request.ExpressionContext(input["main"][0], input, 0)
+			value, err := expression.Evaluate("{{ $('Gate').first().json.v }}", context)
+			if err != nil {
+				return nil, err
+			}
+			read[node.Name] = append(read[node.Name], fmt.Sprint(value))
+			return workflow.NodeOutput{input["main"]}, nil
+		},
+	})
+	if _, err := engine.NewRunner(executors).Run(context.Background(), ir, engine.Request{Input: workflow.Item{JSON: map[string]any{}}}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	// Join and After run once for each branch that reaches them; every run
+	// reads the same output, because the connection is a property of the
+	// graph, not of the branch that delivered.
+	want := map[string]string{"A": "t1", "B": "f1", "Join": "f1,f1", "After": "f1,f1"}
+	for name, reads := range want {
+		if got := strings.Join(read[name], ","); got != reads {
+			t.Errorf("%s read %q, want %q", name, got, reads)
+		}
+	}
+}

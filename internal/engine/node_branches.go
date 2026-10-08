@@ -14,10 +14,10 @@ import (
 //
 // The connection is found as n8n finds it: walking upstream from the node
 // breadth first over item connections — its inputs in the order its
-// definition gives them, each input's connections in turn — and taking the
-// output on the first connection out of X the walk meets, however many nodes
-// sit in between. A node that X does not feed is not in the map, and reads
-// X's first output.
+// definition gives them, each input's connections in the order the workflow
+// lists them — and taking the output on the first connection out of X the
+// walk meets, however many nodes sit in between. A node that X does not feed
+// is not in the map, and reads X's first output.
 //
 // The walk stays inside the graph the run was prepared with. A node left out
 // of it (another trigger's branch) never leads back to a node that ran: were
@@ -29,7 +29,7 @@ func connectedOutputs(graph preparedGraph, nodeID string) map[string]int {
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
-		for _, edge := range inputOrder(graph.nodes[current], graph.incoming[current]) {
+		for _, edge := range inputOrder(graph, current) {
 			if edge.Kind != workflow.ConnectionMain {
 				continue
 			}
@@ -48,17 +48,26 @@ func connectedOutputs(graph preparedGraph, nodeID string) map[string]int {
 	return outputs
 }
 
-// inputOrder is a node's incoming edges by the position of the input they
-// reach in its definition. The prepared graph orders them by the input's
-// name, which is the same order only while the names happen to sort that way.
-func inputOrder(node workflow.IRNode, edges []workflow.IREdge) []workflow.IREdge {
+// inputOrder is a node's incoming edges in the order n8n walks them: by the
+// position of the input they reach in its definition, and the edges into one
+// input in the order the workflow lists them, which for an imported workflow
+// is the order n8n's connections object gave them. The prepared graph orders
+// them by the input's name and then by source node ID, which agrees only by
+// chance: two paths back to X through one input can then meet X on another
+// output than the one n8n reads.
+func inputOrder(graph preparedGraph, nodeID string) []workflow.IREdge {
+	node := graph.nodes[nodeID]
 	position := make(map[string]int, len(node.Definition.Inputs))
 	for index, port := range node.Definition.Inputs {
 		position[port.Name] = index
 	}
-	ordered := append([]workflow.IREdge(nil), edges...)
+	ordered := append([]workflow.IREdge(nil), graph.incoming[nodeID]...)
 	sort.SliceStable(ordered, func(left, right int) bool {
-		return position[ordered[left].Target.Port] < position[ordered[right].Target.Port]
+		a, b := ordered[left], ordered[right]
+		if position[a.Target.Port] != position[b.Target.Port] {
+			return position[a.Target.Port] < position[b.Target.Port]
+		}
+		return graph.listed[a] < graph.listed[b]
 	})
 	return ordered
 }

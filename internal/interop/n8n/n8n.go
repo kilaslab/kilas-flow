@@ -1008,7 +1008,7 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 		parametersByID[converted.ID] = converted.Parameters
 		settingsByID[converted.ID] = converted.Settings
 	}
-	connections, connectionIssues := importConnections(source.Connections, idByName, typeByID, versionByID, parametersByID, settingsByID, catalog)
+	connections, connectionIssues := importConnections(source.Connections, listedSources(payload), idByName, typeByID, versionByID, parametersByID, settingsByID, catalog)
 	unsupported = append(unsupported, connectionIssues...)
 	// A hasOutputParser flag whose parser survived as its own node with an
 	// ai_outputParser edge is answered by that edge: the converter reports
@@ -1306,16 +1306,37 @@ func documentIssues(source Document) []ImportIssue {
 // model emits ai_languageModel, an agent receives it. KilasFlow declares the
 // same shape, so the loop is already directionally correct for every kind; what
 // it needed was the kind itself and ports that exist on both endpoints.
-func importConnections(source Connections, idByName, typeByID map[string]string, versionByID map[string]workflow.TypeVersion, parametersByID, settingsByID map[string]map[string]any, catalog workflow.Catalog) ([]workflow.Connection, []Unsupported) {
+//
+// The edges come out source by source in the order the workflow listed its
+// sources (listed, read from the JSON because the map forgets it). n8n walks
+// the connections into one input in that order to find which output of a node
+// `$('X')` reads, and the engine walks the document's order the same way.
+func importConnections(source Connections, listed []string, idByName, typeByID map[string]string, versionByID map[string]workflow.TypeVersion, parametersByID, settingsByID map[string]map[string]any, catalog workflow.Catalog) ([]workflow.Connection, []Unsupported) {
 	connections := make([]workflow.Connection, 0)
 	issues := make([]Unsupported, 0)
 
 	sourceNames := make([]string, 0, len(source))
-	for name := range source {
-		sourceNames = append(sourceNames, name)
+	seen := make(map[string]bool, len(source))
+	for _, name := range listed {
+		if _, present := source[name]; present && !seen[name] {
+			seen[name] = true
+			sourceNames = append(sourceNames, name)
+		}
 	}
-	sort.Strings(sourceNames)
-	loaderByStore := documentLoadersByStore(source, sourceNames)
+	// Only a payload the order could not be read from leaves any behind; they
+	// follow by name, which is at least the same order on every import.
+	unlisted := make([]string, 0)
+	for name := range source {
+		if !seen[name] {
+			unlisted = append(unlisted, name)
+		}
+	}
+	sort.Strings(unlisted)
+	sourceNames = append(sourceNames, unlisted...)
+	// The loader serving a store is found in name order, as its doc says.
+	byName := append([]string(nil), sourceNames...)
+	sort.Strings(byName)
+	loaderByStore := documentLoadersByStore(source, byName)
 
 	counter := 0
 	for _, sourceName := range sourceNames {
@@ -1464,6 +1485,38 @@ func documentLoaderInput(catalog workflow.Catalog, loaderName, storeID string, i
 	}
 	port, found := resolvePort(catalog, typeByID[loaderID], versionByID[loaderID], parametersByID[loaderID], workflow.ConnectionMain, 0, portInput)
 	return loaderID, port, found
+}
+
+// listedSources is the source node names of a workflow's connections object
+// in the order its JSON lists them, which a Go map does not keep. n8n reads
+// the object in that order. It is read on its own pass so the document keeps
+// decoding into the plain map; a payload it cannot read gives nil, and the
+// sources then follow by name.
+func listedSources(payload []byte) []string {
+	var document struct {
+		Connections json.RawMessage `json:"connections"`
+	}
+	if err := json.NewDecoder(strings.NewReader(string(payload))).Decode(&document); err != nil {
+		return nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(document.Connections)))
+	if open, err := decoder.Token(); err != nil || open != json.Delim('{') {
+		return nil
+	}
+	names := make([]string, 0)
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return names
+		}
+		name, _ := key.(string)
+		names = append(names, name)
+		var skipped json.RawMessage
+		if err := decoder.Decode(&skipped); err != nil {
+			return names
+		}
+	}
+	return names
 }
 
 // dropResolvedParserFlags removes a hasOutputParser diagnostic when the
