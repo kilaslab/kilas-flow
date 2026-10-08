@@ -96,6 +96,7 @@
 	import { hasLabelledOutputs } from '$lib/workflow-editor/ports';
 	import { chatDockBottom, MINIMAP_BOTTOM, MINIMAP_HEIGHT, MINIMAP_WIDTH, showsMinimap, viewportRevealing } from '$lib/workflow-editor/canvas-chrome';
 	import { tidyDocument } from '$lib/workflow-editor/layout';
+	import { fitPaddingBeside, shownSaveError } from '$lib/workflow-editor/save-feedback';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
 	import { isAnnotation } from '$lib/workflow-editor/node-visual';
 	import { chatHasMemory, chatTriggerIn, type ChatSendPayload } from '$lib/workflow-editor/chat';
@@ -400,6 +401,27 @@
 		const id = selectedNodeID;
 		if (showInspector && id) void revealNode(id);
 	});
+
+	// A revision was drawn at whatever viewport the draft was left at, so a
+	// one-node revision could sit under the history panel and the preview
+	// looked blank until Fit View. The view is fitted, beside the panel, when a
+	// preview starts, moves to another revision and ends. A plain variable on
+	// purpose: the effect must not track its own write.
+	let fittedPreview: string | null = null;
+	$effect(() => {
+		const key = preview?.versionID ?? null;
+		if (key === fittedPreview) return;
+		fittedPreview = key;
+		void fitBesideHistory();
+	});
+
+	async function fitBesideHistory() {
+		await tick();
+		if (!flow || !canvasRegion) return;
+		const canvas = canvasRegion.getBoundingClientRect();
+		const panel = globalThis.document.querySelector('[data-history-panel]');
+		await flow.fitView({ padding: fitPaddingBeside(canvas, panel ? panel.getBoundingClientRect().left : null), maxZoom: 1, duration: 250 });
+	}
 
 	/** Pans just enough of the view for the node to sit inside the visible canvas. */
 	async function revealNode(id: string) {
@@ -1066,6 +1088,15 @@
 		await onSave(toWorkflowInput(draft));
 	}
 
+	/**
+	 * Saves the draft for a host that has to, such as the page's "Save and
+	 * leave". Resolves once the host's save has answered; whether it took is
+	 * the host's own `dirty` to read.
+	 */
+	export async function saveDraft(): Promise<void> {
+		await save();
+	}
+
 	async function run() {
 		if (hideRun || dirty || running || previewing) return;
 		const intent = executeIntent(displayed.nodes ?? [], definitions, selectedNodeIDs);
@@ -1205,8 +1236,10 @@
 			<button type="button" class="shrink-0 rounded-md border border-border bg-background px-2 py-0.5 font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1" onclick={() => onOverwriteConflict?.()}>{m.editor_save_mine_anyway()}</button>
 		</div>
 	{/if}
-	{#if saveError}
-		<p role="alert" class="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">{m.editor_save_failed({ error: saveError })}</p>
+	<!-- One banner per failure: a conflict is explained above, and the server's
+	     detail under it only added the two revision ids. -->
+	{#if shownSaveError(saveError, saveConflict)}
+		<p role="alert" class="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">{m.editor_save_failed({ error: saveError ?? '' })}</p>
 	{/if}
 	{#if canvasMessage}
 		<p role="status" class="shrink-0 border-b border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">

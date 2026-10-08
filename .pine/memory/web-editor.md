@@ -1,6 +1,6 @@
 ---
 topic: web-editor
-updated: 2026-10-08T15:55:57Z
+updated: 2026-10-08T16:23:25Z
 ---
 
 # web-editor
@@ -11,3 +11,4 @@ updated: 2026-10-08T15:55:57Z
 - 2026-09-21: A manual run that omits triggerNodeId fires every root with an empty item. When kilasflow.chatTrigger is on the canvas, Execute must always name a non-chat trigger, or open the Chat panel on a chat-only graph — omitting the id would still run chat with {}. (cites: web/src/lib/workflow-editor/run-trigger.ts)
 - 2026-09-21: Keep the canvas Chat panel mounted (hidden) while the chat trigger is on the document. Unmounting on Close recreates sessionId and wipes history; New chat is what rotates the id. (cites: web/src/lib/components/workflow-editor/workflow-editor.svelte)
 - 2026-10-08: The execution replay node (web/src/lib/components/workflow-editor/execution-canvas-node.svelte) renders ports separately from the editor's canvas-node.svelte: any change to resolvedPorts or to port-label placement must be mirrored there, or the replay silently drops edges whose handle it does not draw (BUG-sgrxhh's error branch did exactly this). web/ has no Svelte component test harness, so keep that logic in pure helpers and check the replay in the running app.
+- 2026-10-08: The version-history Sheet is an overlay docked to the window's right edge, not a grid column like the inspector, so anything that frames the canvas while it is open (fitView on preview start/end) must pad by the panel's measured overlap: fitView accepts per-side px padding ({right: '440px'}), see fitPaddingBeside in web/src/lib/workflow-editor/save-feedback.ts. The inspector, by contrast, shrinks the canvas itself, so a selected node is revealed with setViewport against canvasRegion's own size (viewportRevealing in canvas-chrome.ts), never setCenter, whose width Svelte Flow learns a ResizeObserver later.
