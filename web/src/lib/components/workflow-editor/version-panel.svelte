@@ -321,7 +321,7 @@
 	a panel can never silently discard what the user was looking at.
 -->
 <Sheet.Root bind:open>
-	<Sheet.Content side="right" showOverlay={false} trapFocus={false} preventScroll={false} class="flex w-[min(26rem,92vw)] flex-col gap-0 border-l border-border p-0 sm:max-w-none" aria-label={m.versions_history_title()}>
+	<Sheet.Content data-history-panel side="right" showOverlay={false} trapFocus={false} preventScroll={false} class="flex w-[min(26rem,92vw)] flex-col gap-0 border-l border-border p-0 sm:max-w-none" aria-label={m.versions_history_title()}>
 		<Sheet.Header class="shrink-0 gap-1 border-b border-border px-4 py-3 pr-12">
 			<Sheet.Title class="flex items-center gap-2 text-sm">
 				<History aria-hidden="true" class="size-4 text-muted-foreground" />{m.versions_history_title()}

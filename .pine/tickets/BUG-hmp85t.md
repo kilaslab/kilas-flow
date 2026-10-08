@@ -1,7 +1,7 @@
 ---
 id: BUG-hmp85t
 title: Revision preview can show a blank canvas; save/navigation messages expose revision ids, 'Try again' on 404, native confirm
-status: todo
+status: done
 priority: low
 labels:
     - editor
@@ -9,7 +9,7 @@ labels:
     - ux
 parent: EPIC-8rbys7
 created: "2026-09-23T01:48:15Z"
-updated: "2026-09-23T01:48:15Z"
+updated: "2026-10-08T16:25:00Z"
 ---
 
 # Description
@@ -83,8 +83,8 @@ BUG-f9frth (done; save conflicts and unsaved guard)
 
 
 # Acceptance Criteria
-- [ ] The view is fitted when a revision preview starts and when it ends
-- [ ] A conflict banner without raw ids; 404 offers "Back to workflows"; unsaved changes use a Save/Discard/Cancel modal instead of the native confirm
+- [x] The view is fitted when a revision preview starts and when it ends
+- [x] A conflict banner without raw ids; 404 offers "Back to workflows"; unsaved changes use a Save/Discard/Cancel modal instead of the native confirm
 
 # Implementation Plan
 
@@ -94,6 +94,23 @@ See each finding's suggested fix above.
 
 Related tickets: BUG-f9frth
 
+# Fix
+
+- Preview fit (UXE-22): `workflow-editor.svelte` fits the view whenever `preview` starts, switches revision or ends (a plain `fittedPreview` variable, so the effect never tracks its own write). The history Sheet is an overlay, so the fit pads its right side by the panel's measured overlap of the canvas (`fitPaddingBeside`, `maxZoom: 1`); the Sheet carries `data-history-panel` for that measurement.
+- Conflict (UXE-26.1): the "Save failed: 409 … expected revision wfv_…, latest is wfv_…" line is no longer printed under the conflict banner (`shownSaveError`); the conflict banner with Reload theirs / Save mine anyway is the one message.
+- 404 (UXE-26.2): a workflow the API answers 404 for shows "This workflow does not exist" with a "Back to workflows" button and no "Try again"; other load failures keep Try again and gain a "Back to workflows" link.
+- Unsaved changes (UXE-26.3): the native `confirm` is gone. An in-app navigation with a dirty canvas is cancelled and opens a dialog with Cancel / Leave without saving / Save and leave. Save and leave calls the editor's new `saveDraft()` export and leaves only if the canvas is clean afterwards; a failed or conflicting save closes the dialog and leaves the user on the canvas with the banner that says why. Reloads, tab closes and external links (`willUnload`) still use the browser's beforeunload prompt. `workflows_unsaved_confirm` replaced by nine new keys in en and id.
+- Helpers and tests: `web/src/lib/workflow-editor/save-feedback.ts` (+ `.test.ts`, 8 tests: conflict detail suppressed, 404 detection on ApiError, padding beside the panel). `pnpm check` 0 errors; `pnpm vitest run src/lib/workflow-editor src/lib/dashboard src/lib/components src/lib/api src/routes` 690 pass.
+- Playwright (real build, 1280x800): a workflow whose revision 1 holds one node at (2600,1400) and revisions 2-3 four nodes near the origin; after panning the draft away, clicking Revision 1 showed "Previewing revision 1…" with the node fitted at x 634, left of the open panel (blank before the fix); Back to draft fitted all four draft nodes in view. Opening wf_00000000-… showed "This workflow does not exist", one "Back to workflows" link (which lands on /app/workflows) and no Try again. A save after another writer's PUT showed exactly one alert ("This workflow changed elsewhere while you were editing. Reload theirs Save mine anyway"), and the page text contained no `wfv_`. With a dirty canvas, clicking Executions opened the dialog (Cancel / Leave without saving / Save and leave): Cancel stayed on the editor, Leave without saving went to /executions with the revision unchanged, Save and leave went to /executions with the revision going 4 -> 5.
+- Not changed, noticed while testing: the preview banner's own "Back to draft" button sits under the open history panel at 1280 px (the panel has its own Back to draft, which works).
+
 # Related Files
+
+- web/src/lib/workflow-editor/save-feedback.ts
+- web/src/lib/components/workflow-editor/workflow-editor.svelte
+- web/src/lib/components/workflow-editor/version-panel.svelte
+- web/src/routes/(dashboard)/app/workflows/[id]/+page.svelte
+- web/messages/en/workflows.json
+- web/messages/id/workflows.json
 
 # Attachments

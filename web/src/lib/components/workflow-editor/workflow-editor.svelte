@@ -100,7 +100,9 @@
 	import { emptyHistory, record as recordHistory, redo as redoHistory, undo as undoHistory, type History as DocumentHistory } from '$lib/workflow-editor/history';
 	import { SHORTCUT_REFERENCE, CANVAS_DELETE_KEYS, canvasShortcut, controlOwnsKey, isTypingTarget } from '$lib/workflow-editor/shortcuts';
 	import { hasLabelledOutputs } from '$lib/workflow-editor/ports';
+	import { chatDockBottom, MINIMAP_BOTTOM, MINIMAP_HEIGHT, MINIMAP_WIDTH, showsMinimap, viewportRevealing } from '$lib/workflow-editor/canvas-chrome';
 	import { tidyDocument } from '$lib/workflow-editor/layout';
+	import { fitPaddingBeside, shownSaveError } from '$lib/workflow-editor/save-feedback';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
 	import { isAnnotation } from '$lib/workflow-editor/node-visual';
 	import { chatHasMemory, chatTriggerIn, type ChatSendPayload } from '$lib/workflow-editor/chat';
@@ -346,6 +348,7 @@
 	const activationBlockedByDirty = $derived(!active && dirty);
 	const chatTrigger = $derived(chatTriggerIn(displayed.nodes ?? []));
 	const showChat = $derived(Boolean(chatTrigger) && !hideRun && !previewing);
+	const minimapShown = $derived(showsMinimap(displayed.nodes?.length ?? 0, narrow.current));
 	let chatOpen = $state(false);
 	$effect(() => {
 		if (!showChat) chatOpen = false;
@@ -398,6 +401,47 @@
 			replaceDraft(updateNodeSize(draft, nodeID, width, height));
 		}
 	});
+
+	// Opening the inspector takes a column from the canvas, and a node near the
+	// right edge used to end up behind it with the view left where it was. Only
+	// the selection and the panel are tracked, so a node dragged near an edge
+	// is never chased.
+	$effect(() => {
+		const id = selectedNodeID;
+		if (showInspector && id) void revealNode(id);
+	});
+
+	// A revision was drawn at whatever viewport the draft was left at, so a
+	// one-node revision could sit under the history panel and the preview
+	// looked blank until Fit View. The view is fitted, beside the panel, when a
+	// preview starts, moves to another revision and ends. A plain variable on
+	// purpose: the effect must not track its own write.
+	let fittedPreview: string | null = null;
+	$effect(() => {
+		const key = preview?.versionID ?? null;
+		if (key === fittedPreview) return;
+		fittedPreview = key;
+		void fitBesideHistory();
+	});
+
+	async function fitBesideHistory() {
+		await tick();
+		if (!flow || !canvasRegion) return;
+		const canvas = canvasRegion.getBoundingClientRect();
+		const panel = globalThis.document.querySelector('[data-history-panel]');
+		await flow.fitView({ padding: fitPaddingBeside(canvas, panel ? panel.getBoundingClientRect().left : null), maxZoom: 1, duration: 250 });
+	}
+
+	/** Pans just enough of the view for the node to sit inside the visible canvas. */
+	async function revealNode(id: string) {
+		await tick();
+		const node = (displayed.nodes ?? []).find((candidate) => candidate.id === id);
+		if (!flow || !canvasRegion || !node || selectedNodeID !== id) return;
+		const measured = flow.getInternalNode(id)?.measured;
+		const box = { x: node.position.x, y: node.position.y, width: measured?.width ?? TILE_CENTRE * 2, height: measured?.height ?? TILE_CENTRE * 2 };
+		const next = viewportRevealing(box, flow.getViewport(), { width: canvasRegion.clientWidth, height: canvasRegion.clientHeight });
+		if (next) await flow.setViewport(next, { duration: 200 });
+	}
 
 	$effect(() => {
 		if (propertyPanelOpen && narrow.current && !wasPropertyPanelOpen) {
@@ -1053,6 +1097,15 @@
 		await onSave(toWorkflowInput(draft));
 	}
 
+	/**
+	 * Saves the draft for a host that has to, such as the page's "Save and
+	 * leave". Resolves once the host's save has answered; whether it took is
+	 * the host's own `dirty` to read.
+	 */
+	export async function saveDraft(): Promise<void> {
+		await save();
+	}
+
 	async function run() {
 		if (hideRun || dirty || running || previewing) return;
 		const intent = executeIntent(displayed.nodes ?? [], definitions, selectedNodeIDs);
@@ -1192,8 +1245,10 @@
 			<button type="button" class="shrink-0 rounded-md border border-border bg-background px-2 py-0.5 font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1" onclick={() => onOverwriteConflict?.()}>{m.editor_save_mine_anyway()}</button>
 		</div>
 	{/if}
-	{#if saveError}
-		<p role="alert" class="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">{m.editor_save_failed({ error: saveError })}</p>
+	<!-- One banner per failure: a conflict is explained above, and the server's
+	     detail under it only added the two revision ids. -->
+	{#if shownSaveError(saveError, saveConflict)}
+		<p role="alert" class="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">{m.editor_save_failed({ error: saveError ?? '' })}</p>
 	{/if}
 	{#if canvasMessage}
 		<p role="status" class="shrink-0 border-b border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
@@ -1291,10 +1346,14 @@
 				     needs and renders nothing. -->
 				<CanvasBridge onReady={(next) => (flow = next)} />
 				<!-- A minimap over a few nodes is noise; on a 63-node import it is
-				     the only way to know where you are. -->
-				{#if (displayed.nodes?.length ?? 0) > 12 && !narrow.current}
+				     the only way to know where you are. Bottom-right as in n8n: in
+				     the controls' corner it covered zoom, fit and tidy. -->
+				{#if minimapShown}
 					<MiniMap
-						position="bottom-left"
+						position="bottom-right"
+						width={MINIMAP_WIDTH}
+						height={MINIMAP_HEIGHT}
+						style="margin-bottom: {MINIMAP_BOTTOM}px"
 						pannable
 						zoomable
 						ariaLabel={m.editor_minimap_aria()}
@@ -1338,8 +1397,10 @@
 
 			{#if showChat && chatTrigger}
 				<!-- Right corner: the zoom controls live bottom-left, and a Chat button
-				     on top of them cut the third control in half. -->
-				<div class="pointer-events-none absolute bottom-4 right-4 z-20">
+				     on top of them cut the third control in half. The closed button
+				     sits above the minimap; the open panel is a surface the user
+				     asked for and may cover it. -->
+				<div class="pointer-events-none absolute right-4 z-20" style:bottom="{chatOpen ? chatDockBottom(false) : chatDockBottom(minimapShown)}px">
 					<!-- Kept mounted while the trigger is on the canvas so sessionId
 					     and history survive Close. New chat is what rotates the id. -->
 					<div class="pointer-events-auto {chatOpen ? '' : 'hidden'}">

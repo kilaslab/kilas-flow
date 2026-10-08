@@ -15,7 +15,9 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Sheet from '$lib/components/ui/sheet';
 	import { sectionForPath, sectionLabel } from '$lib/dashboard/nav-sections';
+	import { EDITOR_SIDEBAR_BREAKPOINT, isEditorRoute, sidebarCollapsed as collapsedFor } from '$lib/dashboard/sidebar';
 	import * as m from '$lib/paraglide/messages.js';
+	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
 	let { children } = $props();
 	let principal = $state<PrincipalResource | null>(null);
 	let mobileNavOpen = $state(false);
@@ -31,7 +33,14 @@
 
 	// Collapsed = icons-only rail. Default expanded until the client reports
 	// its stored preference, so SSR and first paint never mismatch hydration.
-	let sidebarCollapsed = $state(false);
+	let storedCollapsed = $state(false);
+	// A narrow editor starts with the rail so the canvas keeps its width; what
+	// the user toggles to there lasts the session and is never stored.
+	let editorChoice = $state<boolean | null>(null);
+	const compact = mediaQuery(`(max-width: ${EDITOR_SIDEBAR_BREAKPOINT - 0.02}px)`);
+	const editorRoute = $derived(isEditorRoute(page.url.pathname));
+	const editorCompact = $derived(editorRoute && compact.current);
+	const sidebarCollapsed = $derived(collapsedFor({ stored: storedCollapsed, editorRoute, compact: compact.current, editorChoice }));
 
 	const STORAGE_KEY = 'kilasflow.sidebar.collapsed';
 
@@ -42,16 +51,20 @@
 			principal = signedIn;
 		});
 		try {
-			sidebarCollapsed = localStorage.getItem(STORAGE_KEY) === 'true';
+			storedCollapsed = localStorage.getItem(STORAGE_KEY) === 'true';
 		} catch {
-			sidebarCollapsed = false;
+			storedCollapsed = false;
 		}
 	});
 
 	function toggleSidebar() {
-		sidebarCollapsed = !sidebarCollapsed;
+		if (editorCompact) {
+			editorChoice = !sidebarCollapsed;
+			return;
+		}
+		storedCollapsed = !storedCollapsed;
 		try {
-			localStorage.setItem(STORAGE_KEY, String(sidebarCollapsed));
+			localStorage.setItem(STORAGE_KEY, String(storedCollapsed));
 		} catch {
 			// Private mode / blocked storage: the toggle still works for the session.
 		}
@@ -60,7 +73,6 @@
 	// The header title and the sidebar read one registration, so a section can
 	// no longer be named in the rail and titled as something else here.
 	const sectionTitle = $derived(sectionLabel(sectionForPath(page.url.pathname)));
-	const editorRoute = $derived(/^\/app\/workflows\/[^/]+$/.test(page.url.pathname));
 </script>
 
 <svelte:head>

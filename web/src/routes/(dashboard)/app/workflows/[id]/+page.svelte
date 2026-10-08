@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 
 	import { useQueryClient } from '@tanstack/svelte-query';
 
-	import { beforeNavigate } from '$app/navigation';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 
@@ -25,6 +25,8 @@
 	import ExportDialog from './export-dialog.svelte';
 	import ImportReportDrawer from '../import-report-drawer.svelte';
 	import { Button } from '$lib/components/ui/button';
+	import * as Dialog from '$lib/components/ui/dialog';
+	import { hasStatus } from '$lib/workflow-editor/save-feedback';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import { validationIssuesFromApiError, withNodeNames, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
 	import * as m from '$lib/paraglide/messages.js';
@@ -224,11 +226,54 @@
 	 * prompt is not a UI this page can put a "save" button in.
 	 */
 	beforeNavigate((navigation) => {
-		if (!editorDirty) return;
-		// A full-page teardown is the browser's prompt to own; see below.
-		if (navigation.type === 'leave') return;
-		if (!window.confirm(m.workflows_unsaved_confirm())) navigation.cancel();
+		if (!editorDirty || leaving) return;
+		// A full-page teardown — a reload, a tab close, an external link — is
+		// the browser's prompt to own; see below.
+		if (navigation.willUnload || !navigation.to) return;
+		navigation.cancel();
+		leaveTarget = navigation.to.url;
 	});
+
+	/**
+	 * Where an in-app navigation was headed when unsaved edits stopped it.
+	 *
+	 * It opens the Save / Leave without saving / Cancel dialog, n8n's answer to
+	 * the same question, in place of a native confirm that could only discard.
+	 */
+	let leaveTarget = $state<URL | null>(null);
+	let leaveSaving = $state(false);
+	/** Lets the navigation this page starts itself past the guard. Not state: nothing renders from it. */
+	let leaving = false;
+	let editor = $state<ReturnType<typeof WorkflowEditor>>();
+
+	async function leave() {
+		const target = leaveTarget;
+		if (!target) return;
+		leaveTarget = null;
+		leaving = true;
+		try {
+			await goto(`${target.pathname}${target.search}${target.hash}`);
+		} finally {
+			leaving = false;
+		}
+	}
+
+	async function saveAndLeave() {
+		leaveSaving = true;
+		try {
+			await editor?.saveDraft();
+			await tick();
+		} finally {
+			leaveSaving = false;
+		}
+		// A save that did not take leaves the user on the canvas, where the
+		// conflict or save-failed banner says why; leaving would lose the edits.
+		if (editorDirty) {
+			leaveTarget = null;
+			return;
+		}
+		await leave();
+	}
 
 	$effect(() => {
 		if (!editorDirty) return;
@@ -540,9 +585,23 @@
 	{:else if (workflow.isError || nodeTypes.isError) && !currentWorkflow}
 		<div class="grid flex-1 place-items-center p-6">
 			<div class="max-w-lg rounded-lg border border-destructive/25 bg-destructive/5 p-3">
-				<h1 class="font-semibold">{m.workflows_editor_load_failed()}</h1>
-				<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(workflow.isError ? workflow.error : nodeTypes.error)}</p>
-				<Button class="mt-4" variant="outline" onclick={() => { void workflow.refetch(); void nodeTypes.refetch(); }}>{m.common_try_again()}</Button>
+				<!-- A workflow that is not there will not come back on a retry, so a 404
+				     says so and offers the way back instead. -->
+				{#if workflow.isError && hasStatus(workflow.error, 404)}
+					<h1 class="font-semibold">{m.workflows_editor_not_found()}</h1>
+					<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{m.workflows_editor_not_found_body()}</p>
+					<Button class="mt-4" href="/app/workflows">
+						<ArrowLeft aria-hidden="true" class="size-3.5" />
+						{m.workflows_back_to_workflows()}
+					</Button>
+				{:else}
+					<h1 class="font-semibold">{m.workflows_editor_load_failed()}</h1>
+					<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(workflow.isError ? workflow.error : nodeTypes.error)}</p>
+					<div class="mt-4 flex flex-wrap gap-2">
+						<Button variant="outline" onclick={() => { void workflow.refetch(); void nodeTypes.refetch(); }}>{m.common_try_again()}</Button>
+						<Button variant="ghost" href="/app/workflows">{m.workflows_back_to_workflows()}</Button>
+					</div>
+				{/if}
 			</div>
 		</div>
 	{:else if currentWorkflow}
@@ -568,6 +627,7 @@
 		{/if}
 		{#key canvasFrom}
 			<WorkflowEditor
+				bind:this={editor}
 				header={breadcrumb}
 				document={currentWorkflow.latestVersion.document}
 				definitions={nodeTypes.data ?? []}
@@ -598,4 +658,20 @@
 		{/key}
 		<ImportReportDrawer bind:open={reportOpen} workflowName={currentWorkflow.name} report={importReport} />
 	{/if}
+
+	<Dialog.Root bind:open={() => leaveTarget !== null, (open) => { if (!open && !leaveSaving) leaveTarget = null; }}>
+		<Dialog.Content aria-describedby="unsaved-leave-description" data-testid="unsaved-leave-dialog">
+			<Dialog.Header>
+				<Dialog.Title>{m.workflows_unsaved_title()}</Dialog.Title>
+				<Dialog.Description id="unsaved-leave-description">{m.workflows_unsaved_body()}</Dialog.Description>
+			</Dialog.Header>
+			<Dialog.Footer class="gap-2 sm:justify-between">
+				<Button variant="ghost" disabled={leaveSaving} onclick={() => (leaveTarget = null)}>{m.workflows_unsaved_cancel()}</Button>
+				<div class="flex flex-col-reverse gap-2 sm:flex-row">
+					<Button variant="outline" disabled={leaveSaving} onclick={() => void leave()}>{m.workflows_unsaved_discard()}</Button>
+					<Button disabled={leaveSaving} onclick={() => void saveAndLeave()}>{leaveSaving ? m.workflows_unsaved_saving() : m.workflows_unsaved_save()}</Button>
+				</div>
+			</Dialog.Footer>
+		</Dialog.Content>
+	</Dialog.Root>
 </section>

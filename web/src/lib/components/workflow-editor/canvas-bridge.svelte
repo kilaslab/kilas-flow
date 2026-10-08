@@ -7,11 +7,12 @@
 	 * generics out of a component that has its own types to think about.
 	 */
 	export type CanvasFlow = {
-		fitView: (options?: { padding?: number; duration?: number; nodes?: { id: string }[]; maxZoom?: number }) => Promise<boolean>;
+		fitView: (options?: { padding?: number | { top?: string; right?: string; bottom?: string; left?: string }; duration?: number; nodes?: { id: string }[]; maxZoom?: number }) => Promise<boolean>;
 		zoomIn: (options?: { duration?: number }) => Promise<boolean>;
 		zoomOut: (options?: { duration?: number }) => Promise<boolean>;
 		setCenter: (x: number, y: number, options?: { zoom?: number; duration?: number }) => Promise<boolean>;
 		setZoom: (zoom: number, options?: { duration?: number }) => Promise<boolean>;
+		setViewport: (viewport: { x: number; y: number; zoom: number }, options?: { duration?: number }) => Promise<boolean>;
 		getViewport: () => { x: number; y: number; zoom: number };
 		screenToFlowPosition: (position: { x: number; y: number }, options?: { snapToGrid?: boolean }) => { x: number; y: number };
 		getInternalNode: (id: string) => { measured?: { width?: number; height?: number } | null } | undefined;
