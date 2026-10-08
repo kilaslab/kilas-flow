@@ -1,14 +1,14 @@
 ---
 id: BUG-phv0r9
 title: Conversational / OpenAI-Functions agents import as placeholders instead of Tools Agents
-status: todo
+status: done
 priority: medium
 labels:
     - importer
     - ai
 parent: EPIC-8rbys7
 created: "2026-09-23T01:35:50Z"
-updated: "2026-09-23T01:35:50Z"
+updated: "2026-10-08T16:14:00Z"
 ---
 
 # Description
@@ -35,9 +35,9 @@ conversationalAgent and openAiFunctionsAgent import as the Tools Agent with a lo
 - Meanwhile an agent ≤v1.5 with no `agent` key (which n8n runs as the Conversational agent) is imported silently as a Tools Agent. The treatment of the same agent is therefore inconsistent.
 
 # Acceptance Criteria
-- [ ] `conversationalAgent` and `openAiFunctionsAgent` import as the Tools Agent with a lossy note
-- [ ] `sqlAgent`, `planAndExecute` and `reActAgent` stay blocking, or map with a stronger note
-- [ ] Legacy agents with no `agent` key get the same lossy note
+- [x] `conversationalAgent` and `openAiFunctionsAgent` import as the Tools Agent with a lossy note
+- [x] `sqlAgent`, `planAndExecute` and `reActAgent` stay blocking, or map with a stronger note
+- [x] Legacy agents with no `agent` key get the same lossy note
 
 # Implementation Plan
 
@@ -52,5 +52,16 @@ Related (from the audit): FEAT-j5s2n4 (done). Its suggested fix says "Map conver
 # Related Files
 
 `internal/interop/n8n/parameters.go:4431-4439` (`refuseNonToolsAgent`), `minimal_repros.json`, `import/results.json` (3066, 2859)
+
+## Fix
+
+- `refuseNonToolsAgent` (`internal/interop/n8n/parameters.go`) lets `conversationalAgent` and `openAiFunctionsAgent` through. `sqlAgent`, `planAndExecuteAgent`, `reActAgent` and any other value are still refused with the blocking placeholder.
+- `agentToKilas` adds `legacyAgentNote`, a lossy issue on field `agent`. It says the agent ran as n8n's Conversational or OpenAI Functions agent and now runs as the Tools Agent: the prompt, system message, model, memory and tools carry over, but answers and tool-call timing may differ. An agent at typeVersion 1.5 or below with no `agent` key gets the same note, because n8n's selector defaulted to `conversationalAgent` until 1.6. From 1.6 a missing key means the Tools Agent, so there is no note.
+- The Conversational agent's `options.humanMessage` template (with its `{tools}` and `{format_instructions}` slots) is reported as dropped instead of being silently ignored.
+- Tests: `internal/interop/n8n/legacy_agent_test.go` covers conversational v1.7, openAiFunctions v1.6, and no selector at 1.5 and at 1. Each imports as `kilasflow.agent` with the system message and the lossy note, with no blocking issue, and `workflow.Compile` passes. No note at 1.6, 1.9 or 2.2. humanMessage is reported as dropped. `TestImportRefusesANonToolsAgent` now pins sqlAgent, planAndExecuteAgent and reActAgent as blocking placeholders.
+
+## Notes
+
+- Not checked against templates 3066 and 2859 themselves (no copy in the repo). The fixtures follow their agent shape. n8n's v1.0 to v1.2 agents defaulted `text` to `$json.input` / `$json.chat_input` rather than `$json.chatInput`. The translator still fills the chatInput default when `text` is absent. This was not changed here.
 
 # Attachments

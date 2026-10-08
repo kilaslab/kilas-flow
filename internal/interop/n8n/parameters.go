@@ -4520,22 +4520,59 @@ func stringText(value any) string {
 // the Tools Agent must not import as this server's AI Agent.
 //
 // n8n removed the selector in 1.82 and only the Tools Agent remains, so an
-// absent key is a Tools Agent by construction. Anything else naming another
-// agent would silently run as one if carried across.
+// absent key is a Tools Agent by construction. The Conversational and OpenAI
+// Functions agents are tool-calling loops over one chat model — n8n itself
+// documents OpenAI Functions as superseded by the Tools Agent — so they
+// import as it, with the note legacyAgentNote writes. The SQL, ReAct and
+// Plan and Execute agents run a different loop and would silently run as
+// another agent if carried across.
 func refuseNonToolsAgent(node Node) string {
 	agent := stringParameter(node.Parameters, "agent")
 	switch agent {
-	case "", "toolsAgent":
+	case "", "toolsAgent", "conversationalAgent", "openAiFunctionsAgent":
 		return ""
 	default:
 		return fmt.Sprintf("this node uses the %q agent, which KilasFlow does not implement. Only the Tools Agent imports: the node was kept as a placeholder and cannot run until it is replaced or rebuilt as a Tools Agent.", agent)
 	}
 }
 
+// legacyAgentNote is the lossy note for an agent that ran as the
+// Conversational or OpenAI Functions agent in n8n and imports as the Tools
+// Agent. An agent at typeVersion 1.5 or below with no selector is one of
+// them too: the selector defaulted to the Conversational agent until 1.6,
+// and n8n omits a parameter left at its default.
+func legacyAgentNote(node Node) (Unsupported, bool) {
+	agent := stringParameter(node.Parameters, "agent")
+	if agent == "" {
+		if _, present := node.Parameters["agent"]; present || node.TypeVersion <= 0 || node.TypeVersion > 1.5 {
+			return Unsupported{}, false
+		}
+		agent = "conversationalAgent"
+	}
+	var name string
+	switch agent {
+	case "conversationalAgent":
+		name = "Conversational"
+	case "openAiFunctionsAgent":
+		name = "OpenAI Functions"
+	default:
+		return Unsupported{}, false
+	}
+	return Unsupported{
+		Severity: SeverityLossy, Field: "agent",
+		Reason: fmt.Sprintf("this agent ran as n8n's %s agent, which KilasFlow does not have; it was imported as the Tools Agent. "+
+			"Both call the connected tools through the chat model, so the prompt, system message, model, memory and tools carry over, "+
+			"but the wording of its answers and when it calls a tool may differ: check its replies before relying on them.", name),
+	}, true
+}
+
 // agentToKilas maps n8n's Tools Agent onto this server's AI Agent.
 func agentToKilas(node Node) (map[string]any, []Unsupported) {
 	issues := make([]Unsupported, 0)
 	parameters := map[string]any{}
+	if note, legacy := legacyAgentNote(node); legacy {
+		issues = append(issues, note)
+	}
 
 	// n8n splits the user turn in two: `promptType` names where it comes from
 	// and `text` carries it. `text` holds the value in every mode — under
@@ -4570,6 +4607,16 @@ func agentToKilas(node Node) (map[string]any, []Unsupported) {
 		if value, present := options[key]; present && value != nil {
 			parameters[key] = value
 		}
+	}
+	// The Conversational agent's template for the user turn, with {tools} and
+	// {format_instructions} slots its own loop fills. The Tools Agent sends
+	// the prompt as written and describes its tools natively.
+	if human, present := options["humanMessage"]; present && human != nil && human != "" {
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "options.humanMessage",
+			Reason: "this agent wrapped each prompt in a Conversational-agent template, which the Tools Agent does not use. " +
+				"The template was dropped: the prompt is sent as written and the tools are described to the model directly.",
+		})
 	}
 	// Batching is accepted into neither document: this server runs items in
 	// order, so a batch size n8n ran in parallel would silently become
