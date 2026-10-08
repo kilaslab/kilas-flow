@@ -395,7 +395,7 @@ export const getEvalExpressionUrl = (id: string,) => {
 }
 
 /**
- * Evaluates one expression against the node outputs an execution's trace already stores, under the budget a node of that revision is given, and answers the value and its JSON shape. Nothing is written and nothing runs: this reads what a field held while the workflow ran. The grammar is the one every workflow document is already evaluated with, and $env is the runtime's allowlist rather than the process environment.
+ * Evaluates one expression against the node outputs an execution's trace already stores, under the budget a node of that revision is given, and answers the value and its JSON shape. Nothing is written and nothing runs: this reads what a field held while the workflow ran. With a nodeId the expression is evaluated as that node's parameters were, against one item of one of its runs (run and item pick them), so $json is the item the node received. The grammar is the one every workflow document is already evaluated with, and $env is the runtime's allowlist rather than the process environment.
  * @summary Evaluate an expression against an execution
  */
 export const evalExpression = async (id: string,

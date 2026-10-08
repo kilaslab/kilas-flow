@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -26,13 +28,14 @@ import (
 // execution the context source, so resolving "the newest execution" silently
 // would let a caller evaluate against a run it did not mean — a guess dressed
 // as a default. --node is the optional narrowing within the execution the
-// caller named.
+// caller named: the expression is then evaluated as that node's parameters
+// were, against an item it received, and --run and --item pick which.
 func debugVerbs() []Verb {
 	return []Verb{
 		{
 			Path:      "debug eval",
 			Operation: "eval-expression",
-			Summary:   "evaluate an expression against an execution's stored node outputs (`--execution <id>`, `--node <nodeId>`)",
+			Summary:   "evaluate an expression against an execution's stored trace, as a node's parameters saw it (`--execution <id>`, `--node <nodeId>`, `--run <n>`, `--item <n>`)",
 			Args:      []Arg{arg("expression")},
 			Flags:     registerEvalFlags,
 			Run:       runDebugEval,
@@ -42,20 +45,63 @@ func debugVerbs() []Verb {
 }
 
 // evalFlags name the execution the expression is evaluated against, and the
-// node whose output narrows it.
+// node, run and item whose parameters it stands in for.
 type evalFlags struct {
 	execution string
 	node      string
+	run       position
+	item      position
 }
 
-// registerEvalFlags attaches --execution and --node.
+// registerEvalFlags attaches --execution, --node, --run and --item.
 func registerEvalFlags(fs *flag.FlagSet) any {
-	flags := &evalFlags{}
+	flags := &evalFlags{run: position{name: "run"}, item: position{name: "item"}}
 	fs.StringVar(&flags.execution, "execution", "",
 		"execution whose stored node outputs the expression is evaluated against; find one with kilasflow exec list")
-	fs.StringVar(&flags.node, "node", "", "node whose output the expression is evaluated against; omit for the run's own context")
+	fs.StringVar(&flags.node, "node", "",
+		"node id whose parameters the expression stands in for: $json is an item the node received; omit for the run's own context")
+	fs.Var(&flags.run, "run",
+		"which run of --node, from 0 as $runIndex counts them (default: the last run that received items)")
+	fs.Var(&flags.item, "item", "which item of that run's input is $json, from 0 as $itemIndex counts them (default 0)")
 
 	return flags
+}
+
+// position is a --run or --item flag: a whole number from 0, remembered as
+// given or not, because 0 is a run and an item of its own and leaving the flag
+// out leaves the server's default in charge.
+type position struct {
+	name  string
+	value *int
+}
+
+func (picked *position) String() string {
+	if picked == nil || picked.value == nil {
+		return ""
+	}
+
+	return strconv.Itoa(*picked.value)
+}
+
+func (picked *position) Set(raw string) error {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value < 0 {
+		return fmt.Errorf("--%s takes a whole number from 0, not %q", picked.name, raw)
+	}
+	picked.value = &value
+
+	return nil
+}
+
+// Get makes the flag a flag.Getter holding an int, which is how the MCP
+// adapter knows to publish it as an integer rather than a list of strings. A
+// flag not given reads as 0 there; the request leaves it out all the same.
+func (picked *position) Get() any {
+	if picked.value == nil {
+		return 0
+	}
+
+	return *picked.value
 }
 
 // runDebugEval evaluates one expression against one execution's context.
@@ -81,10 +127,17 @@ func runDebugEval(ctx *Context, args []string) error {
 			"no execution: pass --execution <id>, or read the id of the run to inspect with `kilasflow exec list`")
 	}
 
+	node := strings.TrimSpace(flags.node)
+	if node == "" && (flags.run.value != nil || flags.item.value != nil) {
+		return usageError("--run and --item pick a run and an item of one node: pass --node <nodeId> as well")
+	}
+
 	body := struct {
 		Expression string `json:"expression"`
 		NodeID     string `json:"nodeId,omitempty"`
-	}{Expression: expression, NodeID: strings.TrimSpace(flags.node)}
+		Run        *int   `json:"run,omitempty"`
+		Item       *int   `json:"item,omitempty"`
+	}{Expression: expression, NodeID: node, Run: flags.run.value, Item: flags.item.value}
 
 	encoded, err := json.Marshal(body)
 	if err != nil {
