@@ -7,9 +7,11 @@ labels:
     - n8n
     - importer
     - ai
+deps:
+    - FEAT-cf5n4j
 parent: EPIC-8rbys7
 created: "2026-09-23T01:17:54Z"
-updated: "2026-10-08T16:07:00Z"
+updated: "2026-10-08T16:58:14Z"
 ---
 
 # Description
