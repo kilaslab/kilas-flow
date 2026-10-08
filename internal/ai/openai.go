@@ -159,9 +159,7 @@ func (model *OpenAICompatible) Stream(ctx context.Context, request ModelRequest,
 		if !found || call.Name == "" {
 			continue
 		}
-		if !json.Valid(call.Arguments) {
-			call.Arguments = json.RawMessage(`{}`)
-		}
+		call.Arguments = toolCallArguments(string(call.Arguments))
 		assembled.Message.ToolCalls = append(assembled.Message.ToolCalls, *call)
 	}
 	return assembled, nil
@@ -483,7 +481,10 @@ func wireMessageFrom(message Message) wireMessage {
 	}
 	for _, call := range message.ToolCalls {
 		arguments := string(call.Arguments)
-		if arguments == "" {
+		// Arguments that never parsed are replayed as {}: Ollama refuses a
+		// conversation whose tool-call arguments it cannot decode, and the
+		// tool result answering this call already quotes the raw text.
+		if arguments == "" || !json.Valid(call.Arguments) {
 			arguments = "{}"
 		}
 		wire.ToolCalls = append(wire.ToolCalls, wireToolCall{
@@ -500,15 +501,23 @@ func (wire wireMessage) toMessage() Message {
 		Name: wire.Name, ToolCallID: wire.ToolCallID,
 	}
 	for _, call := range wire.ToolCalls {
-		arguments := json.RawMessage(call.Function.Arguments)
-		if !json.Valid(arguments) {
-			arguments = json.RawMessage(`{}`)
-		}
 		message.ToolCalls = append(message.ToolCalls, ToolCall{
-			ID: call.ID, Name: call.Function.Name, Arguments: arguments,
+			ID: call.ID, Name: call.Function.Name, Arguments: toolCallArguments(call.Function.Arguments),
 		})
 	}
 	return message
+}
+
+// toolCallArguments is the argument text a model sent with a tool call. No
+// text at all is how a parameterless tool is called, so it becomes {}. Text
+// that does not parse is kept exactly as sent: substituting {} ran the tool
+// with input the model never gave and hid the mistake, while the runtime can
+// answer the call with the parse error and let the model try again.
+func toolCallArguments(text string) json.RawMessage {
+	if strings.TrimSpace(text) == "" {
+		return json.RawMessage(`{}`)
+	}
+	return json.RawMessage(text)
 }
 
 type wireToolCall struct {

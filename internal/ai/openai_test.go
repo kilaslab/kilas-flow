@@ -148,6 +148,96 @@ func TestOpenAICompatibleAssemblesStreamedToolCallFragments(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleKeepsMalformedToolArgumentsRatherThanSubstitutingEmptyOnes(t *testing.T) {
+	t.Parallel()
+
+	// The provider truncated the arguments mid-object. Replacing them with {}
+	// ran the tool with no input and hid what the model had sent.
+	const raw = `{"expression": "12*(3+`
+	encodedRaw, _ := json.Marshal(raw)
+
+	t.Run("complete", func(t *testing.T) {
+		t.Parallel()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[
+				{"id":"c1","type":"function","function":{"name":"calculator","arguments":` + string(encodedRaw) + `}},
+				{"id":"c2","type":"function","function":{"name":"now","arguments":""}}
+			]},"finish_reason":"tool_calls"}]}`))
+		}))
+		defer server.Close()
+
+		response, err := ai.NewOpenAICompatible(server.Client(), server.URL, "sk-test").
+			Complete(context.Background(), ai.ModelRequest{Model: "m", Messages: []ai.Message{{Role: ai.RoleUser, Content: "x"}}})
+		if err != nil {
+			t.Fatalf("Complete() error = %v", err)
+		}
+		calls := response.Message.ToolCalls
+		if len(calls) != 2 || string(calls[0].Arguments) != raw {
+			t.Fatalf("tool calls = %#v, want the raw arguments kept", calls)
+		}
+		if string(calls[1].Arguments) != `{}` {
+			t.Errorf("parameterless call arguments = %q, want {}", calls[1].Arguments)
+		}
+	})
+
+	t.Run("stream", func(t *testing.T) {
+		t.Parallel()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: " + `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"calculator","arguments":` + string(encodedRaw) + `}}]}}]}` + "\n\n"))
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		}))
+		defer server.Close()
+
+		response, err := ai.NewOpenAICompatible(server.Client(), server.URL, "sk-test").
+			Stream(context.Background(), ai.ModelRequest{Model: "m", Messages: []ai.Message{{Role: ai.RoleUser, Content: "x"}}}, nil)
+		if err != nil {
+			t.Fatalf("Stream() error = %v", err)
+		}
+		if calls := response.Message.ToolCalls; len(calls) != 1 || string(calls[0].Arguments) != raw {
+			t.Fatalf("tool calls = %#v, want the raw arguments kept", calls)
+		}
+	})
+}
+
+func TestOpenAICompatibleReplaysAMalformedToolCallWithValidArguments(t *testing.T) {
+	t.Parallel()
+
+	// Ollama refuses a conversation whose assistant turn carries tool-call
+	// arguments it cannot parse, so the retry turn must not resend them. The
+	// tool result that follows already quotes them to the model.
+	var received map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &received)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	_, err := ai.NewOpenAICompatible(server.Client(), server.URL, "sk-test").
+		Complete(context.Background(), ai.ModelRequest{Model: "m", Messages: []ai.Message{
+			{Role: ai.RoleUser, Content: "x"},
+			{Role: ai.RoleAssistant, ToolCalls: []ai.ToolCall{{ID: "c1", Name: "calculator", Arguments: json.RawMessage(`{"expression": "12*(3+`)}}},
+			{Role: ai.RoleTool, ToolCallID: "c1", Name: "calculator", Content: "arguments were not valid JSON"},
+		}})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	messages, _ := received["messages"].([]any)
+	if len(messages) != 3 {
+		t.Fatalf("messages = %#v, want the three turns sent", received["messages"])
+	}
+	assistant, _ := messages[1].(map[string]any)
+	calls, _ := assistant["tool_calls"].([]any)
+	call, _ := calls[0].(map[string]any)
+	function, _ := call["function"].(map[string]any)
+	if arguments, _ := function["arguments"].(string); arguments != "{}" {
+		t.Fatalf("replayed arguments = %#v, want a valid {} in place of the malformed text", function["arguments"])
+	}
+}
+
 func TestOpenAICompatibleReportsAProviderErrorWithoutEchoingTheRequest(t *testing.T) {
 	t.Parallel()
 
