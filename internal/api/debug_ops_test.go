@@ -270,8 +270,8 @@ func seedTrace(t *testing.T, server *authenticatedAPI, key, workflowID string) e
 	_, err = server.executions.CreateNodeRun(context.Background(), tenant, execution.NodeRun{
 		ExecutionID: claimed.ID, NodeID: "manual", Attempt: 1, RunIndex: 0, Sequence: 1,
 		Status: execution.StatusSucceeded, LeaseOwner: claimed.LeaseOwner,
-		Input:     json.RawMessage(`{"main":[{"json":{"customer":"Ada"}}]}`),
-		Output:    json.RawMessage(`[[{"json":{"customer":"Ada","total":41}}]]`),
+		Input:     json.RawMessage(`{"main":[{"json":{"customer":"Ada","total":41}},{"json":{"customer":"Grace","total":7}}]}`),
+		Output:    json.RawMessage(`[[{"json":{"billed":"Ada"}},{"json":{"billed":"Grace"}}]]`),
 		StartedAt: time.Now().UTC(),
 	})
 	if err != nil {
@@ -288,7 +288,8 @@ func seedTrace(t *testing.T, server *authenticatedAPI, key, workflowID string) e
 }
 
 // The evaluator answers what a field held at a node, reading the same stored
-// outputs the trace already returns to this caller.
+// trace the trace view already returns to this caller: at a node, $json is an
+// item the node received, the first unless the body picks another.
 func TestEvalExpressionReadsTheStoredTrace(t *testing.T) {
 	server, keys := newAuthenticatedAPI(t, "acme", "globex")
 	key := keys["acme"]
@@ -304,6 +305,8 @@ func TestEvalExpressionReadsTheStoredTrace(t *testing.T) {
 		{map[string]any{"expression": "{{ $json.total + 1 }}", "nodeId": "manual"}, "42", "number"},
 		{map[string]any{"expression": "{{ $input.main[0].json.customer }}", "nodeId": "manual"}, `"Ada"`, "string"},
 		{map[string]any{"expression": "$json.total", "nodeId": "manual"}, "41", "number"},
+		{map[string]any{"expression": "$json.customer", "nodeId": "manual", "item": 1}, `"Grace"`, "string"},
+		{map[string]any{"expression": "$itemIndex + $runIndex", "nodeId": "manual", "run": 0, "item": 1}, "1", "number"},
 	} {
 		answer := server.callJSON(t, http.MethodPost, "/api/v1/executions/"+record.ID+"/eval", key, testCase.body, http.StatusOK)
 		if string(mustJSON(t, answer["value"])) != testCase.wantValue || answer["type"] != testCase.wantType {
@@ -325,6 +328,12 @@ func TestEvalExpressionReadsTheStoredTrace(t *testing.T) {
 		map[string]any{"expression": "{{ $json.x }}", "nodeId": "ghost"})
 	if unknown.Code != http.StatusUnprocessableEntity || !strings.Contains(unknown.Body.String(), "ghost") {
 		t.Errorf("eval(unknown node) = %d %s, want 422 naming the node", unknown.Code, unknown.Body)
+	}
+	// An item or a run the node did not have is refused with what it had.
+	missing := server.call(t, http.MethodPost, "/api/v1/executions/"+record.ID+"/eval", key,
+		map[string]any{"expression": "{{ $json }}", "nodeId": "manual", "item": 2})
+	if missing.Code != http.StatusUnprocessableEntity || !strings.Contains(missing.Body.String(), "received 2 items") {
+		t.Errorf("eval(item 2 of 2) = %d %s, want 422 naming the items the run received", missing.Code, missing.Body)
 	}
 	broken := server.call(t, http.MethodPost, "/api/v1/executions/"+record.ID+"/eval", key,
 		map[string]any{"expression": "{{ $json.total +", "nodeId": "manual"})

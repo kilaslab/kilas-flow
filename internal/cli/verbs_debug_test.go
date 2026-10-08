@@ -101,6 +101,88 @@ func TestDebugEvalWithoutANodeSendsOnlyTheExpression(t *testing.T) {
 	}
 }
 
+// TestDebugEvalSendsTheRunAndTheItem pins the picking half: --run and --item
+// reach the body as numbers, an explicit 0 included, because 0 is a run and an
+// item of its own rather than "not given", and leaving either out leaves the
+// server's default in charge.
+func TestDebugEvalSendsTheRunAndTheItem(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		flags    []string
+		wantRun  any
+		wantItem any
+	}{
+		{"both", []string{"--run", "2", "--item", "1"}, float64(2), float64(1)},
+		{"an explicit zero", []string{"--item", "0"}, nil, float64(0)},
+		{"neither", nil, nil, nil},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			api := newRecordingAPI(map[string]http.HandlerFunc{
+				apiPrefix + "/executions/exec_1/eval": jsonBody(http.StatusOK, evalAnswer),
+			})
+			srv := stubAPI(t, api.routesFor(t))
+
+			args := append([]string{"debug", "eval", "$json.n", "--execution", "exec_1", "--node", "tag"}, testCase.flags...)
+			code, _, stdout, stderr := runCLI(t, Env{
+				Args:   append(args, "--url", srv.URL, "--json"),
+				Getenv: homeEnv(t.TempDir(), nil),
+			})
+			if code != ExitOK {
+				t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitOK, stdout, stderr)
+			}
+
+			var sent map[string]any
+			if err := json.Unmarshal([]byte(api.last(t).Body), &sent); err != nil {
+				t.Fatalf("the body is not the eval request: %v", err)
+			}
+			if sent["nodeId"] != "tag" || sent["run"] != testCase.wantRun || sent["item"] != testCase.wantItem {
+				t.Fatalf("body = %v, want nodeId tag, run %v, item %v", sent, testCase.wantRun, testCase.wantItem)
+			}
+			for field, want := range map[string]any{"run": testCase.wantRun, "item": testCase.wantItem} {
+				if _, present := sent[field]; present != (want != nil) {
+					t.Fatalf("body = %v, want %s present only when its flag was given", sent, field)
+				}
+			}
+		})
+	}
+}
+
+// TestDebugEvalPicksARunOrItemOnlyWithinANode pins the usage refusals: a run
+// and an item are positions within one node, so either without --node, or a
+// position that is not a whole number from 0, is refused before any request.
+func TestDebugEvalPicksARunOrItemOnlyWithinANode(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		flags []string
+		want  string
+	}{
+		{"a run without a node", []string{"--run", "1"}, "--node"},
+		{"an item without a node", []string{"--item", "1"}, "--node"},
+		{"a negative run", []string{"--node", "tag", "--run", "-1"}, "--run"},
+		{"an item that is not a number", []string{"--node", "tag", "--item", "first"}, "--item"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			api := newRecordingAPI(nil)
+			srv := stubAPI(t, api.routesFor(t))
+
+			args := append([]string{"debug", "eval", "$json.n", "--execution", "exec_1"}, testCase.flags...)
+			code, _, stdout, stderr := runCLI(t, Env{
+				Args:   append(args, "--url", srv.URL, "--json"),
+				Getenv: homeEnv(t.TempDir(), nil),
+			})
+			if code != ExitUsage {
+				t.Fatalf("exit = %d, want %d (stdout=%q stderr=%q)", code, ExitUsage, stdout, stderr)
+			}
+			if len(api.calls) != 0 {
+				t.Fatalf("a refused invocation sent %d requests, want none", len(api.calls))
+			}
+			if !strings.Contains(stdout+stderr, testCase.want) {
+				t.Fatalf("output = %q %q, want it to name %s", stdout, stderr, testCase.want)
+			}
+		})
+	}
+}
+
 // TestDebugEvalWithoutAnExecutionIsAUsageError pins the decision recorded on
 // FEAT-ew46cb: the route makes the execution the context source, so "the newest
 // execution" is never guessed — the caller names the run it means.

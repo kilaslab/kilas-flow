@@ -15,6 +15,16 @@ export interface EvalExpressionInputBody {
      * @maxLength 4096
      */
   expression: string;
-  /** The node whose stored output and input the expression reads as $json and $input. Omit it to read the run through $node alone. */
+  /**
+     * Which item of that run's input is $json, counted from 0 as $itemIndex counts them. Defaults to 0. Needs nodeId.
+     * @minimum 0
+     */
+  item?: number;
+  /** The node whose parameters the expression stands in for: $json is an item the node received, $input its run's input, and every earlier node is read as it stood when that run started. Omit it to read the run through $node alone. */
   nodeId?: string;
+  /**
+     * Which run of the node, counted from 0 as $runIndex counts them: a delivery the runner pruned is not a run. Defaults to the last run that received items. Needs nodeId.
+     * @minimum 0
+     */
+  run?: number;
 }

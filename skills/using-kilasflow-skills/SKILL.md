@@ -158,7 +158,7 @@ kilasflow exec cancel               cancel-execution                   request c
 kilasflow exec retry                retry-execution                    start a fresh execution of the same workflow, input and trigger as one that finished
 kilasflow exec trace                stream-execution-events            collect an execution's events into one envelope, stopping at its outcome
 kilasflow exec tail                 stream-execution-events            stream an execution's events as they arrive (one object per line; the documented exception)
-kilasflow debug eval                eval-expression                    evaluate an expression against an execution's stored node outputs (--execution <id>, --node <nodeId>)
+kilasflow debug eval                eval-expression                    evaluate an expression against an execution's stored trace, as a node's parameters saw it (--execution <id>, --node <nodeId>, --run <n>, --item <n>)
 kilasflow node list                 list-node-types                    list the node catalogue the server will run
 kilasflow node describe             list-node-types                    print one node type's definition from the catalogue
 kilasflow node options              load-node-property-options         load a property's selectable values from the service that owns them (--property, --version, --mode, --credential)

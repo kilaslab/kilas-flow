@@ -403,20 +403,32 @@ kilasflow exec tail exec_01K7
 Answering a question about a run without starting another one.
 
 ```bash
-kilasflow debug eval '$json.n + 1' --execution exec_01K7
-kilasflow debug eval '$node["HTTP Request"].body.id' --execution exec_01K7 --node "HTTP Request"
-kilasflow debug eval '$json.n' --execution exec_01K7 --quiet   # the value alone
+kilasflow debug eval '$("HTTP Request").first().json.id' --execution exec_01K7
+kilasflow debug eval '$json.url' --execution exec_01K7 --node http_request
+kilasflow debug eval '$json.url' --execution exec_01K7 --node http_request --run 2 --item 1
+kilasflow debug eval '$json.n' --execution exec_01K7 --node set --quiet   # the value alone
 ```
 
 - `debug eval <expression> --execution <id>` evaluates one expression against the
-  execution's stored context: the node outputs the trace view already shows,
+  execution's stored context: the node runs the trace view already shows,
   rebuilt by the server with the evaluator the runtime already uses for workflow
   documents. It answers `{value, type}` — one value, not a re-run, and nothing is
-  saved or executed. `--node <nodeId>` narrows the context to one node's output.
+  saved or executed.
+- `--node <nodeId>` evaluates the expression the way that node's parameters
+  were evaluated: `$json` is an item the node **received**, not one it produced,
+  `$input` is that run's input, and every earlier node is read as it stood when
+  that run started, so `$('X').item` pairs with the item through its lineage.
+  `--run <n>` picks the run, counted from 0 as `$runIndex` counts them (a
+  delivery the runner pruned is not a run), and defaults to the last run that
+  received items; `--item <n>` picks the input item, `$itemIndex`, and defaults
+  to 0. A run or an item the node did not have is refused with how many it had.
+  To read what a node produced, leave `--node` out and name it:
+  `$('Name').all()`.
 - **`--execution` is required, and is not defaulted to the newest run.** The
   route makes the execution the context source, so guessing which run the caller
   meant would answer a question nobody asked; the verb refuses with exit 2 and
-  names `exec list` for finding an id. `--node` is the only optional narrowing.
+  names `exec list` for finding an id. `--node`, `--run` and `--item` are the
+  optional narrowing, and `--run` or `--item` without `--node` is refused.
 - The verb is **not** guarded and carries no guardrail refusal of its own: it
   reads one execution the caller can already read (`exec get`), so its authority
   is exactly the scope the server asks for. A refusal is the server's to make —

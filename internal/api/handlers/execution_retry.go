@@ -110,12 +110,15 @@ func (handler *Executions) retryProblem(ctx context.Context, err error) error {
 	return serverProblem(ctx, "workflow execution retry failed", err)
 }
 
-// evalExpressionInput is one expression and the node to read the trace from.
+// evalExpressionInput is one expression, and the node, run and item whose
+// parameters it stands in for.
 type evalExpressionInput struct {
 	ID   string `path:"id" minLength:"1" doc:"Execution identifier"`
 	Body struct {
 		Expression string `json:"expression" minLength:"1" maxLength:"4096" doc:"The expression to evaluate. A template carrying {{ }} delimiters is evaluated exactly as a document parameter is; without them the whole text is taken as the expression body."`
-		NodeID     string `json:"nodeId,omitempty" doc:"The node whose stored output and input the expression reads as $json and $input. Omit it to read the run through $node alone."`
+		NodeID     string `json:"nodeId,omitempty" doc:"The node whose parameters the expression stands in for: $json is an item the node received, $input its run's input, and every earlier node is read as it stood when that run started. Omit it to read the run through $node alone."`
+		Run        *int   `json:"run,omitempty" minimum:"0" doc:"Which run of the node, counted from 0 as $runIndex counts them: a delivery the runner pruned is not a run. Defaults to the last run that received items. Needs nodeId."`
+		Item       *int   `json:"item,omitempty" minimum:"0" doc:"Which item of that run's input is $json, counted from 0 as $itemIndex counts them. Defaults to 0. Needs nodeId."`
 	}
 }
 
@@ -164,7 +167,9 @@ func (handler *Executions) EvalExpression(ctx context.Context, input *evalExpres
 	// expression reads are the ones the run read.
 	document := handler.ranDocument(ctx, record)
 
-	result, err := evaluator.EvaluateExpression(ctx, record, document, input.Body.Expression, input.Body.NodeID)
+	result, err := evaluator.EvaluateExpression(ctx, record, document, input.Body.Expression, engine.ExpressionTarget{
+		NodeID: input.Body.NodeID, Run: input.Body.Run, Item: input.Body.Item,
+	})
 	if err != nil {
 		return nil, huma.Error422UnprocessableEntity("the expression could not be evaluated: " + err.Error())
 	}
@@ -178,7 +183,7 @@ func (handler *Executions) EvalExpression(ctx context.Context, input *evalExpres
 // the waiting-links lookup does: a runtime that cannot evaluate answers 503
 // rather than evaluating under some other rule.
 type ExecutionEvaluator interface {
-	EvaluateExpression(context.Context, execution.Record, workflow.Document, string, string) (engine.ExpressionEvaluation, error)
+	EvaluateExpression(context.Context, execution.Record, workflow.Document, string, engine.ExpressionTarget) (engine.ExpressionEvaluation, error)
 }
 
 // WorkflowVersionReader reads the revision an execution ran.

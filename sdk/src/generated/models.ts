@@ -894,8 +894,18 @@ export interface EvalExpressionInputBody {
      * @maxLength 4096
      */
   expression: string;
-  /** The node whose stored output and input the expression reads as $json and $input. Omit it to read the run through $node alone. */
+  /**
+     * Which item of that run's input is $json, counted from 0 as $itemIndex counts them. Defaults to 0. Needs nodeId.
+     * @minimum 0
+     */
+  item?: number;
+  /** The node whose parameters the expression stands in for: $json is an item the node received, $input its run's input, and every earlier node is read as it stood when that run started. Omit it to read the run through $node alone. */
   nodeId?: string;
+  /**
+     * Which run of the node, counted from 0 as $runIndex counts them: a delivery the runner pruned is not a run. Defaults to the last run that received items. Needs nodeId.
+     * @minimum 0
+     */
+  run?: number;
 }
 
 /**
@@ -4294,7 +4304,7 @@ export const getEvalExpressionUrl = (id: string,) => {
 }
 
 /**
- * Evaluates one expression against the node outputs an execution's trace already stores, under the budget a node of that revision is given, and answers the value and its JSON shape. Nothing is written and nothing runs: this reads what a field held while the workflow ran. The grammar is the one every workflow document is already evaluated with, and $env is the runtime's allowlist rather than the process environment.
+ * Evaluates one expression against the node outputs an execution's trace already stores, under the budget a node of that revision is given, and answers the value and its JSON shape. Nothing is written and nothing runs: this reads what a field held while the workflow ran. With a nodeId the expression is evaluated as that node's parameters were, against one item of one of its runs (run and item pick them), so $json is the item the node received. The grammar is the one every workflow document is already evaluated with, and $env is the runtime's allowlist rather than the process environment.
  * @summary Evaluate an expression against an execution
  */
 export const evalExpression = async (id: string,
