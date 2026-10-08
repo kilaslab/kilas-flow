@@ -745,8 +745,17 @@ func (handler *Workflows) Delete(ctx context.Context, input *workflowPathInput) 
 }
 
 // Activate validates and pins the latest saved revision.
+//
+// An embed session holding workflow:activate reaches this handler too, and
+// takes the same compile and catalogue checks the dashboard does. It is also
+// held to its confinement first, the way a publish and a run are: activation
+// pins the latest revision, which may have been saved outside what the
+// session's minted confinement allows. Every other caller is unaffected.
 func (handler *Workflows) Activate(ctx context.Context, input *workflowPathInput) (*activationOutput, error) {
 	if err := handler.available(true); err != nil {
+		return nil, err
+	}
+	if err := handler.confinedStoredProblem(ctx, input.ID); err != nil {
 		return nil, err
 	}
 	tenant := handler.tenant(ctx)

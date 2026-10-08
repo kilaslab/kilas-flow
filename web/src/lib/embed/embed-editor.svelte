@@ -8,13 +8,14 @@
 	import { listCredentials } from '$lib/api/generated/credentials/credentials';
 	import { createListNodeTypes } from '$lib/api/generated/nodes/nodes';
 	import { getExecution } from '$lib/api/generated/executions/executions';
-	import { runWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
+	import { activateWorkflow, deactivateWorkflow, runWorkflow } from '$lib/api/generated/workflow-lifecycle/workflow-lifecycle';
 	import { createGetWorkflow, getWorkflow, updateWorkflow } from '$lib/api/generated/workflows/workflows';
 	import type { CredentialResource, Definition, ExecutionResource, WorkflowDocumentInput, WorkflowResource } from '$lib/api/generated/models';
 	import { Button } from '$lib/components/ui/button';
 	import WorkflowEditor, { type RunSelection, type WorkflowHistoryHost } from '$lib/components/workflow-editor/workflow-editor.svelte';
-	import { SCOPE_PUBLISH, scopeAllows, type EmbedSession } from './session.svelte';
+	import { embedControls, type EmbedSession } from './session.svelte';
 	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage } from '$lib/dashboard/cursor-page';
+	import { activationFailure, activationNotices, dismissNotice, type ActivationNoticeView } from '$lib/workflow-editor/activation';
 	import { cacheWorkflow } from '$lib/workflow-editor/workflow-cache';
 	import { validationIssuesFromApiError, withNodeNames, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
 
@@ -25,15 +26,16 @@
 
 	const queryClient = useQueryClient();
 
-	const canWrite = $derived(scopeAllows(session, 'workflow:write'));
-	const canRun = $derived(scopeAllows(session, 'workflow:run'));
-	const canRead = $derived(scopeAllows(session, 'workflow:read'));
-	// Publishing an embedded workflow makes its webhook live for the whole
-	// deployment, so it needs a scope of its own that the server does not mint
-	// by default. Every session in existence today evaluates this to false, and
-	// the publish controls stay hidden — which is the intended default, not an
-	// oversight.
-	const canPublish = $derived(scopeAllows(session, SCOPE_PUBLISH));
+	// Each control is shown on its own scope. Publishing and activation make a
+	// revision live for the whole deployment, so a host opts its customers into
+	// each with a scope of its own (workflow:publish, workflow:activate); an
+	// editor minted with read, write and run shows neither.
+	const controls = $derived(embedControls(session));
+	const canWrite = $derived(controls.canWrite);
+	const canRun = $derived(controls.canRun);
+	const canRead = $derived(controls.canRead);
+	const canPublish = $derived(controls.canPublish);
+	const canActivate = $derived(controls.canActivate);
 	const branding = $derived(session.branding);
 
 	const workflow = createGetWorkflow<WorkflowResource>(() => session.workflowId, () => ({
@@ -76,6 +78,10 @@
 	let runMessage = $state<string | null>(null);
 	let lastExecutionId = $state<string | null>(null);
 	let editorDirty = $state(false);
+	let activating = $state(false);
+	let activationError = $state<string | null>(null);
+	let activationIssues = $state<CanvasValidationIssue[]>([]);
+	let notices = $state<ActivationNoticeView[]>([]);
 	let newerRevision = $state<WorkflowResource | null>(null);
 	/** The draft the last save carried, kept for the overwrite answer. */
 	let pendingSave = $state<WorkflowDocumentInput | null>(null);
@@ -181,10 +187,11 @@
 	/**
 	 * The version panel's wiring, matching the dashboard's shape exactly.
 	 *
-	 * Browsing and diffing history is a read, restoring is a write, and
-	 * publishing needs the separate publish scope. The server's embed
-	 * middleware draws the same three lines; these flags only decide which
-	 * controls are worth showing, and are never what stops a request.
+	 * Browsing and diffing history is a read, restoring is a write, publishing
+	 * needs the publish scope, and unpublishing — which is deactivation — needs
+	 * the activate scope. The server's embed middleware draws the same lines;
+	 * these flags only decide which controls are worth showing, and are never
+	 * what stops a request.
 	 */
 	const history = $derived<WorkflowHistoryHost | null>(
 		currentWorkflow && canRead
@@ -193,6 +200,7 @@
 					latestVersionID: currentWorkflow.latestVersion.id,
 					canRestore: canWrite,
 					canPublish,
+					canUnpublish: canActivate,
 					onRestored: (workflow) => {
 						adoptFromServer(workflow);
 						notifyHost('workflow-saved', { revision: workflow.latestVersion.revision });
@@ -209,6 +217,54 @@
 				}
 			: null
 	);
+
+	/**
+	 * Turns the workflow on, for a session minted with workflow:activate.
+	 *
+	 * The request reaches the same handler the dashboard's does, so a refusal
+	 * arrives as the same compile problem and is rendered the same way: the
+	 * activation error above the canvas and each blocking node in the issue
+	 * list.
+	 */
+	async function activate() {
+		if (!currentWorkflow || !canActivate) return;
+		activating = true;
+		activationError = null;
+		activationIssues = [];
+		notices = [];
+		try {
+			const response = await activateWorkflow(currentWorkflow.id);
+			if (response.status !== 200) throw new Error(m.workflows_unexpected_workflow_activate());
+			currentWorkflow = response.data;
+			cacheWorkflow(queryClient, response.data);
+			notices = activationNotices(response.data.notices, response.data.latestVersion.document.nodes);
+		} catch (error) {
+			activationError = activationFailure(error);
+			activationIssues = withNodeNames(validationIssuesFromApiError(error), currentWorkflow.latestVersion.document.nodes);
+			// Only the server knows whether a failed activation rolled back.
+			await workflow.refetch();
+		} finally {
+			activating = false;
+		}
+	}
+
+	async function deactivate() {
+		if (!currentWorkflow || !canActivate) return;
+		activating = true;
+		activationError = null;
+		try {
+			const response = await deactivateWorkflow(currentWorkflow.id);
+			if (response.status !== 200) throw new Error(m.workflows_unexpected_workflow_deactivate());
+			currentWorkflow = response.data;
+			cacheWorkflow(queryClient, response.data);
+			notices = [];
+		} catch (error) {
+			activationError = activationFailure(error);
+			await workflow.refetch();
+		} finally {
+			activating = false;
+		}
+	}
 
 	async function run(selection?: RunSelection): Promise<ExecutionResource | undefined> {
 		if (!currentWorkflow || !canRun) return;
@@ -319,13 +375,19 @@
 			{runMessage}
 			{lastExecutionId}
 			{history}
-			hostIssues={runIssues}
+			hostIssues={[...runIssues, ...activationIssues]}
 			onDirtyChange={(value) => (editorDirty = value)}
 			onReloadConflict={() => void reloadTheirs()}
 			onOverwriteConflict={() => void overwriteTheirs()}
 			active={currentWorkflow.active}
+			{activating}
+			{notices}
+			{activationError}
 			onSave={save}
 			onRun={run}
+			onActivate={canActivate ? activate : undefined}
+			onDeactivate={canActivate ? deactivate : undefined}
+			onDismissNotice={(key) => (notices = dismissNotice(notices, key))}
 		/>
 	{/key}
 {/if}

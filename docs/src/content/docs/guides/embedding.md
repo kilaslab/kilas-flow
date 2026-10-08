@@ -115,8 +115,11 @@ await tenant.client.updateWorkflow(workflowId, {
 await tenant.client.activateWorkflow(workflowId);
 ```
 
-Activation is an owner action on purpose: it publishes a deployment-wide
-endpoint, so no embed scope grants it. Only the backend key may call it.
+Activation is an owner action by default: it publishes a deployment-wide
+endpoint, so no scope an editor session carries day to day grants it. A host
+that wants its own customers to turn workflows on and off, or to publish a
+revision, says so when it mints the session — see
+[publish and activate authority](#publish-and-activate-authority).
 
 The webhook credential above needs no allowed domains: the trigger only checks
 it against arriving requests. A credential a node *sends* is different. If the
@@ -150,6 +153,40 @@ const session = await tenant.client.createEmbedSession({
 Minting is cheap, so mint per page load and re-check entitlement each
 time. A default-length (fifteen-minute) token is also the point at which a
 long editing session re-verifies the user is still allowed.
+
+#### Publish and activate authority
+
+What a session may do to the version production traffic runs is three
+levels, each its own scope. None implies another, so the scopes above — read,
+write, run — give an editor that saves and tests drafts and cannot change
+what is live.
+
+| Level | Scope | What the editor shows | What the server allows |
+| --- | --- | --- | --- |
+| Draft | `workflow:write` | Save, restore an older revision | Saving drafts and restoring. Publishing a revision is refused: "This embed session cannot publish a revision without the workflow:publish scope." |
+| Publish | `workflow:publish` | Publish in the version panel | Pinning a named revision as the version production traffic runs — which also turns the workflow on if it was off. It cannot take the workflow offline again. |
+| Activate | `workflow:activate` | The activate/deactivate switch, and Unpublish in the version panel | Activating the latest saved revision and deactivating. Without the scope: "This embed session cannot change activation." |
+
+Both `workflow:publish` and `workflow:activate` imply `workflow:read`, the way
+write and run do, and neither implies write: a session minted with only one
+of them can load the workflow and act on what is saved, but not edit it.
+Activating from the embed reaches the same handler the dashboard's switch
+does, so a workflow that uses a node the tenant may not use is refused with
+the same `node.not_available` problem, and the latest revision is held to the
+session's [confinement](/concepts/tenancy-and-embedding/#credentials-in-a-confined-callers-document)
+first, exactly as a publish or a run is.
+
+```js
+// An editor whose user may also put their changes live.
+await tenant.client.createEmbedSession({
+  workflowId: tenant.workflowId,
+  scopes: ['workflow:write', 'workflow:run', 'workflow:publish', 'workflow:activate'],
+  origin
+});
+```
+
+The two scopes are for embed sessions only. A scoped API key cannot be minted
+with them — publishing and activation stay with the tenant-wide key.
 
 ### 4. Mount the editor, watch the run
 
@@ -231,7 +268,8 @@ until somebody deliberately permits it.
 | --- | --- | --- |
 | Create / update workflow | API key | Provisioning is a backend action |
 | Store / manage credentials | API key | Values are never returned to a picker beyond names |
-| Activate / deactivate | API key | No embed scope grants this, ever |
+| Activate / deactivate | API key, or embed token | An embed token needs `workflow:activate`, minted on purpose; no other scope grants it |
+| Publish a revision | API key, or embed token | An embed token needs `workflow:publish`; `workflow:write` alone is refused |
 | Import workflow | API key | Refused to embed sessions outright |
 | Delete workflow | API key | Refused to embed sessions outright |
 | Mint embed session | API key | The backend's authorization decision |
@@ -278,11 +316,14 @@ until somebody deliberately permits it.
   outside one second to thirty minutes is refused at startup rather than
   clamped. A leaked token stays useful only briefly, and minting another
   is the re-authorization point.
-- **No activate, no delete, no import.** Activation publishes a public
-  endpoint, deletion destroys the tenant's data, import creates
-  workflows outside the session's single-workflow authority. Each
-  refusal names the reason rather than answering 404, because the
-  caller is the host's own page and deserves a diagnostic.
+- **No delete, no import, and no publish or activate unless minted.**
+  Deletion destroys the tenant's data and import creates workflows
+  outside the session's single-workflow authority, so no scope grants
+  either. Publishing and activation make a revision live, so each needs
+  a scope the host mints on purpose (`workflow:publish`,
+  `workflow:activate`). Each refusal names the reason rather than
+  answering 404, because the caller is the host's own page and deserves
+  a diagnostic.
 - **Never a session cookie.** A request with no token at all passes the
   embed middleware untouched. Embedding confines a browser to one
   workflow; anything reachable by your users sits behind your own

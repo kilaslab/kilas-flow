@@ -393,6 +393,7 @@
 					latestVersionID: currentWorkflow.latestVersion.id,
 					canRestore: true,
 					canPublish: true,
+					canUnpublish: true,
 					onRestored: applyRestore,
 					onPublished: applyPublish,
 					onUnpublished: applyPublish

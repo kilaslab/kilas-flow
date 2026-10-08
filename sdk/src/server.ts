@@ -84,10 +84,24 @@ export { KilasFlowError } from './http.js';
 
 /**
  * Scopes an embed session may carry. Implication stays inside one family:
- * `workflow:write` and `workflow:run` imply `workflow:read`, and
- * `datastore:write` implies `datastore:read` — never across.
+ * `workflow:write`, `workflow:run`, `workflow:publish` and `workflow:activate`
+ * imply `workflow:read`, and `datastore:write` implies `datastore:read` — never
+ * across, and never upward.
+ *
+ * Publishing and activation are each opted into on their own:
+ * `workflow:publish` pins a revision as the version production traffic runs,
+ * and `workflow:activate` turns the workflow on and off. `workflow:write` grants
+ * neither, and neither grants the other. Both are for embed sessions only; an
+ * API key cannot be minted with them.
  */
-export type EmbedScope = 'workflow:read' | 'workflow:write' | 'workflow:run' | 'datastore:read' | 'datastore:write';
+export type EmbedScope =
+	| 'workflow:read'
+	| 'workflow:write'
+	| 'workflow:run'
+	| 'workflow:publish'
+	| 'workflow:activate'
+	| 'datastore:read'
+	| 'datastore:write';
 
 export interface EmbedSessionRequest {
 	/**

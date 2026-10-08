@@ -70,29 +70,63 @@ export function isFramed(): boolean {
 /**
  * Publishing from inside an embedded editor.
  *
- * Activation publishes a webhook endpoint for the whole deployment, which is
- * why `permits` in the embed middleware refuses activate and deactivate to
- * every session. A white-label host that wants its own customers to publish
- * needs to say so explicitly, and this is the scope that would say it.
- *
- * The server does not mint it yet — `normalizeScopes` rejects any scope it
- * does not know by name, and it knows read, write and run — so no session can
- * carry this today and every publish control in the embed stays hidden. That
- * is the intended default rather than an oversight: the gate is written here
- * so the frontend is already correct when the server grants the scope, instead
- * of the two halves landing out of step and briefly offering a button the API
- * refuses.
+ * Publishing pins a revision as the version production traffic runs, so it is
+ * not part of `workflow:write`: a white-label host that wants its own
+ * customers to publish mints this scope on purpose, and the server refuses a
+ * publish from any session without it (`permits` in the embed middleware).
  */
 export const SCOPE_PUBLISH = 'workflow:publish';
+
+/**
+ * Activating and deactivating from inside an embedded editor.
+ *
+ * Activation registers the workflow's triggers — a webhook endpoint for the
+ * whole deployment among them — so it is an owner action unless the host mints
+ * this scope. With it, the request reaches the same handler the dashboard's
+ * does and meets the same compiler. Neither this nor publish implies the
+ * other.
+ */
+export const SCOPE_ACTIVATE = 'workflow:activate';
+
+/**
+ * The scopes that carry `workflow:read` with them, mirroring `impliesRead` in
+ * internal/embed/embed.go so the two halves agree on what a session can load.
+ */
+const IMPLIES_READ = ['workflow:write', 'workflow:run', SCOPE_PUBLISH, SCOPE_ACTIVATE];
 
 export function scopeAllows(session: EmbedSession | null, scope: string): boolean {
 	if (!session) return false;
 	if (session.scopes.includes(scope)) return true;
-	// Write, run and publish all imply read, matching the server's rule.
 	if (scope === 'workflow:read') {
-		return session.scopes.includes('workflow:write') || session.scopes.includes('workflow:run') || session.scopes.includes(SCOPE_PUBLISH);
+		return IMPLIES_READ.some((held) => session.scopes.includes(held));
 	}
 	return false;
+}
+
+/** Which of the editor's controls a session can use. */
+export type EmbedControls = {
+	canRead: boolean;
+	canWrite: boolean;
+	canRun: boolean;
+	canPublish: boolean;
+	canActivate: boolean;
+};
+
+/**
+ * The editor's controls, each on its own scope.
+ *
+ * These decide only what is worth showing. The server's embed middleware
+ * draws the same lines and is what actually refuses a request, so a control
+ * shown by mistake costs a refusal rather than an authority.
+ */
+export function embedControls(session: EmbedSession | null): EmbedControls {
+	return {
+		canRead: scopeAllows(session, 'workflow:read'),
+		canWrite: scopeAllows(session, 'workflow:write'),
+		canRun: scopeAllows(session, 'workflow:run'),
+		canPublish: scopeAllows(session, SCOPE_PUBLISH),
+		canActivate: scopeAllows(session, SCOPE_ACTIVATE)
+	};
 }
 
 /**

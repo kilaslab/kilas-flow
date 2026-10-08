@@ -34,6 +34,12 @@
 		latestVersionID: string;
 		canRestore: boolean;
 		canPublish: boolean;
+		/**
+		 * Unpublishing is deactivation, so it follows the activate authority
+		 * rather than the publish one: an embed session shows it only with
+		 * workflow:activate.
+		 */
+		canUnpublish: boolean;
 		onRestored: (workflow: WorkflowResource) => void;
 		onPublished: (workflow: WorkflowResource, version: WorkflowVersionSummaryResource) => void;
 		onUnpublished: (workflow: WorkflowResource) => void;
@@ -327,10 +333,13 @@
 					: m.editor_state_saved()
 	);
 	// Activation appears only for a surface that supplied both halves of it. The
-	// embed supplies neither, because a host application decides when its own
-	// workflows go live and a button inside its iframe would take that decision
-	// away from it.
-	const canActivate = $derived(!locked && Boolean(onActivate) && Boolean(onDeactivate));
+	// embed supplies them only to a session minted with workflow:activate,
+	// because a host application decides when its own workflows go live and a
+	// button inside its iframe must not take that decision away from it unless
+	// the host handed it over. Activation acts on the saved revision rather than
+	// the canvas, so a read-only canvas keeps it; a preview of an older revision
+	// does not, because the switch would not act on what is drawn.
+	const canActivate = $derived(!previewing && Boolean(onActivate) && Boolean(onDeactivate));
 	// A dirty canvas has to be saved first, because activation pins the latest
 	// *saved* revision: activating here would publish something other than what
 	// the user is looking at. Deactivating is never ambiguous that way.
@@ -1509,6 +1518,7 @@
 			{active}
 			canRestore={history.canRestore && !readOnly}
 			canPublish={history.canPublish}
+			canUnpublish={history.canUnpublish}
 			onRestored={history.onRestored}
 			onPublished={history.onPublished}
 			onUnpublished={history.onUnpublished}

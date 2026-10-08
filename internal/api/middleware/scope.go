@@ -248,14 +248,29 @@ func permits(subject subject, r *http.Request) (int, string) {
 			}
 			return refused(subject, subject.Allows(embed.ScopeWrite), "is read-only")
 		case action == "activate" || action == "deactivate":
-			// Activation publishes a webhook endpoint for the whole
-			// deployment; that is an owner action, not an embed one.
-			return http.StatusForbidden, subject.Denial("cannot change activation")
-		case strings.HasSuffix(action, "publish") && subject.Kind() == kindKey:
+			// Activation registers the workflow's triggers — a webhook endpoint
+			// for the whole deployment among them — and is an owner action by
+			// default. A host may hand it to its own customers by minting
+			// workflow:activate; the request then reaches the same Activate
+			// handler the dashboard does, compiler and catalogue checks
+			// included, so this arm only decides who may ask. A scoped key may
+			// not, whatever it holds: activation stays with the tenant-wide key.
+			if subject.Kind() == kindKey {
+				return http.StatusForbidden, subject.Denial("cannot change activation")
+			}
+			return refused(subject, subject.Allows(embed.ScopeActivate), "cannot change activation")
+		case strings.HasSuffix(action, "publish"):
 			// Publishing a revision is activation by another name: it pins the
-			// revision production traffic runs. An embed session keeps its
-			// existing behaviour — this arm is about scoped keys.
-			return http.StatusForbidden, subject.Denial("cannot change activation")
+			// revision production traffic runs. A scoped key is refused it the
+			// way it is refused activation. An embed session needs
+			// workflow:publish — a scope of its own, so the write scope every
+			// editor carries does not also put a draft in front of production
+			// traffic — and the refusal names it, so a host reads what it
+			// would have to grant.
+			if subject.Kind() == kindKey {
+				return http.StatusForbidden, subject.Denial("cannot change activation")
+			}
+			return refused(subject, subject.Allows(embed.ScopePublish), "cannot publish a revision without the workflow:publish scope")
 		case r.Method == http.MethodDelete:
 			return http.StatusForbidden, subject.Denial("cannot delete a workflow")
 		case r.Method == http.MethodGet:

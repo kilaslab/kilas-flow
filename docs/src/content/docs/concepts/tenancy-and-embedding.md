@@ -132,15 +132,26 @@ origin, and its issue and expiry times.
 
 ### Scopes and the implication rule
 
-Three scopes exist: `workflow:read`, `workflow:write` and `workflow:run`. A
-session must carry at least one — a session with none could do nothing, so an
-empty request is a mistake rather than a read-only default — and an unrecognised
-scope is refused at mint time rather than ignored.
+Five workflow scopes exist: `workflow:read`, `workflow:write`, `workflow:run`,
+`workflow:publish` and `workflow:activate` (a datastore session has its own
+two, `datastore:read` and `datastore:write`). A session must carry at least one
+— a session with none could do nothing, so an empty request is a mistake rather
+than a read-only default — and an unrecognised scope is refused at mint time
+rather than ignored.
 
-The only implication runs downward toward read: **`workflow:write` implies
-`workflow:read`, and so does `workflow:run`.** A session that can save must be
-able to load, and one that can run must be able to see what it ran. Nothing
-implies write, and nothing implies run.
+The only implication runs downward toward read: **`workflow:write`,
+`workflow:run`, `workflow:publish` and `workflow:activate` each imply
+`workflow:read`.** A session that can save must be able to load, one that can
+run must be able to see what it ran, and one that can make a revision live must
+be able to see what it is making live. Nothing implies write, run, publish or
+activate.
+
+Publishing and activation are the three-level part of the vocabulary: write
+saves drafts, `workflow:publish` pins a named revision as the version
+production traffic runs, and `workflow:activate` turns the workflow on and off.
+A host grants each on purpose; see
+[publish and activate authority](/guides/embedding/#publish-and-activate-authority).
+Both are embed-session scopes only: a scoped API key cannot be minted with them.
 
 ### Lifetime
 
@@ -233,9 +244,11 @@ handler will run.
 | `GET /credentials` | needs `workflow:read` — the editor has to offer a picker; lists only the credentials the session was granted, and pages over those alone, so no cursor names another |
 | `GET /workflows/{that one}` | needs `workflow:read` |
 | `POST /workflows/{that one}/run` | needs `workflow:run` |
+| `POST /workflows/{that one}/versions/{id}/publish` | needs `workflow:publish`; `workflow:write` alone is refused |
+| `POST /workflows/{that one}/activate`, `/deactivate` | needs `workflow:activate`; the activate handler then runs its usual compile and catalogue checks |
 | any other write to `/workflows/{that one}` | needs `workflow:write` |
 | `/workflows/{a different one}` | refused: scoped to a different workflow |
-| activate, deactivate, or delete a workflow | refused outright, at any scope |
+| delete a workflow | refused outright, at any scope |
 | `POST /workflows/import` | refused outright |
 | `GET /executions?workflowId={that one}` | needs `workflow:read`; a different `workflowId`, or none, is refused |
 | anything under `/executions/{id}` | needs `workflow:read` — see the note below |
@@ -265,10 +278,10 @@ opposite of what an enumerate-the-forbidden approach would give.
 ### Credentials in a confined caller's document
 
 The table bounds what a session may *call*. The document it saves is checked
-too, at every point where it hands one to the server — a save, a publish, a
-restore, a run and a retry — against a confinement minted into the token from the
-revision the workflow's owner published: the credentials, data tables and
-sub-workflows that revision uses, and nothing else.
+too, at every point where it hands one to the server or makes one live — a save,
+a publish, an activation, a restore, a run and a retry — against a confinement
+minted into the token from the revision the workflow's owner published: the
+credentials, data tables and sub-workflows that revision uses, and nothing else.
 
 That check on credential **ids** is not enough on its own. A guest holding
 `workflow:write` may edit where a request goes — an HTTP node's URL, a chat model

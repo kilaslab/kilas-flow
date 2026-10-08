@@ -228,7 +228,7 @@ Responses:
 | `200` | OK | `application/json` — `ActivationResource` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — activation publishes a deployment-wide endpoint; an owner action, not an embed one.
+Embed: Allow with `workflow:activate` only — on the session’s workflow, through the same compile and catalogue checks as the dashboard. No other scope grants it: activation registers deployment-wide triggers, so a host opts in by minting the scope.
 
 ## Deactivate workflow (`deactivate-workflow`)
 
@@ -249,7 +249,7 @@ Responses:
 | `200` | OK | `application/json` — `WorkflowResource` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — activation publishes a deployment-wide endpoint; an owner action, not an embed one.
+Embed: Allow with `workflow:activate` only — on the session’s workflow. `workflow:publish` does not grant it: taking a workflow offline is the activation switch.
 
 ## List workflow revisions (`list-workflow-versions`)
 
@@ -319,7 +319,7 @@ Responses:
 | `200` | OK | `application/json` — `WorkflowResource` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Allow with `workflow:write` — on the session’s workflow only.
+Embed: Allow with `workflow:publish` only — on the session’s workflow; `workflow:write` alone is refused. Publishing pins the revision production traffic runs, so a host opts in by minting the scope.
 
 ## Restore one workflow revision (`restore-workflow-version`)
 
