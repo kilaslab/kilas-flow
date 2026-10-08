@@ -266,7 +266,9 @@ func TestRealRAGTemplatesKeepTheirIngestPath(t *testing.T) {
 }
 
 // unwrapTemplate returns the workflow document inside a templates API
-// response, which nests it as workflow.workflow beside the listing metadata.
+// response, which nests it as workflow.workflow. The listing level between
+// the two has a nodes array of its own (node-type summaries), so the descent
+// follows "workflow" keys rather than stopping at the first "nodes".
 func unwrapTemplate(t *testing.T, raw []byte) []byte {
 	t.Helper()
 	for {
@@ -275,7 +277,7 @@ func unwrapTemplate(t *testing.T, raw []byte) []byte {
 			t.Fatalf("template JSON: %v", err)
 		}
 		inner, nested := envelope["workflow"]
-		if _, isDocument := envelope["nodes"]; isDocument || !nested {
+		if !nested {
 			return raw
 		}
 		raw = inner

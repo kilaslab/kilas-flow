@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -3741,8 +3742,22 @@ func embeddingsOpenAiToKilas(node Node) (map[string]any, []Unsupported) {
 		converted = map[string]any{}
 	}
 	converted["mode"] = "cluster"
+	var issues []Unsupported
 	if name := locatorName(node.Parameters["model"]); name != "" {
 		converted["model"] = name
+	} else {
+		// n8n omits a model left at its default, and the default changed after
+		// version 1, so the absent key is read at the node's own version.
+		fallback := "text-embedding-3-small"
+		if node.TypeVersion != 0 && node.TypeVersion < 1.1 {
+			fallback = "text-embedding-ada-002"
+		}
+		converted["model"] = fallback
+		issues = append(issues, Unsupported{
+			Severity: SeverityLossy, Field: "model",
+			Reason: fmt.Sprintf("the node names no model, which n8n reads as its default at this version, %s; "+
+				"that model was written explicitly, because vectors from another model would not match the stored ones", fallback),
+		})
 	}
 	if options, ok := node.Parameters["options"].(map[string]any); ok {
 		if raw, present := options["baseURL"]; present {
@@ -3751,7 +3766,7 @@ func embeddingsOpenAiToKilas(node Node) (map[string]any, []Unsupported) {
 			}
 		}
 	}
-	return converted, nil
+	return converted, issues
 }
 
 func extractFromFileToKilas(node Node) (map[string]any, []Unsupported) {
@@ -4832,48 +4847,198 @@ var n8nChatModelOptionKeys = []string{
 	"presencePenalty", "temperature", "timeout", "topP",
 }
 
-// openAICompatibleModelToKilas maps a provider's chat-model node onto this
-// server's OpenAI-compatible model.
-//
-// The providers below publish an OpenAI-compatible endpoint, so the node is a
-// model name, a base URL and the same sampling options — and the mapping costs
-// one table entry rather than a provider implementation. The base URL is
-// written explicitly because n8n keeps it in the credential, which never
-// imports: a deployment pointed at a gateway, or at a local Ollama, has to be
-// told where to point here, and the diagnostic says so.
-func openAICompatibleModelToKilas(node Node, defaultBaseURL string, modelField string) (map[string]any, []Unsupported) {
-	parameters, issues := chatModelToKilas(node, "")
-	if modelField != "" {
-		if value, present := node.Parameters[modelField]; present && value != nil && value != "" {
-			parameters["model"] = fromN8NValue(value)
-		}
-	}
-	parameters["baseUrl"] = defaultBaseURL
-	return parameters, append(issues, Unsupported{
-		Severity: SeverityLossy, Field: "credentials",
-		Reason: fmt.Sprintf("this model's endpoint came from an n8n credential, which does not import; "+
-			"the base URL was set to %s — point it at your deployment before running the workflow",
-			defaultBaseURL),
-	})
+// openAICompatibleProvider is one n8n chat-model node whose provider publishes
+// an OpenAI-compatible endpoint, so the node is a model name, a base URL and
+// the same sampling options, and the mapping costs one table entry rather
+// than a provider implementation.
+type openAICompatibleProvider struct {
+	n8nType string
+	// baseURL is written explicitly because n8n keeps it in the credential,
+	// which never imports. It is also how export finds the provider again.
+	baseURL string
+	// modelField is where n8n keeps the model: modelName on Gemini, model on
+	// the rest.
+	modelField string
+	// modelPrefix is part of n8n's model name and not of the endpoint's:
+	// Gemini lists models/<id>, and its OpenAI-compatible path takes <id>.
+	modelPrefix string
+	// defaultModel is n8n's default at a typeVersion. n8n omits a parameter
+	// left at its default, so an absent model means this one.
+	defaultModel func(version float64) string
+	// tokenOption is the provider's own name for the token budget, which the
+	// shared vocabulary calls maxTokens.
+	tokenOption string
 }
 
-// ollamaModelToKilas maps n8n's Ollama chat model, whose endpoint is the
-// local server's OpenAI-compatible path rather than a vendor API.
-func ollamaModelToKilas(node Node) (map[string]any, []Unsupported) {
-	parameters, issues := openAICompatibleModelToKilas(node, "http://localhost:11434/v1", "model")
-	// n8n's Ollama node names the token budget `numPredict`; the shared option
-	// vocabulary names it `maxTokens`.
-	if options, ok := node.Parameters["options"].(map[string]any); ok {
-		if predict, ok := numberParameter(options, "numPredict"); ok {
-			carried, _ := parameters["options"].(map[string]any)
-			if carried == nil {
-				carried = map[string]any{}
+func fixedModel(name string) func(float64) string {
+	return func(float64) string { return name }
+}
+
+// openAICompatibleProviders lists the providers. Ollama's chat node comes
+// before its plain-LLM node, so export chooses the chat node for that host.
+var openAICompatibleProviders = []openAICompatibleProvider{
+	{n8nType: "@n8n/n8n-nodes-langchain.lmChatOllama", baseURL: "http://localhost:11434/v1",
+		modelField: "model", defaultModel: fixedModel("llama3.2"), tokenOption: "numPredict"},
+	{n8nType: "@n8n/n8n-nodes-langchain.lmOllama", baseURL: "http://localhost:11434/v1",
+		modelField: "model", defaultModel: fixedModel("llama3.2"), tokenOption: "numPredict"},
+	{n8nType: "@n8n/n8n-nodes-langchain.lmChatGoogleGemini", baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
+		modelField: "modelName", modelPrefix: "models/", tokenOption: "maxOutputTokens",
+		defaultModel: func(version float64) string {
+			if version >= 1.1 {
+				return "models/gemini-3-flash-preview"
 			}
-			carried["maxTokens"] = predict
-			parameters["options"] = carried
+			return "models/gemini-2.5-flash"
+		}},
+	{n8nType: "@n8n/n8n-nodes-langchain.lmChatDeepSeek", baseURL: "https://api.deepseek.com/v1",
+		modelField: "model", defaultModel: fixedModel("deepseek-chat"), tokenOption: "maxTokens"},
+	{n8nType: "@n8n/n8n-nodes-langchain.lmChatGroq", baseURL: "https://api.groq.com/openai/v1",
+		modelField: "model", defaultModel: fixedModel("llama3-8b-8192"), tokenOption: "maxTokensToSample"},
+	{n8nType: "@n8n/n8n-nodes-langchain.lmChatMistralCloud", baseURL: "https://api.mistral.ai/v1",
+		modelField: "model", defaultModel: fixedModel("mistral-small"), tokenOption: "maxTokens"},
+	{n8nType: "@n8n/n8n-nodes-langchain.lmChatXAiGrok", baseURL: "https://api.x.ai/v1",
+		modelField: "model", defaultModel: fixedModel("grok-2-vision-1212"), tokenOption: "maxTokens"},
+}
+
+func openAICompatibleProviderFor(n8nType string) openAICompatibleProvider {
+	for _, provider := range openAICompatibleProviders {
+		if provider.n8nType == n8nType {
+			return provider
 		}
 	}
-	return parameters, issues
+	panic("no OpenAI-compatible provider registered for " + n8nType)
+}
+
+// chatModelTopLevelOptions are the options the OpenAI-compatible chat model's
+// form shows as fields of their own. The runtime prefers a top-level value to
+// the collection's, so an option written there is the one the editor shows
+// and the run sends.
+var chatModelTopLevelOptions = []string{"temperature", "maxTokens"}
+
+// providerModelToKilas maps a provider's chat-model node onto this server's
+// OpenAI-compatible model.
+//
+// Every option is accounted for: carried under the shared name, or reported
+// as dropped. The model is always written, n8n's default included, because
+// an empty one fails validation with nothing to say it was ever there.
+func providerModelToKilas(n8nType string) func(Node) (map[string]any, []Unsupported) {
+	provider := openAICompatibleProviderFor(n8nType)
+	return func(node Node) (map[string]any, []Unsupported) {
+		issues := make([]Unsupported, 0)
+		parameters := map[string]any{"baseUrl": provider.baseURL}
+
+		raw := node.Parameters[provider.modelField]
+		switch name := locatorName(raw); {
+		case strings.HasPrefix(name, "="):
+			parameters["model"] = fromN8NValue(name)
+		case name != "":
+			parameters["model"] = strings.TrimPrefix(name, provider.modelPrefix)
+		default:
+			fallback := provider.defaultModel(node.TypeVersion)
+			parameters["model"] = strings.TrimPrefix(fallback, provider.modelPrefix)
+			issues = append(issues, Unsupported{
+				Severity: SeverityLossy, Field: provider.modelField,
+				Reason: fmt.Sprintf("the node names no model, which n8n reads as its default at this version, %s; "+
+					"that model was written explicitly so the node names what it will call", fallback),
+			})
+		}
+
+		options, _ := node.Parameters["options"].(map[string]any)
+		keys := make([]string, 0, len(options))
+		for key := range options {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		carried := map[string]any{}
+		for _, key := range keys {
+			name := key
+			if key == provider.tokenOption {
+				name = "maxTokens"
+			}
+			if slices.Contains(n8nChatModelOptionKeys, name) {
+				if value, ok := numberParameter(options, key); ok {
+					if slices.Contains(chatModelTopLevelOptions, name) {
+						parameters[name] = value
+					} else {
+						carried[name] = value
+					}
+					continue
+				}
+			}
+			// n8n's own default for the format: asking for text loses nothing.
+			if key == "responseFormat" && options[key] == "text" {
+				continue
+			}
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "options." + key,
+				Reason: fmt.Sprintf("the %q option has no counterpart on this server's OpenAI-compatible chat model and was not carried; "+
+					"the model runs with the provider's own default for it", key),
+			})
+		}
+		if len(carried) > 0 {
+			parameters["options"] = carried
+		}
+		return parameters, append(issues, Unsupported{
+			Severity: SeverityLossy, Field: "credentials",
+			Reason: fmt.Sprintf("this model's endpoint came from an n8n credential, which does not import; "+
+				"the base URL was set to %s — point it at your deployment before running the workflow",
+				provider.baseURL),
+		})
+	}
+}
+
+// providerModelMapping finds the n8n provider node an OpenAI-compatible chat
+// model goes back out as, by the base URL its import wrote. A model pointed
+// anywhere else stays this server's own node, because nothing says which
+// provider it is.
+func providerModelMapping(node workflow.Node) (mapping, bool) {
+	if node.Type != "kilasflow.chatModel" {
+		return mapping{}, false
+	}
+	base := strings.TrimRight(stringParameter(node.Parameters, "baseUrl"), "/")
+	for _, provider := range openAICompatibleProviders {
+		if provider.baseURL != base {
+			continue
+		}
+		// sharedVersion: the import kept the provider node's own version,
+		// so it goes back out at that version.
+		return mapping{
+			n8nType: provider.n8nType, kilasType: node.Type, kilasVersion: workflow.V(1),
+			exportTypeVersion: 1, sharedVersion: true, toN8N: providerModelToN8N(provider),
+		}, true
+	}
+	return mapping{}, false
+}
+
+func providerModelToN8N(provider openAICompatibleProvider) func(workflow.Node) (map[string]any, []Lossy) {
+	return func(node workflow.Node) (map[string]any, []Lossy) {
+		parameters := map[string]any{}
+		if name, ok := node.Parameters["model"].(string); ok && name != "" && !strings.HasPrefix(name, "=") {
+			if !strings.HasPrefix(name, provider.modelPrefix) {
+				name = provider.modelPrefix + name
+			}
+			parameters[provider.modelField] = name
+		} else if node.Parameters["model"] != nil {
+			parameters[provider.modelField] = toN8NValue(node.Parameters["model"])
+		}
+		options := map[string]any{}
+		stored, _ := node.Parameters["options"].(map[string]any)
+		for _, key := range n8nChatModelOptionKeys {
+			if value, ok := numberParameter(stored, key); ok {
+				options[key] = value
+			}
+		}
+		for _, key := range chatModelTopLevelOptions {
+			if value, ok := numberParameter(node.Parameters, key); ok {
+				options[key] = value
+			}
+		}
+		if budget, ok := options["maxTokens"]; ok && provider.tokenOption != "maxTokens" {
+			delete(options, "maxTokens")
+			options[provider.tokenOption] = budget
+		}
+		parameters["options"] = options
+		return parameters, nil
+	}
 }
 
 // toolCalculatorToKilas maps n8n's Calculator tool.
@@ -5052,6 +5217,21 @@ func chatModelToKilas(node Node, defaultModel string) (map[string]any, []Unsuppo
 			Reason: fmt.Sprintf(
 				"this model was asked for %s output. This server has no JSON-mode plumbing through its model request yet, "+
 					"so the option was dropped and the model answers in text; ask for the format in the prompt instead.", format),
+		})
+	}
+	// Anything else in the collection is named, not lost quietly.
+	leftovers := make([]string, 0)
+	for key := range options {
+		if !slices.Contains(n8nChatModelOptionKeys, key) && key != "baseURL" && key != "responseFormat" {
+			leftovers = append(leftovers, key)
+		}
+	}
+	sort.Strings(leftovers)
+	for _, key := range leftovers {
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "options." + key,
+			Reason: fmt.Sprintf("the %q option has no counterpart on this server's chat model and was not carried; "+
+				"the model runs with the provider's own default for it", key),
 		})
 	}
 	return parameters, issues

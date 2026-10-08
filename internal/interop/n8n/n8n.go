@@ -560,46 +560,31 @@ var mappings = []mapping{
 	// only the base URL differs.
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmChatOllama", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
-		exportTypeVersion: 1, toKilas: ollamaModelToKilas, importOnly: true,
+		exportTypeVersion: 1, importOnly: true, toKilas: providerModelToKilas("@n8n/n8n-nodes-langchain.lmChatOllama"),
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmOllama", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
-		exportTypeVersion: 1, toKilas: ollamaModelToKilas, importOnly: true,
+		exportTypeVersion: 1, importOnly: true, toKilas: providerModelToKilas("@n8n/n8n-nodes-langchain.lmOllama"),
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmChatGoogleGemini", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
-		exportTypeVersion: 1, importOnly: true,
-		toKilas: func(node Node) (map[string]any, []Unsupported) {
-			return openAICompatibleModelToKilas(node, "https://generativelanguage.googleapis.com/v1beta/openai", "model")
-		},
+		exportTypeVersion: 1, importOnly: true, toKilas: providerModelToKilas("@n8n/n8n-nodes-langchain.lmChatGoogleGemini"),
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmChatDeepSeek", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
-		exportTypeVersion: 1, importOnly: true,
-		toKilas: func(node Node) (map[string]any, []Unsupported) {
-			return openAICompatibleModelToKilas(node, "https://api.deepseek.com/v1", "model")
-		},
+		exportTypeVersion: 1, importOnly: true, toKilas: providerModelToKilas("@n8n/n8n-nodes-langchain.lmChatDeepSeek"),
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmChatGroq", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
-		exportTypeVersion: 1, importOnly: true,
-		toKilas: func(node Node) (map[string]any, []Unsupported) {
-			return openAICompatibleModelToKilas(node, "https://api.groq.com/openai/v1", "model")
-		},
+		exportTypeVersion: 1, importOnly: true, toKilas: providerModelToKilas("@n8n/n8n-nodes-langchain.lmChatGroq"),
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmChatMistralCloud", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
-		exportTypeVersion: 1, importOnly: true,
-		toKilas: func(node Node) (map[string]any, []Unsupported) {
-			return openAICompatibleModelToKilas(node, "https://api.mistral.ai/v1", "model")
-		},
+		exportTypeVersion: 1, importOnly: true, toKilas: providerModelToKilas("@n8n/n8n-nodes-langchain.lmChatMistralCloud"),
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.lmChatXAiGrok", kilasType: "kilasflow.chatModel", kilasVersion: workflow.V(1),
-		exportTypeVersion: 1, importOnly: true,
-		toKilas: func(node Node) (map[string]any, []Unsupported) {
-			return openAICompatibleModelToKilas(node, "https://api.x.ai/v1", "model")
-		},
+		exportTypeVersion: 1, importOnly: true, toKilas: providerModelToKilas("@n8n/n8n-nodes-langchain.lmChatXAiGrok"),
 	},
 	{
 		// Versions 1 through 2.2: v1 is [1, 1.1, 1.2, 1.3] and v2 is
@@ -1571,6 +1556,10 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 		}
 
 		entry, supported := byKilasType(node.Type)
+		if !supported {
+			// An imported provider model goes back as its provider's node.
+			entry, supported = providerModelMapping(node)
+		}
 		if !supported {
 			// Emitted under its own type rather than omitted. n8n does not
 			// know this type and will show it as unrecognised and refuse to

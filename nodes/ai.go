@@ -403,6 +403,11 @@ func chatModelNode() node.Definition {
 						TypeOptions: &node.TypeOptions{MinValue: numberBound(0)},
 						Description: "How many times a rate-limited or failed request is sent again, with exponential backoff.",
 					},
+					// The sampling options the runtime already reads from this
+					// collection, declared so an imported model shows them.
+					{Key: ModelOptionTopP, Label: "Top P", Kind: node.PropertyNumber},
+					{Key: ModelOptionFrequencyPenalty, Label: "Frequency Penalty", Kind: node.PropertyNumber},
+					{Key: ModelOptionPresencePenalty, Label: "Presence Penalty", Kind: node.PropertyNumber},
 				},
 			},
 		},
