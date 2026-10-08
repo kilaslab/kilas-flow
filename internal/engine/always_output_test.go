@@ -377,3 +377,135 @@ func TestAResumedRunDoesNotRunABranchThatGotNoItems(t *testing.T) {
 		t.Errorf("the untaken branch has %d skipped rows after the resume, want 1", skippedRows(result, "untaken"))
 	}
 }
+
+// TestAlwaysOutputDataLooksOnlyAtTheFirstOutput is n8n's rule for a node with
+// several outputs: the empty item is added when the first output has none,
+// whatever the others carry, and goes on the first output only.
+//
+// An IF that sent its item to `false` therefore also runs the `true` branch,
+// on one empty item paired with the IF's input. Looking at every output
+// instead left `true` unrun.
+func TestAlwaysOutputDataLooksOnlyAtTheFirstOutput(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.step", "Step"))
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_always_first_output", Name: "Always Output Data on an IF",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "if", Name: "IF", Type: "kilasflow.if", TypeVersion: workflow.V(1), Settings: alwaysOutput,
+				Parameters: map[string]any{"conditions": []any{map[string]any{
+					"field": "tier", "operator": "equals", "value": "vip",
+				}}}},
+			{ID: "yes", Name: "Yes", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 400, Y: 0}},
+			{ID: "no", Name: "No", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 400, Y: 300}},
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "start", "main", "if"),
+			mainEdge("c2", "if", "true", "yes"),
+			mainEdge("c3", "if", "false", "no"),
+		},
+		Settings: map[string]any{},
+	})
+
+	counter := newAlwaysOutputCounter()
+	result, err := engine.NewRunner(counter.registry(t, "test.start", "test.step")).Run(context.Background(), ir,
+		engine.Request{Input: workflow.Item{JSON: map[string]any{}}})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if counter.calls["No"] != 1 || counter.items["No"] != 1 {
+		t.Errorf("the false branch ran %d times over %d items, want once over the IF's item", counter.calls["No"], counter.items["No"])
+	}
+	if counter.calls["Yes"] != 1 || counter.items["Yes"] != 1 {
+		t.Errorf("the true branch ran %d times over %d items, want once over one empty item", counter.calls["Yes"], counter.items["Yes"])
+	}
+	output := runOutput(t, result, "if")
+	if len(output) != 2 || len(output[0]) != 1 || len(output[1]) != 1 {
+		t.Fatalf("IF output = %#v, want one empty item on true and the item on false", output)
+	}
+	if len(output[0][0].JSON) != 0 {
+		t.Errorf("the item Always Output Data added is %v, want an empty one", output[0][0].JSON)
+	}
+	assertPairedWithStart(t, output[0][0])
+}
+
+// TestAlwaysOutputDataAppliesWhenEveryItemWentToTheErrorOutput covers the
+// third shape the rule names: a node routing failures to its error output
+// whose items all failed. The failures go to the error branch, and the first
+// output still gets its empty item, paired with the node's input.
+func TestAlwaysOutputDataAppliesWhenEveryItemWentToTheErrorOutput(t *testing.T) {
+	catalog := testCatalog(t, startType("test.start", "Start"), stepType("test.step", "Step"), stepType("test.fail", "Fail"))
+	ir := compileDoc(t, catalog, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_always_error_output", Name: "Always Output Data on a node whose items all failed",
+		Nodes: []workflow.Node{
+			{ID: "start", Name: "Start", Type: "test.start", TypeVersion: workflow.V(1)},
+			{ID: "fail", Name: "Fail", Type: "test.fail", TypeVersion: workflow.V(1),
+				Settings: map[string]any{"alwaysOutputData": true, "onError": "continueErrorOutput"}},
+			{ID: "ok", Name: "OK", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 400, Y: 0}},
+			{ID: "failed", Name: "Failed", Type: "test.step", TypeVersion: workflow.V(1), Position: workflow.Position{X: 400, Y: 300}},
+		},
+		Connections: []workflow.Connection{
+			mainEdge("c1", "start", "main", "fail"),
+			mainEdge("c2", "fail", "main", "ok"),
+			mainEdge("c3", "fail", "error", "failed"),
+		},
+		Settings: map[string]any{},
+	})
+
+	counter := newAlwaysOutputCounter()
+	executors := counter.registry(t, "test.start", "test.step")
+	if err := executors.Register("test.fail", engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return nil, errors.New("every item fails")
+		})); err != nil {
+		t.Fatalf("Register(test.fail) error = %v", err)
+	}
+	result, err := engine.NewRunner(executors).Run(context.Background(), ir,
+		engine.Request{Input: workflow.Item{JSON: map[string]any{}}})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if counter.calls["Failed"] != 1 || counter.items["Failed"] != 1 {
+		t.Errorf("the error branch ran %d times over %d items, want once over the failed item", counter.calls["Failed"], counter.items["Failed"])
+	}
+	if counter.calls["OK"] != 1 || counter.items["OK"] != 1 {
+		t.Errorf("the success branch ran %d times over %d items, want once over one empty item", counter.calls["OK"], counter.items["OK"])
+	}
+	output := runOutput(t, result, "fail")
+	if len(output) != 2 || len(output[0]) != 1 || len(output[0][0].JSON) != 0 {
+		t.Fatalf("Fail output = %#v, want one empty item on its first output", output)
+	}
+	assertPairedWithStart(t, output[0][0])
+}
+
+// runOutput is the output of a node's one run that was not skipped.
+func runOutput(t *testing.T, result engine.Result, nodeID string) workflow.NodeOutput {
+	t.Helper()
+	for _, run := range result.NodeRuns {
+		if run.NodeID == nodeID && !run.Skipped {
+			return run.Output
+		}
+	}
+	t.Fatalf("node %q has no run", nodeID)
+	return nil
+}
+
+// assertPairedWithStart checks an item descends from Start's one item, which
+// is the one input item of the node that made it.
+//
+// The node also sent that item, or its failure, to its other output, so the
+// two share an origin and each is anchored as its own, with Start's item as
+// its parent: descending from it is what counts, not at which level.
+func assertPairedWithStart(t *testing.T, item workflow.Item) {
+	t.Helper()
+	if item.Paired == nil || item.Paired.Lost {
+		t.Fatalf("the empty item's pairing = %+v, want it to descend from Start's item 0", item.Paired)
+	}
+	for origin := item.Paired; origin != nil; origin = origin.Parent {
+		if origin.SourceNodeID == "start" && origin.ItemIndex == 0 && !origin.Lost {
+			return
+		}
+	}
+	t.Errorf("the empty item's pairing = %+v, want it to descend from Start's item 0", item.Paired)
+}

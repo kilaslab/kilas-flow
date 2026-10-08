@@ -116,6 +116,10 @@ type Definition struct {
 	// unconfigured node and what the catalogue advertises — a picker cannot ask
 	// a node that does not exist yet how many ports it will have.
 	PortsFor func(parameters map[string]any, version workflow.TypeVersion) (inputs, outputs []workflow.Port) `json:"-"`
+	// RequiredInputsFor names the item inputs, by port name, that must have
+	// received items before a node with several of them runs; see
+	// workflow.NodeDefinition. Nil means any one input is enough.
+	RequiredInputsFor func(parameters map[string]any, version workflow.TypeVersion) []string `json:"-"`
 	// LifecycleID binds this node's activate and deactivate hooks, by the same
 	// opaque server-owned identifier pattern as ExecutorID: a trigger that
 	// declares a hook nobody registered fails at startup rather than at
@@ -464,6 +468,7 @@ func (registry *Registry) Lookup(nodeType string, version workflow.TypeVersion) 
 			return visibleRequiredParameters(definition.Parameters, parameters, typeVersion.String())
 		},
 		PortsFor:             definition.PortsFor,
+		RequiredInputsFor:    definition.RequiredInputsFor,
 		RequiredCredentials:  requiredCredentials(definition),
 		CredentialTypes:      declaredCredentials(definition),
 		ExecutorID:           definition.ExecutorID,

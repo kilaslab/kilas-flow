@@ -286,10 +286,11 @@ func mergeNode() node.Definition {
 				VisibleWhen: []node.VisibilityCondition{{Key: "mode", Equals: MergeChooseBranch}},
 			},
 		},
-		SharedSettings: sharedSettings(),
-		ExecutorID:     "core.merge",
-		Validate:       validateMergeConfiguration,
-		PortsFor:       mergePorts,
+		SharedSettings:    sharedSettings(),
+		ExecutorID:        "core.merge",
+		Validate:          validateMergeConfiguration,
+		PortsFor:          mergePorts,
+		RequiredInputsFor: mergeRequiredInputs,
 	}
 }
 

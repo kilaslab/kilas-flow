@@ -400,6 +400,18 @@ func mergePorts(parameters map[string]any, _ workflow.TypeVersion) ([]workflow.P
 	return inputs, mainOutput()
 }
 
+// mergeRequiredInputs names the inputs a Merge cannot run without.
+//
+// Choosing a branch means both branches have to have arrived, so in
+// `chooseBranch` mode the first two inputs are required, as in n8n. Every
+// other mode runs on whichever inputs received items.
+func mergeRequiredInputs(parameters map[string]any, _ workflow.TypeVersion) []string {
+	if textOf(parameters["mode"]) != MergeChooseBranch {
+		return nil
+	}
+	return []string{mergeInputName(0), mergeInputName(1)}
+}
+
 // MaxMergeInputs bounds how many streams one Merge may take, for the same
 // reason a Switch's rules are bounded: the number comes from a document.
 const MaxMergeInputs = 32
