@@ -457,11 +457,29 @@ func (handler *Executions) StreamEvents(ctx context.Context, input *executionEve
 	// the stream is open even before the first event.
 	_ = send(sse.Message{Retry: 2000, Comment: "connected"})
 
+	// lastSent is the newest id this stream has delivered — or the client's
+	// resume point, before anything is sent. A reconstructed terminal frame is
+	// numbered after it, so a client resuming from that frame resumes forward.
+	lastSent := resumeFrom(input)
+	sendEvent := func(event events.Event) error {
+		message := sse.Message{ID: int(event.ID), Data: typedEvent(executionEventResource(event), event.Type)}
+		if event.Type.Terminal() && (subscription.Lagged() || subscription.Truncated()) {
+			// The frame that ends the stream is the one a client reads as "the
+			// run is whole", so it carries the loss when there was one.
+			message.Comment = lostEventsMarker + ": events before this frame were not delivered; the execution's node runs are the complete record"
+		}
+		if err := send(message); err != nil {
+			return err
+		}
+		lastSent = max(lastSent, event.ID)
+		return nil
+	}
+
 	// Everything the broker retained is already in the queue, so the replay is
 	// delivered before the live loop starts.
 	queued, open := drainQueued(subscription)
 	for _, event := range queued {
-		if err := send(sse.Message{ID: int(event.ID), Data: typedEvent(executionEventResource(event), event.Type)}); err != nil {
+		if err := sendEvent(event); err != nil {
 			return
 		}
 		if event.Type.Terminal() {
@@ -483,7 +501,7 @@ func (handler *Executions) StreamEvents(ctx context.Context, input *executionEve
 		// history — left the stream emitting heartbeats forever, which is the
 		// held connection this endpoint exists not to hold.
 		if terminal, ok := syntheticTerminal(record); ok {
-			sendSyntheticTerminal(send, input, terminal)
+			sendSyntheticTerminal(send, lastSent, terminal)
 			return
 		}
 	}
@@ -512,12 +530,12 @@ func (handler *Executions) StreamEvents(ctx context.Context, input *executionEve
 				// frame a run with no events left would have produced.
 				if gated {
 					if terminal, ok := syntheticTerminal(record); ok {
-						sendSyntheticTerminal(send, input, terminal)
+						sendSyntheticTerminal(send, lastSent, terminal)
 					}
 				}
 				return
 			}
-			if err := send(sse.Message{ID: int(event.ID), Data: typedEvent(executionEventResource(event), event.Type)}); err != nil {
+			if err := sendEvent(event); err != nil {
 				return
 			}
 			if event.Type.Terminal() {
@@ -549,9 +567,25 @@ func drainQueued(subscription *events.Subscription) ([]events.Event, bool) {
 	}
 }
 
-// sendSyntheticTerminal delivers the reconstructed terminal frame.
-func sendSyntheticTerminal(send sse.Sender, input *executionEventsInput, terminal ExecutionEvent) {
-	_ = send(sse.Message{ID: int(resumeFrom(input) + 1), Data: typedEvent(terminal, events.Type(terminal.Type))})
+// lostEventsMarker opens the SSE comment on a frame that ends a stream which
+// did not deliver every event. A comment rather than a field keeps the event
+// schema unchanged: browsers ignore it, and `exec trace` reads it into its
+// `truncated` flag.
+const lostEventsMarker = "truncated"
+
+// sendSyntheticTerminal delivers the reconstructed terminal frame, numbered
+// after lastSent.
+//
+// It used to take the client's resume point plus one, which put it behind
+// frames the stream had already sent — id 1 after 64 replayed events — so a
+// client resuming from it replayed the run from the start. A reconstructed
+// frame always stands in for one the feed lost, so it carries the marker.
+func sendSyntheticTerminal(send sse.Sender, lastSent uint64, terminal ExecutionEvent) {
+	_ = send(sse.Message{
+		ID:      int(lastSent + 1),
+		Comment: lostEventsMarker + ": the run's own outcome frame was not retained; this one is rebuilt from the execution record",
+		Data:    typedEvent(terminal, events.Type(terminal.Type)),
+	})
 }
 
 // maxStreamsPerTenant bounds how many event streams one tenant holds open.
