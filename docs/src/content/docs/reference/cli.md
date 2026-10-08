@@ -681,7 +681,7 @@ shell drives. It is a verb of this binary rather than a second executable, so th
 shipped image carries one command.
 
 ```bash
-kilasflow mcp serve --url http://127.0.0.1:8080 --token "$KILASFLOW_TOKEN"
+kilasflow mcp serve --url http://127.0.0.1:8080   # the credential comes from KILASFLOW_TOKEN
 ```
 
 - **One tool per verb**, named after the verb's path with spaces replaced by
