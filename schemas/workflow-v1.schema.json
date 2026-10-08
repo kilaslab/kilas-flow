@@ -64,7 +64,21 @@
         "id": { "type": "string", "minLength": 1 },
         "kind": {
           "type": "string",
-          "enum": ["main", "ai_languageModel", "ai_memory", "ai_tool"]
+          "enum": [
+            "main",
+            "ai_agent",
+            "ai_chain",
+            "ai_document",
+            "ai_embedding",
+            "ai_languageModel",
+            "ai_memory",
+            "ai_outputParser",
+            "ai_retriever",
+            "ai_reranker",
+            "ai_textSplitter",
+            "ai_tool",
+            "ai_vectorStore"
+          ]
         },
         "source": { "$ref": "#/$defs/endpoint" },
         "target": { "$ref": "#/$defs/endpoint" }

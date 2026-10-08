@@ -138,6 +138,47 @@ func TestCanonicalJSONSchemaDeclaresVersionOneDocument(t *testing.T) {
 	}
 }
 
+// TestCanonicalJSONSchemaConnectionKindsMatchTheEngine keeps the published
+// schema's `kind` enum equal to ConnectionKinds(), in the same order. The schema
+// is hand-written, so without this a channel added to the engine leaves every
+// document that uses it failing validation against the file we publish — which
+// is how it once listed four kinds while the engine accepted thirteen.
+func TestCanonicalJSONSchemaConnectionKindsMatchTheEngine(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller() did not return this test file")
+	}
+	schemaPath := filepath.Join(filepath.Dir(testFile), "..", "..", "schemas", "workflow-v1.schema.json")
+
+	contents, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", schemaPath, err)
+	}
+	var schema struct {
+		Defs struct {
+			Connection struct {
+				Properties struct {
+					Kind struct {
+						Enum []string `json:"enum"`
+					} `json:"kind"`
+				} `json:"properties"`
+			} `json:"connection"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(contents, &schema); err != nil {
+		t.Fatalf("schema JSON is invalid: %v", err)
+	}
+
+	want := make([]string, 0, len(workflow.ConnectionKinds()))
+	for _, kind := range workflow.ConnectionKinds() {
+		want = append(want, string(kind))
+	}
+	got := schema.Defs.Connection.Properties.Kind.Enum
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("schemas/workflow-v1.schema.json connection kind enum = %q\nwant workflow.ConnectionKinds() = %q", got, want)
+	}
+}
+
 func (c catalog) HasType(nodeType string) bool {
 	_, ok := c[nodeType]
 	return ok
