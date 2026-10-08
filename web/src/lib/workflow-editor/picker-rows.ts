@@ -13,13 +13,17 @@ export type PickerGroup = { category: string; rows: PickerRow[] };
  * only adjacent runs emitted two groups with the same key, so the keyed each
  * in the picker aborted the render with `each_key_duplicate` and froze the
  * list on stale rows while the footer moved on.
+ *
+ * The flat list is then read back out of the groups, so it follows the order
+ * the list draws: with ranked AI, Core, AI the second AI row is drawn under
+ * the first, and ArrowDown must land on it rather than jump to the Core row
+ * further down. The first row is still the best-ranked one, because the first
+ * group is that row's category.
  */
 export function buildPickerRows(entries: Definition[]): { flat: PickerRow[]; groups: PickerGroup[] } {
-	const flat: PickerRow[] = [];
 	const byCategory = new Map<string, PickerGroup>();
 	for (const definition of entries) {
-		const row: PickerRow = { definition, id: `node-option-${definition.type}@${definition.version}`, index: flat.length };
-		flat.push(row);
+		const row: PickerRow = { definition, id: `node-option-${definition.type}@${definition.version}`, index: 0 };
 		let group = byCategory.get(definition.category);
 		if (!group) {
 			group = { category: definition.category, rows: [] };
@@ -27,5 +31,8 @@ export function buildPickerRows(entries: Definition[]): { flat: PickerRow[]; gro
 		}
 		group.rows.push(row);
 	}
-	return { flat, groups: [...byCategory.values()] };
+	const groups = [...byCategory.values()];
+	const flat = groups.flatMap((group) => group.rows);
+	flat.forEach((row, index) => (row.index = index));
+	return { flat, groups };
 }

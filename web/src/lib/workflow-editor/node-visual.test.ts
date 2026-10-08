@@ -125,6 +125,15 @@ describe('nodeSubtitle', () => {
 		expect(nodeSubtitle(n, d)).toBeNull();
 	});
 
+	it('hides a line that renders only its separators', () => {
+		// A Telegram tile with resource and operation unset used to print a
+		// stray ":" under the node.
+		const [n, d] = withSubtitle('{{ $parameter.resource }}: {{ $parameter.operation }}');
+		expect(nodeSubtitle(n, d)).toBeNull();
+		const [half, halfDefinition] = withSubtitle('{{ $parameter.resource }}: {{ $parameter.operation }}', { resource: 'message' });
+		expect(nodeSubtitle(half, halfDefinition)).toBe('message');
+	});
+
 	it('yields null for a definition that declares no subtitle', () => {
 		const [n, d] = typed('pack.plain', { anything: 'here' });
 		expect(nodeSubtitle(n, { ...d, subtitle: undefined })).toBeNull();
