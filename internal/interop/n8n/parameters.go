@@ -626,28 +626,35 @@ func legacyCondition(row map[string]any, group string) map[string]any {
 // generations, and are listed so that a name v1 has and this server does not
 // is visible here rather than at run time.
 var legacyOperations = map[string]string{
-	"equal":        "equals",
-	"notEqual":     "notEquals",
-	"larger":       "larger",
-	"largerEqual":  "largerEqual",
-	"smaller":      "smaller",
-	"smallerEqual": "smallerEqual",
-	"contains":     "contains",
-	"notContains":  "notContains",
-	"startsWith":   "startsWith",
-	"endsWith":     "endsWith",
-	"regex":        "regex",
-	"isEmpty":      "empty",
-	"isNotEmpty":   "notEmpty",
-	"after":        "after",
-	"before":       "before",
+	"equal":         "equals",
+	"notEqual":      "notEquals",
+	"larger":        "larger",
+	"largerEqual":   "largerEqual",
+	"smaller":       "smaller",
+	"smallerEqual":  "smallerEqual",
+	"contains":      "contains",
+	"notContains":   "notContains",
+	"startsWith":    "startsWith",
+	"notStartsWith": "notStartsWith",
+	"endsWith":      "endsWith",
+	"notEndsWith":   "notEndsWith",
+	"regex":         "regex",
+	"notRegex":      "notRegex",
+	"isEmpty":       "empty",
+	"isNotEmpty":    "notEmpty",
+	"after":         "after",
+	"before":        "before",
 }
 
 // legacyDefaultOperation is n8n v1's per-type default when the operation is
-// omitted: numbers default to `smaller`, everything else to `equals`.
+// omitted: numbers default to `smaller`, dates to `after`, everything else to
+// `equals`. The If and the Switch share these.
 func legacyDefaultOperation(group string) string {
-	if group == "number" {
+	switch group {
+	case "number":
 		return "smaller"
+	case "dateTime":
+		return "after"
 	}
 	return "equals"
 }
@@ -1006,17 +1013,14 @@ func switchToKilas(node Node) (map[string]any, []Unsupported) {
 
 	rules, _ := node.Parameters["rules"].(map[string]any)
 	values, _ := rules["values"].([]any)
-	converted := make([]any, 0, len(values))
-	if len(values) == 0 {
-		// n8n's Switch v1 and v2 keep their rules under `rules.rules`, one row
-		// per output, holding `value1`/`value2`, a `dataType` and an
-		// `operation`. Reading only the v3 shape imported those as a node with
-		// no rules and one output — so every branch from output 1 onwards was
-		// held back and the workflow failed with "switch rules must be a list".
-		legacy, legacyIssues := legacySwitchRules(rules)
-		issues = append(issues, legacyIssues...)
-		converted = legacy
+	if _, legacy := rules["rules"]; len(values) == 0 && legacy {
+		// n8n's Switch v1 and v2 keep their rules under `rules.rules`.
+		// Reading only the v3 shape imported those as a node with no rules
+		// and one output — so every branch from output 1 onwards was held
+		// back and the workflow failed with "switch rules must be a list".
+		return legacySwitchToKilas(node)
 	}
+	converted := make([]any, 0, len(values))
 	for index, entry := range values {
 		rule, ok := entry.(map[string]any)
 		if !ok {
@@ -1116,52 +1120,178 @@ func switchFallback(node Node) (any, string) {
 	return nil, ""
 }
 
-// legacySwitchRules translates n8n's v1/v2 Switch rules.
+// legacySwitchOutputs is how many outputs n8n's Switch v1 has: always four,
+// whatever its rules use.
+const legacySwitchOutputs = 4
+
+// legacySwitchToKilas translates n8n's Switch v1 and v2.
 //
-// One row per output, each carrying the left-hand value, the comparison and the
-// right-hand value — the same shape a v1 If condition has, so the row is
-// translated by the same code (legacyCondition), including the operation-name
-// vocabulary that changed between the two generations. A row's output index is
-// its position, which is how the Switch routes.
-func legacySwitchRules(rules map[string]any) ([]any, []Unsupported) {
+// Both keep the left-hand value and its type once, at node level — `value1`
+// and `dataType`, which defaults to number — and each `rules.rules` row holds
+// only an `operation` and a `value2`. A row is therefore the same comparison a
+// v1 If condition is, and is translated by the same code (legacyCondition)
+// once the node's left-hand value is put beside it. Reading `value1` and
+// `dataType` from the row instead found neither, dropped every row, and cut
+// every branch after the first.
+//
+// The versions route differently. v1 names the output in the row (`output`,
+// omitted when 0, one of four fixed outputs) so several rows can share one and
+// an output can have none; v2 routes a row to its own position and labels it
+// `outputKey`. Both stop at the first matching row, and both send an unmatched
+// item to the top-level `fallbackOutput` index, -1 meaning none.
+//
+// KilasFlow's Switch has one rule per output, in output order, so v1's rows
+// are grouped by output: rows sharing one are OR-ed, and an output no row names
+// gets a rule that never matches, which keeps the outputs after it on their
+// wires.
+func legacySwitchToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	dataType := defaultString(stringParameter(node.Parameters, "dataType"), "number")
+	value1, present := node.Parameters["value1"]
+	if !present {
+		value1 = legacySwitchDefault(dataType)
+	}
+	positional := node.TypeVersion >= 2
+
+	rules, _ := node.Parameters["rules"].(map[string]any)
 	rows, _ := rules["rules"].([]any)
-	converted := make([]any, 0, len(rows))
-	for _, entry := range rows {
+	groups := map[int][]any{}
+	labels := map[int]string{}
+	last, reordered := -1, false
+	for index, entry := range rows {
 		row, ok := entry.(map[string]any)
 		if !ok {
 			continue
 		}
-		if _, present := row["value1"]; !present {
-			continue
+		output := index
+		if !positional {
+			output = 0
+			if _, named := row["output"]; named {
+				number, ok := numberParameter(row, "output")
+				if !ok || number != float64(int(number)) || number < 0 || number >= legacySwitchOutputs {
+					issues = append(issues, Unsupported{
+						Field: fmt.Sprintf("rules.rules[%d].output", index),
+						Reason: fmt.Sprintf("this Switch rule routes to output %v, which is not one of its four; "+
+							"the rule was left out", textOf(row["output"])),
+					})
+					continue
+				}
+				output = int(number)
+			}
 		}
-		dataType, _ := row["dataType"].(string)
-		if dataType == "" {
-			dataType = "string"
+		if output < last {
+			reordered = true
 		}
-		condition := legacyCondition(row, dataType)
+		last = max(last, output)
+
+		value2, present := row["value2"]
+		if !present {
+			value2 = legacySwitchDefault(dataType)
+		}
+		condition := legacyCondition(map[string]any{
+			"value1": value1, "value2": value2, "operation": row["operation"],
+		}, dataType)
 		// Converted, so an expression in a legacy rule stays an expression
 		// rather than arriving as the literal text `={{ … }}`.
 		condition["leftValue"] = fromN8NValue(condition["leftValue"])
 		condition["rightValue"] = fromN8NValue(condition["rightValue"])
-		built := map[string]any{
-			"conditions": map[string]any{
-				"conditions": []any{condition},
-				"options":    map[string]any{"caseSensitive": true},
-			},
+		groups[output] = append(groups[output], condition)
+		if name, _ := row["outputKey"].(string); name != "" {
+			labels[output] = name
 		}
-		if name, _ := row["renameOutput"].(string); name != "" {
-			built["outputKey"] = name
-		}
-		converted = append(converted, built)
 	}
-	if len(converted) == 0 {
-		return nil, []Unsupported{{
+	if len(groups) == 0 {
+		if len(rows) == 0 {
+			return map[string]any{}, append(issues, Unsupported{
+				Reason: "this Switch has no readable rules; add one before running the workflow",
+			})
+		}
+		return map[string]any{}, append(issues, Unsupported{
 			Severity: SeverityBlocking, Field: "rules",
-			Reason: "this Switch's rules could not be read in either the current or the legacy shape; " +
-				"rebuild them before running the workflow",
-		}}
+			Reason: "none of this Switch's rules could be read; rebuild them before running the workflow",
+		})
 	}
-	return converted, nil
+	if reordered {
+		issues = append(issues, Unsupported{
+			Field: "rules",
+			Reason: "this Switch's rules are not in the order of the outputs they route to; n8n tries them in " +
+				"their own order and this server in output order, so an item that matches rules for two outputs " +
+				"now goes to the lower one",
+		})
+	}
+
+	built := map[string]any{}
+	count := last + 1
+	if fallback, ok := numberParameter(node.Parameters, "fallbackOutput"); ok && fallback >= 0 {
+		index := int(fallback)
+		switch {
+		case index < count:
+			issues = append(issues, switchNumericFallback("fallbackOutput", index))
+		case positional || index >= legacySwitchOutputs:
+			// v2 has an output per rule and no more, and v1 has four, so n8n
+			// itself refuses to route an unmatched item here.
+			issues = append(issues, Unsupported{
+				Field:  "fallbackOutput",
+				Reason: fmt.Sprintf("this Switch sent unmatched items to output %d, which it does not have; they are dropped", index),
+			})
+		default:
+			// v1's fallback is one of its four fixed outputs. Past the last
+			// one a rule routes to, it is exactly this server's extra output
+			// once every output before it exists.
+			count = index
+			built["fallbackOutput"] = "extra"
+		}
+	}
+
+	converted := make([]any, 0, count)
+	for output := range count {
+		conditions, routed := groups[output]
+		if !routed {
+			converted = append(converted, legacySwitchUnusedOutput())
+			continue
+		}
+		filter := map[string]any{"conditions": conditions, "options": map[string]any{"caseSensitive": true}}
+		if len(conditions) > 1 {
+			filter["combinator"] = "or"
+		}
+		rule := map[string]any{"conditions": filter}
+		if label := labels[output]; label != "" {
+			rule["outputKey"] = label
+		}
+		converted = append(converted, rule)
+	}
+	built["rules"] = converted
+	return built, issues
+}
+
+// legacySwitchDefault is the value n8n uses for a `value1` or `value2` it
+// omitted because it equalled the type's default.
+func legacySwitchDefault(dataType string) any {
+	switch dataType {
+	case "number":
+		return float64(0)
+	case "boolean":
+		return false
+	default:
+		return ""
+	}
+}
+
+// legacySwitchUnusedOutput is the rule for a v1 output no row routes to. It
+// never matches, as nothing reached that output in n8n either; it exists so
+// the outputs after it keep their positions.
+func legacySwitchUnusedOutput() map[string]any {
+	return map[string]any{
+		"outputKey": "Unused",
+		"conditions": map[string]any{
+			"conditions": []any{map[string]any{
+				"leftValue":  false,
+				"rightValue": "",
+				"operator":   map[string]any{"type": "boolean", "operation": "true", "singleValue": true},
+			}},
+			"options": map[string]any{"caseSensitive": true},
+		},
+	}
 }
 
 func switchToN8N(node workflow.Node) (map[string]any, []Lossy) {
@@ -3786,7 +3916,7 @@ func extractFromFileToKilas(node Node) (map[string]any, []Unsupported) {
 		issues = append(issues, Unsupported{
 			Severity: SeverityBlocking,
 			Field:    "operation",
-			Reason: fmt.Sprintf("this Extract From File reads %q, which this server has no reader for; rebuild the step around an operation the node runs (csv, xlsx, json, text, pdf or binaryToProperty) or the run fails", strings.TrimSpace(fmt.Sprint(raw))),
+			Reason:   fmt.Sprintf("this Extract From File reads %q, which this server has no reader for; rebuild the step around an operation the node runs (csv, xlsx, json, text, pdf or binaryToProperty) or the run fails", strings.TrimSpace(fmt.Sprint(raw))),
 		})
 	}
 	return converted, issues

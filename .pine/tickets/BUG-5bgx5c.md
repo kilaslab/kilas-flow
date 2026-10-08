@@ -1,14 +1,14 @@
 ---
 id: BUG-5bgx5c
 title: 'Switch v1/v2 rules misread on import: every rule dropped and branches 2+ cut (BUG-6as5y7 regression)'
-status: todo
+status: done
 priority: high
 labels:
     - importer
     - regression
 parent: EPIC-8rbys7
 created: "2026-09-23T01:35:50Z"
-updated: "2026-09-23T01:35:50Z"
+updated: "2026-10-08T15:55:00Z"
 ---
 
 # Description
@@ -35,9 +35,9 @@ The legacy rows import as v3 rules. `value1` and `dataType` come from the node, 
 - In 1934, the Greeting, Create-an-image and Send-error-message branches are gone from the canvas.
 
 # Acceptance Criteria
-- [ ] `value1` and `dataType` are read from node-level parameters, and `operation`/`value2` from each row
-- [ ] Each row routes to its `output` index (default 0); all branches and edges survive
-- [ ] A regression test built from the real 1934 Switch node, not a hand-written shape
+- [x] `value1` and `dataType` are read from node-level parameters, and `operation`/`value2` from each row
+- [x] Each row routes to its `output` index (default 0); all branches and edges survive
+- [x] A regression test built from the real 1934 Switch node, not a hand-written shape
 
 # Implementation Plan
 
@@ -57,3 +57,25 @@ Related (from the audit): BUG-6as5y7 (done) lists "Switch: … v1/v2 rules … c
 - `ui_1934_canvas.png` (CheckCommand has one outgoing edge), `ui_1934_import_report.png`
 
 # Attachments
+
+## Fix (2026-10-08)
+
+`switchToKilas` now hands any `rules.rules` node to `legacySwitchToKilas` (`internal/interop/n8n/parameters.go`), which replaces `legacySwitchRules`:
+
+- `value1` and `dataType` come from the node (`dataType` defaults to `number`, n8n's default). `operation`/`value2` come from each row, and an omitted value or operation takes the type's default. Each row then goes through the existing `legacyCondition`.
+- v1 routes a row to its `output` (default 0, one of four outputs). Rows that share an output are OR-ed into one rule. An output that no row names gets a never-matching rule labelled "Unused", which keeps later outputs on their wires. v2 routes by row position and carries `outputKey`.
+- Fallback is read from the top-level `fallbackOutput`, and -1 means none. In v1 an index past the rules' last output becomes `fallbackOutput: "extra"`, padded with Unused rules if needed. So 1934's `fallbackOutput: 3` keeps its "Send error message" branch. An index naming a rule's own output keeps the existing `switchNumericFallback` issue. An index the node doesn't have is reported.
+- When v1 rows are out of output order, a lossy issue says so, because first-match precedence can change.
+- `legacyOperations` gains `notStartsWith`, `notEndsWith` and `notRegex`. `legacyDefaultOperation` returns `after` for `dateTime` (n8n's If v1 and Switch v1 default), and the If v1 import shares this.
+
+Tests are in `internal/interop/n8n/switch_import_test.go`:
+
+- The 1934 CheckCommand node's parameters as n8n stores them. Fetched from the template API into a scratchpad and not committed; the targets are No-Op nodes.
+- The 1534 Check Status node.
+- A v1 Switch with no `dataType`, a gap and a shared output.
+- The v1 reorder warning.
+- v2 positional routing with `outputKey`, fallback -1 and fallback 0.
+
+Each test checks the rules and the 4/3/4/2/3 wired ports, then runs the imported node through the real Switch executor and confirms n8n's routing. For example, 1934 routes `hello`→0, `/start`→1, `/image a cat`→2 and `/help`→fallback 3. `TestLegacySwitchRulesAreTranslated` was removed: it encoded a per-row `value1`/`dataType` shape that n8n never writes, which is how the regression passed.
+
+Verified: `go test ./internal/interop/...` ok, `go vet ./internal/interop/n8n/` clean, `go test ./internal/guardrails/` ok.

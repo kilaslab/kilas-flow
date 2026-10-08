@@ -522,61 +522,6 @@ func TestPostgresOperationDefaultsToInsert(t *testing.T) {
 	}
 }
 
-// TestLegacySwitchRulesAreTranslated covers n8n's v1/v2 rule shape.
-//
-// Those versions keep their rules under `rules.rules`, one row per output.
-// Reading only the v3 shape imported a node with no rules and one output, so
-// every branch from output 1 onwards was held back and activation failed with
-// "switch rules must be a list".
-func TestLegacySwitchRulesAreTranslated(t *testing.T) {
-	t.Parallel()
-
-	result := importFixture(t, `{
-	  "name": "Legacy switch",
-	  "nodes": [
-	    {"id":"a","name":"CheckCommand","type":"n8n-nodes-base.switch","typeVersion":1,"position":[0,0],
-	     "parameters":{"rules":{"rules":[
-	       {"value1":"={{ $json.command }}","value2":"start","dataType":"string","operation":"equal","renameOutput":true},
-	       {"value1":"={{ $json.command }}","value2":"stop","dataType":"string","operation":"equal"}
-	     ]},"fallbackOutput":2}}
-	  ],
-	  "connections": {}
-	}`)
-	node := nodeByName(result.Document, "CheckCommand")
-	rules, _ := node.Parameters["rules"].([]any)
-	if len(rules) != 2 {
-		t.Fatalf("rules = %#v, want both legacy rows translated", node.Parameters["rules"])
-	}
-	first, _ := rules[0].(map[string]any)
-	conditions, _ := first["conditions"].(map[string]any)
-	rows, _ := conditions["conditions"].([]any)
-	condition, _ := rows[0].(map[string]any)
-	operator, _ := condition["operator"].(map[string]any)
-	if operator["type"] != "string" || operator["operation"] != "equals" {
-		t.Errorf("operator = %#v, want the legacy name translated to the evaluator's vocabulary", operator)
-	}
-	left, _ := condition["leftValue"].(map[string]any)
-	if left["value"] != "{{ $json.command }}" {
-		t.Errorf("leftValue = %#v, want the expression carried", condition["leftValue"])
-	}
-	// A numeric fallback names one of the rules' own outputs, which this
-	// server's Switch cannot route to. Writing the index produced a value the
-	// executor never reads — unmatched items were dropped while the import
-	// report stayed clean — so the index is named instead.
-	if node.Parameters["fallbackOutput"] != nil {
-		t.Errorf("fallbackOutput = %#v, want no inert value written", node.Parameters["fallbackOutput"])
-	}
-	named := false
-	for _, issue := range result.Unsupported {
-		if issue.Field == "fallbackOutput" && strings.Contains(issue.Reason, "output 2") {
-			named = true
-		}
-	}
-	if !named {
-		t.Errorf("unsupported = %#v, want the numeric fallback named with its index", result.Unsupported)
-	}
-}
-
 // TestChainRolesAreTranslated covers n8n's prompt-template class names.
 //
 // n8n stores the LangChain class name and this server stores the role, so
