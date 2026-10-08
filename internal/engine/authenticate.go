@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/kilaslab/kilas-flow/internal/credentials"
@@ -164,23 +165,61 @@ func (credential Credential) AllowsHost(host string) bool {
 // Separate from Authenticate because the routing interpreter needs the resolved
 // record *before* it has a request to authenticate: a routing template may read
 // `$credentials.baseUrl`, which decides what URL is built at all.
+//
+// A node that attaches several is resolved to the first in its declared order;
+// see attachedCredentialTypes.
 func (request Request) ResolveNodeCredential(ctx context.Context, ir workflow.IRNode) (Credential, string, bool, error) {
-	credentialID, credentialType := "", ""
-	for typeID, id := range ir.Credentials {
-		if strings.TrimSpace(id) == "" {
-			continue
-		}
-		credentialType, credentialID = typeID, id
-		break
-	}
-	if credentialID == "" {
+	attached := attachedCredentialTypes(ir)
+	if len(attached) == 0 {
 		return Credential{}, "", false, nil
 	}
+	credentialType := attached[0]
+	credentialID := ir.Credentials[credentialType]
 	resolved, found, err := request.resolveCredential(ctx, ir, credentialType, credentialID)
 	if err != nil || !found {
 		return Credential{}, "", false, err
 	}
 	return resolved, credentialType, true, nil
+}
+
+// attachedCredentialTypes lists the types a node attached a credential under,
+// in the order its definition declares them: CredentialTypes first, then any
+// required type it does not repeat, then whatever is left in name order.
+//
+// The attachments are a map, and ranging over it is what picked the credential
+// before: a node carrying two — an HTTP Request with both a header key and a
+// bearer token — sent one or the other from run to run. The leftovers are a
+// node whose definition declares nothing, which the compiler refuses for a real
+// workflow; they are sorted so even that case is the same every time.
+func attachedCredentialTypes(ir workflow.IRNode) []string {
+	attached := make([]string, 0, len(ir.Credentials))
+	seen := make(map[string]struct{}, len(ir.Credentials))
+	take := func(credentialType string) {
+		if _, done := seen[credentialType]; done {
+			return
+		}
+		seen[credentialType] = struct{}{}
+		if strings.TrimSpace(ir.Credentials[credentialType]) != "" {
+			attached = append(attached, credentialType)
+		}
+	}
+	for _, credentialType := range ir.Definition.CredentialTypes {
+		take(credentialType)
+	}
+	for _, credentialType := range ir.Definition.RequiredCredentials {
+		take(credentialType)
+	}
+	rest := make([]string, 0, len(ir.Credentials))
+	for credentialType := range ir.Credentials {
+		if _, done := seen[credentialType]; !done {
+			rest = append(rest, credentialType)
+		}
+	}
+	sort.Strings(rest)
+	for _, credentialType := range rest {
+		take(credentialType)
+	}
+	return attached
 }
 
 // resolveCredential resolves one credential by ID and checks it is of the type

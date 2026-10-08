@@ -307,18 +307,33 @@ func ApplyAuthentication(request *http.Request, credentialType Type, fields map[
 	return nil
 }
 
+// fieldMarker is a `{{ key }}` or `{{key}}` reference in a descriptor template.
+var fieldMarker = regexp.MustCompile(`\{\{ ([^\s{}]+) \}\}|\{\{([^\s{}]+)\}\}`)
+
 // expand substitutes `{{ key }}` references from the credential's own fields.
 //
 // Deliberately not the expression evaluator: a descriptor is written by whoever
 // declares the credential type, and the full grammar would let it read run-time
 // data while signing a request.
+//
+// One pass over the template, and a substituted value is never read again.
+// Substituting field by field in map order did re-read it: a value that held
+// another field's marker was expanded on the runs that reached that field
+// second, so the same credential could sign differently from one call to the
+// next, and a name holding `{{ value }}` could move the secret into the name.
+// A marker naming no field is left as written, as it always was.
 func expand(template string, fields map[string]string) string {
-	result := template
-	for key, value := range fields {
-		result = strings.ReplaceAll(result, "{{ "+key+" }}", value)
-		result = strings.ReplaceAll(result, "{{"+key+"}}", value)
-	}
-	return result
+	return fieldMarker.ReplaceAllStringFunc(template, func(marker string) string {
+		parts := fieldMarker.FindStringSubmatch(marker)
+		key := parts[1]
+		if key == "" {
+			key = parts[2]
+		}
+		if value, found := fields[key]; found {
+			return value
+		}
+		return marker
+	})
 }
 
 // sortedKeys returns a map's keys in a stable order, so two applications of the

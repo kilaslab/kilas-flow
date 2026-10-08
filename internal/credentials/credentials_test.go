@@ -544,6 +544,37 @@ func TestADatabaseCredentialRefusesToSignAnHTTPRequest(t *testing.T) {
 	}
 }
 
+// TestAFieldValueIsNeverExpandedAsATemplate pins field templating to one pass.
+// It used to substitute field by field in map order, so a value that happened
+// to contain another field's marker was expanded again on some runs and not on
+// others — which could put the secret where the descriptor put the name.
+func TestAFieldValueIsNeverExpandedAsATemplate(t *testing.T) {
+	t.Parallel()
+
+	queryAuth, _ := credentials.Default().Get("httpQueryAuth")
+	for name, test := range map[string]struct {
+		fields map[string]string
+		want   string
+	}{
+		"value names the name": {map[string]string{"name": "token", "value": "{{ name }}"}, "token=%7B%7B+name+%7D%7D"},
+		"name names the value": {map[string]string{"name": "{{ value }}", "value": "s3cret"}, "%7B%7B+value+%7D%7D=s3cret"},
+		"compact marker":       {map[string]string{"name": "token", "value": "{{name}}"}, "token=%7B%7Bname%7D%7D"},
+		"marker with no field": {map[string]string{"name": "token", "value": "{{ other }}"}, "token=%7B%7B+other+%7D%7D"},
+		"both name each other": {map[string]string{"name": "{{ value }}", "value": "{{ name }}"}, "%7B%7B+value+%7D%7D=%7B%7B+name+%7D%7D"},
+	} {
+		// Map order differs between ranges, so every pass has to agree.
+		for range 100 {
+			request := httptest.NewRequest(http.MethodGet, "https://api.example.test/items", nil)
+			if err := credentials.ApplyAuthentication(request, queryAuth, test.fields); err != nil {
+				t.Fatalf("%s: ApplyAuthentication() error = %v", name, err)
+			}
+			if got := request.URL.RawQuery; got != test.want {
+				t.Fatalf("%s: query = %q, want %q", name, got, test.want)
+			}
+		}
+	}
+}
+
 // TestADatabaseCredentialFormDefaultsToAVerifiedConnection keeps the form in
 // step with sqlnode, which verifies the server's certificate when the field is
 // empty: a new credential starts on the same mode an empty one gets.

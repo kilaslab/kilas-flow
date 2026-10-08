@@ -302,3 +302,38 @@ func TestAnUnscopedFixedHostCredentialIsHeldToItsTypesDefault(t *testing.T) {
 		t.Error("Credential.AllowsHost does not apply the type's default scope")
 	}
 }
+
+// TestANodeWithSeveralCredentialsResolvesInItsDeclaredOrder pins which of two
+// attached credentials signs the request. It used to be whichever a map
+// iteration reached first, so the same run could send a different secret each
+// time; it is now the first in the node's declared order, and a node with no
+// declaration falls back to the type names in order.
+func TestANodeWithSeveralCredentialsResolvesInItsDeclaredOrder(t *testing.T) {
+	t.Parallel()
+
+	declared := twoCredentialNode()
+	// Declared against name order, so the two cases cannot pass by agreeing.
+	declared.Definition = workflow.NodeDefinition{CredentialTypes: []string{"httpHeaderAuth", "httpBearerAuth"}}
+	undeclared := twoCredentialNode()
+
+	for name, test := range map[string]struct {
+		node workflow.IRNode
+		want string
+	}{
+		"declared order":    {declared, "httpHeaderAuth"},
+		"no declared order": {undeclared, "httpBearerAuth"},
+	} {
+		// A map's iteration order changes from one range to the next, so
+		// one lucky pass proves nothing; a hundred all agreeing does.
+		for range 100 {
+			resolved, credentialType, found, err := engine.Request{Credentials: twoCredentialResolver()}.
+				ResolveNodeCredential(context.Background(), test.node)
+			if err != nil || !found {
+				t.Fatalf("%s: ResolveNodeCredential() = found %v, error %v", name, found, err)
+			}
+			if credentialType != test.want || resolved.Type != test.want {
+				t.Fatalf("%s: resolved %s (%s), want %s", name, credentialType, resolved.Name, test.want)
+			}
+		}
+	}
+}
