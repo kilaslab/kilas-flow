@@ -6,9 +6,11 @@ priority: low
 labels:
     - importer
     - round-trip
+deps:
+    - FEAT-e898nz
 parent: EPIC-8rbys7
 created: "2026-09-23T01:35:50Z"
-updated: "2026-10-08T12:00:00Z"
+updated: "2026-10-08T16:58:07Z"
 ---
 
 # Description
@@ -129,4 +131,6 @@ Left:
 - The other version shifts the audit listed (Agent 1.7/1.8 → 3.1, Webhook 1 → 2, Merge 2 → 3, Code 1 → 2, Telegram 1.1 → 1.2) are a different case. Those translators write the newer version's parameter shape, so the change is reported as lossy, and that is correct. Keeping them would take a translator per older shape.
 
 Notes (2026-10-08): a node's `notes` and `notesInFlow` are carried in the canonical node's `settings` (`withNotes` on import, `applyNotes` on export, internal/interop/n8n/n8n.go), beside its error policy. This needs no schema change, and the editor keeps unknown setting keys when it saves. The import no longer reports the note as dropped. `TestANodesNoteRoundTrips` failed first. `TestImportReportsEveryDroppedElement` now names `webhookId` as its node-level dropped element. Still open: tags (the canonical document has no field for them) and keeping the authored versions of the other nodes the audit lists.
+
+Tags (2026-10-08, 23:58): the repository, workflow and API layers have no tags field anywhere, so n8n `tags` have nowhere to be carried. That needs a stored workflow field first, which is FEAT-e898nz; this ticket now depends on it.
 
