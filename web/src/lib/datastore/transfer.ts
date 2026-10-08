@@ -35,14 +35,36 @@ export function importRowsURL(id: string): string {
 
 /**
  * The filename the server suggests in Content-Disposition, falling back to
- * null so the caller names the file itself. Matches quoted and bare
- * filenames; anything else is not a filename.
+ * null so the caller names the file itself. The server names the file after
+ * the table, so a non-ASCII name arrives as RFC 5987 `filename*`, which wins
+ * over a plain `filename` the way it does in a browser; a quoted filename
+ * may carry backslash-escaped quotes. Anything else is not a filename.
  */
 export function filenameFromDisposition(header: string | null): string | null {
 	if (!header) return null;
-	const match = /filename="([^"]*)"|filename=([^;]*)/.exec(header);
-	const name = (match?.[1] ?? match?.[2] ?? '').trim().replace(/^"(.*)"$/, '$1').trim();
+	const extended = /filename\*\s*=\s*([^']*)'[^']*'([^;]*)/i.exec(header);
+	if (extended) {
+		try {
+			const decoded = decodeURIComponent(extended[2].trim()).trim();
+			if (decoded !== '') return decoded;
+		} catch {
+			// A malformed percent sequence falls through to the plain filename.
+		}
+	}
+	const match = /filename\s*=\s*"((?:[^"\\]|\\.)*)"|filename\s*=\s*([^;]*)/i.exec(header);
+	const quoted = match?.[1]?.replace(/\\(.)/g, '$1');
+	const name = (quoted ?? match?.[2] ?? '').trim();
 	return name === '' ? null : name;
+}
+
+/**
+ * The download name built from the table's own name, for when the server
+ * suggests none. It follows the server's rule: path separators become a
+ * hyphen, and a blank name falls back to the id.
+ */
+export function exportFilename(name: string, id: string): string {
+	const base = name.replace(/[/\\\u0000-\u001f\u007f]/g, '-').trim();
+	return `${base === '' ? `datastore-${id}` : base}.csv`;
 }
 
 /** Saves downloaded bytes through a temporary anchor: the SPA's first download. */
@@ -58,9 +80,14 @@ export function saveBlob(blob: Blob, filename: string): void {
 }
 
 /** Downloads the export and saves it, returning the filename it saved under. */
-export async function downloadExport(id: string, includeSystemColumns: boolean): Promise<{ filename: string }> {
+export async function downloadExport(
+	id: string,
+	name: string,
+	includeSystemColumns: boolean
+): Promise<{ filename: string }> {
 	const result = await apiDownload(exportRowsURL(id, includeSystemColumns));
-	const filename = filenameFromDisposition(result.headers.get('content-disposition')) ?? `datastore-${id}.csv`;
+	const filename =
+		filenameFromDisposition(result.headers.get('content-disposition')) ?? exportFilename(name, id);
 	saveBlob(result.data, filename);
 	return { filename };
 }

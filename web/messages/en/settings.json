@@ -3,7 +3,7 @@
 	"settings_intro": "Account, API keys for server-to-server calls, and this instance.",
 	"settings_account": "Account",
 	"settings_account_loading": "Loading account…",
-	"settings_account_auth_off": "Authentication looks off on this instance — every API call is unauthenticated, so there is no signed-in account to show. Enable auth on the server to sign in.",
+	"settings_account_auth_off": "Authentication is off on this instance, so there is no account to show: the API serves every call without a credential. Enable auth on the server to sign in.",
 	"settings_email": "Email",
 	"settings_tenant": "Tenant",
 	"settings_signed_in_as": "as {kind}",
@@ -23,8 +23,6 @@
 	"settings_creating": "Creating…",
 	"settings_create_key_action": "Create key",
 	"settings_cancel": "Cancel",
-	"settings_keys_need_auth": "API keys need authentication",
-	"settings_keys_need_auth_body": "This instance has auth off, so keys cannot be issued. Enable auth on the server first.",
 	"settings_keys_empty_title": "No API keys yet",
 	"settings_keys_empty_body": "Create one to call the API from a backend or CI job.",
 	"settings_key_created": "· created {at}",
@@ -42,5 +40,8 @@
 	"settings_version": "Version",
 	"settings_error_unexpected_key": "Unexpected API-key response",
 	"settings_error_unexpected_identity": "Unexpected identity response",
-	"settings_error_unexpected_health": "Unexpected health response"
+	"settings_error_unexpected_health": "Unexpected health response",
+	"settings_account_unavailable": "Your account could not be loaded.",
+	"settings_keys_auth_off": "Authentication is off, so the API accepts calls without a key. Keys you create now are enforced once authentication is enabled.",
+	"settings_keys_auth_off_empty_body": "Create one now so it is ready: keys are enforced once authentication is enabled on the server."
 }

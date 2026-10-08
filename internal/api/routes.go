@@ -23,7 +23,7 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	// document stays at a stable /api/openapi.json across API versions.
 	v1 := huma.NewGroup(api, APIPrefix)
 
-	system := handlers.NewSystem(deps.Version, deps.DB)
+	system := handlers.NewSystem(deps.Version, deps.DB).WithAuthEnabled(deps.Config.Auth.Enabled)
 	// The guard is the point: a nil *datastore.Engine stored in the reporter
 	// interface would be a non-nil interface, so an unconditional WithFleet
 	// would call FleetStatus through a nil pointer and answer 503 on every

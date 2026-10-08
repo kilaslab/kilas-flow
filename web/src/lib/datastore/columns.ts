@@ -1,5 +1,6 @@
 import * as m from '$lib/paraglide/messages.js';
 import type { DatastoreColumnResource } from '$lib/api/generated/models';
+import { formatTimestamp } from '$lib/workflow-editor/execution';
 
 /**
  * The datastore grid's column model.
@@ -61,6 +62,35 @@ export function gridColumns(userColumns: DatastoreColumnResource[]): GridColumn[
 		{ name: 'createdAt', type: '', system: true },
 		{ name: 'updatedAt', type: '', system: true }
 	];
+}
+
+/** True for the two system timestamps and for every user datetime column. */
+function isDateColumn(column: GridColumn): boolean {
+	if (column.system) return column.name === 'createdAt' || column.name === 'updatedAt';
+	return column.type === 'date' || column.type === 'datetime';
+}
+
+/** The ISO instant a date cell holds, or null when the value is not one. */
+function dateInstant(value: unknown, column: GridColumn): string | null {
+	if (!isDateColumn(column) || typeof value !== 'string') return null;
+	return Number.isNaN(Date.parse(value)) ? null : value;
+}
+
+/**
+ * The text a grid cell shows. A user datetime column renders through the same
+ * helper as createdAt and updatedAt, so one row never mixes a localized
+ * timestamp with a raw UTC ISO string; a date value that does not parse shows
+ * as written rather than as "unknown".
+ */
+export function cellText(value: unknown, column: GridColumn): string {
+	if (value === null || value === undefined) return '';
+	const instant = dateInstant(value, column);
+	return instant === null ? String(value) : formatTimestamp(instant);
+}
+
+/** The text a grid cell shows on hover: the exact ISO instant for a date column. */
+export function cellHover(value: unknown, column: GridColumn): string {
+	return dateInstant(value, column) ?? cellText(value, column);
 }
 
 export type CellLabelInput = {

@@ -30,15 +30,15 @@ test('a datastore is created through the name-only dialog', async ({ page, serve
 
 	await page.goto(`${server.baseURL}/datastores`);
 	await expect(page.locator('[data-dashboard-shell]')).toBeVisible();
-	await expect(page.getByRole('button', { name: 'New datastore' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'New data table' })).toBeVisible();
 
-	await page.getByRole('button', { name: 'New datastore' }).click();
-	await expect(page.getByRole('dialog')).toContainText('New datastore');
+	await page.getByRole('button', { name: 'New data table' }).click();
+	await expect(page.getByRole('dialog')).toContainText('New data table');
 	// The dialog takes a name only (design-refs shot 19): columns are always
 	// a second step.
 	await expect(page.getByRole('dialog')).toContainText('A name is all it takes');
 	await page.locator('#datastore-name').fill(name);
-	await page.getByRole('button', { name: 'Create datastore' }).click();
+	await page.getByRole('button', { name: 'Create data table' }).click();
 
 	// The list shows the new entry; the API proves it was created name-only
 	// with no user columns yet.
@@ -332,10 +332,10 @@ test('a datastore is renamed through the editor and by the node', async ({ page,
 	await page.goto(`${server.baseURL}/datastores`);
 	await expect(page.getByRole('link', { name: store.name })).toBeVisible();
 	await page.getByRole('button', { name: `Rename ${store.name}` }).click();
-	await expect(page.getByRole('dialog')).toContainText('Rename datastore');
+	await expect(page.getByRole('dialog')).toContainText('Rename data table');
 	await expect(page.getByRole('dialog')).toContainText('only the table is renamed');
 	await page.locator('#datastore-name').fill(renamed);
-	await page.getByRole('button', { name: 'Rename datastore' }).click();
+	await page.getByRole('button', { name: 'Rename data table' }).click();
 	await expect(page.getByRole('link', { name: renamed })).toBeVisible();
 
 	const afterUi = await getDatastore(server.baseURL, store.id);

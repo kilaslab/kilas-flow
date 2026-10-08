@@ -49,9 +49,9 @@ test('the datastore path holds on postgres: create, verbatim columns, node write
 		const name = uniqueName('E2E PG Datastore');
 		await page.goto(`${pg.baseURL}/datastores`);
 		await expect(page.locator('[data-dashboard-shell]')).toBeVisible();
-		await page.getByRole('button', { name: 'New datastore' }).click();
+		await page.getByRole('button', { name: 'New data table' }).click();
 		await page.locator('#datastore-name').fill(name);
-		await page.getByRole('button', { name: 'Create datastore' }).click();
+		await page.getByRole('button', { name: 'Create data table' }).click();
 		await expect(page.getByRole('link', { name })).toBeVisible();
 
 		const created = (await listDatastores(pg.baseURL)).find((entry) => entry.name === name);
