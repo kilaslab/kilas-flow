@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -141,6 +142,7 @@ func run(args []string) error {
 		return nil
 	}
 
+	installBootLogger(os.Stdout)
 	load := config.Load
 	if configNamed {
 		load = config.LoadExplicit
@@ -1525,6 +1527,19 @@ func newLogger(cfg config.Log) *slog.Logger {
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
 	return logger
+}
+
+// installBootLogger makes the process default the text handler newLogger
+// builds, until newLogger replaces it.
+//
+// The configuration warns while it is being read, before the configured logger
+// exists. Through slog's built-in default those lines read
+// `2026/09/26 23:45:59 WARN ...` on stderr, unlike every `time=... level=...`
+// line after them, so the one saying a setting was ignored was the line a
+// collector parsed differently. A JSON deployment is answered by the config
+// package itself, which knows the merged format by then.
+func installBootLogger(out io.Writer) {
+	slog.SetDefault(slog.New(slog.NewTextHandler(out, nil)))
 }
 
 func parseLevel(level string) slog.Level {

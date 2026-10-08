@@ -1222,7 +1222,7 @@ var listPaths = sliceFieldPaths()
 // says where its key came from, and names the variable when there is one.
 func warnUnknownKeys(cfg Config, fileKeys []string, suppliedBy map[string]string, path string, fileRead bool) {
 	known := fieldPaths()
-	logger := warningLogger()
+	logger := warningLogger(cfg.Log.Format)
 	for _, key := range fileKeys {
 		if !known[key] {
 			warnUnknownKey(logger, key, configSource(path, fileRead), "", known)
@@ -1325,13 +1325,13 @@ func collectNamedVariables(value reflect.Value, into map[string]bool) {
 // collects. A JSON pipeline therefore lost the one line saying that a security
 // setting had been ignored — the line it exists to hold.
 //
-// The format is read from the environment because that is the only signal
-// available before the file has been parsed, exactly as the binary's fatal
-// reporter reads it. Everything else keeps the default logger, so an in-process
-// caller — and every test — still reads these warnings from the logger it
-// installed.
-func warningLogger() *slog.Logger {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("KILASFLOW_LOG_FORMAT")), "json") {
+// The format is the merged one, so `log.format: json` in the file counts as
+// much as KILASFLOW_LOG_FORMAT does: the warnings are raised after the merge,
+// when both have been read. A text deployment keeps the default logger, which
+// the binary sets to its text handler before loading, so an in-process caller
+// — and every test — still reads these warnings from the logger it installed.
+func warningLogger(format string) *slog.Logger {
+	if strings.EqualFold(strings.TrimSpace(format), "json") {
 		return slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	}
 	return slog.Default()

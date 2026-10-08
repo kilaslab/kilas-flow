@@ -1,7 +1,7 @@
 ---
 id: BUG-66fhea
 title: Boot warns KILASFLOW_ENCRYPTION_KEY (and other secret/env vars) 'matches nothing and was ignored' although used
-status: todo
+status: done
 priority: medium
 labels:
     - config
@@ -9,7 +9,7 @@ labels:
     - regression
 parent: EPIC-8rbys7
 created: "2026-09-23T01:34:44Z"
-updated: "2026-09-23T01:34:44Z"
+updated: "2026-10-08T15:45:00Z"
 ---
 
 # Description
@@ -80,7 +80,7 @@ none (the ux-ops agent was asked to confirm the root cause)
 
 # Acceptance Criteria
 - [x] No warning for any KILASFLOW_* variable named by a `*_key_env` field, the KILASFLOW_WORKFLOW_ENV_ prefix, or the CLI's KILASFLOW_URL/TOKEN
-- [ ] The warning names the variable, says the source is the environment, and uses the configured slog handler
+- [x] The warning names the variable, says the source is the environment, and uses the configured slog handler
 - [x] `did_you_mean` appears only within a small edit distance
 - [x] A boot test sets each documented secret variable and asserts no unknown-key warning
 
@@ -97,6 +97,15 @@ Related tickets: BUG-y57cz4
 Done: the exemptions (every `*_env` setting's current value, the `KILASFLOW_WORKFLOW_ENV_` prefix, `KILASFLOW_URL` and `KILASFLOW_TOKEN`); `did_you_mean` only within an edit distance of 3 and omitted otherwise; the warning names the variable (`variable=`) and says `source=environment` for a variable, with the file's name only for a key from the file; tests in `internal/config/boot_strictness_test.go` that set every documented secret variable and a struct walk over every `*_env` field.
 
 Remains, so the ticket stays open: the second criterion's "uses the configured slog handler". The warning fires while the configuration is still being read, before the logger exists. `warningLogger` honours `KILASFLOW_LOG_FORMAT=json` from the environment, but a text-format warning still goes through slog's default handler (`2026/09/26 23:45:59 WARN ...`, unlike every `time=... level=...` line after it), and a `log.format: json` set only in the file is not honoured. Fixing it means either installing the text handler as the default before `config.Load` in `cmd/kilasflow`, or having `Load` return its warnings for the caller to log once the logger is built (which changes `Load`'s signature and the tests that read the warnings from `slog.Default`).
+
+## Fix (2026-10-08): the configured handler
+
+The last open criterion. A text-format warning went through slog's built-in default (`2026/09/26 23:45:59 WARN ...` on stderr) and `log.format: json` set only in the file was not honoured, because `warningLogger` read the format from `KILASFLOW_LOG_FORMAT` alone.
+
+- `internal/config`: `warningLogger` takes the merged `cfg.Log.Format`. The warnings are raised after the file and the environment are merged, so the file's `log.format: json` counts as much as the variable does.
+- `cmd/kilasflow`: `installBootLogger` sets the process default to the same text handler `newLogger` builds (stdout, `time=... level=...`) before `config.Load`, and `newLogger` replaces it once the config is read.
+- Tests: `TestTheUnknownKeyWarningFollowsALogFormatSetOnlyInTheFile` (internal/config) and `TestTheBootLoggerWritesTheSameTextLinesAsTheConfiguredOne` (cmd/kilasflow); `go test ./internal/config ./cmd/kilasflow` pass.
+- Live boot of the built binary: with `KILASFLOW_ENCRYPTION_KEY` set there is no warning for it, a typo variable warns as `time=... level=WARN ... source=environment variable=KILASFLOW_OUTBOUND_ALLOWED_HOST did_you_mean=outbound.allowed_hosts` on stdout, and with `log.format: json` only in the file the warning is a JSON record like every line after it.
 
 # Related Files
 

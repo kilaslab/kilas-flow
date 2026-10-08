@@ -509,3 +509,31 @@ func TestTheUnknownKeyWarningFollowsTheConfiguredLogFormat(t *testing.T) {
 		t.Errorf("did_you_mean = %v, want the key that exists", record["did_you_mean"])
 	}
 }
+
+func TestTheUnknownKeyWarningFollowsALogFormatSetOnlyInTheFile(t *testing.T) {
+	// The format used to be read from the environment alone, because the file
+	// had not been parsed when the warning was raised. It has by then: the
+	// warning fires after the merge, so `log.format: json` in the file is as
+	// much the deployment's choice as KILASFLOW_LOG_FORMAT is.
+	t.Setenv("KILASFLOW_LOG_FORMAT", "")
+	_ = os.Unsetenv("KILASFLOW_LOG_FORMAT")
+	path := filepath.Join(t.TempDir(), "typo.yaml")
+	body := "log:\n  format: json\noutbound:\n  allowed_private_endpoint:\n    - 127.0.0.1:11434\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := captureStdout(t, func() {
+		if _, err := Load(path); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+	})
+
+	var record map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(warnings)), &record); err != nil {
+		t.Fatalf("the warning is not one JSON record: %q (%v)", warnings, err)
+	}
+	if record["key"] != "outbound.allowed_private_endpoint" {
+		t.Errorf("key = %v, want the misspelled key", record["key"])
+	}
+}
