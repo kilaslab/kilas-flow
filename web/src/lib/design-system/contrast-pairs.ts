@@ -7,7 +7,7 @@
 // the report is recovered, reconcile against it by ADDING pairs, never by
 // dropping one: the count test below the list fails on a removal.
 
-export type PairKind = 'text' | 'non-text';
+export type PairKind = 'text' | 'non-text' | 'state';
 
 export interface ContrastPair {
 	fg: string;
@@ -64,6 +64,20 @@ export const ALIAS_PAIRS: ContrastPair[] = [
 	// `text-primary` (--primary as text) is deliberately absent: the kunyit fill
 	// is 1.7:1 on white in light. Text that should read in the accent moves to
 	// --kf-accent-text under FEAT-r8ph93.
+];
+
+/**
+ * The hover and pressed surfaces must read as a change on every surface a
+ * hoverable row or control sits on, and as two different steps. A light
+ * --kf-hover of .955 on the .962 panel was 1.02:1, so the sidebar's hover and
+ * current-page fill vanished. 1.08:1 is the floor; it is a surface step, not
+ * a text or boundary contrast.
+ */
+const STATE_SURFACES = ['--kf-bg', '--kf-panel', '--kf-raised', '--kf-overlay'];
+const state = (fg: string, bg: string, min = 1.08): ContrastPair => ({ fg, bg, min, kind: 'state' });
+export const STATE_PAIRS: ContrastPair[] = [
+	...STATE_SURFACES.flatMap((bg) => [state('--kf-hover', bg), state('--kf-pressed', bg)]),
+	state('--kf-pressed', '--kf-hover', 1.05)
 ];
 
 /** Host accents an embed may set; the derived ink/white text must stay ≥ 4.5:1 on each. */

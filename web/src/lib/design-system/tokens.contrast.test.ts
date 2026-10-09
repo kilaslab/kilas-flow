@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { appTokenSheet } from './app-css';
 import { composite, contrast, deltaEOK } from './color';
-import { ALIAS_PAIRS, HOST_ACCENTS, TOKEN_PAIRS, type ContrastPair } from './contrast-pairs';
+import { ALIAS_PAIRS, HOST_ACCENTS, STATE_PAIRS, TOKEN_PAIRS, type ContrastPair } from './contrast-pairs';
 import { tokenEnv, type Theme, type TokenEnv } from './css-tokens';
 
 // FEAT-p75n7j criterion 2: every token pair in contrast-pairs.ts clears its
@@ -45,6 +45,12 @@ describe('token contrast (FEAT-p75n7j criterion 2)', () => {
 	it.each(THEMES)('every token pair clears its minimum in %s', (theme) => {
 		const env = tokenEnv(sheet, theme);
 		const rows = TOKEN_PAIRS.map((pair) => measure(env, theme, pair));
+		expect(failures(rows)).toBe('');
+	});
+
+	it.each(THEMES)('hover and pressed stay separable from every surface and from each other in %s', (theme) => {
+		const env = tokenEnv(sheet, theme);
+		const rows = STATE_PAIRS.map((pair) => measure(env, theme, pair));
 		expect(failures(rows)).toBe('');
 	});
 

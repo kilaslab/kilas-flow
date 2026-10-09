@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 
 	import * as m from '$lib/paraglide/messages.js';
+	import { brandDocument } from '$lib/embed/brand-root';
 	import EmbedEditor from '$lib/embed/embed-editor.svelte';
 	import { embedSession } from '$lib/embed/session.svelte';
 
@@ -14,6 +15,9 @@
 	// the session — so the copy below is already in the host's language.
 	const embed = embedSession(() => workflowID);
 	const branding = $derived(embed.session?.branding ?? {});
+	// Overlays portalled to <body> sit outside the shell below, so the accent
+	// also goes on <html> while this route is mounted (removed on destroy).
+	$effect(() => brandDocument(document.documentElement, branding.accent));
 </script>
 
 <svelte:head>

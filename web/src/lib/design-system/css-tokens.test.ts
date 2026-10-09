@@ -64,6 +64,22 @@ describe('parseTokenSheet', () => {
 	});
 });
 
+describe('parseTokenSheet refuses tokens it cannot place', () => {
+	// A token declared on a selector the reader does not classify would be
+	// silently left out of every test; that is a test passing on a sheet it
+	// never read. Other custom properties (Svelte Flow's --xy-*) are fine.
+	it.each([['.panel { --kf-bg: red; }'], ['.theme-sepia { --primary: var(--kf-accent); }'], ['body, html { --kf-sticky-l: 0.3; }']])(
+		'throws on %s',
+		(css) => {
+			expect(() => parseTokenSheet(css)).toThrow(/unclassified/);
+		}
+	);
+
+	it('accepts other custom properties on other rules', () => {
+		expect(() => parseTokenSheet('.svelte-flow { --xy-edge-stroke: var(--kf-edge); color: red; }')).not.toThrow();
+	});
+});
+
 describe('tokenEnv', () => {
 	const sheet = parseTokenSheet(FIXTURE);
 

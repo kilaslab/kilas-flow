@@ -18,6 +18,7 @@
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 
 	import type { Definition, Port } from '$lib/api/generated/models';
+	import DashboardNav from '$lib/components/dashboard/dashboard-nav.svelte';
 	import CanvasNode from '$lib/components/workflow-editor/canvas-node.svelte';
 	import { Button, type ButtonVariant } from '$lib/components/ui/button';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -101,6 +102,18 @@
 
 	let switchOn = $state(true);
 	let switchOff = $state(false);
+
+	// The sidebar nav renders its own links, so its cells are marked here:
+	// item 1 is the current page, then default, hover, pressed, focus-visible.
+	const NAV_FORCE = [undefined, undefined, 'hover', 'hover active', 'focus focus-visible'];
+	let navPanel = $state<HTMLElement | null>(null);
+	$effect(() => {
+		if (!navPanel) return;
+		navPanel.querySelectorAll('a').forEach((link, index) => {
+			const force = NAV_FORCE[index];
+			if (force) link.setAttribute('data-force', force);
+		});
+	});
 </script>
 
 {#snippet header(extra: string[] = [])}
@@ -245,6 +258,22 @@
 					</div>
 				{/each}
 			{/each}
+		</div>
+	{:else if section === 'nav'}
+		<!-- The dashboard sidebar on its panel surface: the current page (pressed
+		     step) must stay distinct from a hovered row (hover step) in both
+		     themes. -->
+		<div class="flex items-start gap-6" data-testid="matrix">
+			<div bind:this={navPanel} class="w-52 rounded-(--kf-radius-md) border border-sidebar-border bg-sidebar p-2 text-sidebar-foreground" data-testid="nav-panel">
+				<DashboardNav path="/app/workflows" />
+			</div>
+			<div class="grid gap-0.5 pt-2 text-[0.6875rem] text-muted-foreground">
+				<span class="flex h-8 items-center">current page</span>
+				<span class="flex h-8 items-center">default</span>
+				<span class="flex h-8 items-center">hover</span>
+				<span class="flex h-8 items-center">pressed</span>
+				<span class="flex h-8 items-center">focus visible</span>
+			</div>
 		</div>
 	{:else if section === 'canvas-node'}
 		<div class="h-56 w-[72rem] overflow-hidden rounded-(--kf-radius-md) border border-border" data-testid="matrix">

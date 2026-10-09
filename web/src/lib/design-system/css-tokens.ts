@@ -112,6 +112,9 @@ const DARK = "[data-theme='dark']";
 const LIGHT = "[data-theme='light']";
 const BRAND = '[data-kf-brand]';
 const RELATIVE_FALLBACK = /^@supports\s+not\s*\(\s*color\s*:\s*oklch\(\s*from\b/;
+/** A --kf-* token or one of the shadcn/Tailwind aliases app.css maps onto them. */
+const TOKEN_NAME =
+	/^--(kf-[\w-]+|(background|foreground|card|popover|primary|secondary|muted|accent|destructive|success|warning|info|border|input|ring|sidebar|chart)(-[\w-]+)?)$/;
 
 function mergeInto(target: Declarations, source: Declarations): void {
 	for (const [k, v] of source) target.set(k, v);
@@ -132,6 +135,16 @@ export function parseTokenSheet(css: string): TokenSheet {
 		else if (rule.selectors.includes(LIGHT)) mergeInto(sheet.light, decls);
 		else if (rule.selectors.includes(DARK)) mergeInto(sheet.dark, decls);
 		else if (rule.selectors.length === 1 && rule.selectors[0] === ':root') mergeInto(sheet.scales, decls);
+		else {
+			// Dropping it would let every token test pass on a sheet it never read.
+			const tokens = [...decls.keys()].filter((name) => TOKEN_NAME.test(name));
+			if (tokens.length > 0) {
+				throw new Error(
+					`css-tokens: unclassified rule "${rule.selectors.join(', ')}" declares ${tokens.join(', ')}; ` +
+						'declare tokens on :root, the theme blocks or the boundary list, or teach css-tokens.ts the new selector'
+				);
+			}
+		}
 	}
 	for (const at of atRules) {
 		if (!RELATIVE_FALLBACK.test(at.prelude)) continue;

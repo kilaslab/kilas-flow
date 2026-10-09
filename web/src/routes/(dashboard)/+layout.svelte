@@ -112,7 +112,7 @@
 				aria-expanded={!sidebarCollapsed}
 				aria-label={sidebarCollapsed ? m.common_expand_sidebar() : m.common_collapse_sidebar()}
 				title={sidebarCollapsed ? m.common_expand_sidebar() : m.common_collapse_sidebar()}
-				class="grid size-7 place-items-center rounded-md text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring"
+				class="grid size-7 place-items-center rounded-md text-sidebar-foreground/70 transition-colors hover:bg-accent hover:text-sidebar-accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring"
 			>
 				{#if sidebarCollapsed}
 					<PanelLeftOpen aria-hidden="true" class="size-4" />
