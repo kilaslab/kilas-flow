@@ -7,6 +7,7 @@ import (
 
 	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/expression"
+	"github.com/kilaslab/kilas-flow/internal/loadoptions"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/repository"
@@ -34,6 +35,10 @@ const WorkflowListLoader = "workflows.list"
 // a target workflow's trigger declares. The Workflow Tool's inputs mapper names
 // it, for the same reason WorkflowListLoader is named here.
 const WorkflowInputsLoader = "workflows.inputs"
+
+// workflowInputsDependency is the parameter the inputs loader reads: the
+// locator naming the workflow whose trigger it describes.
+const workflowInputsDependency = loadoptions.WorkflowInputsDependency
 
 // Execute Workflow modes.
 const (
