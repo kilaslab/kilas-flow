@@ -87,6 +87,14 @@ Plan: Track C of the 2026-10-09 parallel wave. Engine `Request.FromAIArguments` 
 - 7: a computed SQL condition column that resolves empty is refused.
 - 8: BUG-vqghpm (Stop and Error re-evaluated its resolved message) filed and fixed; the other evaluation sites are listed on that ticket.
 
+## Re-review fixes (2026-10-09)
+
+- Merged main again (credentials hardening, design tokens); no conflicts.
+- BUG-vqghpm's first fix still evaluated an author-written error object's expression fields after resolving them; completed (see that ticket).
+- The computed-condition refusal now runs inside `postgresConditions`, so only select and delete apply it and a stale `where` no longer stops insert, update, upsert or a query; a computed row and a computed `where` that do not resolve to conditions with columns are refused too (`TestComputedConditionsAreRefusedWhereTheyAreReadAndOnlyThere`).
+- The Gmail node skips its item fallbacks (recipient, subject, body, message id) when it runs as a tool form, so a Gmail tool never mails an address taken from the agent's input (`TestTheGmailToolDoesNotFillMailFieldsFromTheAgentsItem`); a json `$fromAI` value's braces stay text in a getAll filter (`TestTheGmailToolKeepsAJSONArgumentsBracesAsText`).
+- The tool-form comment and the migration guide's `$input` sentence say what is true.
+
 # Related Files
 - nodes/tool_form.go — toolForms table, derivation, agent runtime
 - nodes/ai.go — the toolFrom case and the AgentExecutor field
