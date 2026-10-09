@@ -11,6 +11,7 @@
 package nodes
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -233,8 +234,10 @@ func (tool *vectorStoreAnswerTool) Invoke(ctx context.Context, arguments json.Ra
 	var args struct {
 		Query string `json:"query"`
 	}
-	if err := json.Unmarshal(arguments, &args); err != nil {
-		return "", fmt.Errorf("node %q: tool %q: invalid arguments: %w", tool.agentNode, tool.name, err)
+	if len(bytes.TrimSpace(arguments)) > 0 {
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return "", fmt.Errorf("node %q: tool %q: invalid arguments: %w", tool.agentNode, tool.name, err)
+		}
 	}
 	question := strings.TrimSpace(args.Query)
 	if question == "" {
