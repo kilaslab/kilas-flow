@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 import type { CredentialResourceFields } from './credentialResourceFields';
+import type { CredentialUsageResource } from './credentialUsageResource';
 
 export interface CredentialResource {
   /** A URL to the JSON Schema for this object. */
@@ -21,4 +22,9 @@ export interface CredentialResource {
   name: string;
   type: string;
   updatedAt: string;
+  /**
+     * Workflows whose draft or published version attaches this credential. Returned by a single read only, and left out when nothing uses it or the caller's API key is scoped.
+     * @nullable
+     */
+  usedBy?: CredentialUsageResource[] | null;
 }

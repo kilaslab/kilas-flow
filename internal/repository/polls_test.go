@@ -17,6 +17,8 @@ func TestClaimDueLeasesADuePollAndSkipsAnOwnedLease(t *testing.T) {
 	eachDriver(t, func(t *testing.T, db *database.DB) {
 		ctx := context.Background()
 		tenant := repository.TenantScope{ID: "drv-poll-lease"}
+		// Activation refuses a credential the tenant does not have.
+		seedCredentialRow(t, db, tenant, "cred-gmail", nodes.GmailCredentialType)
 		catalogue := node.NewRegistry()
 		if err := nodes.RegisterAll(catalogue); err != nil {
 			t.Fatalf("RegisterAll() error = %v", err)
@@ -71,6 +73,8 @@ func TestActivatePreservesPollCursor(t *testing.T) {
 	eachDriver(t, func(t *testing.T, db *database.DB) {
 		ctx := context.Background()
 		tenant := repository.TenantScope{ID: "drv-poll-preserve"}
+		// Activation refuses a credential the tenant does not have.
+		seedCredentialRow(t, db, tenant, "cred-gmail", nodes.GmailCredentialType)
 		catalogue := node.NewRegistry()
 		if err := nodes.RegisterAll(catalogue); err != nil {
 			t.Fatalf("RegisterAll() error = %v", err)
@@ -130,6 +134,8 @@ func TestClaimDueReturnsOnePollAtATime(t *testing.T) {
 	eachDriver(t, func(t *testing.T, db *database.DB) {
 		ctx := context.Background()
 		tenant := repository.TenantScope{ID: "drv-poll-one"}
+		// Activation refuses a credential the tenant does not have.
+		seedCredentialRow(t, db, tenant, "cred-gmail", nodes.GmailCredentialType)
 		catalogue := node.NewRegistry()
 		if err := nodes.RegisterAll(catalogue); err != nil {
 			t.Fatalf("RegisterAll() error = %v", err)
@@ -194,6 +200,8 @@ func TestCompleteDoesNotRewindAfterLeaseStolen(t *testing.T) {
 	eachDriver(t, func(t *testing.T, db *database.DB) {
 		ctx := context.Background()
 		tenant := repository.TenantScope{ID: "drv-poll-stale"}
+		// Activation refuses a credential the tenant does not have.
+		seedCredentialRow(t, db, tenant, "cred-gmail", nodes.GmailCredentialType)
 		catalogue := node.NewRegistry()
 		if err := nodes.RegisterAll(catalogue); err != nil {
 			t.Fatalf("RegisterAll() error = %v", err)

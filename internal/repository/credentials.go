@@ -32,6 +32,16 @@ type CredentialRepository interface {
 	Delete(context.Context, TenantScope, string) error
 	// Resolve returns the decrypted payload for runtime use only.
 	Resolve(context.Context, TenantScope, string) (credentials.Record, map[string]string, error)
+	// RecordCredentialEvent appends to a credential's audit trail, and
+	// CredentialEvents reads it back, newest first.
+	RecordCredentialEvent(context.Context, TenantScope, CredentialEvent) error
+	CredentialEvents(context.Context, TenantScope, string) ([]CredentialEvent, error)
+	// FindCredentialEvent returns the newest event of one credential with an
+	// action and detail, and whether there is one.
+	FindCredentialEvent(ctx context.Context, tenant TenantScope, credentialID, action, detail string) (CredentialEvent, bool, error)
+	// CredentialUsers lists the workflows whose draft or published version
+	// attaches the credential.
+	CredentialUsers(context.Context, TenantScope, string) ([]CredentialUser, error)
 }
 
 // GORMCredentialStore persists credentials with their payload encrypted.
@@ -42,6 +52,9 @@ type GORMCredentialStore struct {
 	// SetExternalResolver attaches one, and resolution without it fails
 	// closed: a reference is never returned as plaintext.
 	external *credentials.Resolver
+	// resealHook, when set by a test, runs between Reseal opening a row and
+	// writing it back.
+	resealHook func(credentialID string)
 }
 
 var _ CredentialRepository = (*GORMCredentialStore)(nil)
@@ -67,7 +80,7 @@ func (store *GORMCredentialStore) Create(ctx context.Context, tenant TenantScope
 	if err := rejectPlaceholders(record.Fields); err != nil {
 		return credentials.Record{}, err
 	}
-	sealed, publicFields, err := store.seal(record.Type, record.Fields)
+	sealed, publicFields, err := store.seal(tenant.ID, id, record.Type, record.Fields)
 	if err != nil {
 		return credentials.Record{}, err
 	}
@@ -113,7 +126,7 @@ func (store *GORMCredentialStore) Update(ctx context.Context, tenant TenantScope
 	if err != nil {
 		return credentials.Record{}, err
 	}
-	stored, err := store.cipher.Decrypt(model.Payload)
+	stored, err := store.cipher.Open(model.Payload, credentials.CredentialAAD(model.TenantID, model.ID, model.Type))
 	if err != nil {
 		return credentials.Record{}, err
 	}
@@ -139,7 +152,7 @@ func (store *GORMCredentialStore) Update(ctx context.Context, tenant TenantScope
 		return credentials.Record{}, err
 	}
 
-	sealed, publicFields, err := store.seal(record.Type, merged)
+	sealed, publicFields, err := store.seal(model.TenantID, model.ID, record.Type, merged)
 	if err != nil {
 		return credentials.Record{}, err
 	}
@@ -323,7 +336,7 @@ func (store *GORMCredentialStore) Resolve(ctx context.Context, tenant TenantScop
 	if err != nil {
 		return credentials.Record{}, nil, err
 	}
-	fields, err := store.cipher.Decrypt(model.Payload)
+	fields, err := store.cipher.Open(model.Payload, credentials.CredentialAAD(model.TenantID, model.ID, model.Type))
 	if err != nil {
 		return credentials.Record{}, nil, err
 	}
@@ -365,15 +378,20 @@ func (store *GORMCredentialStore) ready(tenant TenantScope) error {
 
 // seal splits a payload into its sealed and public halves and encodes both.
 //
+// The sealed half is bound to the row it is written for — tenant, credential
+// id and type — so it opens nowhere else: a payload copied into another row by
+// someone with write access to the database fails to open there rather than
+// authenticating as that credential.
+//
 // The public half also records which secret fields hold a value, under a key
 // no credential type may declare. That is what lets a listing show the mask
 // only for a secret that is set without decrypting the payload to find out.
-func (store *GORMCredentialStore) seal(typeID string, fields map[string]string) ([]byte, []byte, error) {
+func (store *GORMCredentialStore) seal(tenantID, credentialID, typeID string, fields map[string]string) ([]byte, []byte, error) {
 	secret, public := credentials.Split(typeID, fields)
 	if err := rejectPublicReferences(public); err != nil {
 		return nil, nil, err
 	}
-	sealed, err := store.cipher.Encrypt(secret)
+	sealed, err := store.cipher.Seal(secret, credentials.CredentialAAD(tenantID, credentialID, typeID))
 	if err != nil {
 		return nil, nil, err
 	}

@@ -126,6 +126,23 @@ one with `GET /workflows/{id}/webhooks`, and activate again any workflow whose
 trigger registers its own address with the sender (Telegram, WAHA), so that the
 sender learns it. Bindings that already have a route are not touched.
 
+This release seals credentials and captured trigger values in a versioned
+format, bound to the row they belong to. Two things follow when you upgrade:
+
+- **A binary from an earlier release cannot open the new format.** Upgrade
+  every replica together rather than leaving an old one serving beside a new
+  one, and do not downgrade without restoring the backup taken in step 1:
+  anything the new release saved is unreadable to the old one.
+- **Existing payloads still open, but are not yet bound to their rows.** Run
+  `kilasflow -reseal-credentials` once with the server's configuration after
+  every replica is upgraded. It reseals the stored rows in place and exits.
+  A copy of an old payload taken before that (a dump, a backup) still opens in
+  any row until you set `security.legacy_seals: refuse` or rotate the key; see
+  [Key rotation](/operate/key-rotation/#after-upgrading-to-this-release).
+
+A Google Connect popup that is open during the upgrade fails when it returns,
+because its state is now signed with a derived key. Press Connect again.
+
 Switching drivers (SQLite to PostgreSQL or back) is not an upgrade path:
 there is no migration between backends, the new side comes up empty, and
 anything worth keeping must be exported first.

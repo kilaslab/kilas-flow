@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"flag"
 	"io"
 	"net/http"
 	"net/url"
@@ -78,10 +79,11 @@ func credentialVerbs() []Verb {
 		{
 			Path:      "credential delete",
 			Operation: "delete-credential",
-			Summary:   "remove a stored credential (guarded)",
+			Summary:   "remove a stored credential; one a workflow attaches is refused unless `--force` (guarded)",
 			Args:      []Arg{arg("credential id")},
 			Guarded:   true,
 			Refusal:   "removes a stored secret other workflows may depend on",
+			Flags:     registerCredentialDeleteFlags,
 			Run:       runCredentialDelete,
 			Human:     humanDeletion,
 		},
@@ -187,14 +189,43 @@ func runCredentialUpdate(ctx *Context, args []string) error {
 	return ctx.writeResource(http.MethodPut, "/credentials/"+url.PathEscape(id), document, id)
 }
 
+// credentialDeleteFlags carry the one choice a credential delete takes.
+type credentialDeleteFlags struct {
+	force bool
+}
+
+// registerCredentialDeleteFlags attaches --force.
+func registerCredentialDeleteFlags(fs *flag.FlagSet) any {
+	flags := &credentialDeleteFlags{}
+	fs.BoolVar(&flags.force, "force", false,
+		"delete it even though workflows attach it; without this the server refuses with 409 and names them")
+
+	return flags
+}
+
 // runCredentialDelete removes a stored credential.
+//
+// The server refuses to delete one a workflow's draft or published version
+// still attaches, answering 409 with the workflows named, and that refusal
+// reaches the caller as a conflict. --force sends force=true, which deletes it
+// anyway; it does not stand in for --yes, which the guard still asks for.
 func runCredentialDelete(ctx *Context, args []string) error {
 	id, err := requireOneID(args, "credential id")
 	if err != nil {
 		return err
 	}
+	var query url.Values
+	if flags, ok := ctx.VerbFlags.(*credentialDeleteFlags); ok && flags.force {
+		query = url.Values{"force": {"true"}}
+	}
+	resp, err := ctx.Client.Do(ctx.Ctx, http.MethodDelete, apiPath("/credentials/"+url.PathEscape(id)), query, nil, nil)
+	if err != nil {
+		return err
+	}
+	ctx.Data = deletionResult{ID: id, Status: resp.Status}
+	ctx.Primary = id
 
-	return ctx.deleteResource("/credentials/"+url.PathEscape(id), id)
+	return nil
 }
 
 // credentialDocument reads the credential payload --file names.

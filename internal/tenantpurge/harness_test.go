@@ -297,7 +297,7 @@ func seedPolls(document workflow.Document) []repository.PollTrigger {
 	return triggers
 }
 
-func seedDocument(tenantID, workflowID, name string) workflow.Document {
+func seedDocument(tenantID, workflowID, name, gmailCredentialID string) workflow.Document {
 	return workflow.Document{
 		SchemaVersion: workflow.CurrentSchemaVersion,
 		ID:            workflowID,
@@ -309,7 +309,7 @@ func seedDocument(tenantID, workflowID, name string) workflow.Document {
 			{ID: "cron", Name: "Schedule", Type: "kilasflow.schedule", TypeVersion: workflow.V(1),
 				Parameters: map[string]any{"cron": "0 * * * *"}},
 			{ID: "gmail", Name: "Gmail Trigger", Type: "kilasflow.gmailTrigger", TypeVersion: workflow.V(1),
-				Credentials: map[string]string{"gmailOAuth2": "seed-gmail"}},
+				Credentials: map[string]string{"gmailOAuth2": gmailCredentialID}},
 		},
 		Connections: []workflow.Connection{},
 		Settings:    map[string]any{},
@@ -464,7 +464,16 @@ func (env *purgeEnv) seedTenant(id string) *tenantSeed {
 		env.t.Fatalf("CreateAPIKey(%s) error = %v", id, err)
 	}
 
-	document := seedDocument(id, "wf_"+id, "Purge source")
+	// The Gmail trigger's credential exists before the workflow that attaches
+	// it is activated: activation refuses a credential the tenant does not
+	// have.
+	gmail, err := env.secrets.Create(ctx, tenant, credentials.Record{
+		Name: "gmail", Type: "gmailOAuth2", Fields: map[string]string{"clientId": "seed-" + id},
+	})
+	if err != nil {
+		env.t.Fatalf("Create(gmail credential %s) error = %v", id, err)
+	}
+	document := seedDocument(id, "wf_"+id, "Purge source", gmail.ID)
 	stored, err := env.workflows.SaveDraft(ctx, tenant, document)
 	if err != nil {
 		env.t.Fatalf("SaveDraft(%s) error = %v", id, err)
@@ -494,7 +503,7 @@ func (env *purgeEnv) seedTenant(id string) *tenantSeed {
 	// A workflow the tenant deleted before the tenant itself. workflowModel
 	// soft-deletes, so a purge that only stamps deleted_at would leave the
 	// customer's workflow name in the table.
-	doomed, err := env.workflows.SaveDraft(ctx, tenant, seedDocument(id, "wf_"+id+"_removed", "Removed"))
+	doomed, err := env.workflows.SaveDraft(ctx, tenant, seedDocument(id, "wf_"+id+"_removed", "Removed", gmail.ID))
 	if err != nil {
 		env.t.Fatalf("SaveDraft(removed %s) error = %v", id, err)
 	}
@@ -519,14 +528,23 @@ func (env *purgeEnv) seedTenant(id string) *tenantSeed {
 		env.t.Fatalf("ClaimDelivery(%s) error = %v", id, err)
 	}
 
-	if _, err := env.secrets.Create(ctx, tenant, credentials.Record{
+	openAI, err := env.secrets.Create(ctx, tenant, credentials.Record{
 		Name: "openai", Type: "openAiApi", Fields: map[string]string{"apiKey": "seed-" + id},
-	}); err != nil {
+	})
+	if err != nil {
 		env.t.Fatalf("Create(credential %s) error = %v", id, err)
+	}
+	// Its audit trail names the tenant's credential and who wrote it.
+	if err := env.secrets.RecordCredentialEvent(ctx, tenant, repository.CredentialEvent{
+		CredentialID: openAI.ID, CredentialName: openAI.Name, CredentialType: openAI.Type,
+		Action: repository.CredentialEventCreated,
+		Actor:  repository.Actor{Kind: repository.ActorKindUser, Label: "owner@" + id + ".example"},
+	}); err != nil {
+		env.t.Fatalf("RecordCredentialEvent(%s) error = %v", id, err)
 	}
 	if _, err := env.secrets.CreateSecretBinding(ctx, tenant, credentials.Binding{
 		Name: "vault-" + id, Provider: "vault", Address: "https://vault.example",
-		TokenEnv: "KILASFLOW_SEED_VAULT_TOKEN",
+		TokenEnv: "KILASFLOW_EXTERNAL_SECRET_TOKEN_SEED_VAULT",
 	}); err != nil {
 		env.t.Fatalf("CreateSecretBinding(%s) error = %v", id, err)
 	}

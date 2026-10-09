@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kilaslab/kilas-flow/internal/credentials"
 )
 
 // These tests cover the configuration defects the full review reproduced on a
@@ -535,5 +537,79 @@ func TestTheUnknownKeyWarningFollowsALogFormatSetOnlyInTheFile(t *testing.T) {
 	}
 	if record["key"] != "outbound.allowed_private_endpoint" {
 		t.Errorf("key = %v, want the misspelled key", record["key"])
+	}
+}
+
+func TestExternalSecretTokenVariablesAreNotReportedAsUnknown(t *testing.T) {
+	// A secret binding reads its manager token from a variable under this
+	// prefix (internal/credentials), outside the configuration tree, so the
+	// strict mapper must leave every such variable alone. The two packages
+	// keep their own copy of the prefix; this is what keeps them equal.
+	if externalSecretTokenPrefix != credentials.BindingTokenEnvPrefix {
+		t.Fatalf("config exempts %q but bindings read %q", externalSecretTokenPrefix, credentials.BindingTokenEnvPrefix)
+	}
+	t.Setenv(credentials.BindingTokenEnvPrefix+"PROD_VAULT", "a-secret-value")
+	warnings := captureWarnings(t, func() {
+		if _, err := Load(filepath.Join(t.TempDir(), "absent.yaml")); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+	})
+	if strings.TrimSpace(warnings) != "" {
+		t.Errorf("a binding token variable was warned about:\n%s", warnings)
+	}
+}
+
+func TestTheSecondaryEncryptionKeySettingNamesItsVariable(t *testing.T) {
+	// The rotation key is read from the environment like the primary, never
+	// from the file, and the variable it names is exempt from the unknown-key
+	// warning the way every other *_env setting's variable is.
+	t.Setenv("KILASFLOW_ENCRYPTION_KEY_SECONDARY", "a-secret-value")
+	warnings := captureWarnings(t, func() {
+		cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if got := cfg.Security.SecondaryEncryptionKeyEnv; got != "KILASFLOW_ENCRYPTION_KEY_SECONDARY" {
+			t.Errorf("Security.SecondaryEncryptionKeyEnv = %q, want the documented default", got)
+		}
+	})
+	if strings.TrimSpace(warnings) != "" {
+		t.Errorf("the secondary key variable was warned about:\n%s", warnings)
+	}
+
+	t.Setenv("KILASFLOW_SECURITY_SECONDARY_ENCRYPTION_KEY_ENV", "KILASFLOW_OLD_KEY")
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Security.SecondaryEncryptionKeyEnv; got != "KILASFLOW_OLD_KEY" {
+		t.Errorf("Security.SecondaryEncryptionKeyEnv = %q, want the environment override", got)
+	}
+}
+
+func TestLegacySealsDefaultToOpenAndAcceptOnlyOpenOrRefuse(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	// Open by default: an upgraded installation still holds legacy rows until
+	// it has resealed them, and refusing them would lock it out.
+	if cfg.Security.LegacySeals != LegacySealsOpen {
+		t.Fatalf("Security.LegacySeals = %q, want %q by default", cfg.Security.LegacySeals, LegacySealsOpen)
+	}
+
+	t.Setenv("KILASFLOW_SECURITY_LEGACY_SEALS", "refuse")
+	cfg, err = Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() with refuse error = %v", err)
+	}
+	if cfg.Security.LegacySeals != LegacySealsRefuse {
+		t.Fatalf("Security.LegacySeals = %q, want %q", cfg.Security.LegacySeals, LegacySealsRefuse)
+	}
+
+	// A typo must not silently keep legacy seals open.
+	t.Setenv("KILASFLOW_SECURITY_LEGACY_SEALS", "refused")
+	if _, err := Load(filepath.Join(t.TempDir(), "absent.yaml")); err == nil || !strings.Contains(err.Error(), "security.legacy_seals") {
+		t.Fatalf("Load() with an unknown value error = %v, want a refusal naming the key", err)
 	}
 }

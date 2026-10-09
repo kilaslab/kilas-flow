@@ -41,11 +41,12 @@ never be reached from the environment.
 A variable, or a key in the file, that matches no setting is reported at boot
 instead of being dropped in silence. The warning names the variable and where
 it came from, and suggests the nearest key only when one is close enough to be
-a typo. Three kinds of variable are read by the process itself and are never
+a typo. Four kinds of variable are read by the process itself and are never
 reported: the one a `*_env` setting names (`KILASFLOW_ENCRYPTION_KEY` unless
 `security.encryption_key_env` points somewhere else, and likewise for the
-other secret-holding settings), the `KILASFLOW_WORKFLOW_ENV_` allowlist, and
-the CLI's `KILASFLOW_URL` and `KILASFLOW_TOKEN`.
+other secret-holding settings), the `KILASFLOW_WORKFLOW_ENV_` allowlist, the
+`KILASFLOW_EXTERNAL_SECRET_TOKEN_` variables secret bindings read their manager
+token from, and the CLI's `KILASFLOW_URL` and `KILASFLOW_TOKEN`.
 
 ## Workflow expressions cannot read secrets
 
@@ -64,8 +65,11 @@ misreads in production:
 - **No credential encryption key** (`KILASFLOW_ENCRYPTION_KEY` unset). The
   server starts, runs workflows, and logs a warning — but credential storage
   is disabled: credential reads and writes report unconfigured. Set the key
-  before storing anything. There is no re-encryption pass, so changing the key
-  later makes every credential already stored undecryptable.
+  before storing anything. Replacing it outright later makes every credential
+  already stored undecryptable. Change it with the
+  [key rotation](/operate/key-rotation/) procedure instead: the old key goes in
+  `KILASFLOW_ENCRYPTION_KEY_SECONDARY` while `kilasflow -reseal-credentials`
+  seals every row again under the new one.
 - **No embed signing key** (`KILASFLOW_EMBED_SIGNING_KEY` unset). The server
   starts with a warning, the session endpoints report themselves
   unconfigured, and every embed token is refused. Embedding is off until both

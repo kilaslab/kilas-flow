@@ -25,7 +25,8 @@ type WebhookRouteStateStore interface {
 var _ WebhookRouteStateStore = (*GORMWorkflowStore)(nil)
 
 // WithLifecycleState returns a store that keeps lifecycle state, sealed with
-// the credential cipher.
+// the credential cipher and bound to its tenant and route, so a value copied
+// onto another route does not open there.
 //
 // Nil keeps none: a captured value may be the secret a service signs its
 // deliveries with, and it is never written in the clear. Reading a route that
@@ -55,7 +56,7 @@ func (store *GORMWorkflowStore) SaveLifecycleState(ctx context.Context, tenant T
 	if store.lifecycleCipher == nil {
 		return fmt.Errorf("lifecycle state is not kept: it is sealed with the credential encryption key, which is not configured")
 	}
-	sealed, err := store.lifecycleCipher.Encrypt(values)
+	sealed, err := store.lifecycleCipher.Seal(values, credentials.LifecycleAAD(tenant.ID, route))
 	if err != nil {
 		return fmt.Errorf("seal lifecycle state: %w", err)
 	}
@@ -100,7 +101,7 @@ func (store *GORMWorkflowStore) lifecycleState(ctx context.Context, tenantID, ro
 	if store.lifecycleCipher == nil {
 		return nil, fmt.Errorf("this route's lifecycle state is sealed, and the credential encryption key is not configured")
 	}
-	values, err := store.lifecycleCipher.Decrypt(rows[0].LifecycleState)
+	values, err := store.lifecycleCipher.Open(rows[0].LifecycleState, credentials.LifecycleAAD(tenantID, route))
 	if err != nil {
 		return nil, fmt.Errorf("open lifecycle state: %w", err)
 	}

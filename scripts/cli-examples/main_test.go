@@ -43,6 +43,34 @@ func TestNeedsOfSaysWhatABlockHasToHaveBeforeItRuns(t *testing.T) {
 	}
 }
 
+// A credential a workflow attaches is its own seed: deleting it is refused,
+// which is the example, and the block's plain $CREDENTIAL_ID stays unattached.
+func TestAnInUseCredentialIsSeededApartFromAPlainOne(t *testing.T) {
+	needed, unknown := needsOf([]string{`kilasflow credential delete "$IN_USE_CREDENTIAL_ID" --yes`})
+	if len(unknown) != 0 {
+		t.Fatalf("unknown = %q, want none", unknown)
+	}
+	if !needed.inUseCredential || needed.credential || needed.workflow {
+		t.Fatalf("needs = %+v, want only the in-use credential", needed)
+	}
+	document, err := inUseWorkflowDocument([]byte(`{"nodes":[{"id":"http_request","type":"kilasflow.httpRequest"},{"id":"set","type":"kilasflow.set"}]}`), "cred_1")
+	if err != nil {
+		t.Fatalf("inUseWorkflowDocument() error = %v", err)
+	}
+	var decoded struct {
+		Nodes []struct {
+			ID          string            `json:"id"`
+			Credentials map[string]string `json:"credentials"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(document, &decoded); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if decoded.Nodes[0].Credentials["httpHeaderAuth"] != "cred_1" || len(decoded.Nodes[1].Credentials) != 0 {
+		t.Fatalf("document = %s, want the HTTP node alone to attach the credential", document)
+	}
+}
+
 func TestNeedsOfRefusesAVariableNothingSeeds(t *testing.T) {
 	_, unknown := needsOf([]string{`kilasflow workflow get "$MYSTERY_ID"`, `kilasflow workflow get "$WORKFLOW_ID"`})
 	if want := []string{"MYSTERY_ID"}; !reflect.DeepEqual(unknown, want) {
