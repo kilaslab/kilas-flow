@@ -27,7 +27,9 @@ import (
 const (
 	GmailToolNodeType    = "kilasflow.gmailTool"
 	PostgresToolNodeType = "kilasflow.postgresTool"
-	TelegramToolNodeType = "pack.telegramTool"
+	// GoogleSheetsToolNodeType is the Sheets tool form; the node itself is in googlesheets.go.
+	GoogleSheetsToolNodeType = "kilasflow.googleSheetsTool"
+	TelegramToolNodeType     = "pack.telegramTool"
 )
 
 // toolOnlyParameters are what n8n adds to a node to make its tool; the base
@@ -215,6 +217,40 @@ func postgresToolToKilas(node Node) (map[string]any, []Unsupported) {
 				Reason: "this tool maps its columns automatically from the item it runs on, which for a tool is the " +
 					"agent's input rather than a row to write. This server's PostgreSQL tool writes only columns the " +
 					"author mapped: map each column, using $fromAI for the values the model supplies, before activating.",
+			})
+		}
+	}
+	return parameters, issues
+}
+
+// googleSheetsToolToKilas maps n8n's Google Sheets tool: the generic tool
+// translation over the Sheets node's own, with the mapper restored from the
+// original so the generic `=` pass cannot read a schema label such as "=total"
+// as an expression, and two blocking issues for what this server's tool never
+// does: clear a sheet, and map its columns from the item it runs on, which for
+// a tool is the agent's input.
+func googleSheetsToolToKilas(node Node) (map[string]any, []Unsupported) {
+	parameters, issues := toolFormToKilas(mapping{toKilas: googleSheetsToKilas})(node)
+	if original, ok := node.Parameters["columns"].(map[string]any); ok {
+		parameters["columns"] = sheetsMapper(original, fromN8NTree)
+	}
+	operation, _ := parameters["operation"].(string)
+	if operation == "clear" {
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "operation",
+			Reason: "this tool clears a sheet, which empties a whole tab or range in one call. This server's Google Sheets tool " +
+				"does not offer clear to a model: use delete for rows or columns of a size you set, or the Google Sheets node " +
+				"as a step, before activating.",
+		})
+	}
+	switch operation {
+	case "append", "appendOrUpdate", "update":
+		if columns, _ := parameters["columns"].(map[string]any); columns["mappingMode"] == "autoMapInputData" {
+			issues = append(issues, Unsupported{
+				Severity: SeverityBlocking, Field: "columns",
+				Reason: "this tool maps its columns automatically from the item it runs on, which for a tool is the agent's " +
+					"input rather than a row to write. This server's Google Sheets tool writes only columns the author mapped: " +
+					"map each column, using $fromAI for the values the model supplies, before activating.",
 			})
 		}
 	}
