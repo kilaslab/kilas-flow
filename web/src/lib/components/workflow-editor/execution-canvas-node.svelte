@@ -51,7 +51,6 @@
 				)
 			: data.definition
 	);
-	const visual = $derived(nodeVisual(definition));
 	const subtitle = $derived(
 		isPlaceholder
 			? friendlyOriginalType(typeof node.parameters?.originalType === 'string' ? node.parameters.originalType : null)
@@ -66,6 +65,8 @@
 	// error output" — carry edges in the replay too, and an edge whose handle
 	// is missing is silently not drawn (the failed items' branch vanished).
 	const ports = $derived(resolvedPorts(node, definition));
+	// The tile is cut from the same resolved ports the handles are drawn from.
+	const visual = $derived(nodeVisual(definition, ports));
 	const mainInputs = $derived(mainPorts(ports.inputs));
 	const mainOutputs = $derived(mainPorts(ports.outputs));
 	const attachmentInputs = $derived(attachmentPorts(ports.inputs));
