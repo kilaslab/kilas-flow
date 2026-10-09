@@ -35,10 +35,14 @@ Both come back as the strings `={{ $json.trace }}` and `={{ $json.code }}`, as i
 Both come back as `{"mode":"expression","value":"{{ ... }}"}` maps, which n8n treats as literal data, not an expression.
 
 # Acceptance Criteria
-- [ ] A nested expression marker under a Webhook's `options` and a top-level `responseCode` marker export as `=`-prefixed strings (regression test)
-- [ ] `toN8NTree` checks for the expression marker before it recurses, and nested lists and plain maps without a marker are unchanged
-- [ ] Import then export then import of a webhook with nested expressions is stable
+- [x] A nested expression marker under a Webhook's `options` and a top-level `responseCode` marker export as `=`-prefixed strings (regression test): `TestAnExpressionNestedInAnExportedParameterGoesBackAsAnEqualsString`, seen failing before the fix
+- [x] `toN8NTree` checks for the expression marker before it recurses, and nested lists and plain maps without a marker are unchanged: the same test asserts the fixed header beside it, and the whole `internal/interop/n8n` package stays green
+- [x] Import then export then import of a webhook with nested expressions is stable: `TestAWebhookWithNestedExpressionsImportsTheSameAfterAnExport` (it also passed before the fix, because re-importing the marker object reproduces itself; it guards the stability, the first test guards the bug)
 
 # Related Files
 - internal/interop/n8n/parameters.go
 - internal/interop/n8n/roundtrip_fidelity_test.go
+
+# Progress (2026-10-09)
+
+`toN8NTree` now returns `toN8NValue(value)` when `expression.IsExpression(value)` before it walks a map, so a marker below the top level exports as the `=`-prefixed string. Only the Webhook exporter used the walker (the plan also named HTTP and respond; those use other code paths). New tests are in `internal/interop/n8n/export_expression_test.go`. The Google Sheets exporter in FEAT-vntngh relies on this fix. Status left for the orchestrator to close.

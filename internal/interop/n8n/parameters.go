@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kilaslab/kilas-flow/internal/expression"
 	"github.com/kilaslab/kilas-flow/internal/jsrun"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/scheduler"
@@ -2142,7 +2143,15 @@ func webhookToN8N(node workflow.Node) (map[string]any, []ExportIssue) {
 }
 
 // toN8NTree is the export inverse of fromN8NTree.
+//
+// An expression marker is itself a map, so it has to be recognised before the
+// walk descends: recursing into `{mode: expression, value}` rewrote its two
+// keys and handed n8n the marker object, which it reads as literal data
+// (BUG-8xz9t1).
 func toN8NTree(value any) any {
+	if expression.IsExpression(value) {
+		return toN8NValue(value)
+	}
 	switch typed := value.(type) {
 	case map[string]any:
 		converted := make(map[string]any, len(typed))
