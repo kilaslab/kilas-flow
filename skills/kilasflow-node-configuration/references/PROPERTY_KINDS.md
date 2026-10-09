@@ -100,7 +100,10 @@ matching columns are required, and the label of the values column; each column
 carries an id, a display name, a type, a required flag, match eligibility,
 read-only-ness and any fixed options (internal/property/mapper.go,
 `ResourceMapperDeclaration`, `MapperField`). The columns themselves come from the
-sibling operation — see LOAD_OPTIONS.md.
+sibling operation — see LOAD_OPTIONS.md. A mapper that sets `modelDefinable` (the
+Workflow Tool's `workflowInputs`) lets each column be left to the model, stored as
+one whole `$fromAI` call, with a column that has no entry counting as the model's
+(`ai.WholeFromAICall`, `nodes.WorkflowToolInputs`).
 
 ## Assignment collection
 
