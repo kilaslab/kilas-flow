@@ -44,6 +44,39 @@ var ErrUnknownBinding = errors.New("external secret binding is not configured fo
 // ErrUnknownProvider reports a binding naming no registered provider.
 var ErrUnknownProvider = errors.New("external secret provider is not registered")
 
+// BindingTokenEnvPrefix is the only prefix a binding's TokenEnv may carry.
+//
+// A binding names the environment variable that holds its manager token, and
+// the provider sends that variable's value to the binding's Address. Left
+// open, a binding could name any variable the server holds — the database
+// DSN, the credential master key — and an address chosen by whoever wrote the
+// binding would receive it. The remainder after the prefix must be uppercase
+// letters, digits and underscores.
+//
+// The prefix closes the "any server variable" half. It does not stop one
+// tenant's binding from naming a prefixed variable meant for another tenant,
+// and the tenant still chooses Address: before a binding API is exposed to
+// tenants, give each tenant its own token namespace or have the operator own
+// the mapping from binding to variable.
+const BindingTokenEnvPrefix = "KILASFLOW_EXTERNAL_SECRET_TOKEN_"
+
+// checkTokenEnv reports whether a binding may read the named variable.
+func checkTokenEnv(bindingName, variable string) error {
+	rest, prefixed := strings.CutPrefix(variable, BindingTokenEnvPrefix)
+	valid := prefixed && rest != ""
+	for _, character := range rest {
+		if (character < 'A' || character > 'Z') && (character < '0' || character > '9') && character != '_' {
+			valid = false
+			break
+		}
+	}
+	if !valid {
+		return fmt.Errorf("external secret binding %q: its manager credential variable must be named %s<NAME>, with NAME in uppercase letters, digits and underscores",
+			bindingName, BindingTokenEnvPrefix)
+	}
+	return nil
+}
+
 // Binding names one tenant's external secret source. The provider credential
 // itself (a Vault token, a cloud access key) is named by environment variable,
 // never stored: a binding row that held a token would make the manager a copy
@@ -77,7 +110,7 @@ func (binding Binding) Validate() error {
 	if strings.TrimSpace(binding.TokenEnv) == "" {
 		return fmt.Errorf("external secret binding %q needs the environment variable holding its manager credential", name)
 	}
-	return nil
+	return checkTokenEnv(name, binding.TokenEnv)
 }
 
 // IsReference reports whether a stored field value is an external reference
@@ -425,7 +458,13 @@ func scrubValue(value any, needles []string) any {
 // managerToken reads the manager credential for one binding out of the process
 // environment. The variable — not the token — is what the binding row names,
 // so the row stays committable and rotation never touches the database.
+//
+// The prefix is checked again here, not only in Validate: a row written around
+// validation must still not be able to read an arbitrary server variable.
 func managerToken(binding Binding) (string, error) {
+	if err := checkTokenEnv(binding.Name, binding.TokenEnv); err != nil {
+		return "", err
+	}
 	token := strings.TrimSpace(os.Getenv(binding.TokenEnv))
 	if token == "" {
 		return "", fmt.Errorf("external secret binding %q: %s holds no manager credential", binding.Name, binding.TokenEnv)

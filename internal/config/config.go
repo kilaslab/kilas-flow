@@ -1277,17 +1277,22 @@ const (
 	// container that configures both sets them in the server's environment too.
 	cliURLVar   = "KILASFLOW_URL"
 	cliTokenVar = "KILASFLOW_TOKEN"
+	// externalSecretTokenPrefix is where a secret binding's manager token
+	// lives; internal/credentials reads it as BindingTokenEnvPrefix, and a
+	// test keeps the two equal.
+	externalSecretTokenPrefix = "KILASFLOW_EXTERNAL_SECRET_TOKEN_"
 )
 
 // readDirectly reports whether the process reads an environment variable itself
 // instead of through the configuration tree: one a *_env setting names, a
-// workflow variable, or one of the CLI's two.
+// workflow variable, a secret binding's manager token, or one of the CLI's two.
 //
 // Only what is read is exempt. A variable a setting used to name and no longer
 // does — the setting was pointed elsewhere — is ignored now, and says so.
 func readDirectly(variable string, named map[string]bool) bool {
 	return named[variable] ||
 		strings.HasPrefix(variable, workflowEnvPrefix) ||
+		strings.HasPrefix(variable, externalSecretTokenPrefix) ||
 		variable == cliURLVar || variable == cliTokenVar
 }
 

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kilaslab/kilas-flow/internal/credentials"
 )
 
 // These tests cover the configuration defects the full review reproduced on a
@@ -535,6 +537,25 @@ func TestTheUnknownKeyWarningFollowsALogFormatSetOnlyInTheFile(t *testing.T) {
 	}
 	if record["key"] != "outbound.allowed_private_endpoint" {
 		t.Errorf("key = %v, want the misspelled key", record["key"])
+	}
+}
+
+func TestExternalSecretTokenVariablesAreNotReportedAsUnknown(t *testing.T) {
+	// A secret binding reads its manager token from a variable under this
+	// prefix (internal/credentials), outside the configuration tree, so the
+	// strict mapper must leave every such variable alone. The two packages
+	// keep their own copy of the prefix; this is what keeps them equal.
+	if externalSecretTokenPrefix != credentials.BindingTokenEnvPrefix {
+		t.Fatalf("config exempts %q but bindings read %q", externalSecretTokenPrefix, credentials.BindingTokenEnvPrefix)
+	}
+	t.Setenv(credentials.BindingTokenEnvPrefix+"PROD_VAULT", "a-secret-value")
+	warnings := captureWarnings(t, func() {
+		if _, err := Load(filepath.Join(t.TempDir(), "absent.yaml")); err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+	})
+	if strings.TrimSpace(warnings) != "" {
+		t.Errorf("a binding token variable was warned about:\n%s", warnings)
 	}
 }
 

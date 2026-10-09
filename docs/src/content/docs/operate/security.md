@@ -117,7 +117,13 @@ like any secret and resolved on the Resolve path at the moment the runtime
 needs it, against a manager binding that belongs to the calling tenant — a
 reference authored under one tenant cannot read another tenant's binding.
 Resolved values are cached in process memory with a bounded TTL, never
-written to disk, and dropped when the credential or the binding changes. The
+written to disk, and dropped when the credential or the binding changes. A
+Google token refresh or Connect writes back only the tokens Google returned,
+so a client secret held as a reference stays a reference. A binding names the
+environment variable holding its manager token, and only a variable named
+`KILASFLOW_EXTERNAL_SECRET_TOKEN_<NAME>` is accepted, both when the binding is
+saved and again when it is used, so a binding can never send the database DSN
+or the master key to the manager address it names. The
 manager leg (Vault KV v2 today) travels through the same egress policy as
 every workflow HTTP request: a manager on loopback or a private network needs
 an `allowed_private_endpoints` entry, never `allow_private_networks: true`.

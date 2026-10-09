@@ -524,7 +524,7 @@ func (env *purgeEnv) seedTenant(id string) *tenantSeed {
 	}
 	if _, err := env.secrets.CreateSecretBinding(ctx, tenant, credentials.Binding{
 		Name: "vault-" + id, Provider: "vault", Address: "https://vault.example",
-		TokenEnv: "KILASFLOW_SEED_VAULT_TOKEN",
+		TokenEnv: "KILASFLOW_EXTERNAL_SECRET_TOKEN_SEED_VAULT",
 	}); err != nil {
 		env.t.Fatalf("CreateSecretBinding(%s) error = %v", id, err)
 	}

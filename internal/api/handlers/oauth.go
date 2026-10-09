@@ -312,9 +312,11 @@ func (handler *Credentials) OAuthCallback() http.Handler {
 			writeOAuthResult(w, false, err.Error(), state.Origin)
 			return
 		}
-		merged := credentials.MergeGoogleToken(fields, token)
+		// Only what Google returned is written: Update merges it over the
+		// stored payload, so a client secret held as an ext:// reference stays
+		// a reference instead of being sealed as the value it resolved to.
 		if _, err := handler.store.Update(r.Context(), tenant, state.CredentialID, credentials.Record{
-			Name: record.Name, Type: record.Type, Fields: merged, AllowedDomains: record.AllowedDomains,
+			Name: record.Name, Type: record.Type, Fields: token, AllowedDomains: record.AllowedDomains,
 		}); err != nil {
 			writeOAuthResult(w, false, "could not store the google token", state.Origin)
 			return

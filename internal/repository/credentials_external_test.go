@@ -69,7 +69,7 @@ func wiredStore(store *repository.GORMCredentialStore, fetches *atomic.Int64) {
 func mustBinding(t *testing.T, store *repository.GORMCredentialStore, tenant repository.TenantScope, name string) {
 	t.Helper()
 	if _, err := store.CreateSecretBinding(context.Background(), tenant, credentials.Binding{
-		Name: name, Provider: "test", Address: "https://vault.example", TokenEnv: "KILASFLOW_TEST_VAULT_TOKEN",
+		Name: name, Provider: "test", Address: "https://vault.example", TokenEnv: "KILASFLOW_EXTERNAL_SECRET_TOKEN_TEST_VAULT",
 	}); err != nil {
 		t.Fatalf("CreateSecretBinding() error = %v", err)
 	}
@@ -194,7 +194,7 @@ func TestBindingChangeDropsCachedValues(t *testing.T) {
 		t.Fatalf("two resolves caused %d fetches, want 1 cached", got)
 	}
 	if _, err := store.UpdateSecretBinding(ctx, tenant, "prod-vault", credentials.Binding{
-		Provider: "test", Address: "https://vault-two.example", TokenEnv: "KILASFLOW_TEST_VAULT_TOKEN",
+		Provider: "test", Address: "https://vault-two.example", TokenEnv: "KILASFLOW_EXTERNAL_SECRET_TOKEN_TEST_VAULT",
 	}); err != nil {
 		t.Fatalf("UpdateSecretBinding() error = %v", err)
 	}
