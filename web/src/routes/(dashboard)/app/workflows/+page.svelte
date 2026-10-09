@@ -16,6 +16,7 @@
 	} from '$lib/api/generated/workflows/workflows';
 	import type { WorkflowDocumentInput, WorkflowSummary } from '$lib/api/generated/models';
 	import ListStates from '$lib/components/dashboard/list-states.svelte';
+	import WorkflowTagChips from '$lib/components/dashboard/workflow-tag-chips.svelte';
 	import ActivationNotices from '$lib/components/workflow-editor/activation-notices.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
@@ -27,10 +28,15 @@
 		defaultWorkflowListQuery,
 		duplicateName,
 		filterWorkflows,
+		MAX_TAG_LENGTH,
+		MAX_TAGS,
 		pageWorkflows,
+		parseTagInput,
 		parseWorkflowListQuery,
+		tagProblemMessage,
 		WORKFLOWS_PER_PAGE,
-		workflowCountLabel
+		workflowCountLabel,
+		workflowTagOptions
 	} from '$lib/dashboard/workflow-list';
 	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
 	import { RequestGuard } from '$lib/dashboard/request-guard';
@@ -75,7 +81,7 @@
 
 	onMount(() => void loadWorkflows());
 
-	// Search, filter, sort and page live in the URL (?q=&active=&sort=&page=)
+	// Search, filter, sort and page live in the URL (?q=&active=&sort=&page=&tag=)
 	// so a narrowed view survives reload and can be linked. Writes use
 	// replaceState: a filter keystroke is not a navigation.
 	const initialQuery = parseWorkflowListQuery(route.url.search);
@@ -83,6 +89,9 @@
 	let activeFilter = $state(initialQuery.active);
 	let sort = $state(initialQuery.sort);
 	let listPage = $state(initialQuery.page);
+	// Lower-cased: the select's option values are the tags' lower-case keys, so a
+	// link written as ?tag=PROD still selects the "Prod" option.
+	let tagFilter = $state(initialQuery.tag.toLowerCase());
 	let selected = $state<Set<string>>(new Set());
 
 	let createOpen = $state(false);
@@ -101,6 +110,8 @@
 	let renaming = $state<WorkflowSummary | null>(null);
 	let renameName = $state('');
 	let renameError = $state<string | null>(null);
+	let renameTags = $state('');
+	let renameTagsError = $state<string | null>(null);
 	let deleteOpen = $state(false);
 	let deleting = $state<WorkflowSummary | null>(null);
 	let deleteError = $state<string | null>(null);
@@ -110,7 +121,14 @@
 	// Read from the drained list rather than through a query object: the rows
 	// are also used inside a snippet, where the `!isPending && !isError`
 	// narrowing that made `.data` non-optional no longer reaches.
-	const filtered = $derived(filterWorkflows(allRows, { search, active: activeFilter, sort }));
+	const filtered = $derived(filterWorkflows(allRows, { search, active: activeFilter, sort, tag: tagFilter }));
+	// Each tag in the workspace once, plus the one in the URL when no row has it
+	// any more, so the select never shows a blank for a link it was given.
+	const tagOptions = $derived.by(() => {
+		const options = workflowTagOptions(allRows);
+		const known = options.some((tag) => tag.toLowerCase() === tagFilter);
+		return tagFilter && !known ? [...options, tagFilter] : options;
+	});
 	const paged = $derived(pageWorkflows(filtered, listPage));
 	// A delete on the last page clamps to the page that still has rows,
 	// rather than stranding the user on an empty numbered page.
@@ -119,7 +137,7 @@
 	const currentPage = $derived(paged.page);
 
 	$effect(() => {
-		const query = { search, active: activeFilter, sort, page: listPage };
+		const query = { search, active: activeFilter, sort, page: listPage, tag: tagFilter };
 		const searchText = buildWorkflowListSearch(query);
 		const current = route.url.search.startsWith('?') ? route.url.search.slice(1) : route.url.search;
 		if (searchText !== current) {
@@ -200,7 +218,9 @@
 	function askRename(workflow: WorkflowSummary) {
 		renaming = workflow;
 		renameName = workflow.name;
+		renameTags = (workflow.tags ?? []).join(', ');
 		renameError = null;
+		renameTagsError = null;
 		renameOpen = true;
 	}
 
@@ -215,11 +235,17 @@
 			renameError = m.workflows_error_name_too_long();
 			return;
 		}
+		const parsedTags = parseTagInput(renameTags);
+		if (parsedTags.problem) {
+			renameTagsError = tagProblemMessage(parsedTags.problem);
+			return;
+		}
 		rowBusyID = renaming.id;
 		renameError = null;
+		renameTagsError = null;
 		try {
 			// Rename goes through the draft save: the document carries the
-			// name, and PUT appends the renamed revision.
+			// name and the tags, and PUT appends the renamed revision.
 			const current = await getWorkflow(renaming.id);
 			if (current.status !== 200) throw new Error(m.workflows_unexpected_workflow());
 			const document = current.data.latestVersion.document;
@@ -228,7 +254,8 @@
 				name: trimmed,
 				nodes: document.nodes,
 				connections: document.connections,
-				settings: document.settings
+				settings: document.settings,
+				tags: parsedTags.tags
 			});
 			if (response.status !== 200) throw new Error(m.workflows_unexpected_workflow_rename());
 			await loadWorkflows();
@@ -255,7 +282,8 @@
 				name: duplicateName(workflow.name, taken),
 				nodes: document.nodes ?? [],
 				connections: document.connections ?? [],
-				settings: document.settings ?? {}
+				settings: document.settings ?? {},
+				tags: document.tags ?? []
 			});
 			if (response.status !== 201) throw new Error(m.workflows_unexpected_workflow_duplicate());
 			await loadWorkflows();
@@ -363,6 +391,7 @@
 		activeFilter = defaults.active;
 		sort = defaults.sort;
 		listPage = defaults.page;
+		tagFilter = defaults.tag;
 	}
 </script>
 
@@ -435,6 +464,17 @@
 				<option value="draft">{m.workflows_state_draft()}</option>
 			</select>
 		</div>
+		{#if tagOptions.length > 0}
+			<div class="grid gap-1">
+				<label for="workflow-tag" class="text-xs font-medium text-muted-foreground">{m.workflows_tag_filter_label()}</label>
+				<select id="workflow-tag" bind:value={tagFilter} class="h-7 max-w-40 rounded-md border border-input bg-background px-1.5 text-xs" onchange={() => (listPage = 1)}>
+					<option value="">{m.workflows_tag_filter_all()}</option>
+					{#each tagOptions as tag (tag.toLowerCase())}
+						<option value={tag.toLowerCase()}>{tag}</option>
+					{/each}
+				</select>
+			</div>
+		{/if}
 		<div class="grid gap-1">
 			<label for="workflow-sort" class="text-xs font-medium text-muted-foreground">{m.workflows_sort_label()}</label>
 			<select id="workflow-sort" bind:value={sort} class="h-7 rounded-md border border-input bg-background px-1.5 text-xs" onchange={() => (listPage = 1)}>
@@ -501,6 +541,7 @@
 							<a href={`/app/workflows/${workflow.id}`} class="flex h-11 min-w-0 flex-1 items-center gap-3 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring">
 								<span aria-hidden="true" class="size-1.5 shrink-0 rounded-full {workflow.active ? 'bg-success' : 'bg-muted-foreground/40'}"></span>
 								<span class="min-w-0 flex-1 truncate text-[0.8125rem] font-medium" title={workflow.name}>{workflow.name}</span>
+								<WorkflowTagChips tags={workflow.tags ?? []} />
 								<span class="hidden shrink-0 text-[0.6875rem] text-muted-foreground sm:inline">{workflow.active ? m.workflows_state_active() : m.workflows_state_draft()}</span>
 								<span class="sr-only sm:hidden">{workflow.active ? m.workflows_state_active() : m.workflows_state_draft()}</span>
 								<span class="hidden shrink-0 font-mono text-[0.6875rem] text-muted-foreground md:inline">
@@ -561,6 +602,12 @@
 					<label for="rename-workflow-name" class="text-sm font-medium">{m.workflows_name_label()}</label>
 					<Input id="rename-workflow-name" bind:value={renameName} maxlength={255} aria-invalid={Boolean(renameError)} />
 					{#if renameError}<p role="alert" class="text-sm text-destructive">{renameError}</p>{/if}
+				</div>
+				<div class="grid gap-2">
+					<label for="rename-workflow-tags" class="text-sm font-medium">{m.workflows_tags_label()}</label>
+					<Input id="rename-workflow-tags" bind:value={renameTags} placeholder={m.workflows_tags_input_placeholder()} aria-describedby="rename-workflow-tags-hint" aria-invalid={Boolean(renameTagsError)} />
+					<p id="rename-workflow-tags-hint" class="text-xs text-muted-foreground">{m.workflows_tags_input_hint({ max: MAX_TAGS, length: MAX_TAG_LENGTH })}</p>
+					{#if renameTagsError}<p role="alert" class="text-sm text-destructive">{renameTagsError}</p>{/if}
 				</div>
 				<Dialog.Footer>
 					<Button type="button" variant="outline" onclick={() => (renameOpen = false)} disabled={rowBusyID !== null}>{m.workflows_cancel()}</Button>

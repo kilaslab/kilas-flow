@@ -6,9 +6,11 @@ import {
 	duplicateName,
 	filterWorkflows,
 	pageWorkflows,
+	parseTagInput,
 	parseWorkflowListQuery,
 	type WorkflowRow,
-	workflowCountLabel
+	workflowCountLabel,
+	workflowTagOptions
 } from './workflow-list';
 
 function row(overrides: Partial<WorkflowRow> & { id: string }): WorkflowRow {
@@ -17,6 +19,7 @@ function row(overrides: Partial<WorkflowRow> & { id: string }): WorkflowRow {
 		active: false,
 		latestRevision: 1,
 		updatedAt: '2026-09-18T10:00:00Z',
+		tags: [],
 		...overrides
 	};
 }
@@ -27,7 +30,8 @@ describe('parsing the workflows list query from the URL', () => {
 			search: 'orders',
 			active: 'active',
 			sort: 'name',
-			page: 2
+			page: 2,
+			tag: ''
 		});
 	});
 
@@ -39,8 +43,16 @@ describe('parsing the workflows list query from the URL', () => {
 	});
 
 	it('round-trips through the serialiser', () => {
-		const query = { search: 'bill', active: 'draft' as const, sort: 'name' as const, page: 3 };
+		const query = { search: 'bill', active: 'draft' as const, sort: 'name' as const, page: 3, tag: 'Prod' };
 		expect(parseWorkflowListQuery(`?${buildWorkflowListSearch(query)}`)).toEqual(query);
+	});
+
+	it('reads the tag filter and drops a blank one', () => {
+		expect(parseWorkflowListQuery('?tag=billing').tag).toBe('billing');
+		expect(parseWorkflowListQuery('?tag=%20Prod%20').tag).toBe('Prod');
+		expect(parseWorkflowListQuery('?tag=%20%20').tag).toBe('');
+		expect(parseWorkflowListQuery('').tag).toBe('');
+		expect(buildWorkflowListSearch({ ...defaultWorkflowListQuery(), tag: 'a b' })).toBe('tag=a+b');
 	});
 
 	it('omits defaults so the URL stays short', () => {
@@ -73,6 +85,79 @@ describe('filtering and sorting workflows', () => {
 		expect(
 			filterWorkflows(rows, { search: '', active: 'all', sort: 'updated' }).map((entry) => entry.id)
 		).toEqual(['wf_3', 'wf_1', 'wf_2']);
+	});
+});
+
+describe('filtering workflows by tag', () => {
+	const rows = [
+		row({ id: 'wf_1', name: 'One', tags: ['Prod', 'billing'] }),
+		row({ id: 'wf_2', name: 'Two', tags: ['staging'] }),
+		row({ id: 'wf_3', name: 'Three' })
+	];
+	const base = { search: '', active: 'all' as const, sort: 'name' as const };
+
+	it('keeps only the workflows carrying the tag, ignoring case', () => {
+		for (const tag of ['prod', 'PROD', 'Prod']) {
+			expect(filterWorkflows(rows, { ...base, tag }).map((entry) => entry.id)).toEqual(['wf_1']);
+		}
+		expect(filterWorkflows(rows, { ...base, tag: 'nothing' })).toEqual([]);
+	});
+
+	it('shows everything without a tag filter, and works beside the other filters', () => {
+		expect(filterWorkflows(rows, base)).toHaveLength(3);
+		expect(filterWorkflows(rows, { ...base, tag: '' })).toHaveLength(3);
+		expect(filterWorkflows(rows, { ...base, tag: 'staging', search: 'tw' }).map((e) => e.id)).toEqual(['wf_2']);
+		expect(filterWorkflows(rows, { ...base, tag: 'staging', search: 'one' })).toEqual([]);
+	});
+
+	it('copes with a row from an older server that sent no tags', () => {
+		const legacy = { ...row({ id: 'wf_4' }), tags: undefined } as unknown as WorkflowRow;
+		expect(filterWorkflows([legacy], { ...base, tag: 'prod' })).toEqual([]);
+		expect(filterWorkflows([legacy], base)).toHaveLength(1);
+	});
+
+	it('offers each distinct tag once, case-insensitively, in alphabetical order', () => {
+		const options = workflowTagOptions([
+			row({ id: 'a', tags: ['staging', 'Prod'] }),
+			row({ id: 'b', tags: ['prod', 'billing'] }),
+			row({ id: 'c' })
+		]);
+		expect(options).toEqual(['billing', 'Prod', 'staging']);
+		expect(workflowTagOptions([])).toEqual([]);
+	});
+});
+
+describe('reading tags typed into a comma-separated field', () => {
+	it('splits on commas, trims, drops blanks and keeps the written case and order', () => {
+		expect(parseTagInput(' Prod ,billing,, Nightly job ,').tags).toEqual(['Prod', 'billing', 'Nightly job']);
+		expect(parseTagInput('').tags).toEqual([]);
+		expect(parseTagInput('  , ').tags).toEqual([]);
+		expect(parseTagInput('a, b').problem).toBeNull();
+	});
+
+	it('collapses a repeat that differs only in case, keeping the first spelling', () => {
+		expect(parseTagInput('Prod, billing, prod, PROD').tags).toEqual(['Prod', 'billing']);
+	});
+
+	it('refuses what the server would refuse, naming the tag', () => {
+		const long = 'x'.repeat(25);
+		expect(parseTagInput(long).problem).toEqual({ kind: 'too_long', tag: long });
+		expect(parseTagInput('ok, a\u0007b').problem).toEqual({ kind: 'control', tag: 'a\u0007b' });
+		expect(parseTagInput('a\tb').problem).toEqual({ kind: 'control', tag: 'a\tb' });
+
+		const twentyOne = Array.from({ length: 21 }, (_, index) => `t${index}`).join(',');
+		expect(parseTagInput(twentyOne).problem).toEqual({ kind: 'too_many' });
+	});
+
+	it('accepts twenty tags of twenty-four characters, measured the way the server measures', () => {
+		const tag = (index: number) => `${'ж'.repeat(22)}${String(index).padStart(2, '0')}`;
+		const twenty = Array.from({ length: 20 }, (_, index) => tag(index)).join(',');
+		const parsed = parseTagInput(twenty);
+		expect(parsed.problem).toBeNull();
+		expect(parsed.tags).toHaveLength(20);
+		// Thirteen emoji are 26 UTF-16 code units, which n8n and the server count.
+		expect(parseTagInput('😀'.repeat(13)).problem?.kind).toBe('too_long');
+		expect(parseTagInput('😀'.repeat(12)).problem).toBeNull();
 	});
 });
 

@@ -277,7 +277,9 @@ export function toWorkflowInput(document: Document): WorkflowDocumentInput {
 		name: document.name,
 		nodes: clone(document.nodes ?? []),
 		connections: clone(document.connections ?? []),
-		settings: clone(document.settings ?? {})
+		settings: clone(document.settings ?? {}),
+		// A save replaces the stored tags with these, so they are always sent.
+		tags: clone(document.tags ?? [])
 	};
 }
 
