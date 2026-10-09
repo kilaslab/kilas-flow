@@ -39,7 +39,7 @@ opt-in authentication, the n8n importer and exporter, and the embedded-editor
 session flow are all implemented and covered by tests.
 
 <!-- generated:catalogue-size -->
-A default install serves 68 distinct node types across 75 type-and-version pairs: 64 types (69 pairs) compiled into the binary, counting the `kilasflow.unsupported` import placeholder for nodes KilasFlow does not implement, and 4 types (6 pairs) from the declarative packs it ships with.
+A default install serves 69 distinct node types across 76 type-and-version pairs: 65 types (70 pairs) compiled into the binary, counting the `kilasflow.unsupported` import placeholder for nodes KilasFlow does not implement, and 4 types (6 pairs) from the declarative packs it ships with.
 <!-- /generated:catalogue-size -->
 
 [`GET /api/v1/node-types`](/reference/api/) is the list of record, and the
