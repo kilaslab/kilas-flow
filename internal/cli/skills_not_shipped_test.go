@@ -2,6 +2,7 @@ package cli
 
 import (
 	"flag"
+	"fmt"
 	"io"
 	"io/fs"
 	"regexp"
@@ -119,9 +120,9 @@ func TestNoSkillListsAShippedVerbAsMissing(t *testing.T) {
 // id a verb drives described as reached "through the escape hatch", and a
 // "No <family> verbs" head whose leaf verbs the family has (BUG-x28fsx).
 
-// notShippedPieces is every place a skill denies a capability: each
+// skillsGateNotShippedPieces is every place a skill denies a capability: each
 // kilasflow_not_shipped entry and the body of its '## Not shipped yet' section.
-func notShippedPieces(skill skills.Skill) []string {
+func skillsGateNotShippedPieces(skill skills.Skill) []string {
 	pieces := append([]string{}, skill.NotShipped...)
 	if section, found := notShippedSection(skill.Body); found {
 		pieces = append(pieces, section)
@@ -130,35 +131,35 @@ func notShippedPieces(skill skills.Skill) []string {
 	return pieces
 }
 
-// sentenceBreak ends a sentence at a full stop followed by a space, a
+// skillsGateSentenceBreak ends a sentence at a full stop followed by a space, a
 // semicolon, a newline or a leading bullet. A colon does not end one, because
 // "No X verb: exec retry reruns …" is a single claim and the gate has to be
 // able to see both halves of it.
-var sentenceBreak = regexp.MustCompile(`\.\s|;|\n|^\s*[-*]\s`)
+var skillsGateSentenceBreak = regexp.MustCompile(`\.\s|;|\n|^\s*[-*]\s`)
 
-func claimSentences(piece string) []string {
-	return sentenceBreak.Split(piece, -1)
+func skillsGateClaimSentences(piece string) []string {
+	return skillsGateSentenceBreak.Split(piece, -1)
 }
 
-// negation is what turns a mention of a verb into a claim about it.
-var negation = regexp.MustCompile(`(?i)\b(no|not|never|nor|without|cannot|isn't|aren't|nothing)\b`)
+// skillsGateNegation is what turns a mention of a verb into a claim about it.
+var skillsGateNegation = regexp.MustCompile(`(?i)\b(no|not|never|nor|without|cannot|isn't|aren't|nothing)\b`)
 
-// verbPattern matches a verb's words with any run of spaces between them.
-func verbPattern(path string) string {
+// skillsGateVerbPattern matches a verb's words with any run of spaces between them.
+func skillsGateVerbPattern(path string) string {
 	return strings.Join(strings.Fields(path), `\s+`)
 }
 
-// deniesVerb reports whether a sentence denies a verb that ships.
+// skillsGateDeniesVerb reports whether a sentence denies a verb that ships.
 //
 // A multi-word path (`workflow activate`, `skills list`) is specific enough
 // that writing it next to a negation is the denial, bare or after `kilasflow`,
 // backticked or not. A one-word verb (`run`, `api`, `help`) is also a common
 // English word and a sentence about its flags legitimately says "no", so only
 // the denial's own forms count: "no `run` verb", "`run` does not exist".
-func deniesVerb(sentence, path string) bool {
-	joined := verbPattern(path)
+func skillsGateDeniesVerb(sentence, path string) bool {
+	joined := skillsGateVerbPattern(path)
 	if strings.Contains(path, " ") {
-		return negation.MatchString(sentence) &&
+		return skillsGateNegation.MatchString(sentence) &&
 			regexp.MustCompile(`(?i)\b`+joined+`\b`).MatchString(sentence)
 	}
 
@@ -176,10 +177,10 @@ func TestNoNotShippedSentenceNegatesAShippedVerb(t *testing.T) {
 		t.Fatalf("LoadBundle() error = %v", err)
 	}
 	for _, skill := range bundle {
-		for _, piece := range notShippedPieces(skill) {
-			for _, sentence := range claimSentences(piece) {
+		for _, piece := range skillsGateNotShippedPieces(skill) {
+			for _, sentence := range skillsGateClaimSentences(piece) {
 				for _, verb := range registry() {
-					if verb.Path != "" && deniesVerb(sentence, verb.Path) {
+					if verb.Path != "" && skillsGateDeniesVerb(sentence, verb.Path) {
 						t.Errorf("%s: %q writes a negation next to `kilasflow %s`, which ships; say what is missing without naming a verb that exists",
 							skill.Name, strings.TrimSpace(sentence), verb.Path)
 					}
@@ -189,9 +190,9 @@ func TestNoNotShippedSentenceNegatesAShippedVerb(t *testing.T) {
 	}
 }
 
-// verbFlags is every flag each verb registers, the globals every verb takes
+// skillsGateVerbFlags is every flag each verb registers, the globals every verb takes
 // and its own, keyed by the verb's path.
-func verbFlags() map[string]map[string]bool {
+func skillsGateVerbFlags() map[string]map[string]bool {
 	flags := map[string]map[string]bool{}
 	for _, verb := range registry() {
 		set := flag.NewFlagSet(verb.Path, flag.ContinueOnError)
@@ -218,7 +219,7 @@ func TestNoSkillDeniesAFlagTheBinaryRegisters(t *testing.T) {
 		t.Fatalf("LoadBundle() error = %v", err)
 	}
 	denial := regexp.MustCompile("(?i)\\bno\\s+`?--([a-z][a-z0-9-]*)`?\\s+flag")
-	flags := verbFlags()
+	flags := skillsGateVerbFlags()
 	registered := map[string]bool{}
 	for _, names := range flags {
 		for name := range names {
@@ -226,19 +227,19 @@ func TestNoSkillDeniesAFlagTheBinaryRegisters(t *testing.T) {
 		}
 	}
 	for _, skill := range bundle {
-		for _, piece := range notShippedPieces(skill) {
+		for _, piece := range skillsGateNotShippedPieces(skill) {
 			for _, match := range denial.FindAllStringSubmatch(piece, -1) {
 				if registered[match[1]] {
 					t.Errorf("%s says %q, but --%s is a flag this binary registers", skill.Name, match[0], match[1])
 				}
 			}
-			for _, sentence := range claimSentences(piece) {
-				if !negation.MatchString(sentence) {
+			for _, sentence := range skillsGateClaimSentences(piece) {
+				if !skillsGateNegation.MatchString(sentence) {
 					continue
 				}
 				for path, names := range flags {
 					for name := range names {
-						mention := "(?i)" + verbPattern(path) + "`?\\s+--" + regexp.QuoteMeta(name) + "\\b"
+						mention := "(?i)" + skillsGateVerbPattern(path) + "`?\\s+--" + regexp.QuoteMeta(name) + "\\b"
 						if regexp.MustCompile(mention).MatchString(sentence) {
 							t.Errorf("%s: %q writes a negation next to `%s --%s`, which ships", skill.Name, strings.TrimSpace(sentence), path, name)
 						}
@@ -249,8 +250,8 @@ func TestNoSkillDeniesAFlagTheBinaryRegisters(t *testing.T) {
 	}
 }
 
-// operationsOfShippedVerbs maps each operation id a verb drives to that verb.
-func operationsOfShippedVerbs() map[string]string {
+// skillsGateOperationsOfShippedVerbs maps each operation id a verb drives to that verb.
+func skillsGateOperationsOfShippedVerbs() map[string]string {
 	operations := map[string]string{}
 	for _, verb := range registry() {
 		if verb.Operation != "" && verb.Path != "" {
@@ -274,12 +275,12 @@ func TestNoSkillSendsAShippedVerbsOperationThroughTheEscapeHatch(t *testing.T) {
 	}
 	escape := regexp.MustCompile("(?i)escape hatch")
 	for _, skill := range bundle {
-		for _, piece := range notShippedPieces(skill) {
-			for _, sentence := range claimSentences(piece) {
+		for _, piece := range skillsGateNotShippedPieces(skill) {
+			for _, sentence := range skillsGateClaimSentences(piece) {
 				if !escape.MatchString(sentence) {
 					continue
 				}
-				for operation, path := range operationsOfShippedVerbs() {
+				for operation, path := range skillsGateOperationsOfShippedVerbs() {
 					if regexp.MustCompile(`\b` + regexp.QuoteMeta(operation) + `\b`).MatchString(sentence) {
 						t.Errorf("%s: %q sends `%s` through the escape hatch, but `kilasflow %s` drives it",
 							skill.Name, strings.TrimSpace(sentence), operation, path)
@@ -307,8 +308,8 @@ func TestNoSkillDeniesAWholeVerbFamily(t *testing.T) {
 	}
 	head := regexp.MustCompile(`(?i)\bno\s+([a-z]+)\s+verbs?\b`)
 	for _, skill := range bundle {
-		for _, piece := range notShippedPieces(skill) {
-			for _, sentence := range claimSentences(piece) {
+		for _, piece := range skillsGateNotShippedPieces(skill) {
+			for _, sentence := range skillsGateClaimSentences(piece) {
 				match := head.FindStringSubmatch(sentence)
 				if match == nil {
 					continue
@@ -333,6 +334,36 @@ func TestNoSkillDeniesAWholeVerbFamily(t *testing.T) {
 // prose: "no <verb>" and "<verb> does not exist". The forms are tight on
 // purpose (a negation directly before the path, or an existence verb after it)
 // because an anti-pattern may say "not" about anything.
+// skillsGateProseDenials returns every plain denial of a shipped verb in one
+// document's prose. Inside a document that is not a denial section only "no"
+// counts as the denial: "without" and "nor" are ordinary advice ("never save
+// without `kilasflow workflow validate`"), and the denial sections, where they
+// are claims, are read by the sentence gates above.
+func skillsGateProseDenials(text string) []string {
+	if from := strings.Index(text, "<!-- generated:command-reference -->"); from >= 0 {
+		if to := strings.Index(text, "<!-- /generated:command-reference -->"); to > from {
+			text = text[:from] + text[to:]
+		}
+	}
+
+	var denials []string
+	for _, verb := range registry() {
+		if verb.Path == "" || !strings.Contains(verb.Path, " ") {
+			continue
+		}
+		joined := skillsGateVerbPattern(verb.Path)
+		before := regexp.MustCompile("(?i)\\bno\\s+`?(?:kilasflow\\s+)?" + joined + "\\b")
+		after := regexp.MustCompile("(?i)\\b" + joined + "\\b[^.;\\n]{0,60}?\\b(?:do|does|is|are)\\s+not\\s+(?:yet\\s+)?(?:exist|ship|shipped)\\b")
+		for _, pattern := range []*regexp.Regexp{before, after} {
+			for _, match := range pattern.FindAllString(text, -1) {
+				denials = append(denials, fmt.Sprintf("%q, but `kilasflow %s` ships", match, verb.Path))
+			}
+		}
+	}
+
+	return denials
+}
+
 func TestNoSkillProseDeniesAShippedVerb(t *testing.T) {
 	err := fs.WalkDir(skills.BundleFS(), ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".md") {
@@ -342,28 +373,38 @@ func TestNoSkillProseDeniesAShippedVerb(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		text := string(data)
-		if from := strings.Index(text, "<!-- generated:command-reference -->"); from >= 0 {
-			if to := strings.Index(text, "<!-- /generated:command-reference -->"); to > from {
-				text = text[:from] + text[to:]
-			}
-		}
-		for _, verb := range registry() {
-			if verb.Path == "" || !strings.Contains(verb.Path, " ") {
-				continue
-			}
-			joined := verbPattern(verb.Path)
-			before := regexp.MustCompile("(?i)\\b(?:no|without|nor)\\s+`?(?:kilasflow\\s+)?" + joined + "\\b")
-			after := regexp.MustCompile("(?i)\\b" + joined + "\\b[^.;\\n]{0,60}?\\b(?:do|does|is|are)\\s+not\\s+(?:yet\\s+)?(?:exist|ship|shipped)\\b")
-			for _, pattern := range []*regexp.Regexp{before, after} {
-				for _, match := range pattern.FindAllString(text, -1) {
-					t.Errorf("%s says %q, but `kilasflow %s` ships", path, match, verb.Path)
-				}
-			}
+		for _, denial := range skillsGateProseDenials(string(data)) {
+			t.Errorf("%s says %s", path, denial)
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walk the skills bundle: %v", err)
+	}
+}
+
+// The prose gate has to read a denial and spare advice that happens to share
+// its words.
+func TestTheProseGateSparesAdviceAndCatchesDenials(t *testing.T) {
+	spared := []string{
+		"Never save a workflow without `kilasflow workflow validate` first.",
+		"Neither a draft nor `workflow validate` output proves a run.",
+		"Run `kilasflow workflow activate <workflowId> --yes` only when asked.",
+	}
+	for _, text := range spared {
+		if denials := skillsGateProseDenials(text); len(denials) != 0 {
+			t.Errorf("%q was read as a denial: %v", text, denials)
+		}
+	}
+
+	refused := []string{
+		"There is no `workflow activate` verb.",
+		"`workflow duplicate` and `run --revision` do not exist either.",
+		"No kilasflow workflow validate exists, so validate by saving.",
+	}
+	for _, text := range refused {
+		if denials := skillsGateProseDenials(text); len(denials) == 0 {
+			t.Errorf("%q was not read as a denial", text)
+		}
 	}
 }
