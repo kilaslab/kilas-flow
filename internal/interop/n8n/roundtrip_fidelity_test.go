@@ -1,7 +1,9 @@
 package n8n_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/kilaslab/kilas-flow/internal/interop/n8n"
@@ -47,6 +49,30 @@ func TestAnExportedWorkflowDeclaresTheExecutionOrderItRunsIn(t *testing.T) {
 	}
 	if fmt.Sprint(settings["executionTimeout"]) != "120" {
 		t.Errorf("settings = %#v, want the imported execution timeout kept", settings)
+	}
+
+	// Export then import is a fixed point for the settings: the order the
+	// export declares is the order this server runs in, so reading it back
+	// reports nothing, and the next export carries the same settings.
+	exportedJSON, err := json.Marshal(exported.Document)
+	if err != nil {
+		t.Fatalf("marshal the export: %v", err)
+	}
+	reimported, err := n8n.Import(exportedJSON, registry(t))
+	if err != nil {
+		t.Fatalf("Import(export) error = %v", err)
+	}
+	for _, issue := range reimported.Unsupported {
+		if strings.HasPrefix(issue.Field, "settings") {
+			t.Errorf("importing the export reported %#v, want no settings issue", issue)
+		}
+	}
+	again, err := n8n.Export(reimported.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export(reimport) error = %v", err)
+	}
+	if fmt.Sprint(again.Document.Settings) != fmt.Sprint(settings) {
+		t.Errorf("second export settings = %#v, want the first export's %#v", again.Document.Settings, settings)
 	}
 
 	// A workflow authored here, with no settings at all, says the same thing.

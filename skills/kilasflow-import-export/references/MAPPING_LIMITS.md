@@ -95,7 +95,7 @@ in part (`documentIssues` and `importSettings` in internal/interop/n8n/n8n.go):
 
 | Field | What happens |
 | --- | --- |
-| `settings` | beyond the timezone, the workflow's own `executionTimeout` and `errorWorkflow`, reported **dropped**: execution order, the save-data flags and the rest have no equivalent yet |
+| `settings` | beyond the timezone, the workflow's own `executionTimeout`, `errorWorkflow` and `executionOrder`, reported **dropped**: the save-data flags and the rest have no equivalent yet |
 | `pinData` | reported **dropped**: pinned test data is an editor feature, and the nodes that had it pinned will run for real |
 | `meta` | reported **dropped**: instance metadata about where the workflow came from means nothing in another installation |
 | `staticData` | reported **dropped**: per-workflow scratch space its nodes persist between runs, with no equivalent here |
@@ -105,6 +105,12 @@ server cannot resolve is not carried (schedules run in UTC), n8n's `-1` "no
 timeout" is left uncarried because this server always applies its own budget,
 and an `errorWorkflow` is carried as the id n8n held — which resolves only if
 that workflow was imported too.
+
+`executionOrder` is the one setting this server states a position on: it always
+runs n8n's `v1` order, so `"v1"` (which every export writes) imports silently and
+export then import adds no `settings` issue. `"v0"`, any other value or a
+non-string is reported **lossy** as `settings.executionOrder`, saying KilasFlow
+runs the v1 order, and is not carried.
 
 ## Node-level elements
 
@@ -163,8 +169,9 @@ rather than guessing when the paired-item lineage cannot be established
   activation. Import and read your diagnostics rather than guessing from a
   table: the subset is a measured claim, and `supportedMappings[]` on an export
   is the list this server will stand behind today.
-- **n8n's execution order and the other global settings have no equivalent**:
-  `settings` is read for the timezone, the workflow's own `executionTimeout` and
-  `errorWorkflow`, and the rest is reported dropped rather than quietly applied.
+- **n8n's save-data flags and the other global settings have no equivalent**:
+  `settings` is read for the timezone, the workflow's own `executionTimeout`,
+  `errorWorkflow` and `executionOrder` (only the v1 order is honoured), and the
+  rest is reported dropped rather than quietly applied.
 - **A revision's report is frozen with it**: read diagnostics on the revision an
   import created, and export the latest revision rather than an unsaved draft.

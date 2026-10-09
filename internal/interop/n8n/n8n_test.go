@@ -1625,7 +1625,7 @@ func TestWebhookResponseModeRoundTripsExactly(t *testing.T) {
 // the canonical document, or fails to, without a diagnostic saying so.
 const annotatedFixture = `{
   "name": "Maximally annotated",
-  "settings": {"executionOrder":"v1","timezone":"Asia/Jakarta","errorWorkflow":"wf_other"},
+  "settings": {"executionOrder":"v1","timezone":"Asia/Jakarta","errorWorkflow":"wf_other","saveDataSuccessExecution":"none"},
   "pinData": {"Edit": [{"json":{"pinned":true}}]},
   "meta": {"instanceId":"abc123","templateId":"42"},
   "staticData": {"lastRunToken":"xyz"},
@@ -3142,9 +3142,14 @@ func TestAnImportedWorkflowKeepsItsTimezone(t *testing.T) {
 	if result.Document.Settings["timezone"] != "Asia/Jakarta" {
 		t.Fatalf("settings = %#v, want the timezone carried", result.Document.Settings)
 	}
-	// The other settings still are not carried, and still say so.
-	if !hasReason(result.Unsupported, "execution order") {
-		t.Errorf("unsupported = %#v, want the uncarried settings still named", result.Unsupported)
+	// executionOrder v1 is the order this server runs in, so it is not a
+	// setting that went missing: the file says nothing the import has to name.
+	// Exported workflows always carry it (BUG-6gkd12), which made every
+	// export-then-import report a dropped `settings` issue it never had.
+	for _, issue := range result.Unsupported {
+		if strings.HasPrefix(issue.Field, "settings") {
+			t.Errorf("issue = %#v, want no settings issue for v1 and a timezone", issue)
+		}
 	}
 
 	// A zone this server cannot resolve is named rather than carried: falling
@@ -3163,6 +3168,65 @@ func TestAnImportedWorkflowKeepsItsTimezone(t *testing.T) {
 	}
 	if !hasReason(typo.Unsupported, "not a zone this server knows") {
 		t.Errorf("unsupported = %#v, want the unknown zone named", typo.Unsupported)
+	}
+}
+
+// TestExecutionOrderIsSilentForV1AndLossyForAnythingElse pins the one setting
+// KilasFlow can state a position on. It runs every workflow in n8n's v1 order,
+// so a file that says v1 describes this server exactly and needs no issue; a
+// file that says v0 (the legacy order), an order from a future n8n, or a value
+// that is not a string asks for something this server will not do, and is told
+// so as lossy rather than silently running in a different order.
+func TestExecutionOrderIsSilentForV1AndLossyForAnythingElse(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		value string
+		lossy bool
+	}{
+		{"v1", `"v1"`, false},
+		{"v0", `"v0"`, true},
+		{"a later order", `"v2"`, true},
+		{"not a string", `1`, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			result := importFixture(t, `{
+			  "name": "Order",
+			  "settings": {"executionOrder": `+test.value+`},
+			  "nodes": [
+			    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}}
+			  ],
+			  "connections": {}
+			}`)
+
+			var settingsIssues []n8n.ImportIssue
+			for _, issue := range result.Unsupported {
+				if strings.HasPrefix(issue.Field, "settings") {
+					settingsIssues = append(settingsIssues, issue)
+				}
+			}
+			if !test.lossy {
+				if len(settingsIssues) != 0 {
+					t.Fatalf("issues = %#v, want none for executionOrder %s", settingsIssues, test.value)
+				}
+				return
+			}
+			if len(settingsIssues) != 1 {
+				t.Fatalf("issues = %#v, want exactly one for executionOrder %s", settingsIssues, test.value)
+			}
+			issue := settingsIssues[0]
+			if issue.Field != "settings.executionOrder" || issue.Severity != n8n.SeverityLossy {
+				t.Errorf("issue = %#v, want a lossy settings.executionOrder", issue)
+			}
+			if !strings.Contains(issue.Reason, "v1") || !strings.Contains(issue.Reason, "always") {
+				t.Errorf("reason = %q, want it to say KilasFlow always runs the v1 order", issue.Reason)
+			}
+			if _, carried := result.Document.Settings["executionOrder"]; carried {
+				t.Errorf("settings = %#v, want the order not carried: nothing here reads it", result.Document.Settings)
+			}
+		})
 	}
 }
 
