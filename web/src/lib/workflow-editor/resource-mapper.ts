@@ -31,7 +31,15 @@ function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-const MAPPER_KEYS = ['mappingMode', 'value', 'matchingColumns', 'schema'];
+/**
+ * Whether an object is a stored mapper. The server's rule exactly
+ * (property.ReadMapping): its mappingMode is a non-empty string. Any other key
+ * the mapper uses (`value`, `schema`, `matchingColumns`) can also be the name of
+ * a legacy fixed input, so none of them says anything on its own.
+ */
+function isMapperShaped(value: Record<string, unknown>): boolean {
+	return typeof value.mappingMode === 'string' && value.mappingMode !== '';
+}
 
 /**
  * Whether a stored value is one expression standing for the whole mapper.
@@ -50,15 +58,14 @@ export function isWholeExpression(value: unknown): boolean {
  * property held before it was a mapper — `{unit: "F"}`, the keys being the
  * columns — instead of treating it as empty. Reading it as empty made the next
  * edit write an empty mapping back, silently deleting every static input the
- * author had set. It is only done when none of the mapper's own keys is
- * present, so a mapper, a partial mapper and an expression marker are never
- * mistaken for columns; and only for a mapper that opted in, so every other
- * mapper reads exactly as it did.
+ * author had set. It is done for any object that is not a stored mapper (the
+ * server's own test, below) and not an expression marker; and only for a mapper
+ * that opted in, so every other mapper reads exactly as it did.
  */
 export function readMapping(property: PropertyDefinition, value: unknown): Mapping {
 	const fallback = property.mapper?.supportsAutoMap ? MAPPING_AUTO : MAPPING_MANUAL;
 	if (!isObject(value)) return { mappingMode: fallback, value: {}, matchingColumns: [] };
-	if (property.mapper?.modelDefinable && !isWholeExpression(value) && MAPPER_KEYS.every((key) => !(key in value))) {
+	if (property.mapper?.modelDefinable && !isWholeExpression(value) && !isMapperShaped(value)) {
 		return { mappingMode: MAPPING_MANUAL, value: { ...value }, matchingColumns: [] };
 	}
 	return {
@@ -232,12 +239,24 @@ export function columnText(value: unknown): string {
  *
  * An expression stays one, with the typed text as its template: writing the
  * text over the marker turned an expression into plain text with the first
- * keystroke. Typing `{{` makes a fixed column an expression, as an assignment
- * row does. A number column keeps what is typed until it parses, and clearing
- * it is empty rather than zero.
+ * keystroke. That holds for every mapper.
+ *
+ * The rest is for a mapper that opted into the model switch only (`modelDefinable`),
+ * so every other mapper (a table's columns) stores what it always did. Typing
+ * `{{` makes a fixed column an expression, as an assignment row does. A number
+ * column keeps what is typed until it parses, and clearing it is empty rather
+ * than zero. Elsewhere typed braces stay literal text and a number column stores
+ * Number(text).
  */
-export function editColumn(previous: unknown, text: string, control: ReturnType<typeof columnControl>): unknown {
-	if (isExpression(previous) || text.includes('{{')) return { mode: 'expression', value: text };
+export function editColumn(
+	previous: unknown,
+	text: string,
+	control: ReturnType<typeof columnControl>,
+	modelDefinable = false
+): unknown {
+	if (isExpression(previous)) return { mode: 'expression', value: text };
+	if (!modelDefinable) return control === 'number' ? Number(text) : text;
+	if (text.includes('{{')) return { mode: 'expression', value: text };
 	if (control === 'number') {
 		if (text.trim() === '') return '';
 		const parsed = Number(text);

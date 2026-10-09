@@ -164,14 +164,31 @@ describe('readMapping of a plain object written before the property was a mapper
 
 	it.each([
 		['an expression marker', { mode: 'expression', value: '{{ { unit: 1 } }}' }],
-		['a partial mapper with only its mode', { mappingMode: MAPPING_MANUAL }],
-		['a partial mapper with only its schema', { schema: [] }],
-		['a mapper with its columns', { mappingMode: MAPPING_MANUAL, value: { unit: 'F' }, matchingColumns: [] }]
+		['a mapper with only its mode', { mappingMode: MAPPING_MANUAL }],
+		['a mapper with its columns', { mappingMode: MAPPING_MANUAL, value: { unit: 'F' }, matchingColumns: [] }],
+		['a mapper with its schema copy', { mappingMode: MAPPING_MANUAL, schema: [] }]
 	])('does not read %s as columns', (_name, stored) => {
 		const read = readMapping(optedIn, stored);
 		expect(Object.keys(read.value)).not.toContain('mode');
 		expect(Object.keys(read.value)).not.toContain('mappingMode');
 		expect(Object.keys(read.value)).not.toContain('schema');
+	});
+
+	// The server reads an object as a mapper only when its mappingMode is a
+	// non-empty string (property.ReadMapping). A legacy fixed input that happens
+	// to be named like one of the mapper's other keys is still a plain input,
+	// and reading it as a mapper lost it on the next edit.
+	it.each([
+		['a key named value', { value: 'x', unit: 'F' }],
+		['a key named schema', { schema: 'abc' }],
+		['a key named matchingColumns', { matchingColumns: 3, unit: 'F' }],
+		['an empty mappingMode', { mappingMode: '', unit: 'F' }],
+		['a mappingMode that is not text', { mappingMode: 2, unit: 'F' }]
+	])('keeps %s as a fixed input', (_name, stored) => {
+		const read = readMapping(optedIn, stored);
+		expect(read.mappingMode).toBe(MAPPING_MANUAL);
+		expect(read.value).toEqual(stored);
+		expect(read.schema).toBeUndefined();
 	});
 
 	it('flags a whole expression, which no column editor can show', () => {
@@ -301,14 +318,35 @@ describe('columnText and editColumn', () => {
 	});
 
 	it('turns typed braces into an expression, as an assignment row does', () => {
-		expect(editColumn('F', 'x {{ $json.unit }}', 'string')).toEqual({ mode: 'expression', value: 'x {{ $json.unit }}' });
+		expect(editColumn('F', 'x {{ $json.unit }}', 'string', true)).toEqual({ mode: 'expression', value: 'x {{ $json.unit }}' });
 	});
 
 	it('writes fixed text and numbers as themselves', () => {
-		expect(editColumn('', 'F', 'string')).toBe('F');
-		expect(editColumn('', '37', 'number')).toBe(37);
+		expect(editColumn('', 'F', 'string', true)).toBe('F');
+		expect(editColumn('', '37', 'number', true)).toBe(37);
 		// Clearing a number must not become zero: the author has said nothing yet.
-		expect(editColumn(37, '', 'number')).toBe('');
-		expect(editColumn('', '3x', 'number')).toBe('3x');
+		expect(editColumn(37, '', 'number', true)).toBe('');
+		expect(editColumn('', '3x', 'number', true)).toBe('3x');
+	});
+
+	// Every other mapper (a table's columns) keeps what it stored before the
+	// model switch existed: only an expression column editing as its template
+	// is shared, because the marker's JSON in a text box was destroyed by the
+	// first keystroke.
+	describe('for a mapper that did not opt into the model switch', () => {
+		it('still edits an existing expression column as its template', () => {
+			const previous = { mode: 'expression', value: '{{ $json.note }}' };
+			expect(editColumn(previous, '{{ $json.other }}', 'string')).toEqual({ mode: 'expression', value: '{{ $json.other }}' });
+		});
+
+		it('stores typed braces as the literal text they are', () => {
+			expect(editColumn('F', 'x {{ $json.unit }}', 'string')).toBe('x {{ $json.unit }}');
+		});
+
+		it('stores a cleared number as Number(text), which is zero', () => {
+			expect(editColumn(37, '', 'number')).toBe(0);
+			expect(editColumn('', '37', 'number')).toBe(37);
+			expect(editColumn('', '3x', 'number')).toBeNaN();
+		});
 	});
 });
