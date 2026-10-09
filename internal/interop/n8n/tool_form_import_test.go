@@ -385,6 +385,44 @@ func TestGmailImportsWithN8NsNamesAndDefaults(t *testing.T) {
 	}
 }
 
+// n8n's Gmail appends an attribution line to every sent mail from 2.1 unless
+// told not to, and this server's node sends none, so the export says not to.
+// An imported "do not append" loses nothing and is not reported.
+func TestGmailSendsExportWithoutN8NsAttribution(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, gmailFixture("2.1", `{"sendTo":"ops@example.com","subject":"Hi","message":"x","options":{"appendAttribution":false}}`))
+	if issue, found := issueOn(result, "options.appendAttribution"); found {
+		t.Errorf("an imported appendAttribution: false was reported: %+v", issue)
+	}
+	exported, err := n8n.Export(result.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	for _, candidate := range exported.Document.Nodes {
+		if candidate.Name == "Gmail" {
+			options, _ := candidate.Parameters["options"].(map[string]any)
+			if attribution, present := options["appendAttribution"]; !present || attribution != false {
+				t.Errorf("exported options = %#v, want appendAttribution false", candidate.Parameters["options"])
+			}
+		}
+	}
+	// A tool form sends the same way.
+	tool := importFixture(t, agentWithTool(gmailToolNode))
+	exportedTool, err := n8n.Export(tool.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	for _, candidate := range exportedTool.Document.Nodes {
+		if candidate.Name == "Tool" {
+			options, _ := candidate.Parameters["options"].(map[string]any)
+			if options["appendAttribution"] != false {
+				t.Errorf("exported tool options = %#v, want appendAttribution false", candidate.Parameters["options"])
+			}
+		}
+	}
+}
+
 // --- PostgreSQL query replacements ----------------------------------------------
 
 // n8n resolves each {{ }} segment of an expression replacement on its own and

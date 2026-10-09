@@ -293,6 +293,10 @@ func gmailToKilas(node Node) (map[string]any, []Unsupported) {
 			if options[key] == nil {
 				continue
 			}
+			if key == "appendAttribution" && options[key] == false {
+				// This node never appends one, so nothing is lost.
+				continue
+			}
 			issues = append(issues, Unsupported{
 				Severity: SeverityDropped, Field: collection + "." + key,
 				Reason: fmt.Sprintf("the n8n Gmail option %q has no equivalent in this server's Gmail node and was not carried", key),
@@ -359,6 +363,15 @@ func gmailToN8N(node workflow.Node) (map[string]any, []Lossy) {
 			// This node's default; n8n's is html.
 			parameters["emailType"] = "text"
 		}
+		// n8n appends an attribution line to a sent mail from 2.1 unless told
+		// not to; this node sends none, so the export says not to.
+		options, _ := parameters["options"].(map[string]any)
+		copied := make(map[string]any, len(options)+1)
+		for key, value := range options {
+			copied[key] = value
+		}
+		copied["appendAttribution"] = false
+		parameters["options"] = copied
 	}
 	return parameters, nil
 }
