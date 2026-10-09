@@ -27,10 +27,10 @@ import (
 //
 // The results are the columns, the schema copy, whether anything was present
 // and whether what was present could not be read.
-func readN8NWorkflowInputs(value any) (map[string]any, []property.MapperField, bool, bool) {
+func readN8NWorkflowInputs(value any) (map[string]any, []property.MapperField, []string, bool, bool) {
 	collection, ok := value.(map[string]any)
 	if !ok || collection == nil {
-		return nil, nil, value != nil, value != nil
+		return nil, nil, nil, value != nil, value != nil
 	}
 	inner, _ := collection["value"].(map[string]any)
 	entries := inner
@@ -40,18 +40,18 @@ func readN8NWorkflowInputs(value any) (map[string]any, []property.MapperField, b
 		// imported every current n8n mapper as empty.
 		entries = wrapper
 	}
-	schema := n8nWorkflowInputSchema(collection["schema"])
-	if len(entries) == 0 && len(schema) == 0 {
+	schema, removed := n8nWorkflowInputSchema(collection["schema"])
+	if len(entries) == 0 && len(schema) == 0 && len(removed) == 0 {
 		// Absent, or a mapper the author never filled in. Optional either
 		// way; an empty mapper and no mapper are the same tool.
 		empty := len(collection) > 0
-		return nil, nil, empty, false
+		return nil, nil, nil, empty, false
 	}
 	columns := make(map[string]any, len(entries))
 	for _, key := range sortedKeys(entries) {
 		columns[key] = fromN8NValue(entries[key])
 	}
-	return columns, schema, true, false
+	return columns, schema, removed, true, false
 }
 
 // workflowInputsToKilas carries a mapper's columns as a plain field map, the
@@ -60,7 +60,7 @@ func readN8NWorkflowInputs(value any) (map[string]any, []property.MapperField, b
 // The three results are the value to store, whether anything was present, and
 // whether what was present could not be read.
 func workflowInputsToKilas(value any) (map[string]any, bool, bool) {
-	columns, _, present, reported := readN8NWorkflowInputs(value)
+	columns, _, _, present, reported := readN8NWorkflowInputs(value)
 	if len(columns) == 0 {
 		return nil, present, reported
 	}
@@ -70,20 +70,28 @@ func workflowInputsToKilas(value any) (map[string]any, bool, bool) {
 // workflowToolInputsToKilas carries a Workflow Tool's mapper as the mapper
 // KilasFlow stores, with the same three results.
 func workflowToolInputsToKilas(value any) (map[string]any, bool, bool) {
-	columns, schema, present, reported := readN8NWorkflowInputs(value)
-	if columns == nil && len(schema) == 0 {
+	columns, schema, removed, present, reported := readN8NWorkflowInputs(value)
+	if columns == nil && len(schema) == 0 && len(removed) == 0 {
 		return nil, present, reported
 	}
 	// n8n offers the model only the columns written as a $fromAI call; the
 	// others it lists but leaves unset. Here a column with no entry is the
 	// model's, so an untouched n8n column is stored as an explicit null: a
 	// fixed value, which keeps it out of the model's schema as it was in n8n.
+	if columns == nil {
+		columns = map[string]any{}
+	}
 	for _, field := range schema {
 		if _, set := columns[field.ID]; !set {
-			if columns == nil {
-				columns = map[string]any{}
-			}
 			columns[field.ID] = nil
+		}
+	}
+	// A column the author removed from the form is not mapped in n8n, so the
+	// model is not offered it there either. It stays out of the schema copy, but
+	// without an entry here it would read as a column the model fills.
+	for _, id := range removed {
+		if _, set := columns[id]; !set {
+			columns[id] = nil
 		}
 	}
 	return property.WriteMapping(property.Mapping{Mode: property.MappingManual, Values: columns, Schema: schema}), true, false
@@ -91,21 +99,25 @@ func workflowToolInputsToKilas(value any) (map[string]any, bool, bool) {
 
 // n8nWorkflowInputSchema reads the schema copy n8n stores beside a mapper. The
 // copy is display data here too, so only the live columns' ids, names and
-// types cross; a column the author removed from the form is not one.
-func n8nWorkflowInputSchema(raw any) []property.MapperField {
+// types cross. A column the author removed from the form is not one: its id is
+// returned separately, so the caller can keep it out of the model's hands.
+func n8nWorkflowInputSchema(raw any) ([]property.MapperField, []string) {
 	rows, _ := raw.([]any)
 	fields := make([]property.MapperField, 0, len(rows))
+	var removedIDs []string
 	seen := make(map[string]bool, len(rows))
 	for _, entry := range rows {
 		row, ok := entry.(map[string]any)
 		if !ok {
 			continue
 		}
-		if removed, _ := row["removed"].(bool); removed {
-			continue
-		}
 		id := textOf(row["id"])
 		if id == "" || seen[id] {
+			continue
+		}
+		if removed, _ := row["removed"].(bool); removed {
+			seen[id] = true
+			removedIDs = append(removedIDs, id)
 			continue
 		}
 		seen[id] = true
@@ -115,7 +127,7 @@ func n8nWorkflowInputSchema(raw any) []property.MapperField {
 		}
 		fields = append(fields, property.MapperField{ID: id, DisplayName: name, Type: workflowInputTypeFromN8N(textOf(row["type"]))})
 	}
-	return fields
+	return fields, removedIDs
 }
 
 // workflowInputTypeFromN8N renders a mapper column type in this server's

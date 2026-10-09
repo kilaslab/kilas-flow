@@ -94,8 +94,11 @@ func TestWorkflowToolV2FromAIInputsImportAsModelDefinedColumns(t *testing.T) {
 			t.Errorf("%s = %#v (present %v), want an explicit null so the model is not offered it", untouched, value, present)
 		}
 	}
-	if _, present := mapping.Values["gone"]; present {
-		t.Errorf("a column the author removed from the form was imported: %#v", mapping.Values["gone"])
+	// A column the author removed from the form is not mapped in n8n, so the
+	// model is not offered it there either. Here a column with no entry is the
+	// model's, so it is kept as a fixed null too (it is not in the schema copy).
+	if value, present := mapping.Values["gone"]; !present || value != nil {
+		t.Errorf("gone = %#v (present %v), want an explicit null so the model is not offered a removed column", value, present)
 	}
 
 	// The schema copy is display data: ids, names and types, minus the removed
