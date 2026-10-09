@@ -142,9 +142,12 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   nodes; a read keys each row by its header and adds the sheet's own
   `row_number`. The trigger polls on the leased cursor for `rowAdded`,
   `rowUpdate` and `anyUpdate` by comparing row fingerprints, so it needs only
-  the spreadsheets scope; it watches up to 20,000 rows. Two OAuth2 credential
-  types, `googleSheetsOAuth2Api` and `googleSheetsTriggerOAuth2Api`, use the
-  existing Google Connect flow and refresh. Service-account sign-in, creating
+  read access to spreadsheets; it watches up to 20,000 rows and starts a new
+  baseline when its settings change. Two OAuth2 credential types,
+  `googleSheetsOAuth2Api` and `googleSheetsTriggerOAuth2Api`, use the existing
+  Google Connect flow and refresh, and ask for the least scope each node needs
+  (`spreadsheets`, or `spreadsheets.readonly` for the trigger, plus
+  `drive.metadata.readonly` for the spreadsheet picker). Service-account sign-in, creating
   or deleting spreadsheets and tabs, and the version 3 node shape are refused by
   name at import, and a trigger set to emit the old or both versions of a row
   imports as the new version with a note. The Google Sheets Tool for the AI

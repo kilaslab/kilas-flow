@@ -14,9 +14,10 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/credentials"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/sheetsa1"
 )
 
-// The three loaders the Google Sheets node's pickers are built from. The node
+// The loaders the Google Sheets node's pickers are built from. The node
 // names them as data, and this package decides what they mean.
 const (
 	// GoogleSheetsDocumentsLoader lists the spreadsheets the credential can see.
@@ -25,6 +26,9 @@ const (
 	GoogleSheetsSheetsLoader = "googleSheets.sheets"
 	// GoogleSheetsColumnsLoader is the schema loader behind the columns mapper.
 	GoogleSheetsColumnsLoader = "googleSheets.columns"
+	// GoogleSheetsHeadingsLoader lists the column names of a tab, for a setting
+	// that picks among them, such as the trigger's Columns to Watch.
+	GoogleSheetsHeadingsLoader = "googleSheets.headings"
 )
 
 // The dependency keys these loaders read.
@@ -32,6 +36,9 @@ const (
 	googleSheetsDocumentDependency  = "documentId"
 	googleSheetsSheetDependency     = "sheetName"
 	googleSheetsOperationDependency = "operation"
+	// googleSheetsOptionsDependency is the node's Options collection as JSON,
+	// which says which row the column names are on.
+	googleSheetsOptionsDependency = "options"
 )
 
 // The API roots, variables only so a test can aim them at a stub.
@@ -43,6 +50,7 @@ var (
 var (
 	spreadsheetLink = regexp.MustCompile(`/spreadsheets/d/([A-Za-z0-9_-]+)`)
 	spreadsheetID   = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+	gidInText       = regexp.MustCompile(`(?:^|[#?&])gid=([0-9]+)`)
 )
 
 // RegisterGoogleSheets installs the Sheets pickers' loaders.
@@ -58,6 +66,7 @@ func RegisterGoogleSheets(resolver *Resolver) error {
 	for name, loader := range map[string]InternalLoader{
 		GoogleSheetsDocumentsLoader: googleSheetsDocuments(resolver.policy),
 		GoogleSheetsSheetsLoader:    googleSheetsSheets(resolver.policy),
+		GoogleSheetsHeadingsLoader:  googleSheetsHeadings(resolver.policy),
 	} {
 		if err := resolver.RegisterInternal(name, loader); err != nil {
 			return err
@@ -242,7 +251,11 @@ func googleSheetsSheets(policy safehttp.Policy) InternalLoader {
 // and, for a large gid, in exponent form after a float64 round trip; or a
 // title. A number that is no tab's gid is tried as a title.
 func tabNamed(tabs []spreadsheetTab, value string) (spreadsheetTab, bool) {
-	value = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(value), "gid="))
+	value = strings.TrimSpace(value)
+	// A link names its tab by the gid after # or ?; "gid=7" alone does too.
+	if match := gidInText.FindStringSubmatch(value); match != nil {
+		value = match[1]
+	}
 	if number, err := strconv.ParseFloat(value, 64); err == nil && number == math.Trunc(number) && number >= 0 && number < 1<<53 {
 		for _, tab := range tabs {
 			if tab.gid == int64(number) {
@@ -258,67 +271,145 @@ func tabNamed(tabs []spreadsheetTab, value string) (spreadsheetTab, bool) {
 	return spreadsheetTab{}, false
 }
 
+// headingText is a header cell as the text the node uses for it. The node keys a
+// mapped value, a read row and a filter by a heading exactly as written, so the
+// pickers offer it exactly as written too: no trimming, and a number as the text
+// a cell shows.
+func headingText(cell any) string {
+	switch typed := cell.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(typed)
+	default:
+		return fmt.Sprint(typed)
+	}
+}
+
+// headerRowOf reads which row the column names are on from the node's Options
+// collection, sent as JSON: Data Location on Sheet for the writing operations,
+// and for the trigger its rows or the start of its A1 range. Anything it cannot
+// read is row 1.
+func headerRowOf(optionsJSON string) int {
+	var options map[string]any
+	if strings.TrimSpace(optionsJSON) == "" || json.Unmarshal([]byte(optionsJSON), &options) != nil {
+		return 1
+	}
+	group := func(name string) map[string]any {
+		holder, _ := options[name].(map[string]any)
+		values, _ := holder["values"].(map[string]any)
+		return values
+	}
+	whole := func(value any) int {
+		switch typed := value.(type) {
+		case float64:
+			return int(typed)
+		case string:
+			number, _ := strconv.Atoi(strings.TrimSpace(typed))
+			return number
+		}
+		return 0
+	}
+	if row := whole(group("locationDefine")["headerRow"]); row >= 1 {
+		return row
+	}
+	location := group("dataLocationOnSheet")
+	switch location["rangeDefinition"] {
+	case "specifyRange":
+		if row := whole(location["headerRow"]); row >= 1 {
+			return row
+		}
+	case "specifyRangeA1":
+		if requested, _ := location["range"].(string); strings.TrimSpace(requested) != "" {
+			return sheetsa1.StartRow(sheetsa1.Region(requested))
+		}
+	}
+	return 1
+}
+
+// sheetHeadings reads the column names of the tab a scope names. A reason, with
+// no error, says what to choose first or what Google refused.
+func sheetHeadings(ctx context.Context, policy safehttp.Policy, scope Scope) (names []string, reason string, err error) {
+	documentID, err := spreadsheetIDOf(scope.Dependencies[googleSheetsDocumentDependency])
+	if err != nil {
+		return nil, "", err
+	}
+	sheet := strings.TrimSpace(scope.Dependencies[googleSheetsSheetDependency])
+	if documentID == "" || sheet == "" {
+		return nil, "choose a document and a sheet first", nil
+	}
+	tabs, reason, err := spreadsheetTabs(ctx, policy, scope, documentID)
+	if err != nil {
+		return nil, "", err
+	}
+	if reason != "" {
+		return nil, reason, nil
+	}
+	tab, found := tabNamed(tabs, sheet)
+	if !found {
+		return nil, "that sheet is not in the document", nil
+	}
+
+	row := headerRowOf(scope.Dependencies[googleSheetsOptionsDependency])
+	query := url.Values{"valueRenderOption": []string{"FORMATTED_VALUE"}}
+	rangeA1 := sheetsa1.Quote(tab.title) + "!" + strconv.Itoa(row) + ":" + strconv.Itoa(row)
+	body, status, err := googleGet(ctx, policy, scope,
+		googleSheetsBase+"/spreadsheets/"+url.PathEscape(documentID)+"/values/"+url.PathEscape(rangeA1), query)
+	if err != nil {
+		return nil, "", err
+	}
+	if refusedForScope(status) {
+		return nil, "Google did not let this credential read that sheet.", nil
+	}
+	if status >= 400 {
+		return nil, "", fmt.Errorf("Google answered %d", status)
+	}
+	var payload struct {
+		Values [][]any `json:"values"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, "", fmt.Errorf("Google's header row was not JSON")
+	}
+	seen := map[string]bool{}
+	if len(payload.Values) > 0 {
+		for _, cell := range payload.Values[0] {
+			name := headingText(cell)
+			if name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		reason = fmt.Sprintf("row %d of this sheet is empty, so there are no column names yet.", row)
+	}
+	return names, reason, nil
+}
+
 // googleSheetsColumns answers the columns mapper: the header row becomes the
 // column list, and Update also offers the row number as a column to match on.
 func googleSheetsColumns(policy safehttp.Policy) SchemaLoader {
 	return func(ctx context.Context, scope Scope) (property.MapperSchema, error) {
-		documentID, err := spreadsheetIDOf(scope.Dependencies[googleSheetsDocumentDependency])
+		names, reason, err := sheetHeadings(ctx, policy, scope)
 		if err != nil {
 			return property.MapperSchema{}, err
 		}
-		sheet := strings.TrimSpace(scope.Dependencies[googleSheetsSheetDependency])
-		if documentID == "" || sheet == "" {
-			return property.MapperSchema{Reason: "choose a document and a sheet first"}, nil
-		}
-		tabs, reason, err := spreadsheetTabs(ctx, policy, scope, documentID)
-		if err != nil {
-			return property.MapperSchema{}, err
-		}
-		if reason != "" {
-			return property.MapperSchema{Reason: reason}, nil
-		}
-		tab, found := tabNamed(tabs, sheet)
-		if !found {
-			return property.MapperSchema{Reason: "that sheet is not in the document"}, nil
-		}
-
-		query := url.Values{"valueRenderOption": []string{"FORMATTED_VALUE"}}
-		rangeA1 := "'" + strings.ReplaceAll(tab.title, "'", "''") + "'!1:1"
-		body, status, err := googleGet(ctx, policy, scope,
-			googleSheetsBase+"/spreadsheets/"+url.PathEscape(documentID)+"/values/"+url.PathEscape(rangeA1), query)
-		if err != nil {
-			return property.MapperSchema{}, err
-		}
-		if refusedForScope(status) {
-			return property.MapperSchema{Reason: "Google did not let this credential read that sheet."}, nil
-		}
-		if status >= 400 {
-			return property.MapperSchema{}, fmt.Errorf("Google answered %d", status)
-		}
-		var payload struct {
-			Values [][]any `json:"values"`
-		}
-		if err := json.Unmarshal(body, &payload); err != nil {
-			return property.MapperSchema{}, fmt.Errorf("Google's header row was not JSON")
-		}
-
 		schema := property.MapperSchema{}
 		seen := map[string]bool{}
-		if len(payload.Values) > 0 {
-			for _, cell := range payload.Values[0] {
-				name := strings.TrimSpace(fmt.Sprint(cell))
-				if cell == nil || name == "" || seen[name] {
-					continue
-				}
-				seen[name] = true
-				schema.Fields = append(schema.Fields, property.MapperField{
-					ID: name, DisplayName: name, Type: "string", CanBeUsedToMatch: true,
-				})
-			}
+		for _, name := range names {
+			seen[name] = true
+			schema.Fields = append(schema.Fields, property.MapperField{
+				ID: name, DisplayName: name, Type: "string", CanBeUsedToMatch: true,
+			})
 		}
-		if len(schema.Fields) == 0 {
-			schema.Reason = "the first row of this sheet is empty, so there are no column names yet. " +
-				"Map the columns automatically and the first rows written will create them."
+		schema.Reason = reason
+		if len(names) == 0 && reason != "" && strings.HasSuffix(reason, "no column names yet.") {
+			schema.Reason = reason + " Map the columns automatically and the first rows written will create them."
 		}
 		if strings.TrimSpace(scope.Dependencies[googleSheetsOperationDependency]) == "update" && !seen["row_number"] {
 			schema.Fields = append(schema.Fields, property.MapperField{
@@ -326,5 +417,21 @@ func googleSheetsColumns(policy safehttp.Policy) SchemaLoader {
 			})
 		}
 		return schema, nil
+	}
+}
+
+// googleSheetsHeadings answers a setting that picks among the column names, such
+// as the trigger's Columns to Watch.
+func googleSheetsHeadings(policy safehttp.Policy) InternalLoader {
+	return func(ctx context.Context, scope Scope) (Result, error) {
+		names, reason, err := sheetHeadings(ctx, policy, scope)
+		if err != nil {
+			return Result{}, err
+		}
+		options := make([]Option, 0, len(names))
+		for _, name := range names {
+			options = append(options, Option{Label: name, Value: name})
+		}
+		return Result{Options: options, Reason: reason}, nil
 	}
 }

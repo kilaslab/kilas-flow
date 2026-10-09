@@ -1,6 +1,7 @@
 package nodes_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -208,4 +209,50 @@ func TestGoogleSheetsTriggerValidateRefusesIncludeInOutputOldAndBoth(t *testing.
 			t.Errorf("Validate(%s) = %v, want a refusal naming includeInOutput", include, err)
 		}
 	}
+}
+
+// Columns to Watch is picked from the tab's own headings, so a native user can
+// set it; the headings come from the row the trigger's settings name, which is
+// why the loader reads the Options collection too.
+func TestGoogleSheetsTriggerColumnsToWatchIsPickedFromTheHeadings(t *testing.T) {
+	t.Parallel()
+
+	definition, _ := sheetsRegistry(t).Get(nodes.GoogleSheetsTriggerNodeType, workflow.V(1))
+	for _, parameter := range definition.Parameters {
+		if parameter.Key != "options" {
+			continue
+		}
+		for _, field := range parameter.Fields {
+			if field.Key != "columnsToWatch" {
+				continue
+			}
+			loader := field.LoadOptions
+			if loader == nil || loader.Name != "googleSheets.headings" || loader.CredentialType != nodes.GoogleSheetsTriggerCredentialType {
+				t.Fatalf("columnsToWatch loader = %#v, want the headings loader under the trigger's credential", loader)
+			}
+			for _, key := range []string{"documentId", "sheetName", "options"} {
+				if !slices.Contains(loader.DependsOn, key) {
+					t.Errorf("columnsToWatch loader depends on %v, want %q among them", loader.DependsOn, key)
+				}
+			}
+			return
+		}
+	}
+	t.Fatal("the trigger has no options.columnsToWatch")
+}
+
+func TestGoogleSheetsColumnsMapperReadsTheOptionsToo(t *testing.T) {
+	t.Parallel()
+
+	definition, _ := sheetsRegistry(t).Get(nodes.GoogleSheetsNodeType, workflow.V(1))
+	for _, parameter := range definition.Parameters {
+		if parameter.Key != "columns" {
+			continue
+		}
+		if !slices.Contains(parameter.Mapper.Schema.DependsOn, "options") {
+			t.Fatalf("columns schema depends on %v, want options among them so Data Location on Sheet moves the header row", parameter.Mapper.Schema.DependsOn)
+		}
+		return
+	}
+	t.Fatal("the node has no columns parameter")
 }

@@ -245,8 +245,8 @@ func TestGoogleSheetsColumnsAreTheHeaderRow(t *testing.T) {
 
 	stub.header = nil
 	empty, err := load("Sheet1", "append")
-	if err != nil || len(empty.Fields) != 0 || !strings.Contains(empty.Reason, "first row") {
-		t.Errorf("LoadSchema(empty header) = %#v, %v, want a reason that names the first row", empty, err)
+	if err != nil || len(empty.Fields) != 0 || !strings.Contains(empty.Reason, "row 1") {
+		t.Errorf("LoadSchema(empty header) = %#v, %v, want a reason that names row 1", empty, err)
 	}
 }
 

@@ -69,6 +69,27 @@ func TestSheetsTriggerStartsAgainWhenItsConfigurationChanges(t *testing.T) {
 	}
 }
 
+// A watched column is named by its heading as written, like every other column.
+func TestSheetsTriggerWatchesAColumnByItsHeadingAsWritten(t *testing.T) {
+	setup := newTriggerSetup(t)
+	tab := setup.fake.addTab(0, "Sheet1", 20,
+		sheetsRow("Email ", "name"),
+		sheetsRow("a@b", "Ann"),
+	)
+	node := triggerNode("rowUpdate", map[string]any{"columnsToWatch": []any{"Email "}})
+	setup.poll(t, node)
+
+	tab.rows[1][1] = "Anna" // the name is not watched
+	if got := setup.poll(t, node); len(got) != 0 {
+		t.Fatalf("a change outside the watched column emitted %v", got)
+	}
+	tab.rows[1][0] = "c@d"
+	got := setup.poll(t, node)
+	if len(got) != 1 || got[0]["Email "] != "c@d" {
+		t.Fatalf("rows = %v, want the row whose Email column changed", got)
+	}
+}
+
 // A tick that finds nothing new leaves the cursor exactly as it was.
 func TestSheetsTriggerLeavesTheCursorAloneWhenNothingChanged(t *testing.T) {
 	setup := newTriggerSetup(t)

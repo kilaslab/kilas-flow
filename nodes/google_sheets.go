@@ -152,7 +152,7 @@ func googleSheetsNode() node.Definition {
 					Schema: &node.OptionsLoader{
 						Source: property.LoaderInternal, Name: loadoptions.GoogleSheetsColumnsLoader,
 						CredentialType: GoogleSheetsCredentialType,
-						DependsOn:      []string{"documentId", "sheetName", "operation"},
+						DependsOn:      []string{"documentId", "sheetName", "operation", "options"},
 					},
 					SupportsAutoMap: true,
 					ValuesLabel:     "Values to Send",
@@ -408,6 +408,11 @@ func googleSheetsTrigger() node.Definition {
 				Fields: []node.PropertyDefinition{
 					{
 						Key: "columnsToWatch", Label: "Columns to Watch", Kind: node.PropertyMultiOptions,
+						LoadOptions: &node.OptionsLoader{
+							Source: property.LoaderInternal, Name: loadoptions.GoogleSheetsHeadingsLoader,
+							CredentialType: GoogleSheetsTriggerCredentialType,
+							DependsOn:      []string{"documentId", "sheetName", "options"},
+						},
 						Description: "Only a change in one of these columns counts as an update. Leave empty to watch every column.",
 					},
 					{

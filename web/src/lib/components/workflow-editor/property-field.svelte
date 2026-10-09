@@ -828,12 +828,17 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		{/if}
 	{:else if property.kind === 'multiOptions'}
 		<div class="grid gap-1 rounded-md border border-input p-1.5">
-			{#each property.options ?? [] as option (option.value)}
+			<!-- The loaded list when the property declares a loader (the column
+			     names of a sheet), its fixed options otherwise. -->
+			{#each selectableOptions as option (option.value)}
 				<label class="flex items-center gap-2 text-[0.6875rem]">
 					<input type="checkbox" class="size-3.5" checked={selected.includes(option.value)} onchange={(event) => toggleOption(option.value, event.currentTarget.checked)} />
 					<span>{option.label}</span>
 				</label>
 			{/each}
+			{#if activeLoader && loadState.reason}
+				<p class="text-[0.6875rem] leading-4 text-muted-foreground">{loadState.reason}</p>
+			{/if}
 		</div>
 	{:else if property.kind === 'fixedCollection' && group}
 		<!-- A repeatable named group — a Schedule Trigger's rules, an HTTP

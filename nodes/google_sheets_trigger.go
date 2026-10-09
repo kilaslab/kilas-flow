@@ -261,11 +261,33 @@ func (handler *GoogleSheetsPoller) poll(ctx context.Context, claim poller.Claim)
 	return emitted, next, err
 }
 
+// headingList reads a list of column names as written. The shared stringList
+// trims each entry, which would turn the heading "Email " into one that is not
+// in the sheet.
+func headingList(raw any) []string {
+	var names []string
+	switch typed := raw.(type) {
+	case []string:
+		for _, name := range typed {
+			if name != "" {
+				names = append(names, name)
+			}
+		}
+	case []any:
+		for _, entry := range typed {
+			if name, ok := entry.(string); ok && name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
+}
+
 // watchedColumns resolves Columns to Watch to indexes into the header. An empty
 // list watches every column; a name the sheet does not have is refused, because
 // watching a column that is not there would never see a change.
 func watchedColumns(raw any, header []string) ([]int, error) {
-	names := stringList(raw)
+	names := headingList(raw)
 	if len(names) == 0 {
 		return nil, nil
 	}
@@ -291,7 +313,7 @@ func watchedColumns(raw any, header []string) ([]int, error) {
 // on. The watched columns are sorted, so listing them in another order is not
 // a change.
 func sheetsTriggerConfig(watched any, render, dateRender, rangeA1 string, headerRow, firstDataRow int) string {
-	names := slices.Clone(stringList(watched))
+	names := slices.Clone(headingList(watched))
 	sort.Strings(names)
 	encoded, _ := json.Marshal(struct {
 		Watched      []string `json:"watched"`
