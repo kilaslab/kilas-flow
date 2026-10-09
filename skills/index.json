@@ -183,6 +183,7 @@
       ],
       "references": [
         "references/EMBED_HANDSHAKE.md",
+        "references/EXAMPLE.md",
         "references/SESSION_AUTHORITY.md"
       ]
     },
@@ -354,6 +355,7 @@
         "No pack install verb: a pack directory is loaded from the configured paths at boot. The only pack verb is `pack validate`"
       ],
       "references": [
+        "references/EXAMPLE.md",
         "references/MODULE_AND_SIDECAR.md",
         "references/PACK_FORMAT.md"
       ]

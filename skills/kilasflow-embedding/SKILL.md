@@ -46,6 +46,7 @@ kilasflow_not_shipped:
 
 ## Strong defaults
 
+- Start from the validated example: `kilasflow skills show kilasflow-embedding --reference EXAMPLE.md` is the smallest workflow an embed session can be minted for, and says which scopes the host grants on purpose.
 - Provision a customer with operator operations, in this order: the tenant row (`create-tenant`, answered with `201` and a `Location`, and a duplicate id is `409`), its first account (`create-tenant-user`), then a key for the host's backend (`create-tenant-api-key`, which mints on another tenant's behalf). Tenant rows are operator-managed: there is no self-service signup (internal/api/handlers/admin.go; docs/src/content/docs/guides/embedding.md).
 - One key per customer, held by your backend and never by a page. `create-api-key` mints a key for the calling tenant and returns the whole credential exactly once — the server keeps only a hash — `list-api-keys` reads one page without any secret, and `revoke-api-key` stops one immediately and permanently (internal/api/handlers/auth.go).
 - Account lifecycle is four operator operations on one tenant's accounts: `create-tenant-user` makes an account that can sign in immediately, `disable-tenant-user` stops it signing in from the next request while keeping the row so the workflows it authored still have a name, `enable-tenant-user` clears that marker so it signs in again with its existing password, and `set-tenant-user-password` is the operator's reset — the old password stops working at once (internal/api/handlers/admin.go).
@@ -108,7 +109,7 @@ what are you doing?
 - "One shared tenant is simpler" → any key in that tenant lists every workflow, resolves every credential and reads every row → one tenant per customer; that is the model the isolation tests prove (docs/src/content/docs/guides/embedding.md).
 - "I'll reflect the request's `Origin` header into the mint" → whoever controls that header receives your customer's token → keep the mint origin and the iframe target as backend constants, and list every framing domain in `embed.allowed_origins`.
 - "Fifteen minutes is the ceiling" → the default is 15 but the hard cap is 30, and `ttlSeconds` is honoured up to it → mint again for a longer session; it is cheap and it is the re-authorization point.
-- "The token can activate the workflow" → activation, deactivation, deletion and import are refused to an embed session at any scope, and importing creates a workflow outside its single-workflow authority → those are backend-key actions (internal/api/middleware/embed.go).
+- "The token can delete or import" → deletion and import are refused to an embed session at any scope, and importing creates a workflow outside its single-workflow authority; activation and deactivation need the `workflow:activate` scope on the session → those are backend-key actions, and the host grants `workflow:activate` on purpose (internal/api/middleware/embed.go).
 - "The page can hold the key" → the browser sends an embed token, which grants strictly less and expires → mint server-side and pass only the token over postMessage.
 - "The iframe is blank, so the session is bad" → the usual causes are a missing embed signing key (503) or an origin that is not exactly in the allowlist → check the two configuration keys before the session.
 - "The tenant is gone, so its sessions are too" → embed sessions are stateless and keep their scopes until they expire, and can keep writing rows keyed to the deleted tenant's id until then → repeat the deletion after they lapse (docs/src/content/docs/operate/tenant-deletion.md).
@@ -120,5 +121,6 @@ what are you doing?
 
 | File | Read when |
 | --- | --- |
+| EXAMPLE.md | you are creating the workflow a customer will open in the editor and need the document and the scopes the session needs for it |
 | EMBED_HANDSHAKE.md | you are minting a session, wiring the iframe handshake, or debugging one that never completes, and need the token, scope, origin and message contract |
 | SESSION_AUTHORITY.md | you need to know exactly what a live session may call, why a save was refused, or how the live execution stream is authorized |
