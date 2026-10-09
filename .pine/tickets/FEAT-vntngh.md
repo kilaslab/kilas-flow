@@ -235,3 +235,13 @@ Follow-up worth its own ticket: the generic tool-form importer reports no blocki
 
 The session stopped at the owner's time box. Wave 1 (node, trigger, credentials, loaders, importer, 19200-shaped fixture) is on main. The wave-2 commits — the plan, `kilasflow.googleSheetsTool` as one tool-form row (`98f0363d`) and the regenerated counts (`84529e42`) — are on branch `worktree-agent-a3294cd4f4ee7e00c` and are NOT yet reviewed or merged. Resume there: steps 1–8 of "Progress, wave 2" above, then a review, then merge. Follow-up worth its own ticket: the generic tool-form importer reports no blocking issue when a Gmail, Postgres or Telegram tool breaks a tool-form rule (they fail at validation instead); step 1's typed `ToolFormRefusal` would let `toolFormToKilas` report it for every form.
 
+
+## Resumed window (2026-10-09, ended 20:59)
+
+Main was merged into the branch (`355b4d63`; the one conflict was this ticket, where both Progress notes are kept). After the merge `go build ./...`, `go test ./nodes/ ./internal/interop/n8n/` and `make generate-docs-facts-check` pass. The window was too short to take step 1 (the importer) to green, so nothing of steps 1 to 8 above is started: they stand exactly as listed, in the same order.
+
+### Update at 20:57: step 1 is done in a reduced form
+
+`caa8fd22` is the importer (green: `go test ./internal/interop/n8n/`, `go vet`, `gofmt -l` clean). Done: the mirrored constant `GoogleSheetsToolNodeType` (`tool_forms.go`), the `toolVariants[GoogleSheetsNodeType]` line (`n8n.go`, base versions 4 to 4.7 apply), `googleSheetsToolToKilas` (restores `columns` from the original so a schema label such as `=total` stays plain text; blocks `clear` on `operation` and automatic mapping on a write on `columns`), the SupportedMappings and mirrored-types entries in `n8n_test.go`, and `internal/interop/n8n/sheets_tool_import_test.go` (import with no blocking issue apart from credentials and compile on an agent, the export as `n8n-nodes-base.googleSheetsTool` 4.7 with `descriptionType: manual`, and the two blocking cases). The tool imports at n8n's own typeVersion (4.7), as the Gmail tool does.
+
+Not done from step 1: the planned `nodes.CheckToolForm` with a typed `*ToolFormRefusal{Key}`, which would also block at import a documentId, sheetName, options or filter column that is an expression (today such a tool imports and is refused at validation). Not done from step 2: the `testdata/n8n_sheets_tool_19348.json` fixture file, the lossy-note assertion for a generated description, and the import-of-the-export equality; the tests use an inline node shaped like the template. Steps 3 to 8 are untouched and stand as listed above, with `go test ./nodes/` last green at `98f0363d` plus the main merge.
