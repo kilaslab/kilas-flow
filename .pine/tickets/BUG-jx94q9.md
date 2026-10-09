@@ -28,9 +28,9 @@ Reported by the Track H2 coder in the 2026-10-09 parallel wave.
 A `dropped` issue for `settings.executionOrder`.
 
 # Acceptance Criteria
-- [ ] `executionOrder: "v1"` produces no import issue; `"v0"` (or anything else) is reported as lossy with a reason saying KilasFlow runs v1 order.
-- [ ] Export → import of a workflow reports no settings issue; the skills round-trip test no longer needs its allowance.
-- [ ] `TestAnImportedWorkflowKeepsItsTimezone` and the round-trip fidelity tests are updated accordingly.
+- [x] `executionOrder: "v1"` produces no import issue; `"v0"` (or anything else) is reported as lossy with a reason saying KilasFlow runs v1 order. Evidence: `TestExecutionOrderIsSilentForV1AndLossyForAnythingElse` (v1 silent; v0, "v2" and a number each give exactly one lossy `settings.executionOrder` issue whose reason says KilasFlow always runs the v1 order, and no dropped `settings` issue).
+- [x] Export → import of a workflow reports no settings issue; the skills round-trip test no longer needs its allowance. Evidence: `TestAnExportedWorkflowDeclaresTheExecutionOrderItRunsIn` now imports its own export, asserts no issue with a `settings*` field, and that a second export carries identical settings. The skills round-trip test is not on main (it lives on another track's branch), so its one-entry allowance has to be dropped when that branch lands: see Progress.
+- [x] `TestAnImportedWorkflowKeepsItsTimezone` and the round-trip fidelity tests are updated accordingly. Evidence: `TestAnImportedWorkflowKeepsItsTimezone` asserts no settings issue for v1 + timezone; `annotatedFixture` gained `saveDataSuccessExecution` so `TestImportReportsEveryDroppedElement` still covers the dropped-settings path.
 
 
 ## Plan (2026-10-09)
@@ -48,3 +48,18 @@ Proof (test first).
 - New: a table test of `executionOrder` values (`v1` silent; `v0`, `v2`, a number: one lossy `settings.executionOrder` issue with the v1 sentence and no `settings` dropped issue).
 - `TestAnExportedWorkflowDeclaresTheExecutionOrderItRunsIn` (roundtrip_fidelity_test.go) gains the fixed-point assertion: export a workflow, import the export, and no issue with Field `settings...` comes back; a second export is identical in settings.
 - The skills' own round-trip test lives on another track's branch (no such test on main), so there is no allowance to remove here; I will say so in the report.
+
+
+## Progress (2026-10-09)
+
+What changed (internal/interop/n8n/n8n.go, four small hunks).
+- `importSettings` reads `executionOrder` first (before the timezone early-return, so a bad zone does not hide it): `"v1"` is silent; anything else, including a non-string, adds one lossy `settings.executionOrder` issue ("this workflow ran in n8n's v0 execution order; KilasFlow always runs the v1 order, so the order its branches run in may differ") and is not carried. An absent key stays silent, as before.
+- `hasUncarriedSettings` no longer counts `executionOrder`, so the dropped `settings` issue appears only for keys really not carried (the save-data flags and so on); its reason text no longer lists "execution order" as unsupported.
+- Docs that quoted the old behaviour: skills/kilasflow-import-export/references/MAPPING_LIMITS.md (table row, a short paragraph, the limits bullet) and docs/src/content/docs/guides/n8n-migration.md (importer table row and limits bullet). `make generate-skills-index-check` is still clean.
+
+Deviations and notes.
+- The "skills round-trip test with its one-entry allowance" is not on main; whoever merges the track that owns it has to delete the allowance. Nothing on main depended on it.
+- The checked-in benchmark result files under e2e/benchmark/ still quote the old reason text; they are dated measurement records, so I left them.
+- docs/.../n8n-migration.md around the export limits still says the exported document carries an empty `settings` object, which stopped being true with BUG-6gkd12 (the export writes the timezone, timeout, error workflow and executionOrder). That is export-side docs drift outside this ticket; not touched.
+
+Left: nothing.
