@@ -91,4 +91,7 @@ kilasflow workflow validate --file call-api.json
 ```
 
 `credential test` runs the type's own probe, which is the only check that a
-stored credential works; a 2xx from the create proves nothing about it.
+stored credential works; a 2xx from the create proves nothing about it. A type
+with no probe, such as this fixed-header credential, answers `untestable`, which
+is not a failure: the first real check is a run of the node that uses it
+(`kilasflow run <workflowId> --wait`), read back with `kilasflow exec get`.
