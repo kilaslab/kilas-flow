@@ -59,6 +59,11 @@ func gmailNode() node.Definition {
 			{Key: "to", Label: "To", Kind: node.PropertyString},
 			{Key: "subject", Label: "Subject", Kind: node.PropertyString},
 			{Key: "message", Label: "Message", Kind: node.PropertyString},
+			{
+				Key: "emailType", Label: "Email Type", Kind: node.PropertyOptions, Default: "text",
+				Options:     []node.PropertyOption{{Label: "Text", Value: "text"}, {Label: "HTML", Value: "html"}},
+				VisibleWhen: []node.VisibilityCondition{{Key: "operation", Equals: "send"}},
+			},
 			{Key: "q", Label: "Search", Kind: node.PropertyString},
 		},
 		SharedSettings: sharedSettings(),
@@ -139,7 +144,7 @@ func (executor *GmailExecutor) executeItem(ctx context.Context, ir workflow.IRNo
 func (executor *GmailExecutor) get(ctx context.Context, ir workflow.IRNode, item workflow.Item, request engine.Request) ([]workflow.Item, error) {
 	messageID := locatorValue(ir.Parameters["messageId"])
 	if messageID == "" {
-		messageID = locatorValue(item.JSON["id"])
+		messageID = locatorValue(gmailItemFields(item, request)["id"])
 	}
 	if messageID == "" {
 		return nil, fmt.Errorf("node %q: messageId is required", ir.Name)
@@ -181,13 +186,25 @@ func (executor *GmailExecutor) list(ctx context.Context, ir workflow.IRNode, ite
 }
 
 func (executor *GmailExecutor) send(ctx context.Context, ir workflow.IRNode, item workflow.Item, request engine.Request) ([]workflow.Item, error) {
-	to := strings.TrimSpace(textValue(ir.Parameters["to"], textValue(item.JSON["to"], "")))
-	subject := strings.TrimSpace(textValue(ir.Parameters["subject"], textValue(item.JSON["subject"], "")))
-	body := textValue(ir.Parameters["message"], textValue(item.JSON["message"], textValue(item.JSON["text"], "")))
+	to := strings.TrimSpace(textValue(ir.Parameters["to"], textValue(gmailItemFields(item, request)["to"], "")))
+	subject := strings.TrimSpace(textValue(ir.Parameters["subject"], textValue(gmailItemFields(item, request)["subject"], "")))
+	body := textValue(ir.Parameters["message"], textValue(gmailItemFields(item, request)["message"], textValue(gmailItemFields(item, request)["text"], "")))
 	if to == "" {
 		return nil, fmt.Errorf("node %q: to is required to send", ir.Name)
 	}
-	raw := "To: " + to + "\r\nSubject: " + subject + "\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + body
+	// The header block is built by hand, so a line break in a value would
+	// start a header the caller chose — a Bcc to somebody else. The values can
+	// come from a webhook or an agent's model.
+	for name, value := range map[string]string{"to": to, "subject": subject} {
+		if strings.ContainsAny(value, "\r\n") {
+			return nil, fmt.Errorf("node %q: %s contains a line break, which would start another mail header", ir.Name, name)
+		}
+	}
+	contentType := "text/plain"
+	if strings.EqualFold(strings.TrimSpace(textValue(ir.Parameters["emailType"], "")), "html") {
+		contentType = "text/html"
+	}
+	raw := "To: " + to + "\r\nSubject: " + subject + "\r\nContent-Type: " + contentType + "; charset=utf-8\r\n\r\n" + body
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
 	var payload map[string]any
 	if err := executor.google.json(ctx, request, ir, GmailCredentialType, http.MethodPost, gmailAPIRoot+"/users/me/messages/send", nil, map[string]any{"raw": encoded}, &payload); err != nil {
@@ -211,6 +228,19 @@ func fetchGmailMessage(ctx context.Context, google *GoogleClient, ir workflow.IR
 		return simplifyGmailMessage(payload), nil
 	}
 	return payload, nil
+}
+
+// gmailItemFields is what an unset recipient, subject, body or message id
+// falls back to: the item's own fields, for a Gmail step fed by a previous
+// node. Nothing when the node runs as an agent's tool form (the request
+// carries the tool call's $fromAI arguments): that item is the agent's input,
+// not mail fields addressed to this node, so a tool reads only what its author
+// configured.
+func gmailItemFields(item workflow.Item, request engine.Request) map[string]any {
+	if request.FromAIArguments != nil {
+		return nil
+	}
+	return item.JSON
 }
 
 func gmailSimple(parameters map[string]any) bool {

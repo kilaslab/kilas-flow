@@ -255,7 +255,8 @@ func TestTemplate6270GeminiModelGetsPastValidation(t *testing.T) {
 	}
 	document := result.Document
 	document.ID = "wf_6270"
-	// Its RSS Feed Read tool is a *Tool variant this server does not map yet
+	// Its RSS Feed Read tool is a *Tool variant this server does not map yet:
+	// there is no RSS node (FEAT-kfmq1z). Its Get Weather tool imports
 	// (BUG-b8bwhw). The placeholder is set aside so compile reaches the model
 	// whatever order it checks nodes in.
 	placeholders := map[string]bool{}

@@ -1004,15 +1004,16 @@ func TestErrorWorkflowNodesMapOntoTheNativePair(t *testing.T) {
 	if stop.Type != "kilasflow.stopAndError" {
 		t.Fatalf("stop type = %q, want the native node", stop.Type)
 	}
-	message, _ := stop.Parameters["errorMessage"].(map[string]any)
-	if message["value"] != "{{ $json.execution.error.message }}" {
-		t.Errorf("errorMessage = %#v, want the expression carried", stop.Parameters["errorMessage"])
+	// The object mode becomes JSON text, message and description together:
+	// dropping the description would throw away the half of the error the
+	// author wrote for a human. The message is not also set on its own, or
+	// the node would show it and never read the object.
+	if message, present := stop.Parameters["errorMessage"]; present {
+		t.Errorf("errorMessage = %#v, want it only inside the error object", message)
 	}
-	// The object mode becomes JSON text, description included: dropping it
-	// would throw away the half of the error the author wrote for a human.
 	object, _ := stop.Parameters["errorObject"].(string)
-	if !strings.Contains(object, "the run failed") || !strings.Contains(object, "errorMessage") {
-		t.Errorf("errorObject = %q, want the message and description serialised", object)
+	if !strings.Contains(object, "the run failed") || !strings.Contains(object, "{{ $json.execution.error.message }}") {
+		t.Errorf("errorObject = %q, want the message expression and the description serialised", object)
 	}
 
 	// Unreadable JSON blocks rather than throwing an empty error.

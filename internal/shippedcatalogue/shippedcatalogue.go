@@ -78,6 +78,11 @@ func Register(reg *node.Registry) error {
 	}); err != nil {
 		return fmt.Errorf("register the WAHA node pack: %w", err)
 	}
+	// The packs' agent-tool forms (pack.telegramTool), after the packs, as
+	// run() registers them.
+	if err := nodes.RegisterPackToolForms(reg); err != nil {
+		return fmt.Errorf("register the pack nodes' tool forms: %w", err)
+	}
 
 	return nil
 }

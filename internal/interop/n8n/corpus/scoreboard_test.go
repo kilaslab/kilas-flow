@@ -161,7 +161,7 @@ func corpusRuntime(t *testing.T) (*node.Registry, *engine.Registry) {
 	if err != nil {
 		t.Fatalf("datastore.NewEngine() error = %v", err)
 	}
-	if err := nodes.RegisterExecutors(executors, offline, sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil, nodes.WithDatastoreEngine(storeEngine)); err != nil {
+	if err := nodes.RegisterExecutors(executors, offline, sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil, nodes.WithDatastoreEngine(storeEngine), nodes.WithNodeCatalog(catalog)); err != nil {
 		t.Fatalf("RegisterExecutors() error = %v", err)
 	}
 	routes := routing.NewRegistry()
@@ -183,6 +183,10 @@ func corpusRuntime(t *testing.T) (*node.Registry, *engine.Registry) {
 		Executors: executors, Options: loadoptions.NewResolver(offline, 0),
 	}); err != nil {
 		t.Fatalf("waha.Register() error = %v", err)
+	}
+	// The packs' agent-tool forms, as the server registers them after the packs.
+	if err := nodes.RegisterPackToolForms(catalog); err != nil {
+		t.Fatalf("RegisterPackToolForms() error = %v", err)
 	}
 	return catalog, executors
 }
