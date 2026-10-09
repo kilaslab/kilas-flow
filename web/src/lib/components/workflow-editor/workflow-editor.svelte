@@ -80,6 +80,7 @@
 		BRANCH_COLUMN,
 		COLUMN,
 		positionAfter,
+		positionBelow,
 		reconcileCanvas,
 		renameNode,
 		resolveDefinition,
@@ -109,7 +110,8 @@
 	import { isAnnotation } from '$lib/workflow-editor/node-visual';
 	import { chatHasMemory, chatTriggerIn, type ChatSendPayload } from '$lib/workflow-editor/chat';
 	import { executeIntent } from '$lib/workflow-editor/run-trigger';
-	import { canConnect, connectionFromCanvas, resolvedPorts } from '$lib/workflow-editor/ports';
+	import { canConnect, connectionForPickedNode, connectionFromCanvas, describeConnections, resolvedPorts, staleConnections } from '$lib/workflow-editor/ports';
+	import { createPortSettler } from '$lib/workflow-editor/port-settle';
 	import type { CanvasShortcut } from '$lib/workflow-editor/shortcuts';
 	import type { CanvasValidationIssue } from '$lib/workflow-editor/validation';
 
@@ -593,15 +595,22 @@
 			definition,
 			dropped
 				? { x: Math.round(dropped.x - TILE_CENTRE), y: Math.round(dropped.y - TILE_CENTRE) }
-				: source
-					? positionAfter(
+				: source && pendingKind
+					? // A model, a memory or a tool fills a slot on the bottom of its
+						// consumer, so it goes under it rather than a column along.
+						positionBelow(
 							source.position,
-							existing.map((candidate) => candidate.position),
-							// A labelled source (IF, Switch) carries its output names to
-							// the right of the tile; the ordinary column lands inside them.
-							hasLabelledOutputs(source, definitions) ? BRANCH_COLUMN : COLUMN
+							existing.map((candidate) => candidate.position)
 						)
-					: viewportPlacement(existing.length),
+					: source
+						? positionAfter(
+								source.position,
+								existing.map((candidate) => candidate.position),
+								// A labelled source (IF, Switch) carries its output names to
+								// the right of the tile; the ordinary column lands inside them.
+								hasLabelledOutputs(source, definitions) ? BRANCH_COLUMN : COLUMN
+							)
+						: viewportPlacement(existing.length),
 			undefined,
 			existing.map((candidate) => candidate.name)
 		);
@@ -614,12 +623,10 @@
 		const interrupted = pendingSplice ? connections.find((connection) => connection.id === pendingSplice) : undefined;
 		if (interrupted) connections = connections.filter((connection) => connection.id !== interrupted.id);
 		if (from) {
-			const target = ports.inputs.find((port) => port.kind === (pendingKind ?? 'main'));
 			// Built through the same validator a dragged connection uses, so a step
 			// added from a port can never produce an edge the canvas would refuse.
-			const connection = target
-				? connectionFromCanvas({ source: from.nodeID, sourceHandle: from.port, target: node.id, targetHandle: target.name }, nextNodes, definitions, connections)
-				: null;
+			// From a slot the new node is the provider, so the wire runs from it.
+			const connection = connectionForPickedNode({ id: node.id, ports }, from, pendingKind, nextNodes, definitions, connections);
 			if (connection) connections = [...connections, connection];
 		}
 		if (interrupted) {
@@ -854,10 +861,38 @@
 		if (locked || !selectedNode) return;
 		// One history step per field, however many keystrokes it took: undoing a
 		// word should not need one press per letter.
-		replaceDraft(updateNodeProperty(draft, selectedNode.id, scope, key, value), {
-			key: `${selectedNode.id}:${scope}:${key}`
+		const historyKey = `${selectedNode.id}:${scope}:${key}`;
+		replaceDraft(updateNodeProperty(draft, selectedNode.id, scope, key, value), { key: historyKey });
+		// A change can take a port away — a mode, a Switch rule, a Merge input, an
+		// error output — and a wire to it could no longer be drawn, selected or
+		// deleted. Once the edit has settled they are removed (BUG-qfp7rf).
+		portSettler.schedule(selectedNode.id, historyKey);
+	}
+
+	/**
+	 * Removes the connections a node's current configuration has no port for, in
+	 * the history step of the edit that stranded them, and says what went.
+	 *
+	 * Run by the settler rather than on every keystroke, so a typed value that
+	 * passes through a smaller port count does not cost the wires.
+	 */
+	function removeStrandedConnections(nodeID: string, historyKey: string) {
+		if (locked) return;
+		const stale = staleConnections(draft, nodeID, definitions);
+		if (stale.length === 0) return;
+		const gone = new Set(stale.map((connection) => connection.id));
+		const owner = (draft.nodes ?? []).find((candidate) => candidate.id === nodeID);
+		replaceDraft({ ...draft, connections: (draft.connections ?? []).filter((connection) => !gone.has(connection.id)) }, { key: historyKey });
+		selectedEdgeIDs = selectedEdgeIDs.filter((id) => !gone.has(id));
+		canvasMessage = m.editor_connections_removed({
+			count: stale.length,
+			node: owner?.name ?? nodeID,
+			detail: describeConnections(stale, draft.nodes)
 		});
 	}
+
+	const portSettler = createPortSettler(removeStrandedConnections);
+	$effect(() => () => portSettler.cancel());
 
 	function updateCredential(typeID: string, credentialID: string) {
 		if (locked || !selectedNode) return;
@@ -952,6 +987,9 @@
 		if (!step) return;
 		undoStack = step.history;
 		draft = step.state;
+		// A notice about what the last step did (wires removed, "Undo brings it
+		// back") describes a document that is no longer on screen.
+		canvasMessage = null;
 		forgetMissingSelection();
 	}
 
@@ -961,6 +999,7 @@
 		if (!step) return;
 		undoStack = step.history;
 		draft = step.state;
+		canvasMessage = null;
 		forgetMissingSelection();
 	}
 
