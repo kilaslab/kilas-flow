@@ -2418,6 +2418,9 @@ func stopAndErrorToKilas(node Node) (map[string]any, []Unsupported) {
 		if len(described) > 0 {
 			if encoded, err := json.Marshal(described); err == nil {
 				parameters["errorObject"] = string(encoded)
+				// The message lives in the object only. Set on its own as well,
+				// it is what the node shows, and the description never is.
+				delete(parameters, "errorMessage")
 			}
 		}
 	case "json":

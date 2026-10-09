@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/kilaslab/kilas-flow/internal/engine"
@@ -174,28 +175,27 @@ func executeStopAndError(ctx context.Context, node workflow.IRNode, input workfl
 // expression produced is data. A message built from a webhook body that held
 // `{{ $env.SECRET }}` used to fail the run with the secret's value.
 func stopAndErrorMessage(parameters map[string]any, ctx expression.Context) (string, error) {
-	authored := make(map[string]any, len(parameters))
-	for key, value := range parameters {
-		authored[key] = value
-	}
-	if text, isText := parameters["errorMessage"].(string); isText {
-		authored["errorMessage"] = templateStringsAsExpressions(text)
-	}
-	if object, written := authoredErrorObject(parameters["errorObject"]); written {
-		authored["errorObject"] = templateStringsAsExpressions(object)
-	}
-	resolved, err := expression.Resolve(authored, ctx)
+	// The message first, alone: the object is read only when there is no
+	// message, so a template in an object the node never shows cannot fail it.
+	message, err := resolvedMessage(parameters["errorMessage"], ctx)
 	if err != nil {
 		return "", err
 	}
-	message := strings.TrimSpace(textOf(resolved["errorMessage"]))
 	if message == "" {
-		if object, ok := errorObjectOf(resolved["errorObject"]); ok {
-			message = strings.TrimSpace(textOf(object["errorMessage"]))
+		object := parameters["errorObject"]
+		if written, isWritten := authoredErrorObject(object); isWritten {
+			object = templateStringsAsExpressions(written)
+		}
+		resolved, err := expression.Resolve(map[string]any{"errorObject": object}, ctx)
+		if err != nil {
+			return "", err
+		}
+		if fields, ok := errorObjectOf(resolved["errorObject"]); ok {
+			message = messageText(fields["errorMessage"])
 			if message == "" {
-				message = strings.TrimSpace(textOf(object["message"]))
+				message = messageText(fields["message"])
 			}
-			if description := strings.TrimSpace(textOf(object["errorDescription"])); description != "" {
+			if description := messageText(fields["errorDescription"]); description != "" {
 				if message == "" {
 					message = description
 				} else {
@@ -208,6 +208,37 @@ func stopAndErrorMessage(parameters map[string]any, ctx expression.Context) (str
 		return "the workflow was stopped by a Stop and Error node with no message", nil
 	}
 	return message, nil
+}
+
+// resolvedMessage resolves the errorMessage parameter once, the author's
+// plain template text made an expression first.
+func resolvedMessage(value any, ctx expression.Context) (string, error) {
+	if text, isText := value.(string); isText {
+		value = templateStringsAsExpressions(text)
+	}
+	resolved, err := expression.Resolve(map[string]any{"errorMessage": value}, ctx)
+	if err != nil {
+		return "", err
+	}
+	return messageText(resolved["errorMessage"]), nil
+}
+
+// messageText reads a resolved message as text: a string as written, a
+// number or a boolean as its literal, and nothing for an object or a list,
+// which is not a message.
+func messageText(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case float64, bool:
+		return textValue(typed, "")
+	case int:
+		return strconv.Itoa(typed)
+	case json.Number:
+		return typed.String()
+	default:
+		return ""
+	}
 }
 
 // authoredErrorObject is the error object the author wrote, before anything

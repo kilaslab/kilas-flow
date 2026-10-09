@@ -78,3 +78,38 @@ func TestStopAndErrorNeverEvaluatesAResolvedMessage(t *testing.T) {
 		t.Errorf("error = %v, want the item's braces verbatim inside the author's message", err)
 	}
 }
+
+// The error object is read only when the message is empty, so a template in
+// an object the node never shows cannot fail it; and a message that comes
+// out a number or a boolean is that text, not nothing.
+func TestStopAndErrorReadsTheObjectOnlyWithoutAMessageAndKeepsScalarMessages(t *testing.T) {
+	t.Parallel()
+
+	executor := flowExecutor(t, nodes.StopAndErrorExecutorID)
+	input := workflow.NodeInput{"main": {{JSON: map[string]any{"id": float64(7), "paid": false}}}}
+	for name, testCase := range map[string]struct {
+		parameters map[string]any
+		want       string
+	}{
+		"an unused object with a broken template": {map[string]any{
+			"errorMessage": "fixed", "errorObject": `{"errorMessage":"{{ $('Nope').item.json.x }}"}`,
+		}, "fixed"},
+		"an unused object with a syntax error": {map[string]any{
+			"errorMessage": "fixed", "errorObject": map[string]any{"errorMessage": "{{ ) }}"},
+		}, "fixed"},
+		"a number":  {map[string]any{"errorMessage": map[string]any{"mode": "expression", "value": "{{ $json.id }}"}}, "7"},
+		"a boolean": {map[string]any{"errorMessage": map[string]any{"mode": "expression", "value": "{{ $json.paid }}"}}, "false"},
+		// The shape the importer writes for n8n's object mode.
+		"an imported object": {map[string]any{
+			"errorObject": `{"errorMessage":{"mode":"expression","value":"{{ $json.id }}"},"errorDescription":"declined"}`,
+		}, "7: declined"},
+		"a number in the object": {map[string]any{
+			"errorObject": map[string]any{"errorMessage": map[string]any{"mode": "expression", "value": "{{ $json.id }}"}, "errorDescription": "declined"},
+		}, "7: declined"},
+	} {
+		_, err := executor.Execute(context.Background(), flowNode(t, nodes.StopAndErrorNodeType, testCase.parameters), input, engine.Request{})
+		if err == nil || err.Error() != testCase.want {
+			t.Errorf("%s: error = %v, want %q", name, err, testCase.want)
+		}
+	}
+}
