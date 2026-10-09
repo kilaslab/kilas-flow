@@ -1300,6 +1300,7 @@
             },
             "parameters": {
               "operation": "get",
+              "resource": "message",
               "simple": true
             }
           },
