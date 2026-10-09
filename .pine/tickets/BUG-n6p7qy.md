@@ -171,10 +171,19 @@ Criterion 1 is done: `workflowInputs` is a resource mapper whose columns are the
 
 **Deviations from the plan.**
 - New tests live in new files (`nodes/workflow_tool_inputs_test.go`, `internal/api/node_types_schema_expression_test.go`, `internal/ai/fromai_whole_test.go`), not in `ai_tools_test.go` / `node_types_test.go`, to stay clear of Tracks C and F. The importer code lives in `internal/interop/n8n/workflow_tool_inputs.go` for the same reason (Track B edits `parameters.go`).
-- `readMapping`'s legacy-plain-object reading and the number-as-text input apply only to a mapper with `modelDefinable`, so a mapper that did not opt in (Track B's) reads and renders as before. The `editColumn` fix (an expression column edits as its template) applies to every mapper, because the old behaviour wiped the marker on the first keystroke.
+- `readMapping`'s legacy-plain-object reading, the number-as-text input, `editColumn`'s typed-braces rule and its empty-number rule apply only to a mapper with `modelDefinable`, so a mapper that did not opt in (Track B's) reads, renders and stores as before. The one shared change is that an expression column edits as its template, because the old behaviour wiped the marker on the first keystroke.
+- A `$fromAI(..., 'json')` on a declared object or array input is now typed `object` / `array` in the tool schema the model is offered, instead of untyped. This holds for the legacy plain-object and whole-expression shapes too, not only the mapper: `Definition` refines any call whose key is a declared input.
 - The whole-expression notice sits under the existing expression textarea, which already renders for any kind holding an expression, so the expression stays editable. The plan's version put the notice in the mapper block, which is unreachable for that value.
 - For a mapper with `modelDefinable` the client no longer keeps its column list in the module-level `schemaCache`: the endpoint is `no-store`, and a target's fields change whenever its author edits and activates it in the same page session.
 - Added `e2e/tests/workflow-tool-inputs.spec.ts`, which the plan did not list: it drives the switch, a real agent run against a scripted model, and the n8n round trip.
+
+**Review round (2026-10-09).**
+- The editor tells a mapper from a legacy plain object by the server's own test (`mappingMode` is a non-empty string), so a legacy input named `value` or `schema` is no longer read as a mapper and lost on the next edit.
+- A workflow that declares no fields (takes anything, inactive, unreadable, or named by an expression) still lists the legacy static keys with a Remove button.
+- `editColumn`'s typed-braces and cleared-number rules are gated on `modelDefinable`; Datastore, SQL and Sheets mappers store what they stored before.
+- A mapper whose own `value` is one expression is the whole-expression case in the runtime and the exporter.
+- An n8n column marked `removed` imports as a fixed null, not as one the model fills.
+- "Use per-field inputs" asks before it deletes the expression (inline confirmation, Escape cancels; copy in en and id).
 
 **Unverified: how n8n stores an untouched column.** The repo has no real Workflow Tool v2 export with a populated schema (only fixtures with an empty `value` and `schema`), so I could not confirm that n8n stores a column the author never touched as absent or null. The importer follows the plan: an untouched, non-removed schema column is stored as an explicit `null`, which keeps it out of the model's schema as it was in n8n. What it does not know is whether n8n passes such a column to the sub-workflow as `null` or leaves it out; here it arrives as `null`. Check this against a real n8n 2.x export before relying on it for sub-workflows that tell the two apart.
 
