@@ -34,7 +34,21 @@ func NewGoogleSheetsExecutor(policy safehttp.Policy) *GoogleSheetsExecutor {
 	return &GoogleSheetsExecutor{google: NewGoogleClient(policy)}
 }
 
+// Execute runs the whole batch as one operation, and so it is WholeBatch: the
+// runner never splits it into one-item calls to resolve a tolerated failure,
+// which would read the sheet again for every item. n8n's node does the same —
+// the whole operation sits inside one try, and a failure under Continue on
+// fail is a single error item for the node — so a failure here, when failures
+// are tolerated, is a BatchFailure and not one error per input item.
 func (executor *GoogleSheetsExecutor) Execute(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+	output, err := executor.execute(ctx, ir, input, request)
+	if err != nil && request.TolerateItemFailures && ctx.Err() == nil {
+		return nil, &engine.BatchFailure{Err: err}
+	}
+	return output, err
+}
+
+func (executor *GoogleSheetsExecutor) execute(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

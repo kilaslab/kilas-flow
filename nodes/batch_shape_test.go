@@ -27,6 +27,7 @@ var batchShapedNodes = map[string]string{
 	nodes.RespondNodeType:          "answers the caller once, with the first item or all of them",
 	nodes.CodeNodeType:             "runs once for all items by default",
 	nodes.ExecuteWorkflowNodeType:  "calls the workflow once with all items by default",
+	nodes.GoogleSheetsNodeType:     "reads the sheet once and writes the batch in one request, and fails as one operation",
 }
 
 // perItemNodes are the native nodes an item is the unit of work for: one item
@@ -34,7 +35,7 @@ var batchShapedNodes = map[string]string{
 var perItemNodes = map[string]bool{
 	"kilasflow.calculator": true, nodes.DatastoreNodeType: true, nodes.DateTimeNodeType: true,
 	nodes.EmbeddingsNodeType: true, nodes.ExtractFromFileNodeType: true,
-	nodes.FilterNodeType: true, nodes.GmailNodeType: true, nodes.GoogleDriveNodeType: true, nodes.GoogleSheetsNodeType: true, "kilasflow.httpRequest": true,
+	nodes.FilterNodeType: true, nodes.GmailNodeType: true, nodes.GoogleDriveNodeType: true, "kilasflow.httpRequest": true,
 	"kilasflow.if": true, nodes.MySQLNodeType: true, nodes.NoOpNodeType: true, nodes.PostgresNodeType: true,
 	"kilasflow.set": true, nodes.SplitOutNodeType: true, nodes.SQLiteNodeType: true, nodes.StopAndErrorNodeType: true,
 	nodes.SwitchNodeType: true, nodes.VectorStorePGVectorNodeType: true, nodes.WaitNodeType: true,

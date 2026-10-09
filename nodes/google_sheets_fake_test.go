@@ -33,6 +33,9 @@ type fakeSheets struct {
 	calls []fakeCall
 	// failWith, when set, answers every call with this status.
 	failWith int
+	// failOnly, when set, narrows failWith to the calls whose "METHOD path"
+	// matches it.
+	failOnly *regexp.Regexp
 }
 
 type fakeTab struct {
@@ -160,7 +163,7 @@ func (fake *fakeSheets) serve(w http.ResponseWriter, r *http.Request) {
 	if got := r.Header.Get("Authorization"); got != "Bearer token" {
 		fake.t.Errorf("Authorization = %q, want the credential's bearer token", got)
 	}
-	if fake.failWith != 0 {
+	if fake.failWith != 0 && (fake.failOnly == nil || fake.failOnly.MatchString(r.Method+" "+r.URL.Path)) {
 		http.Error(w, `{"error":{"message":"stub failure"}}`, fake.failWith)
 		return
 	}

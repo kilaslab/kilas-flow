@@ -243,6 +243,9 @@ func googleSheetsNode() node.Definition {
 			},
 			sheetsOptionsCollection(),
 		},
+		// The operation is one batch against one tab, and a failure under Continue on
+		// fail is one error item for the node, as in n8n. See Execute.
+		WholeBatch:     true,
 		SharedSettings: sharedSettings(),
 		ExecutorID:     GoogleSheetsExecutorID,
 		Validate:       validateGoogleSheetsConfiguration,

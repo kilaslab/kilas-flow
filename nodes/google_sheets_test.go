@@ -476,3 +476,51 @@ func TestSheetsRefusesAnOperationItDoesNotImplement(t *testing.T) {
 		t.Fatalf("error = %v, want a refusal naming the operation", err)
 	}
 }
+
+// --- Failure under Continue on fail ---------------------------------------------
+
+// n8n's node runs the whole operation inside one try, so a failure under
+// Continue on fail is one error item for the node, not one per input item. A
+// tolerated failure is therefore a BatchFailure, and the node is WholeBatch so
+// the runner does not split it into per-item calls that each read the sheet.
+func TestSheetsFailureIsOneBatchFailureWhenFailuresAreTolerated(t *testing.T) {
+	setup := newSheetsSetup(t)
+	setup.peopleTab()
+	bad := sheetsParams("read", map[string]any{"filtersUI": map[string]any{"values": []any{
+		map[string]any{"lookupColumn": "nope", "lookupValue": "x"},
+	}}})
+	items := sheetItems(map[string]any{}, map[string]any{}, map[string]any{})
+
+	tolerant := setup.request
+	tolerant.TolerateItemFailures = true
+	_, err := setup.executor.Execute(context.Background(), setup.ir(bad), workflow.NodeInput{"main": items}, tolerant)
+	var batch *engine.BatchFailure
+	if !errors.As(err, &batch) || !strings.Contains(err.Error(), `"nope"`) {
+		t.Fatalf("tolerated error = %v, want a BatchFailure that keeps the cause", err)
+	}
+	// One read for the three items, though the failure came at the end.
+	if got := setup.fake.callsMatching(`GET .*/values/`); len(got) != 1 {
+		t.Errorf("sheet reads = %d, want 1", len(got))
+	}
+
+	_, err = setup.executor.Execute(context.Background(), setup.ir(bad), workflow.NodeInput{"main": items}, setup.request)
+	if err == nil || errors.As(err, &batch) {
+		t.Fatalf("untolerated error = %v, want the plain failure", err)
+	}
+
+	// A cancelled run is not a failure the node tolerates.
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = setup.executor.Execute(cancelled, setup.ir(sheetsParams("read", nil)), workflow.NodeInput{"main": items}, tolerant)
+	if !errors.Is(err, context.Canceled) || errors.As(err, &batch) {
+		t.Fatalf("cancelled error = %v, want context.Canceled and no BatchFailure", err)
+	}
+}
+
+func TestSheetsNodeDeclaresItselfWholeBatch(t *testing.T) {
+	t.Parallel()
+	definition, _ := sheetsRegistry(t).Get(nodes.GoogleSheetsNodeType, workflow.V(1))
+	if !definition.WholeBatch {
+		t.Fatal("the Sheets node is not WholeBatch, so a tolerated failure would split it into one call per item")
+	}
+}
