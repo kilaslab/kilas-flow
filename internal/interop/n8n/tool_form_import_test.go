@@ -1,6 +1,7 @@
 package n8n_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -410,6 +411,96 @@ func TestAnExpressionQueryReplacementBindsOneValuePerSegment(t *testing.T) {
 			if options["queryReplacement"] != "={{ $json.tier }}, {{ $json.region }}" {
 				t.Errorf("queryReplacement = %#v, want the segments back", options["queryReplacement"])
 			}
+		}
+	}
+}
+
+// The per-segment reading is n8n's from PostgreSQL 2.5 on. Before it, and in
+// the MySQL node, n8n resolves the whole replacement and splits the result on
+// its commas, so a value holding a comma binds differently; the import binds
+// per segment all the same (binding the source text is never right) and says
+// so.
+func TestAnExpressionQueryReplacementBeforeTwoPointFiveIsReported(t *testing.T) {
+	t.Parallel()
+
+	for name, fixture := range map[string]string{
+		"postgres 2.4": strings.Replace(sqlNodeFixture(`{"operation":"executeQuery","query":"SELECT $1, $2",
+		  "options":{"queryReplacement":"={{ $json.a }}, {{ $json.b }}"}}`), `"typeVersion":2.5`, `"typeVersion":2.4`, 1),
+		"mysql": strings.Replace(sqlNodeFixture(`{"operation":"executeQuery","query":"SELECT ?, ?",
+		  "options":{"queryReplacement":"={{ $json.a }}, {{ $json.b }}"}}`), `"n8n-nodes-base.postgres","typeVersion":2.5`, `"n8n-nodes-base.mySql","typeVersion":2.4`, 1),
+	} {
+		result := importFixture(t, fixture)
+		bound, _ := nodeByName(result.Document, "Postgres").Parameters["queryParameters"].([]any)
+		if len(bound) != 2 {
+			t.Errorf("%s: queryParameters = %#v, want one bound value per segment", name, bound)
+		}
+		if issue, found := issueOn(result, "options.queryReplacement"); !found || issue.Severity != n8n.SeverityLossy {
+			t.Errorf("%s: queryReplacement issue = %+v (found %v), want a lossy note", name, issue, found)
+		}
+	}
+	// At 2.5 the reading is n8n's own, so there is nothing to report.
+	result := importFixture(t, sqlNodeFixture(`{"operation":"executeQuery","query":"SELECT $1, $2",
+	  "options":{"queryReplacement":"={{ $json.a }}, {{ $json.b }}"}}`))
+	if issue, found := issueOn(result, "options.queryReplacement"); found {
+		t.Errorf("2.5 reported %+v, want nothing", issue)
+	}
+}
+
+// lazySegments returns the body of each {{ … }} segment, each ending at the
+// first }} after its opener.
+func lazySegments(text string) []string {
+	var bodies []string
+	for {
+		open := strings.Index(text, "{{")
+		if open < 0 {
+			return bodies
+		}
+		closing := strings.Index(text[open+2:], "}}")
+		if closing < 0 {
+			return bodies
+		}
+		bodies = append(bodies, text[open+2:open+2+closing])
+		text = text[open+2+closing+2:]
+	}
+}
+
+// A fixed value written beside expressions becomes a segment of its own, and
+// one holding braces must not end that segment early: a nested object's }}
+// and a string's }} would.
+func TestFixedValuesBesideExpressionsExportAsWholeSegments(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, sqlNodeFixture(`{"operation":"executeQuery","query":"SELECT $1, $2, $3",
+	  "options":{"queryReplacement":"={{ $json.a }}"}}`))
+	document := result.Document
+	for index, candidate := range document.Nodes {
+		if candidate.Name == "Postgres" {
+			bound := candidate.Parameters["queryParameters"].([]any)
+			document.Nodes[index].Parameters["queryParameters"] = append(bound,
+				map[string]any{"outer": map[string]any{"inner": float64(1)}}, "x}}y{{z")
+		}
+	}
+	exported, err := n8n.Export(document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	var replacement string
+	for _, candidate := range exported.Document.Nodes {
+		if candidate.Name == "Postgres" {
+			options, _ := candidate.Parameters["options"].(map[string]any)
+			replacement, _ = options["queryReplacement"].(string)
+		}
+	}
+	// n8n finds a segment's end at the first }} after its {{, whatever is
+	// inside, so the segments are read that way here.
+	bodies := lazySegments(strings.TrimPrefix(replacement, "="))
+	if len(bodies) != 3 {
+		t.Fatalf("queryReplacement = %q splits into %d segments at the first }}, want 3", replacement, len(bodies))
+	}
+	for index, want := range []any{map[string]any{"outer": map[string]any{"inner": float64(1)}}, "x}}y{{z"} {
+		got, err := expression.Evaluate("{{"+bodies[index+1]+"}}", expression.Context{})
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("segment %d = %q evaluates to %#v (%v), want %#v", index+1, bodies[index+1], got, err, want)
 		}
 	}
 }

@@ -3544,7 +3544,11 @@ func postgresToKilas(node Node) (map[string]any, []Unsupported) {
 	}
 
 	if options, ok := node.Parameters["options"].(map[string]any); ok {
-		carried, bound, optionIssues := sqlOptionsToKilas(options)
+		// n8n reads an expression replacement one {{ }} segment at a time from
+		// PostgreSQL 2.5 on; before it, and in the MySQL node, it resolves the
+		// whole replacement and splits the result on its commas.
+		perSegment := strings.Contains(strings.ToLower(node.Type), "postgres") && node.TypeVersion >= 2.5
+		carried, bound, optionIssues := sqlOptionsToKilas(options, perSegment)
 		if len(carried) > 0 {
 			parameters["options"] = carried
 		}
@@ -3567,7 +3571,7 @@ func postgresToKilas(node Node) (map[string]any, []Unsupported) {
 // own validator refuses a key this server does not know, so passing a newer
 // n8n's option straight through would turn an import into a workflow that
 // cannot be saved. What is dropped is named.
-func sqlOptionsToKilas(options map[string]any) (map[string]any, any, []Unsupported) {
+func sqlOptionsToKilas(options map[string]any, perSegment bool) (map[string]any, any, []Unsupported) {
 	declared := map[string]bool{}
 	for _, key := range nodes.DeclaredSQLOptions() {
 		declared[key] = true
@@ -3593,7 +3597,7 @@ func sqlOptionsToKilas(options map[string]any) (map[string]any, any, []Unsupport
 			"these n8n options have no equivalent and were dropped: %s", strings.Join(unknown, ", "))})
 	}
 
-	bound, replacementIssues := queryReplacementToKilas(options["queryReplacement"])
+	bound, replacementIssues := queryReplacementToKilas(options["queryReplacement"], perSegment)
 	issues = append(issues, replacementIssues...)
 	return carried, bound, issues
 }
@@ -3605,7 +3609,7 @@ func sqlOptionsToKilas(options map[string]any) (map[string]any, any, []Unsupport
 // there is nothing in the stored document that could say otherwise. So a split
 // that changes the count is reported rather than guessed at: binding the wrong
 // number of values would run a different query, silently.
-func queryReplacementToKilas(value any) (any, []Unsupported) {
+func queryReplacementToKilas(value any, perSegment bool) (any, []Unsupported) {
 	switch typed := value.(type) {
 	case nil:
 		return nil, nil
@@ -3616,10 +3620,13 @@ func queryReplacementToKilas(value any) (any, []Unsupported) {
 		if strings.TrimSpace(typed) == "" {
 			return nil, nil
 		}
-		// An expression is not split on its commas. n8n resolves each {{ }}
-		// segment of it on its own and binds each result as one value,
-		// ignoring the text between segments; splitting the stored text first
-		// bound the expressions' source as literal strings.
+		// An expression is not split on its commas. From PostgreSQL 2.5 n8n
+		// resolves each {{ }} segment of it on its own and binds each result as
+		// one value, ignoring the text between segments; splitting the stored
+		// text first bound the expressions' source as literal strings. Before
+		// 2.5, and in the MySQL node, n8n resolves the whole replacement and
+		// splits the result on its commas, which no stored value can express
+		// here: it is bound per segment all the same and reported.
 		if template, isExpression := strings.CutPrefix(typed, "="); isExpression {
 			template = strings.TrimLeft(template, "=")
 			if bodies, err := expression.Bodies(template); err == nil && len(bodies) > 0 {
@@ -3627,7 +3634,13 @@ func queryReplacementToKilas(value any) (any, []Unsupported) {
 				for _, body := range bodies {
 					bound = append(bound, expressionValue("{{ "+strings.TrimSpace(body)+" }}"))
 				}
-				return bound, nil
+				if perSegment {
+					return bound, nil
+				}
+				return bound, []Unsupported{{Field: "options.queryReplacement", Severity: SeverityLossy, Reason: fmt.Sprintf(
+					"this node resolves its query replacements as one string and splits the result on every comma; "+
+						"they were bound as %d values, one per {{ }} segment, which differs only when a value "+
+						"holds a comma or the text between the segments matters", len(bound))}}
 			}
 			// No segment: n8n splits the text as it does a fixed value.
 			typed = template
@@ -3863,12 +3876,12 @@ func queryReplacementSegments(bound []any) (string, []Lossy) {
 	segments := make([]string, 0, len(bound))
 	for _, entry := range bound {
 		if !expression.IsExpression(entry) {
-			literal, err := json.Marshal(entry)
+			literal, err := segmentLiteral(entry)
 			if err != nil {
 				return "", []Lossy{{Field: "queryParameters", Severity: SeverityDropped, Reason: "a bound value " +
 					"could not be written as an n8n query replacement, so the replacements were left out"}}
 			}
-			segments = append(segments, "{{ "+string(literal)+" }}")
+			segments = append(segments, "{{ "+literal+" }}")
 			continue
 		}
 		template := strings.TrimSpace(entry.(map[string]any)["value"].(string))
@@ -3881,6 +3894,48 @@ func queryReplacementSegments(bound []any) (string, []Lossy) {
 		segments = append(segments, template)
 	}
 	return "=" + strings.Join(segments, ", "), nil
+}
+
+// segmentLiteral writes a fixed value as a JavaScript literal that holds no
+// `{{` or `}}`. n8n ends a segment at the first `}}` after its opener, so a
+// nested object's closing braces, or braces inside a string, would end it
+// early. Braces inside strings become \u escapes, which JSON and JavaScript
+// read back as the same characters, and two structural braces in a row get a
+// space between them.
+func segmentLiteral(value any) (string, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	var builder strings.Builder
+	inString, escaped := false, false
+	var previous byte
+	for index := 0; index < len(encoded); index++ {
+		char := encoded[index]
+		switch {
+		case inString && escaped:
+			escaped = false
+		case inString && char == '\\':
+			escaped = true
+		case inString && char == '"':
+			inString = false
+		case inString && char == '{':
+			builder.WriteString("\\u007b")
+			previous = 0
+			continue
+		case inString && char == '}':
+			builder.WriteString("\\u007d")
+			previous = 0
+			continue
+		case !inString && char == '"':
+			inString = true
+		case !inString && (char == '{' || char == '}') && previous == char:
+			builder.WriteByte(' ')
+		}
+		builder.WriteByte(char)
+		previous = char
+	}
+	return builder.String(), nil
 }
 
 // n8nConditionName is the inverse of postgresConditionOperators.
