@@ -82,6 +82,12 @@ what is in front of you?
 +-- a failure must be caught, retried, alerting or answered to a caller
 |     -> kilasflow-error-handling
 |
++-- an AI agent, a chat, an LLM chain or answers from documents (RAG)
+|     -> kilasflow-ai-agents
+|
++-- items to batch or loop, a file or binary payload, one workflow calling another
+|     -> kilasflow-flow-patterns
+|
 +-- a secret, a token, an API key or a database connection
 |     -> kilasflow-credentials
 |
@@ -114,6 +120,8 @@ what is in front of you?
 | `kilasflow-triggers` | the workflow must be started by something else: "webhook", "trigger", "schedule", "form", "activation" |
 | `kilasflow-debugging` | a run failed, produced the wrong output or never started: "failed", "error", "wrong output", "trace" |
 | `kilasflow-error-handling` | a failure must be caught, retried, alerted on or answered to an HTTP caller: "retry", "timeout", "error workflow", "respond" |
+| `kilasflow-ai-agents` | building an agent, chat, LLM chain or RAG workflow: "agent", "AI", "LLM", "chat model", "tool", "memory", "RAG", "embeddings", "vector store" |
+| `kilasflow-flow-patterns` | items must be batched or looped, a file is read or produced, or one workflow calls another: "loop", "batch", "binary", "file", "PDF", "sub-workflow", "execute workflow" |
 | `kilasflow-credentials` | a secret, token or key is involved: "credential", "secret", "token", "auth", "api key" |
 | `kilasflow-datastore` | reading or writing a table: "datastore", "table", "columns", "rows", "filter", "CSV" |
 | `kilasflow-import-export` | migrating from n8n or exporting back: "n8n", "migration", "import", "export", "lossy" |

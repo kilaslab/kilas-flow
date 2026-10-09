@@ -791,3 +791,42 @@ func TestEmbeddedBundlePassesItsOwnChecker(t *testing.T) {
 		t.Errorf("%s: %s: %s", finding.Skill, finding.Rule, finding.Message)
 	}
 }
+
+// The router is how an agent finds a skill: a skill it does not name is a skill
+// nobody loads. Every other skill in the bundle must be named in the router's
+// decision tree and in its table, so a skill added to skills/ without a line in
+// using-kilasflow-skills fails here instead of shipping unreachable.
+func TestTheRouterNamesEverySkill(t *testing.T) {
+	const router = "using-kilasflow-skills"
+
+	loaded := embeddedBundle(t)
+	var body string
+	for _, skill := range loaded {
+		if skill.Name == router {
+			body = skill.Body
+		}
+	}
+	if body == "" {
+		t.Fatalf("the bundle has no %s skill", router)
+	}
+
+	tree := body
+	if from := strings.Index(body, "## Decision tree"); from >= 0 {
+		tree = body[from:]
+		if to := strings.Index(tree, "### The command surface"); to >= 0 {
+			tree = tree[:to]
+		}
+	}
+
+	for _, skill := range loaded {
+		if skill.Name == router {
+			continue
+		}
+		if !strings.Contains(tree, "-> "+skill.Name) {
+			t.Errorf("the router's decision tree never sends an agent to %s", skill.Name)
+		}
+		if !strings.Contains(tree, "| `"+skill.Name+"` |") {
+			t.Errorf("the router's skills table has no row for %s", skill.Name)
+		}
+	}
+}

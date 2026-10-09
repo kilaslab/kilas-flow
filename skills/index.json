@@ -3,6 +3,54 @@
   "generatedBy": "go run ./scripts/skills-index",
   "skills": [
     {
+      "name": "kilasflow-ai-agents",
+      "description": "Use when building an AI agent, chat, LLM chain or RAG workflow — wiring a chat model, memory, tools, an output parser or a vector store into a workflow. Triggers on \"agent\", \"AI\", \"LLM\", \"chat model\", \"tool\", \"memory\", \"RAG\", \"embeddings\", \"vector store\".",
+      "path": "skills/kilasflow-ai-agents/SKILL.md",
+      "commands": [
+        "kilasflow credential create",
+        "kilasflow exec trace",
+        "kilasflow node describe",
+        "kilasflow node list",
+        "kilasflow node options",
+        "kilasflow run",
+        "kilasflow workflow create",
+        "kilasflow workflow validate"
+      ],
+      "operations": [
+        "create-credential",
+        "create-workflow",
+        "list-node-types",
+        "load-node-property-options",
+        "run-workflow",
+        "stream-execution-events",
+        "validate-workflow-document"
+      ],
+      "nodes": [
+        "kilasflow.agent",
+        "kilasflow.calculatorTool",
+        "kilasflow.chainLlm",
+        "kilasflow.chatModel",
+        "kilasflow.chatTrigger",
+        "kilasflow.documentLoader",
+        "kilasflow.embeddings",
+        "kilasflow.lmChatOpenAi",
+        "kilasflow.lmChatOpenRouter",
+        "kilasflow.memoryBuffer",
+        "kilasflow.outputParser",
+        "kilasflow.textSplitter",
+        "kilasflow.vectorStore"
+      ],
+      "expressionRoots": [
+        "$json"
+      ],
+      "notShipped": [],
+      "references": [
+        "references/EXAMPLE.md",
+        "references/MODELS.md",
+        "references/RAG.md"
+      ]
+    },
+    {
       "name": "kilasflow-credentials",
       "description": "Use when a workflow needs an API key, token, password or a database connection, when a stored credential must be listed, inspected, tested or replaced, or when a new agent key must be minted. Triggers on \"credential\", \"secret\", \"token\", \"auth\", \"api key\".",
       "path": "skills/kilasflow-credentials/SKILL.md",
@@ -260,6 +308,49 @@
       "references": [
         "references/EXAMPLE.md",
         "references/EXPRESSION_ROOTS.md"
+      ]
+    },
+    {
+      "name": "kilasflow-flow-patterns",
+      "description": "Use when items must be batched or looped, a file or binary payload is read or produced, or one workflow calls another. Triggers on \"loop\", \"batch\", \"binary\", \"file\", \"PDF\", \"sub-workflow\", \"execute workflow\".",
+      "path": "skills/kilasflow-flow-patterns/SKILL.md",
+      "commands": [
+        "kilasflow exec get",
+        "kilasflow exec list",
+        "kilasflow node describe",
+        "kilasflow run",
+        "kilasflow workflow activate",
+        "kilasflow workflow create",
+        "kilasflow workflow validate"
+      ],
+      "operations": [
+        "activate-workflow",
+        "create-workflow",
+        "get-execution",
+        "list-executions",
+        "list-node-types",
+        "run-workflow",
+        "validate-workflow-document"
+      ],
+      "nodes": [
+        "kilasflow.aggregate",
+        "kilasflow.executeWorkflow",
+        "kilasflow.executeWorkflowTrigger",
+        "kilasflow.extractFromFile",
+        "kilasflow.httpRequest",
+        "kilasflow.loop",
+        "kilasflow.splitOut"
+      ],
+      "expressionRoots": [
+        "$json"
+      ],
+      "notShipped": [
+        "No OCR: kilasflow.extractFromFile reads a PDF text layer only, so a scanned PDF yields empty text"
+      ],
+      "references": [
+        "references/BINARY_DATA.md",
+        "references/EXAMPLE.md",
+        "references/SUB_WORKFLOWS.md"
       ]
     },
     {
