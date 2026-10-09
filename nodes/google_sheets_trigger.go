@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,6 +60,12 @@ type sheetsPollCursor struct {
 	// row of the new tab as a change.
 	Doc string `json:"doc,omitempty"`
 	Gid int64  `json:"gid"`
+	// Config fingerprints how the rows were read and what their fingerprints
+	// were made from: the watched columns, how values and dates are rendered,
+	// the range and the header and first data rows. Edit any of them and every
+	// stored fingerprint is stale, so the next tick starts a new baseline
+	// instead of reporting each row as changed.
+	Config string `json:"config,omitempty"`
 	// LastRow is the last data row there was, so a row past it is an addition.
 	LastRow int `json:"lastRow"`
 	// Rows maps a sheet row number to the fingerprint of its watched cells.
@@ -178,7 +186,8 @@ func (handler *GoogleSheetsPoller) poll(ctx context.Context, claim poller.Claim)
 		}
 	}
 
-	current := sheetsPollCursor{Version: 1, Doc: docID, Gid: tab.gid, Rows: make(map[string]string, len(rows))}
+	config := sheetsTriggerConfig(options["columnsToWatch"], render, dateRender, rangeA1, headerRow, firstDataRow)
+	current := sheetsPollCursor{Version: 1, Doc: docID, Gid: tab.gid, Config: config, Rows: make(map[string]string, len(rows))}
 	for _, row := range rows {
 		current.Rows[strconv.Itoa(row.number)] = row.hash
 		current.LastRow = max(current.LastRow, row.number)
@@ -188,7 +197,7 @@ func (handler *GoogleSheetsPoller) poll(ctx context.Context, claim poller.Claim)
 	hasBaseline := false
 	if strings.TrimSpace(claim.Cursor.Cursor) != "" {
 		if json.Unmarshal([]byte(claim.Cursor.Cursor), &previous) == nil &&
-			previous.Version == 1 && previous.Doc == docID && previous.Gid == tab.gid {
+			previous.Version == 1 && previous.Doc == docID && previous.Gid == tab.gid && previous.Config == config {
 			hasBaseline = true
 		}
 	}
@@ -200,6 +209,12 @@ func (handler *GoogleSheetsPoller) poll(ctx context.Context, claim poller.Claim)
 		// The first tick only records what is already there.
 		next, err := encode()
 		return nil, next, err
+	}
+
+	// Nothing changed: hand the stored cursor back as it is, rather than
+	// encoding a long map into the same text again.
+	if reflect.DeepEqual(previous, current) {
+		return nil, claim.Cursor.Cursor, nil
 	}
 
 	var emitted []workflow.Item
@@ -269,6 +284,24 @@ func watchedColumns(raw any, header []string) ([]int, error) {
 	}
 	sort.Ints(indexes)
 	return indexes, nil
+}
+
+// sheetsTriggerConfig is a digest of the settings a row's fingerprint depends
+// on. The watched columns are sorted, so listing them in another order is not
+// a change.
+func sheetsTriggerConfig(watched any, render, dateRender, rangeA1 string, headerRow, firstDataRow int) string {
+	names := slices.Clone(stringList(watched))
+	sort.Strings(names)
+	encoded, _ := json.Marshal(struct {
+		Watched      []string `json:"watched"`
+		Render       string   `json:"render"`
+		DateRender   string   `json:"dateRender"`
+		Range        string   `json:"range"`
+		HeaderRow    int      `json:"headerRow"`
+		FirstDataRow int      `json:"firstDataRow"`
+	}{names, render, dateRender, rangeA1, headerRow, firstDataRow})
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])[:16]
 }
 
 // rowFingerprint is a short, stable digest of the cells a row is watched by.

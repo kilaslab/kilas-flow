@@ -371,7 +371,8 @@ func googleSheetsTrigger() node.Definition {
 		Type:        GoogleSheetsTriggerNodeType,
 		Version:     workflow.V(1),
 		DisplayName: "Google Sheets Trigger",
-		Description: "Starts a workflow when a row is added or changed in a Google Sheets tab. Polls with a leased cursor and compares the sheet's values; the first poll only records what is already there.",
+		Description: "Starts a workflow when a row is added or changed in a Google Sheets tab. Polls with a leased cursor and compares the sheet's values; the first poll only records what is already there. " +
+			"Rows are compared by position, so deleting a row reports the rows below it as updated.",
 		Category:    "Triggers",
 		Group:       []node.NodeGroup{node.GroupTrigger},
 		Icon:        &node.NodeIcon{Light: "builtin:sheet"},
