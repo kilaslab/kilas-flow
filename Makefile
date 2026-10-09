@@ -535,6 +535,17 @@ smoke-postgres: ## Prove the Docker image against the temporary Compose PostgreS
 test-e2e: ## Run the Playwright end-to-end suite against a real binary and SPA
 	cd e2e && pnpm test
 
+# The visual regression suite (VR-03): the /design/states harness, every
+# primitive in every interaction state, screenshotted in both themes and
+# compared with the committed baselines for this platform (darwin baselines
+# stay local; CI compares linux ones). It shares the e2e build: global-setup
+# builds with KILASFLOW_DESIGN_HARNESS=1, and KILASFLOW_E2E_PREBUILT=1 reuses a
+# binary test-e2e already built. Flake check:
+# `cd e2e && pnpm test:visual --repeat-each=3`.
+.PHONY: test-visual
+test-visual: ## Run the Playwright visual regression suite (state matrix, focus ring, theme subtree)
+	cd e2e && pnpm test:visual
+
 # Run after test-e2e (and after a failure, hence the CI `if: always()`): the
 # JSON report it reads exists either way. A skipped test is not a passing test,
 # and this is the step that says so — see e2e/skip-budget.json.

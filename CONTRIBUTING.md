@@ -67,6 +67,7 @@ checks only matter if your change reaches the API surface or the configuration.
 | `make sdk-example-check` | `examples/host-page` runs against the packed SDK: installed into a scratch copy outside the repository, booted against a stub KilasFlow, with raw `..%2f` probes at its static route |
 | `make sdk-release-check` | every gate a release has to pass, in one command (`sdk-check`, `sdk-test`, `sdk-build`, `sdk-version-check`, `generate-types-check`, `sdk-package-check`, `sdk-example-check`) |
 | `make test-e2e` | the Playwright suite, against a real binary and SPA |
+| `make test-visual` | the visual regression suite: every UI primitive in every state, both themes, against committed screenshots |
 | `make test-e2e-capstone` | the epic acceptance capstone, against a docker image (on demand) |
 | `make e2e-capstone-report` | the capstone's verdict: exit 0 passed, 1 failed, 2 unavailable |
 | `make e2e-capstone-scheduled` | the same verdict as `.github/workflows/capstone.yml` reads it: an unavailable third party does not fail the run |
@@ -83,6 +84,15 @@ about.
 
 `make test-e2e` needs `pnpm install` in `e2e/` and a built binary. It is slow and
 CI runs it on your pull request, so it is not part of the local loop.
+
+`make test-visual` shares that build (`KILASFLOW_E2E_PREBUILT=1` reuses it). CI
+compares against the linux screenshots committed under
+`e2e/visual/__screenshots__/linux/`; screenshots taken on a Mac stay local and are
+gitignored. When a change alters a screenshot on purpose, take the new linux
+baselines from the `visual-regression` artefact of the CI run and commit them.
+The focus lint (`pnpm lint:focus` in `web/`, also part of `make lint`) fails on
+any `outline-none` that removes the focus ring without a replacement; its
+message names the utility to use instead.
 
 ### Production smoke checks
 

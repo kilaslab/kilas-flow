@@ -33,6 +33,8 @@ Introduce a <StatusBadge status=…> primitive fed by a single status→token ma
 
 Source: the 2026-09-23 frontend visual audit. The owner chose direction A, "Kunyit", after rejecting "Nila" for resembling qonflo.ai. The full audit and draft tokens are attached to the parent epic.
 
+2026-10-09 (Track I, FEAT-p75n7j): with the Kunyit tokens, `--primary` is the kunyit FILL, so `text-primary` in light reads at about 1.7:1 on white (26 sites; on /executions the execution ids are an example). It cannot be fixed by an alias: those sites move to `text-(--kf-accent-text)` (deep ochre in light, 6.35:1 on bg) here. Only the Button `link` variant was moved in FEAT-p75n7j. `tokens.contrast.test.ts` leaves `text-primary` out of its alias guard for this reason; add the pair back once the sites are migrated. Light is only reachable by forcing `data-theme='light'` until FEAT-a3dwj2.
+
 # Related Files
 
 # Attachments

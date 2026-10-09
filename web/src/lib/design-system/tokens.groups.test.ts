@@ -118,7 +118,7 @@ describe('v1 leftovers (FEAT-p75n7j criterion 6)', () => {
 		return out;
 	}
 
-	it('no source mentions --node-trigger/core/ai/data/imported', () => {
+	it('no source mentions the v1 node category tokens (--node-<category>)', () => {
 		const hits = ROOTS.flatMap(files).filter((f) => /--node-(trigger|core|ai|data|imported)\b/.test(readFileSync(f, 'utf8')));
 		expect(hits).toEqual([]);
 	});
