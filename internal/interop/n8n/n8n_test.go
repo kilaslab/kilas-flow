@@ -747,6 +747,8 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.gmailTrigger ↔ kilasflow.gmailTrigger",
 		"n8n-nodes-base.googleDrive ↔ kilasflow.googleDrive",
 		"n8n-nodes-base.googleDriveTrigger ↔ kilasflow.googleDriveTrigger",
+		"n8n-nodes-base.googleSheets ↔ kilasflow.googleSheets",
+		"n8n-nodes-base.googleSheetsTrigger ↔ kilasflow.googleSheetsTrigger",
 		"n8n-nodes-base.httpRequest ↔ kilasflow.httpRequest",
 		"n8n-nodes-base.if ↔ kilasflow.if",
 		"n8n-nodes-base.limit ↔ kilasflow.limit",

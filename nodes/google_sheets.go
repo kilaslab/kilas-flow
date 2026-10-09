@@ -398,8 +398,8 @@ func googleSheetsTrigger() node.Definition {
 					{Label: "Old Version", Value: "old"},
 					{Label: "Both Versions", Value: "both"},
 				},
-				Description: "Only the new version is produced: the old and both settings are kept when a workflow is imported, " +
-					"and the trigger still emits the new version.",
+				Description: "The trigger compares fingerprints of the rows and does not keep their previous values, so only the " +
+					"new version can be produced. An imported workflow that asked for the old or both versions arrives set to new.",
 				DisplayOptions: node.Visibility{Show: []node.Condition{{Key: "event", Values: []any{SheetsEventRowUpdate, SheetsEventAnyUpdate}}}},
 			},
 			{
