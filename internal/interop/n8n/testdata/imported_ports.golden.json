@@ -292,44 +292,24 @@
     {
       "name": "n8n_rag_16706.json",
       "document": {
-        "schemaVersion": 1,
-        "id": "",
-        "name": "RAG HTTP PDF Telegram",
         "nodes": [
           {
             "id": "m",
             "name": "Manual",
             "type": "kilasflow.manual",
-            "typeVersion": 1,
-            "position": {
-              "x": 0,
-              "y": 0
-            }
+            "typeVersion": 1
           },
           {
             "id": "h",
             "name": "HTTP Request",
             "type": "kilasflow.httpRequest",
-            "typeVersion": 4.2,
-            "position": {
-              "x": 220,
-              "y": 0
-            },
-            "parameters": {
-              "followRedirects": true,
-              "method": "GET",
-              "url": "https://example.test/manual.pdf"
-            }
+            "typeVersion": 4.2
           },
           {
             "id": "x",
             "name": "Extract from File",
             "type": "kilasflow.extractFromFile",
             "typeVersion": 1,
-            "position": {
-              "x": 440,
-              "y": 0
-            },
             "parameters": {
               "operation": "pdf"
             }
@@ -338,38 +318,21 @@
             "id": "l",
             "name": "Default Data Loader",
             "type": "kilasflow.documentLoader",
-            "typeVersion": 1.1,
-            "position": {
-              "x": 660,
-              "y": 80
-            }
+            "typeVersion": 1.1
           },
           {
             "id": "s",
             "name": "Recursive Character Text Splitter",
             "type": "kilasflow.textSplitter",
-            "typeVersion": 1,
-            "position": {
-              "x": 660,
-              "y": 220
-            },
-            "parameters": {
-              "chunkOverlap": 200,
-              "chunkSize": 1000
-            }
+            "typeVersion": 1
           },
           {
             "id": "e",
             "name": "Embeddings OpenAI",
             "type": "kilasflow.embeddings",
             "typeVersion": 1.2,
-            "position": {
-              "x": 880,
-              "y": 220
-            },
             "parameters": {
-              "mode": "cluster",
-              "model": "text-embedding-3-small"
+              "mode": "cluster"
             }
           },
           {
@@ -377,43 +340,23 @@
             "name": "Postgres PGVector Store",
             "type": "kilasflow.vectorStorePGVector",
             "typeVersion": 1.3,
-            "position": {
-              "x": 880,
-              "y": 0
-            },
             "parameters": {
-              "mode": "insert",
-              "tableName": "documents"
+              "mode": "insert"
             }
           },
           {
             "id": "t",
             "name": "Telegram Trigger",
             "type": "kilasflow.telegramTrigger",
-            "typeVersion": 1.2,
-            "position": {
-              "x": 0,
-              "y": 400
-            },
-            "parameters": {
-              "path": "rag",
-              "updates": [
-                "message"
-              ]
-            }
+            "typeVersion": 1.2
           },
           {
             "id": "e2",
             "name": "Embeddings Query",
             "type": "kilasflow.embeddings",
             "typeVersion": 1.2,
-            "position": {
-              "x": 440,
-              "y": 560
-            },
             "parameters": {
-              "mode": "cluster",
-              "model": "text-embedding-3-small"
+              "mode": "cluster"
             }
           },
           {
@@ -421,100 +364,41 @@
             "name": "Policies Store",
             "type": "kilasflow.vectorStorePGVector",
             "typeVersion": 1,
-            "position": {
-              "x": 440,
-              "y": 720
-            },
             "parameters": {
-              "mode": "retrieve",
-              "options": {},
-              "tableName": "n8n_vectors"
+              "mode": "retrieve"
             }
           },
           {
             "id": "vt",
             "name": "Answer questions with a vector store",
             "type": "kilasflow.vectorStoreTool",
-            "typeVersion": 1,
-            "position": {
-              "x": 660,
-              "y": 400
-            },
-            "parameters": {
-              "toolDescription": "the employee handbook",
-              "toolName": "handbook",
-              "topK": 4
-            }
+            "typeVersion": 1
           },
           {
             "id": "lm2",
             "name": "OpenAI Chat Model1",
             "type": "kilasflow.lmChatOpenAi",
-            "typeVersion": 1.2,
-            "position": {
-              "x": 880,
-              "y": 720
-            },
-            "parameters": {
-              "model": {
-                "__rl": true,
-                "mode": "id",
-                "value": "gpt-4.1-mini"
-              }
-            }
+            "typeVersion": 1.2
           },
           {
             "id": "lm",
             "name": "OpenAI Chat Model",
             "type": "kilasflow.lmChatOpenAi",
-            "typeVersion": 1.2,
-            "position": {
-              "x": 660,
-              "y": 560
-            },
-            "parameters": {
-              "model": {
-                "__rl": true,
-                "mode": "id",
-                "value": "gpt-4.1-mini"
-              }
-            }
+            "typeVersion": 1.2
           },
           {
             "id": "a",
             "name": "AI Agent",
             "type": "kilasflow.agent",
-            "typeVersion": 3.1,
-            "position": {
-              "x": 880,
-              "y": 400
-            },
-            "parameters": {
-              "prompt": {
-                "mode": "expression",
-                "value": "{{ $json.message.text }}"
-              }
-            }
+            "typeVersion": 3.1
           },
           {
             "id": "r",
             "name": "Telegram",
             "type": "pack.telegram",
             "typeVersion": 1.2,
-            "position": {
-              "x": 1100,
-              "y": 400
-            },
             "parameters": {
-              "chatId": {
-                "mode": "expression",
-                "value": "{{ $json.message.chat.id }}"
-              },
-              "operation": "sendMessage",
-              "text": {
-                "mode": "expression",
-                "value": "{{ $json.output }}"
-              }
+              "operation": "sendMessage"
             }
           }
         ],
@@ -675,40 +559,26 @@
               "port": "main"
             }
           }
-        ],
-        "settings": {}
+        ]
       }
     },
     {
       "name": "n8n_rag_3647.json",
       "document": {
-        "schemaVersion": 1,
-        "id": "",
-        "name": "RAG Drive PGVector",
         "nodes": [
           {
             "id": "m",
             "name": "Manual",
             "type": "kilasflow.manual",
-            "typeVersion": 1,
-            "position": {
-              "x": 0,
-              "y": 0
-            }
+            "typeVersion": 1
           },
           {
             "id": "d",
             "name": "Google Drive",
             "type": "kilasflow.googleDrive",
             "typeVersion": 3,
-            "position": {
-              "x": 220,
-              "y": 0
-            },
             "parameters": {
-              "operation": "search",
-              "queryString": "mimeType = 'application/pdf'",
-              "resource": "fileFolder"
+              "operation": "search"
             }
           },
           {
@@ -716,10 +586,6 @@
             "name": "Download",
             "type": "kilasflow.googleDrive",
             "typeVersion": 3,
-            "position": {
-              "x": 440,
-              "y": 0
-            },
             "parameters": {
               "operation": "download"
             }
@@ -729,10 +595,6 @@
             "name": "Extract from File",
             "type": "kilasflow.extractFromFile",
             "typeVersion": 1,
-            "position": {
-              "x": 660,
-              "y": 0
-            },
             "parameters": {
               "operation": "pdf"
             }
@@ -741,38 +603,21 @@
             "id": "l",
             "name": "Default Data Loader",
             "type": "kilasflow.documentLoader",
-            "typeVersion": 1.1,
-            "position": {
-              "x": 880,
-              "y": 80
-            }
+            "typeVersion": 1.1
           },
           {
             "id": "s",
             "name": "Recursive Character Text Splitter",
             "type": "kilasflow.textSplitter",
-            "typeVersion": 1,
-            "position": {
-              "x": 880,
-              "y": 220
-            },
-            "parameters": {
-              "chunkOverlap": 200,
-              "chunkSize": 1000
-            }
+            "typeVersion": 1
           },
           {
             "id": "e",
             "name": "Embeddings OpenAI",
             "type": "kilasflow.embeddings",
             "typeVersion": 1.2,
-            "position": {
-              "x": 1100,
-              "y": 220
-            },
             "parameters": {
-              "mode": "cluster",
-              "model": "text-embedding-3-small"
+              "mode": "cluster"
             }
           },
           {
@@ -780,13 +625,8 @@
             "name": "Postgres PGVector Store",
             "type": "kilasflow.vectorStorePGVector",
             "typeVersion": 1.3,
-            "position": {
-              "x": 1100,
-              "y": 0
-            },
             "parameters": {
-              "mode": "insert",
-              "tableName": "documents"
+              "mode": "insert"
             }
           },
           {
@@ -794,12 +634,7 @@
             "name": "Move",
             "type": "kilasflow.googleDrive",
             "typeVersion": 3,
-            "position": {
-              "x": 1320,
-              "y": 0
-            },
             "parameters": {
-              "folderId": "processed",
               "operation": "move"
             }
           }
@@ -901,36 +736,24 @@
               "port": "main"
             }
           }
-        ],
-        "settings": {}
+        ]
       }
     },
     {
       "name": "n8n_rag_4799.json",
       "document": {
-        "schemaVersion": 1,
-        "id": "",
-        "name": "RAG Drive Telegram",
         "nodes": [
           {
             "id": "m",
             "name": "Manual",
             "type": "kilasflow.manual",
-            "typeVersion": 1,
-            "position": {
-              "x": 0,
-              "y": 0
-            }
+            "typeVersion": 1
           },
           {
             "id": "d",
             "name": "Google Drive",
             "type": "kilasflow.googleDrive",
             "typeVersion": 3,
-            "position": {
-              "x": 220,
-              "y": 0
-            },
             "parameters": {
               "operation": "search"
             }
@@ -940,10 +763,6 @@
             "name": "Download",
             "type": "kilasflow.googleDrive",
             "typeVersion": 3,
-            "position": {
-              "x": 440,
-              "y": 0
-            },
             "parameters": {
               "operation": "download"
             }
@@ -953,10 +772,6 @@
             "name": "Extract from File",
             "type": "kilasflow.extractFromFile",
             "typeVersion": 1,
-            "position": {
-              "x": 660,
-              "y": 0
-            },
             "parameters": {
               "operation": "pdf"
             }
@@ -965,38 +780,21 @@
             "id": "l",
             "name": "Default Data Loader",
             "type": "kilasflow.documentLoader",
-            "typeVersion": 1.1,
-            "position": {
-              "x": 880,
-              "y": 80
-            }
+            "typeVersion": 1.1
           },
           {
             "id": "s",
             "name": "Recursive Character Text Splitter",
             "type": "kilasflow.textSplitter",
-            "typeVersion": 1,
-            "position": {
-              "x": 880,
-              "y": 220
-            },
-            "parameters": {
-              "chunkOverlap": 100,
-              "chunkSize": 800
-            }
+            "typeVersion": 1
           },
           {
             "id": "e",
             "name": "Embeddings OpenAI",
             "type": "kilasflow.embeddings",
             "typeVersion": 1.2,
-            "position": {
-              "x": 1100,
-              "y": 220
-            },
             "parameters": {
-              "mode": "cluster",
-              "model": "text-embedding-3-small"
+              "mode": "cluster"
             }
           },
           {
@@ -1004,43 +802,23 @@
             "name": "Postgres PGVector Store",
             "type": "kilasflow.vectorStorePGVector",
             "typeVersion": 1.3,
-            "position": {
-              "x": 1100,
-              "y": 0
-            },
             "parameters": {
-              "mode": "insert",
-              "tableName": "documents"
+              "mode": "insert"
             }
           },
           {
             "id": "t",
             "name": "Telegram Trigger",
             "type": "kilasflow.telegramTrigger",
-            "typeVersion": 1.2,
-            "position": {
-              "x": 0,
-              "y": 400
-            },
-            "parameters": {
-              "path": "rag",
-              "updates": [
-                "message"
-              ]
-            }
+            "typeVersion": 1.2
           },
           {
             "id": "e2",
             "name": "Embeddings Query",
             "type": "kilasflow.embeddings",
             "typeVersion": 1.2,
-            "position": {
-              "x": 440,
-              "y": 560
-            },
             "parameters": {
-              "mode": "cluster",
-              "model": "text-embedding-3-small"
+              "mode": "cluster"
             }
           },
           {
@@ -1048,68 +826,29 @@
             "name": "Postgres PGVector Tool",
             "type": "kilasflow.vectorStorePGVector",
             "typeVersion": 1.3,
-            "position": {
-              "x": 660,
-              "y": 400
-            },
             "parameters": {
-              "mode": "retrieve-as-tool",
-              "tableName": "documents",
-              "toolName": "docs"
+              "mode": "retrieve-as-tool"
             }
           },
           {
             "id": "lm",
             "name": "OpenAI Chat Model",
             "type": "kilasflow.lmChatOpenAi",
-            "typeVersion": 1.2,
-            "position": {
-              "x": 660,
-              "y": 560
-            },
-            "parameters": {
-              "model": {
-                "__rl": true,
-                "mode": "id",
-                "value": "gpt-4.1-mini"
-              }
-            }
+            "typeVersion": 1.2
           },
           {
             "id": "a",
             "name": "AI Agent",
             "type": "kilasflow.agent",
-            "typeVersion": 3.1,
-            "position": {
-              "x": 880,
-              "y": 400
-            },
-            "parameters": {
-              "prompt": {
-                "mode": "expression",
-                "value": "{{ $json.chatInput }}"
-              }
-            }
+            "typeVersion": 3.1
           },
           {
             "id": "r",
             "name": "Telegram",
             "type": "pack.telegram",
             "typeVersion": 1.2,
-            "position": {
-              "x": 1100,
-              "y": 400
-            },
             "parameters": {
-              "chatId": {
-                "mode": "expression",
-                "value": "{{ $json.message.chat.id }}"
-              },
-              "operation": "sendMessage",
-              "text": {
-                "mode": "expression",
-                "value": "{{ $json.output }}"
-              }
+              "operation": "sendMessage"
             }
           }
         ],
@@ -1258,87 +997,47 @@
               "port": "main"
             }
           }
-        ],
-        "settings": {}
+        ]
       }
     },
     {
       "name": "n8n_rag_5908.json",
       "document": {
-        "schemaVersion": 1,
-        "id": "",
-        "name": "RAG Gmail Chat",
         "nodes": [
           {
             "id": "g",
             "name": "Gmail Trigger",
             "type": "kilasflow.gmailTrigger",
-            "typeVersion": 1.2,
-            "position": {
-              "x": 0,
-              "y": 0
-            },
-            "parameters": {
-              "pollTimes": {
-                "item": [
-                  {
-                    "mode": "everyMinute"
-                  }
-                ]
-              },
-              "simple": true
-            }
+            "typeVersion": 1.2
           },
           {
             "id": "get",
             "name": "Gmail",
             "type": "kilasflow.gmail",
             "typeVersion": 2.1,
-            "position": {
-              "x": 220,
-              "y": 0
-            },
             "parameters": {
-              "operation": "get",
-              "simple": true
+              "operation": "get"
             }
           },
           {
             "id": "l",
             "name": "Default Data Loader",
             "type": "kilasflow.documentLoader",
-            "typeVersion": 1.1,
-            "position": {
-              "x": 440,
-              "y": 80
-            }
+            "typeVersion": 1.1
           },
           {
             "id": "s",
             "name": "Recursive Character Text Splitter",
             "type": "kilasflow.textSplitter",
-            "typeVersion": 1,
-            "position": {
-              "x": 440,
-              "y": 220
-            },
-            "parameters": {
-              "chunkOverlap": 100,
-              "chunkSize": 1000
-            }
+            "typeVersion": 1
           },
           {
             "id": "e",
             "name": "Embeddings OpenAI",
             "type": "kilasflow.embeddings",
             "typeVersion": 1.2,
-            "position": {
-              "x": 660,
-              "y": 220
-            },
             "parameters": {
-              "mode": "cluster",
-              "model": "text-embedding-3-small"
+              "mode": "cluster"
             }
           },
           {
@@ -1346,37 +1045,23 @@
             "name": "Postgres PGVector Store",
             "type": "kilasflow.vectorStorePGVector",
             "typeVersion": 1.3,
-            "position": {
-              "x": 660,
-              "y": 0
-            },
             "parameters": {
-              "mode": "insert",
-              "tableName": "documents"
+              "mode": "insert"
             }
           },
           {
             "id": "c",
             "name": "When chat message received",
             "type": "kilasflow.chatTrigger",
-            "typeVersion": 1.1,
-            "position": {
-              "x": 0,
-              "y": 400
-            }
+            "typeVersion": 1.1
           },
           {
             "id": "e2",
             "name": "Embeddings Query",
             "type": "kilasflow.embeddings",
             "typeVersion": 1.2,
-            "position": {
-              "x": 440,
-              "y": 560
-            },
             "parameters": {
-              "mode": "cluster",
-              "model": "text-embedding-3-small"
+              "mode": "cluster"
             }
           },
           {
@@ -1384,48 +1069,21 @@
             "name": "Postgres PGVector Tool",
             "type": "kilasflow.vectorStorePGVector",
             "typeVersion": 1.3,
-            "position": {
-              "x": 660,
-              "y": 400
-            },
             "parameters": {
-              "mode": "retrieve-as-tool",
-              "tableName": "documents",
-              "toolName": "inbox"
+              "mode": "retrieve-as-tool"
             }
           },
           {
             "id": "lm",
             "name": "OpenAI Chat Model",
             "type": "kilasflow.lmChatOpenAi",
-            "typeVersion": 1.2,
-            "position": {
-              "x": 660,
-              "y": 560
-            },
-            "parameters": {
-              "model": {
-                "__rl": true,
-                "mode": "id",
-                "value": "gpt-4.1-mini"
-              }
-            }
+            "typeVersion": 1.2
           },
           {
             "id": "a",
             "name": "AI Agent",
             "type": "kilasflow.agent",
-            "typeVersion": 3.1,
-            "position": {
-              "x": 880,
-              "y": 400
-            },
-            "parameters": {
-              "prompt": {
-                "mode": "expression",
-                "value": "{{ $json.chatInput }}"
-              }
-            }
+            "typeVersion": 3.1
           }
         ],
         "connections": [
@@ -1537,36 +1195,24 @@
               "port": "model"
             }
           }
-        ],
-        "settings": {}
+        ]
       }
     },
     {
       "name": "insert store: items arrive on the loader",
       "document": {
-        "schemaVersion": 1,
-        "id": "",
-        "name": "Ingest",
         "nodes": [
           {
             "id": "m",
             "name": "Manual",
             "type": "kilasflow.manual",
-            "typeVersion": 1,
-            "position": {
-              "x": 0,
-              "y": 0
-            }
+            "typeVersion": 1
           },
           {
             "id": "p",
             "name": "Extract from PDF",
             "type": "kilasflow.extractFromFile",
             "typeVersion": 1,
-            "position": {
-              "x": 200,
-              "y": 0
-            },
             "parameters": {
               "operation": "pdf"
             }
@@ -1576,10 +1222,6 @@
             "name": "Extract from Text",
             "type": "kilasflow.extractFromFile",
             "typeVersion": 1,
-            "position": {
-              "x": 200,
-              "y": 200
-            },
             "parameters": {
               "operation": "text"
             }
@@ -1589,67 +1231,36 @@
             "name": "Postgres PGVector Store",
             "type": "kilasflow.vectorStorePGVector",
             "typeVersion": 1.1,
-            "position": {
-              "x": 400,
-              "y": 0
-            },
             "parameters": {
-              "mode": "insert",
-              "options": {},
-              "tableName": "documents"
+              "mode": "insert"
             }
           },
           {
             "id": "l",
             "name": "Default Data Loader",
             "type": "kilasflow.documentLoader",
-            "typeVersion": 1,
-            "position": {
-              "x": 500,
-              "y": 200
-            },
-            "parameters": {
-              "options": {}
-            }
+            "typeVersion": 1
           },
           {
             "id": "r",
             "name": "Recursive Character Text Splitter",
             "type": "kilasflow.textSplitter",
-            "typeVersion": 1,
-            "position": {
-              "x": 500,
-              "y": 400
-            },
-            "parameters": {
-              "chunkOverlap": 200,
-              "chunkSize": 1000
-            }
+            "typeVersion": 1
           },
           {
             "id": "e",
             "name": "Embeddings OpenAI",
             "type": "kilasflow.embeddings",
             "typeVersion": 1.2,
-            "position": {
-              "x": 300,
-              "y": 200
-            },
             "parameters": {
-              "mode": "cluster",
-              "model": "text-embedding-3-small",
-              "options": {}
+              "mode": "cluster"
             }
           },
           {
             "id": "d",
             "name": "Done",
             "type": "kilasflow.noOp",
-            "typeVersion": 1,
-            "position": {
-              "x": 700,
-              "y": 0
-            }
+            "typeVersion": 1
           }
         ],
         "connections": [
@@ -1749,102 +1360,50 @@
               "port": "main"
             }
           }
-        ],
-        "settings": {}
+        ]
       }
     },
     {
       "name": "retrieve store under a Vector Store Tool",
       "document": {
-        "schemaVersion": 1,
-        "id": "",
-        "name": "Answer from policies",
         "nodes": [
           {
             "id": "m",
             "name": "Manual",
             "type": "kilasflow.manual",
-            "typeVersion": 1,
-            "position": {
-              "x": 0,
-              "y": 0
-            }
+            "typeVersion": 1
           },
           {
             "id": "a",
             "name": "AI Agent",
             "type": "kilasflow.agent",
-            "typeVersion": 1.7,
-            "position": {
-              "x": 300,
-              "y": 0
-            },
-            "parameters": {
-              "prompt": "How many leave days do I get?"
-            }
+            "typeVersion": 1.7
           },
           {
             "id": "c",
             "name": "OpenAI Chat Model",
             "type": "kilasflow.lmChatOpenAi",
-            "typeVersion": 1.1,
-            "position": {
-              "x": 200,
-              "y": 200
-            },
-            "parameters": {
-              "model": {
-                "__rl": true,
-                "mode": "list",
-                "value": "gpt-5-mini"
-              }
-            }
+            "typeVersion": 1.1
           },
           {
             "id": "t",
             "name": "Answer questions with a vector store",
             "type": "kilasflow.vectorStoreTool",
-            "typeVersion": 1,
-            "position": {
-              "x": 400,
-              "y": 200
-            },
-            "parameters": {
-              "toolDescription": "data for HR",
-              "toolName": "hr_employee_policies",
-              "topK": 4
-            }
+            "typeVersion": 1
           },
           {
             "id": "c1",
             "name": "OpenAI Chat Model1",
             "type": "kilasflow.lmChatOpenAi",
-            "typeVersion": 1.1,
-            "position": {
-              "x": 600,
-              "y": 400
-            },
-            "parameters": {
-              "model": {
-                "__rl": true,
-                "mode": "list",
-                "value": "gpt-5-mini"
-              }
-            }
+            "typeVersion": 1.1
           },
           {
             "id": "s",
             "name": "Postgres PGVector Store",
             "type": "kilasflow.vectorStorePGVector",
             "typeVersion": 1,
-            "position": {
-              "x": 300,
-              "y": 400
-            },
             "parameters": {
-              "mode": "retrieve",
-              "options": {},
-              "tableName": "n8n_vectors"
+              "mode": "retrieve"
             }
           },
           {
@@ -1852,14 +1411,8 @@
             "name": "Embeddings OpenAI1",
             "type": "kilasflow.embeddings",
             "typeVersion": 1.2,
-            "position": {
-              "x": 300,
-              "y": 600
-            },
             "parameters": {
-              "mode": "cluster",
-              "model": "text-embedding-3-small",
-              "options": {}
+              "mode": "cluster"
             }
           }
         ],
@@ -1936,8 +1489,7 @@
               "port": "embedding"
             }
           }
-        ],
-        "settings": {}
+        ]
       }
     }
   ]
