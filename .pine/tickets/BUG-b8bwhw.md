@@ -37,8 +37,8 @@ Import Manual → AI Agent ← OpenAI model + tool X, using real instances: http
 
 # Acceptance Criteria
 - [x] A generic rule maps `<type>Tool` onto the KilasFlow tool variant whenever the base node is mapped, carrying `toolDescription`
-- [ ] httpRequestTool, gmailTool, postgresTool and telegramTool import and run as agent tools
-- [ ] Template 6270 imports with no blocking issue (its Get Weather httpRequestTool now imports and compiles on an agent; asserted on a fixture shaped like that tool, not on the template itself, which is not in the repo, so the template's other nodes are unverified)
+- [x] httpRequestTool, gmailTool, postgresTool and telegramTool import and run as agent tools (import: `TestAToolVariantOfAMappedNodeImportsAsItsKilasFlowTool`, `TestAGmailToolImportsAsTheGmailToolForm`, `TestAPostgresToolImportsWithItsValuesBound`, `TestATelegramToolImportsAsThePacksToolForm`, each compiling on an agent; run: `TestImported6270WeatherToolRuns` and `TestAnImportedTelegramToolRuns` run the imported tool through an agent, and FEAT-cf5n4j's `nodes/tool_form_run_test.go` runs the Gmail, Telegram and PostgreSQL forms, with `TestPostgresToolLive` against a real server)
+- [x] Template 6270 imports with no blocking issue (its Get Weather httpRequestTool now imports and compiles on an agent; asserted on a fixture shaped like that tool, not on the template itself, which is not in the repo, so the template's other nodes are unverified) (`TestTemplate6270ShapeImportsAndCompiles`: chat trigger, agent 2.2, Gemini model with options only, window memory, sticky notes and Get Weather 4.2 import with no blocking issue apart from re-binding the Gemini credential, and compile; `TestImported6270WeatherToolRuns`. The real template's RSS Feed Read tool is still a placeholder: there is no RSS node, FEAT-kfmq1z)
 
 # Implementation Plan
 
@@ -63,5 +63,12 @@ Related (from the audit): BUG-6jvcs5 (done). Its unchecked item "n8n's current t
 ## Remaining
 
 - gmailTool, postgresTool and telegramTool still import as placeholders: KilasFlow has no Gmail, Postgres or Telegram tool node. Each needs a tool node in `nodes/` (derived with `toolVariantOf`) plus an agent tool kind that runs the base executor with `$fromAI` arguments, the way `httpToolFrom` runs the HTTP executor. Once a tool node exists, its import is one line in `toolVariants`.
+
+## Progress (2026-10-09)
+
+- FEAT-cf5n4j shipped the three tool forms (`kilasflow.gmailTool`, `kilasflow.postgresTool`, `pack.telegramTool`) and their import: `toolVariants` now maps `gmailTool`, `postgresTool` and `telegramTool`, through a generic translator derived from the base mapping (`toolFormToKilas`), and exports them back as n8n's `<base>Tool` (`toolVariantExportMapping`). The "Remaining" item above is done.
+- The httpRequestTool translator now shares `withToolFields` with the tool forms; its behaviour is unchanged.
+- Template 6270: a fixture with the template's shape as the 2026-09-23 import report records it (13 nodes, of which the RSS Feed Read tool is left out) imports with no blocking issue apart from the Gemini credential and compiles, and its Get Weather tool runs through an agent against a stand-in weather service. The template itself still carries `n8n-nodes-base.rssFeedReadTool`, a placeholder until the RSS Read node exists; that is noted on FEAT-kfmq1z rather than filed again.
+- A `<base>Tool` whose base node imports but has no tool form here (googleDriveTool, for one) is still a placeholder that says so (`TestAToolVariantWithNoKilasFlowToolSaysSo`, moved off gmailTool).
 
 # Attachments
