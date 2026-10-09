@@ -17,4 +17,9 @@ limit?: number;
  * Opaque cursor from the previous page's X-Next-Cursor header
  */
 cursor?: string;
+/**
+ * Keep only workflows whose latest revision carries this tag; case is ignored
+ * @maxLength 255
+ */
+tag?: string;
 };

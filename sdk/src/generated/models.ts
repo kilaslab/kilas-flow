@@ -242,6 +242,8 @@ export interface Document {
   nodes: Node[] | null;
   schemaVersion: number;
   settings: DocumentSettings;
+  /** @nullable */
+  tags?: string[] | null;
 }
 
 export interface WorkflowVersionResource {
@@ -1772,6 +1774,12 @@ export interface WorkflowDocumentInput {
   nodes: Node[] | null;
   schemaVersion: number;
   settings: WorkflowDocumentInputSettings;
+  /**
+     * Optional labels that group workflows. At most 20; each 1 to 24 characters with no leading or trailing whitespace, no comma and no control character; unique ignoring case. Order and case are kept. The list filters by one with ?tag=
+     * @maxItems 20
+     * @nullable
+     */
+  tags?: string[] | null;
 }
 
 export type WorkflowPublishEventResourceAction = typeof WorkflowPublishEventResourceAction[keyof typeof WorkflowPublishEventResourceAction];
@@ -1833,6 +1841,8 @@ export interface WorkflowSummary {
   id: string;
   latestRevision: number;
   name: string;
+  /** The latest revision's tags, in the order they were written; empty when it has none */
+  tags: string[];
   updatedAt: string;
 }
 
@@ -2210,6 +2220,11 @@ limit?: number;
  * Opaque cursor from the previous page's X-Next-Cursor header
  */
 cursor?: string;
+/**
+ * Keep only workflows whose latest revision carries this tag; case is ignored
+ * @maxLength 255
+ */
+tag?: string;
 };
 
 export type WorkflowDiagnosticsParams = {

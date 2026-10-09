@@ -58,6 +58,12 @@ type Document struct {
 	Nodes         []Node         `json:"nodes"`
 	Connections   []Connection   `json:"connections"`
 	Settings      map[string]any `json:"settings"`
+	// Tags are short labels that group workflows in the dashboard, the CLI and
+	// the API, and that an n8n import and export carry. They are optional and
+	// ordered, and each revision has its own, like its name; the repository
+	// keeps a per-tenant index of the latest revision's tags so a listing never
+	// has to load documents. See ValidateDraft for what a tag may be.
+	Tags []string `json:"tags,omitempty"`
 }
 
 // Node is a user-configured instance of a registered node definition.
@@ -321,6 +327,9 @@ func ValidateDraft(document Document) error {
 	}
 	if document.Nodes == nil || document.Connections == nil || document.Settings == nil {
 		return fmt.Errorf("workflow nodes, connections, and settings are required")
+	}
+	if err := validateTags(document.Tags); err != nil {
+		return err
 	}
 
 	nodeIDs := make(map[string]struct{}, len(document.Nodes))

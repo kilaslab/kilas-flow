@@ -243,6 +243,11 @@ func (store *GORMWorkflowStore) saveDraft(ctx context.Context, tenant TenantScop
 			Updates(map[string]any{"name": document.Name, "latest_revision": version.Revision}).Error; err != nil {
 			return fmt.Errorf("update workflow: %w", err)
 		}
+		// The tag index follows the revision it was just appended with, in this
+		// transaction, so the list can never show tags the latest revision lacks.
+		if err := replaceWorkflowTags(tx, tenant.ID, model.ID, document.Tags); err != nil {
+			return err
+		}
 
 		// Enforcing the count bound here, in the transaction that created the
 		// row that broke it, is what keeps history from exceeding the operator's
@@ -271,6 +276,9 @@ type WorkflowFilter struct {
 	// Cursor continues a previous listing. It is opaque to callers; only
 	// ListSummaries may construct one.
 	Cursor string
+	// Tag keeps only the workflows whose latest revision carries this tag.
+	// Matching ignores case and surrounding whitespace; empty means no filter.
+	Tag string
 }
 
 // WorkflowSummary is one row of the dashboard's workflow list: the identity and
@@ -287,6 +295,9 @@ type WorkflowSummary struct {
 	Active         bool
 	LatestRevision int
 	UpdatedAt      time.Time
+	// Tags are the latest revision's tags in authored order, read from the tag
+	// index rather than the document. Nil when the workflow has none.
+	Tags []string
 }
 
 // WorkflowSummaryPage is one page of workflow summaries.
@@ -318,6 +329,13 @@ func (store *GORMWorkflowStore) ListSummaries(ctx context.Context, tenant Tenant
 	}
 
 	query := store.db.WithContext(ctx).Model(&workflowModel{}).Where("tenant_id = ?", tenant.ID)
+	if key := workflow.TagKey(strings.TrimSpace(filter.Tag)); key != "" {
+		// A subquery over the tag index, built from the model so the table
+		// prefix applies. It narrows the set before the cursor and the limit.
+		tagged := store.db.WithContext(ctx).Model(&workflowTagModel{}).
+			Select("workflow_id").Where("tenant_id = ? AND tag_key = ?", tenant.ID, key)
+		query = query.Where("id IN (?)", tagged)
+	}
 	if filter.Cursor != "" {
 		updatedAt, id, err := decodeWorkflowCursor(filter.Cursor)
 		if err != nil {
@@ -339,10 +357,20 @@ func (store *GORMWorkflowStore) ListSummaries(ctx context.Context, tenant Tenant
 		page.NextCursor = encodeWorkflowCursor(last.UpdatedAt, last.ID)
 		models = models[:limit]
 	}
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		ids = append(ids, model.ID)
+	}
+	// One query for the whole page, not one per row.
+	tags, err := loadWorkflowTags(store.db.WithContext(ctx), tenant.ID, ids)
+	if err != nil {
+		return WorkflowSummaryPage{}, err
+	}
 	for _, model := range models {
 		page.Workflows = append(page.Workflows, WorkflowSummary{
 			ID: model.ID, Name: model.Name, Active: model.Active,
 			LatestRevision: model.LatestRevision, UpdatedAt: model.UpdatedAt,
+			Tags: tags[model.ID],
 		})
 	}
 	return page, nil
@@ -646,6 +674,10 @@ func (store *GORMWorkflowStore) Delete(ctx context.Context, tenant TenantScope, 
 		// A soft-deleted workflow keeps its version and execution history,
 		// but its static data is scratch space for runs it will never have.
 		if err := deleteStaticData(tx, tenant.ID, workflowID); err != nil {
+			return err
+		}
+		// Its tags would otherwise keep a deleted workflow in the tag filter.
+		if err := deleteWorkflowTags(tx, tenant.ID, workflowID); err != nil {
 			return err
 		}
 		// It must stop answering immediately.
