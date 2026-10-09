@@ -74,8 +74,8 @@ FEAT-gcq50s (todo, in-memory store listed), NG-13, NG-11
 
 
 # Acceptance Criteria
-- [ ] The vector store has a `retrieve` mode with an `ai_vectorStore` output
-- [ ] `toolVectorStore` imports and runs over it
+- [x] The vector store has a `retrieve` mode with an `ai_vectorStore` output (both `kilasflow.vectorStore` and `kilasflow.vectorStorePGVector`; `nodes/vectorstore_retrieve_test.go`: `TestRetrieveModeDeclaresAnEmbeddingInputAndAVectorStoreOutput`, `TestInternalVectorStoreRetrieveEmitsAStoreDescriptor`, `TestPGVectorRetrieveEmitsAStoreDescriptorWithoutOpeningTheDatabase`)
+- [x] `toolVectorStore` imports and runs over it (runs: `nodes/vectorstore_tool_test.go` `TestAgentAnswersThroughAVectorStoreToolOverARetrieveStore`, a compiled Manual → Agent ← Vector Store Tool ← retrieve store ← embeddings graph on `engine.NewRunner`; imports: `internal/interop/n8n/vectorstore_import_test.go` and the real template 16706 under `TestRealRAGTemplatesKeepTheirIngestPath`, now strict)
 - ~~An in-memory store (per tenant and execution) and Qdrant over REST~~ moved (2026-10-09): the in-memory store to FEAT-v8md2e, scoped per tenant and memoryKey rather than per execution, and Qdrant to FEAT-bvyc0b
 - ~~The token splitter~~ moved (2026-10-09) to FEAT-gcq50s, onto its existing "Additional text splitters (character, token)" criterion
 - ~~RAG works on the default SQLite install: an in-process or SQLite-backed vector store per tenant, so insert and retrieve-as-tool run without PostgreSQL~~ moved (2026-10-09) to FEAT-v8md2e
@@ -99,3 +99,36 @@ Related (from the audit): FEAT-gcq50s (todo) covers splitters, in-memory, Supaba
 `results-ai.json` (Qdrant, Pinecone, Supabase, In-Memory Vector Store, Vector Store Tool, Token Splitter, Character Text Splitter), `probes/Vector_Store_Tool.json`
 
 # Attachments
+
+## Progress (2026-10-09)
+
+Criteria 1 and 2 are met. Criteria 3–5 moved out: FEAT-v8md2e (SQLite-backed store per tenant and memoryKey, n8n `vectorStoreInMemory`, `embeddingsOllama`), FEAT-bvyc0b (Qdrant over REST) and FEAT-gcq50s (token splitter, beside its character splitter). The canvas gap is BUG-pc284d.
+
+**Retrieve mode** (`nodes/rag.go`, `nodes/vectorstore_retrieve.go`):
+- `mode: retrieve` declares one input, `embedding` (required, max 1), and one output, `vectorStore` (`ai_vectorStore`). It has no main port, so the store is a sub-node of whatever reads it.
+- Only the `mode` key means retrieve. A native `operation: retrieve` still folds into a search, as before.
+- The internal store emits a `vectorStoreSource` descriptor `{nodeName, backend: internal, collection, distance, metadataFilter?, embeddings}` after the usual availability and tenant checks, so it still refuses on SQLite.
+- The customer PGVector store emits `{backend: postgres, tableName, idColumn, contentColumn, metadataColumn, embeddingColumn, credentialId, collection, embeddings}` and never opens the database.
+- Both refuse a store with no Embeddings sub-node, naming the port.
+- Retrieve-as-tool now builds its descriptor from the same store fields. `TestRetrieveAsToolDescriptorsKeepTheirFields` pins that no key changed.
+
+**Vector Store Tool** (`kilasflow.vectorStoreTool`, `nodes/vectorstore_tool.go`):
+- Ports: `vectorStore` (`ai_vectorStore`) and `model` (`ai_languageModel`) in, both required and capped at one; `tool` out.
+- Parameters: `toolName`, `toolDescription` (required) and `topK` (default 4, whole number 1..100, refused rather than clamped).
+- The executor carries the store and model descriptors whole into a `vectorStoreAnswer` tool descriptor. It refuses anything on the vectorStore port that is not a retrieve-mode store.
+- In the agent, `toolFrom` gained one case. `vectorStoreAnswerToolFrom` builds the retrieval through the existing `vectorStoreToolFrom`, so it gets the same install refusal, the execution's tenant and the same customer-PG guard. It resolves the tool's model with the agent's own `resolveModel`: credential re-read, outbound pre-flight, credential host scope and timeout ceiling.
+- A call embeds the question, takes the top K documents and asks the tool's model to answer from them with a system prompt of our own, and the answer is the tool result. With no match it says so and makes no model call.
+
+**Importer** (`internal/interop/n8n/vectorstore.go`):
+- A `vectorStorePGVector` with no `mode` imports as `retrieve`. One with no or an empty `tableName` imports as `n8n_vectors`; that was the one-line default fix the orchestrator asked for.
+- `toolVectorStore` maps to `kilasflow.vectorStoreTool`. At v1 the tool name is `name`; at v1.1, or when `name` is empty, it is the node name. An empty description gets a stand-in, and a non-numeric topK becomes a lossy note.
+- Export writes `toolVectorStore` at v1 with `name`, `description` and `topK`.
+- The 16706 fixture's retrieval half is rewired to the real shape. 4799 still covers retrieve-as-tool.
+
+**Deviations from the plan:**
+- ai.go changed by the two-line `toolFrom` case only, per the orchestrator's shared-file rule. The plan's two extractions (`vectorRetrieverFrom`, `vectorStoreTool.search`) were not made. Instead the answer tool builds a retrieve-as-tool tool from the store descriptor and calls its `Invoke`, reading the matches back from its JSON. That reuses retrieval with no copy and no edit to ai.go.
+- The store's retrieve descriptor carries no topK; the tool supplies it, as n8n's does.
+- `options.columnNames` is not lifted on import. It needs the export inverse to be honest, which made it more than the one-line fix, so it is noted on FEAT-gcq50s with the other PGVector fidelity gaps.
+- The documented catalogue size (`node-registry.md`, `what-kilasflow-is.md`) moved to 63 types / 70 pairs, because `TestTheDocumentedCatalogueSizeIsTheShippedOne` counts it. Other tracks adding nodes will collide on those two sentences.
+
+**Not done:** the optional live-PostgreSQL subtest. No pgvector database was available to this track, and the only PostgreSQL container running belonged to another track.
