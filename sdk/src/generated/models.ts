@@ -670,6 +670,7 @@ export interface OptionsLoader {
 
 export interface ResourceMapperDeclaration {
   matchingColumnsRequired?: boolean;
+  modelDefinable?: boolean;
   schema: OptionsLoader;
   supportsAutoMap?: boolean;
   valuesLabel?: string;

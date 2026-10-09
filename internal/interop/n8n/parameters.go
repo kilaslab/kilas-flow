@@ -5758,7 +5758,7 @@ func workflowToolToKilas(node Node) (map[string]any, []Unsupported) {
 					"Point it at a workflow before activating.",
 			})
 		}
-		if carried, present, reported := workflowInputsToKilas(node.Parameters["workflowInputs"]); reported {
+		if carried, present, reported := workflowToolInputsToKilas(node.Parameters["workflowInputs"]); reported {
 			issues = append(issues, Unsupported{
 				Severity: SeverityDropped, Field: "workflowInputs",
 				Reason: "this tool declared its workflow inputs in a shape this importer does not read. " +
@@ -5803,35 +5803,6 @@ func workflowToolToKilas(node Node) (map[string]any, []Unsupported) {
 	return parameters, issues
 }
 
-// workflowInputsToKilas carries a workflow tool's resourceMapper value: the
-// defined-below entries become plain expression-valued inputs. Anything else
-// present is reported so the caller can name it, never carried half-read.
-func workflowInputsToKilas(value any) (map[string]any, bool, bool) {
-	collection, ok := value.(map[string]any)
-	if !ok || collection == nil {
-		return nil, value != nil, value != nil
-	}
-	inner, _ := collection["value"].(map[string]any)
-	entries, _ := inner["mapping"].(map[string]any)
-	if len(entries) == 0 {
-		// The modern resource mapper holds the fields directly under `value`;
-		// the `mapping` wrapper is an older shape. Reading only the wrapper
-		// imported every current n8n mapper as empty.
-		entries = inner
-	}
-	if len(entries) == 0 {
-		// Absent, or a mapper the author never filled in. Optional either
-		// way; an empty mapper and no mapper are the same tool.
-		empty := len(collection) > 0
-		return nil, empty, false
-	}
-	carried := make(map[string]any, len(entries))
-	for _, key := range sortedKeys(entries) {
-		carried[key] = fromN8NValue(entries[key])
-	}
-	return carried, true, false
-}
-
 // workflowToolToN8N writes the workflow tool back.
 // n8nSelfWorkflowTemplate is how n8n writes "the workflow this node is in".
 const n8nSelfWorkflowTemplate = "{{ $workflow.id }}"
@@ -5862,15 +5833,7 @@ func workflowToolToN8N(node workflow.Node) (map[string]any, []Lossy) {
 		"source":      "database",
 		"workflowId":  map[string]any{"value": workflowReferenceToN8N(node.Parameters["workflowId"])},
 	}
-	if inputs, ok := node.Parameters["workflowInputs"].(map[string]any); ok && len(inputs) > 0 {
-		// The editor re-resolves the mapper schema from the workflow on
-		// open, so only the entries travel; the wrapper is rebuilt there.
-		value := make(map[string]any, len(inputs))
-		for _, key := range sortedKeys(inputs) {
-			value[key] = toN8NValue(inputs[key])
-		}
-		parameters["workflowInputs"] = map[string]any{"mappingMode": "defineBelow", "value": value}
-	}
+	lossy = append(lossy, workflowToolInputsToN8N(node, parameters)...)
 	return parameters, lossy
 }
 
