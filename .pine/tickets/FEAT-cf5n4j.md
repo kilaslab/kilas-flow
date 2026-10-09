@@ -95,6 +95,13 @@ Plan: Track C of the 2026-10-09 parallel wave. Engine `Request.FromAIArguments` 
 - The Gmail node skips its item fallbacks (recipient, subject, body, message id) when it runs as a tool form, so a Gmail tool never mails an address taken from the agent's input (`TestTheGmailToolDoesNotFillMailFieldsFromTheAgentsItem`); a json `$fromAI` value's braces stay text in a getAll filter (`TestTheGmailToolKeepsAJSONArgumentsBracesAsText`).
 - The tool-form comment and the migration guide's `$input` sentence say what is true.
 
+## Second re-review fixes (2026-10-09)
+
+- A PostgreSQL tool form refuses automatic column mapping for insert, update and upsert: the tool-form validator and the agent's re-check refuse it, the SQL executor refuses it on any tool call (the MySQL operation set shares that executor), and the importer reports an n8n `postgresTool` using `autoMapInputData` as blocking (`TestThePostgresToolRefusesAutomaticMapping`, `TestAPostgresToolThatMapsColumnsAutomaticallyIsBlocked`). The migration guide says so.
+- Conditions: an authored row with an expression anywhere inside it counts as computed and must resolve to a condition naming a column (by a string); a `where` in a shape the node does not read is refused instead of running unfiltered; truncate and drop no longer read a leftover `where`.
+- Found while checking which producers write a non-list `where`: the importer never does (it translates n8n's `{values: [...]}`), but the editor's conditions control writes every conditions property in its filter shape, `{combinator, conditions: [{leftValue, operator: {operation}, rightValue}]}`, and the executor read only lists, so a PostgreSQL or MySQL select whose conditions were edited in the editor ran unfiltered (and a row delete was refused for having none). That shape is now translated, combinator included (`TestConditionShapesAreReadOrRefusedNeverIgnored`). Pre-existing on main; not filed separately because it is fixed here.
+- Stop and Error (BUG-vqghpm) follow-ups are recorded on that ticket.
+
 # Related Files
 - nodes/tool_form.go — toolForms table, derivation, agent runtime
 - nodes/ai.go — the toolFrom case and the AgentExecutor field
