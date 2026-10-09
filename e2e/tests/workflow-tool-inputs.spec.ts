@@ -246,3 +246,127 @@ test('a Workflow Tool lists the workflow’s fields, each the model’s or fixed
 		await provider.close();
 	}
 });
+
+/** A parent workflow whose one tool carries the stored inputs given, and its sub-workflow. */
+async function seedToolWith(
+	baseURL: string,
+	declared: Array<{ name: string; type: string }>,
+	workflowInputs: unknown
+): Promise<{ parentId: string }> {
+	const child = await createWorkflow(baseURL, {
+		schemaVersion: 1,
+		name: 'Sub-workflow',
+		nodes: [
+			{
+				id: 'start',
+				name: 'When Executed by Another Workflow',
+				type: 'kilasflow.executeWorkflowTrigger',
+				typeVersion: 1,
+				position: { x: 0, y: 0 },
+				parameters: declared.length > 0 ? { inputSource: 'fields', workflowInputs: { values: declared } } : { inputSource: 'passthrough' }
+			}
+		],
+		connections: [],
+		settings: {}
+	});
+	await api(baseURL, 'POST', `/workflows/${child.id}/activate`);
+	const parent = await createWorkflow(baseURL, {
+		schemaVersion: 1,
+		name: 'Agent With A Tool',
+		nodes: [
+			{ id: 'manual', name: 'Manual Trigger', type: 'kilasflow.manual', typeVersion: 1, position: { x: 0, y: 0 } },
+			{ id: 'model', name: 'Model', type: 'kilasflow.chatModel', typeVersion: 1, position: { x: 0, y: 240 }, parameters: { model: 'scripted', baseUrl: 'http://127.0.0.1:9' } },
+			{ id: 'agent', name: 'Agent', type: 'kilasflow.agent', typeVersion: 1, position: { x: 240, y: 0 }, parameters: { prompt: 'Convert.' } },
+			{
+				id: 'tool',
+				name: 'Convert',
+				type: 'kilasflow.workflowTool',
+				typeVersion: 1,
+				position: { x: 240, y: 240 },
+				parameters: {
+					toolName: 'convert',
+					toolDescription: 'Converts.',
+					workflowId: { __rl: true, mode: 'list', value: child.id },
+					workflowInputs
+				}
+			}
+		],
+		connections: [
+			{ id: 'c1', kind: 'main', source: { nodeId: 'manual', port: 'main' }, target: { nodeId: 'agent', port: 'main' } },
+			{ id: 'c2', kind: 'ai_languageModel', source: { nodeId: 'model', port: 'model' }, target: { nodeId: 'agent', port: 'model' } },
+			{ id: 'c3', kind: 'ai_tool', source: { nodeId: 'tool', port: 'tool' }, target: { nodeId: 'agent', port: 'tools' } }
+		],
+		settings: {}
+	});
+	return { parentId: parent.id };
+}
+
+async function openToolPanel(page: Page, baseURL: string, parentId: string) {
+	await page.goto(`${baseURL}/app/workflows/${parentId}`);
+	await expect(page.locator('[data-testid="workflow-canvas"]')).toBeVisible();
+	await page.locator('[data-testid="workflow-canvas"] .svelte-flow__node').filter({ hasText: 'Convert' }).first().click();
+	const panel = page.getByRole('region', { name: 'Convert properties' });
+	await expect(panel).toBeVisible();
+	await panel.getByRole('tab', { name: 'Parameters' }).click();
+	return panel;
+}
+
+async function storedInputs(baseURL: string, parentId: string): Promise<any> {
+	const document = (await api(baseURL, 'GET', `/workflows/${parentId}`)).latestVersion.document;
+	return document.nodes.find((entry: any) => entry.id === 'tool').parameters.workflowInputs;
+}
+
+test('a tool whose inputs are one expression keeps it until the author confirms the per-field form', async ({ page, server }) => {
+	const expression = { mode: 'expression', value: '{{ { "unit": "F" } }}' };
+	const { parentId } = await seedToolWith(server.baseURL, [{ name: 'tempC', type: 'number' }], expression);
+	const panel = await openToolPanel(page, server.baseURL, parentId);
+
+	await expect(panel.getByText('These inputs are written as one expression')).toBeVisible();
+	await expect(panel.getByRole('switch', { name: /defined by the model/ })).toHaveCount(0);
+
+	// Asking is not doing: the button opens a confirmation, and Cancel and
+	// Escape both leave the expression where it was.
+	await panel.getByRole('button', { name: 'Use per-field inputs' }).click();
+	const confirmation = panel.getByRole('alertdialog');
+	await expect(confirmation).toBeVisible();
+	await confirmation.getByRole('button', { name: 'Cancel' }).click();
+	await expect(confirmation).toHaveCount(0);
+	await expect(panel.getByText('These inputs are written as one expression')).toBeVisible();
+	await panel.getByRole('button', { name: 'Use per-field inputs' }).click();
+	await expect(confirmation).toBeVisible();
+	await confirmation.focus();
+	await page.keyboard.press('Escape');
+	await expect(confirmation).toHaveCount(0);
+
+	await panel.getByRole('button', { name: 'Use per-field inputs' }).click();
+	await confirmation.getByRole('button', { name: 'Delete the expression' }).click();
+	await expect(panel.getByRole('switch', { name: 'tempC: defined by the model' })).toHaveAttribute('aria-checked', 'true');
+	await expect(panel.getByText('These inputs are written as one expression')).toHaveCount(0);
+
+	const save = page.getByRole('button', { name: 'Save', exact: true });
+	await expect(save).toBeEnabled();
+	await save.click();
+	await expect(save).toBeDisabled();
+	const stored = await storedInputs(server.baseURL, parentId);
+	expect(stored.mappingMode).toBe('defineBelow');
+	expect(stored.value).toEqual({});
+});
+
+test('the static inputs a plain-JSON tool kept stay visible and removable when the workflow declares no fields', async ({ page, server }) => {
+	const { parentId } = await seedToolWith(server.baseURL, [], { unit: 'F', note: { mode: 'expression', value: '{{ $json.note }}' } });
+	const panel = await openToolPanel(page, server.baseURL, parentId);
+
+	await expect(panel.getByText('Also sent, though the workflow does not declare them:')).toBeVisible();
+	await expect(panel.getByRole('button', { name: 'Remove unit' })).toBeVisible();
+	await expect(panel.getByRole('button', { name: 'Remove note' })).toBeVisible();
+
+	await panel.getByRole('button', { name: 'Remove unit' }).click();
+	await expect(panel.getByRole('button', { name: 'Remove unit' })).toHaveCount(0);
+	const save = page.getByRole('button', { name: 'Save', exact: true });
+	await expect(save).toBeEnabled();
+	await save.click();
+	await expect(save).toBeDisabled();
+	const stored = await storedInputs(server.baseURL, parentId);
+	expect(Object.keys(stored.value)).toEqual(['note']);
+	expect(stored.value.note).toEqual({ mode: 'expression', value: '{{ $json.note }}' });
+});
