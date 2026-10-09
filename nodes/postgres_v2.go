@@ -351,12 +351,9 @@ func (executor *SQLOperationExecutor) Execute(ctx context.Context, ir workflow.I
 				MaxRows: int(numberValue(parameters["maxRows"])),
 			})
 		}
-		statement, err := buildSQLStatement(executor.dialect, parameters, item, options)
-		if err == nil {
-			if refusal := refuseEmptyComputedColumns(ir.Parameters["where"], parameters["where"]); refusal != nil {
-				statement, err = sqlnode.Statement{}, refusal
-			}
-		}
+		// The unresolved conditions go along so a computed one can be told
+		// from a row the author left blank (postgresConditions).
+		statement, err := buildSQLStatement(executor.dialect, parameters, ir.Parameters["where"], item, options)
 		if err != nil && mode != BatchingIndependently {
 			return nil, fmt.Errorf("node %q: item %d: %w", ir.Name, index+1, err)
 		}
@@ -486,12 +483,12 @@ func appendResultItems(out []workflow.Item, result sqlnode.Result, options sqlOp
 // through inverse tables, so an inversion between them is symmetric and
 // invisible until something asserts the SQL that actually runs.
 func BuildSQLStatementForTest(dialect sqlbuild.Dialect, parameters map[string]any) (sqlnode.Statement, error) {
-	return buildSQLStatement(dialect, parameters, workflow.Item{JSON: map[string]any{}},
+	return buildSQLStatement(dialect, parameters, nil, workflow.Item{JSON: map[string]any{}},
 		readSQLOptions(parameters["options"]))
 }
 
 // buildSQLStatement turns one item's resolved parameters into SQL.
-func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, item workflow.Item, options sqlOptions) (sqlnode.Statement, error) {
+func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, whereTemplate any, item workflow.Item, options sqlOptions) (sqlnode.Statement, error) {
 	operation := textValue(parameters["operation"], PostgresOperationExecuteQuery)
 	if operation == PostgresOperationExecuteQuery {
 		bound, err := boundParameters(parameters["queryParameters"])
@@ -528,7 +525,7 @@ func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, item
 		if truthy(parameters["returnAll"]) {
 			limit = 0
 		}
-		where, err := postgresConditions(parameters["where"])
+		where, err := postgresConditions(whereTemplate, parameters["where"])
 		if err != nil {
 			return sqlnode.Statement{}, err
 		}
@@ -537,7 +534,7 @@ func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, item
 
 	case PostgresOperationDeleteTable:
 		mode := textValue(parameters["deleteCommand"], sqlbuild.DeleteRows)
-		where, err := postgresConditions(parameters["where"])
+		where, err := postgresConditions(whereTemplate, parameters["where"])
 		if err != nil {
 			return sqlnode.Statement{}, err
 		}
@@ -584,8 +581,13 @@ func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, item
 	}
 }
 
-// postgresConditions reads the WHERE builder's rows.
-func postgresConditions(value any) ([]sqlbuild.Comparison, error) {
+// postgresConditions reads the WHERE builder's rows. template is the same
+// parameter unresolved (nil when the caller has none), which is what tells a
+// computed condition from a row the author left blank.
+func postgresConditions(template, value any) ([]sqlbuild.Comparison, error) {
+	if err := refuseEmptyComputedConditions(template, value); err != nil {
+		return nil, err
+	}
 	rows, ok := value.([]any)
 	if !ok {
 		return nil, nil
@@ -609,27 +611,54 @@ func postgresConditions(value any) ([]sqlbuild.Comparison, error) {
 	return comparisons, nil
 }
 
-// refuseEmptyComputedColumns refuses a condition whose column an expression
-// computes and which resolved to nothing. postgresConditions skips a row with
-// no column, which is right for a row the author left blank and wrong for one
-// whose column came from data or from an agent's model: the condition would
-// vanish and the statement match more rows than it was written to — every row,
-// for a delete with one condition.
-func refuseEmptyComputedColumns(unresolved, resolved any) error {
-	authored, _ := unresolved.([]any)
+// refuseEmptyComputedConditions refuses a computed condition that did not come
+// out as one: a row whose column an expression computes and which resolved
+// empty, a row that is itself an expression and did not resolve to a
+// condition with a column, and a whole `where` that is an expression and did
+// not resolve to a list of them. postgresConditions skips a row with no
+// column, which is right for a row the author left blank and wrong for one
+// that came from data or from an agent's model: the condition would vanish and
+// the statement match more rows than it was written to — every row, for a
+// delete with one condition.
+func refuseEmptyComputedConditions(template, resolved any) error {
+	refused := func(index int) error {
+		return fmt.Errorf("condition %d is computed by an expression and did not resolve to a condition with a "+
+			"column; it is refused rather than dropped, because the statement would then match more rows than it "+
+			"was written to", index+1)
+	}
+	if expression.IsExpression(template) {
+		rows, isList := resolved.([]any)
+		if !isList {
+			return fmt.Errorf("the conditions are computed by an expression that did not resolve to a list of " +
+				"conditions; they are refused rather than dropped, because the statement would then match more rows " +
+				"than it was written to")
+		}
+		for index, row := range rows {
+			if !isConditionWithColumn(row) {
+				return refused(index)
+			}
+		}
+		return nil
+	}
+	authored, _ := template.([]any)
 	rows, _ := resolved.([]any)
 	for index, entry := range authored {
 		row, _ := entry.(map[string]any)
-		if !expression.IsExpression(row["field"]) || index >= len(rows) {
+		computed := expression.IsExpression(entry) || expression.IsExpression(row["field"])
+		if !computed {
 			continue
 		}
-		resolvedRow, _ := rows[index].(map[string]any)
-		if strings.TrimSpace(textValue(resolvedRow["field"], "")) == "" {
-			return fmt.Errorf("condition %d takes its column from an expression that resolved to nothing; it is "+
-				"refused rather than dropped, because the statement would then match more rows than it was written to", index+1)
+		if index >= len(rows) || !isConditionWithColumn(rows[index]) {
+			return refused(index)
 		}
 	}
 	return nil
+}
+
+// isConditionWithColumn reports whether a resolved WHERE row names a column.
+func isConditionWithColumn(value any) bool {
+	row, isRow := value.(map[string]any)
+	return isRow && strings.TrimSpace(textValue(row["field"], "")) != ""
 }
 
 // postgresOperator maps the shared condition vocabulary onto the builder's.

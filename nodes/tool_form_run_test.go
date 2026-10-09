@@ -663,6 +663,61 @@ func TestAComputedConditionColumnThatResolvesEmptyIsRefused(t *testing.T) {
 	}
 }
 
+// The refusal covers a row that is itself an expression and a `where` that is
+// one: a computed row that is not a condition with a column is refused, and so
+// is a computed `where` that is not a list. Only a row the author left blank
+// is skipped. And it applies only where conditions are read: a `where` left
+// over from an earlier operation does not stop an insert, an update, an upsert
+// or a query.
+func TestComputedConditionsAreRefusedWhereTheyAreReadAndOnlyThere(t *testing.T) {
+	t.Parallel()
+
+	executor := nodes.NewPostgresV2Executor(sqlGuard(), sqlnode.DefaultCeiling())
+	item := map[string]any{"row": map[string]any{"field": "", "operator": "equals", "value": float64(1)}, "column": "", "nothing": nil}
+	run := func(parameters map[string]any) error {
+		_, err := executor.Execute(context.Background(), workflow.IRNode{
+			ID: "db", Name: "Database", Type: nodes.PostgresNodeType, TypeVersion: workflow.V(2),
+			Parameters: parameters, Credentials: map[string]string{"postgres": "cred-db"},
+		}, workflow.NodeInput{"main": {{JSON: item}}}, engine.Request{
+			Credentials: credentialMap{"cred-db": {ID: "cred-db", Type: "postgres", Fields: map[string]string{"host": "db.invalid"}}},
+		})
+		return err
+	}
+	deleting := func(where any) map[string]any {
+		return map[string]any{
+			"operation": "deleteTable", "deleteCommand": "delete",
+			"table": map[string]any{"__rl": true, "mode": "name", "value": "orders"}, "where": where,
+		}
+	}
+	status := map[string]any{"field": "status", "operator": "equals", "value": "open"}
+	for name, where := range map[string]any{
+		"a computed row with no column":    []any{status, formExpression("{{ $json.row }}")},
+		"a computed row that is not a row": []any{status, formExpression("{{ $json.nothing }}")},
+		"a computed where with an empty row": formExpression(
+			"{{ [{field: 'status', operator: 'equals', value: 'open'}, $json.row] }}"),
+		"a computed where that is not a list": formExpression("{{ $json.nothing }}"),
+	} {
+		if err := run(deleting(where)); err == nil || !strings.Contains(err.Error(), "condition") {
+			t.Errorf("%s: Execute() error = %v, want the condition refused before anything connects", name, err)
+		}
+	}
+
+	stale := []any{map[string]any{"field": formExpression("{{ $json.column }}"), "operator": "equals", "value": "x"}}
+	columns := map[string]any{"mappingMode": "defineBelow", "value": map[string]any{"id": float64(1)},
+		"matchingColumns": []any{"id"},
+		"schema":          []any{map[string]any{"id": "id", "displayName": "id", "type": "number"}}}
+	for _, operation := range []string{"insert", "update", "upsert", "executeQuery"} {
+		err := run(map[string]any{
+			"operation": operation, "query": "SELECT 1",
+			"table":   map[string]any{"__rl": true, "mode": "name", "value": "orders"},
+			"columns": columns, "where": stale,
+		})
+		if err == nil || strings.Contains(err.Error(), "condition") {
+			t.Errorf("%s with a stale where: Execute() error = %v, want it to reach the connection", operation, err)
+		}
+	}
+}
+
 // A descriptor is data: one that names an executor of its choosing still runs
 // the base node the tool type names, found on the server.
 func TestADescriptorCannotNameItsExecutor(t *testing.T) {
