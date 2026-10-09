@@ -29,9 +29,9 @@ A 4xx (422 `config.invalid` or 409) whose error names the parent node, and the c
 500 "workflow operation failed"; the reason only appears in the server log.
 
 # Acceptance Criteria
-- [ ] Activation of a parent with an inactive sub-workflow answers a 4xx naming the node and the child workflow, through the API, the CLI and MCP.
-- [ ] A test pins the status code and message; the 500 path is gone.
-- [ ] The triggers skill / SUB_WORKFLOWS.md describe the real behaviour.
+- [x] Activation of a parent with an inactive sub-workflow answers a 4xx naming the node and the child workflow, through the API, the CLI and MCP. Evidence: `TestActivatingAParentWhoseSubworkflowIsInactiveAnswers422NamingTheNodeAndTheChild` (internal/api), `TestWorkflowActivateSaysWhichNodeNeedsWhichInactiveChild` and `TestMCPWorkflowActivateReturnsTheSameRefusal` (internal/cli, real API + stores).
+- [x] A test pins the status code and message; the 500 path is gone. Evidence: the three tests above assert 422, `application/problem+json`, the full sentence (node, child name and id, "not active", "activate that workflow first"), `errors[0].value.code == config.invalid` on `nodeId` `call`, and that the detail is not "workflow operation failed"; they failed with the 500 before the change. `TestPublishingAParentWhoseSubworkflowIsInactiveAnswersTheSame422` covers the publish route, `TestActivatingAParentWhoseSubworkflowIsGoneAnswers422SayingItDoesNotExist` the missing-target variant.
+- [x] The triggers skill / SUB_WORKFLOWS.md describe the real behaviour. Evidence: skills/kilasflow-triggers/SKILL.md (Sub-workflow bullet) now states the 422 and where the node and child appear. skills/kilasflow-flow-patterns/references/SUB_WORKFLOWS.md does not exist on main, so there was nothing to fix there.
 
 
 ## Plan (2026-10-09)
@@ -48,3 +48,18 @@ Proof (test first).
 - internal/repository/subworkflow_activation_test.go: `errors.As` finds `*SubworkflowRefusalError` with the node, child id, child name and `Missing` set correctly for an inactive and for a missing target.
 - A new internal/api test with the production `nodes.SubworkflowCalls` wired into the store: an inactive child gives 422 `application/problem+json`, a `detail` naming the node and the child's name and id, `errors[0].value.code == "config.invalid"`, `nodeId`, the workflow stays inactive, and activating the child first makes the parent activate (200). The same through `POST /workflows/{id}/versions/{versionId}/publish`.
 - A CLI test that runs `workflow activate` against that real handler stack and asserts exit code, `error.status` 422 and `error.message` naming the node and child; the MCP tool result is that same envelope, asserted in the mcp-serve test if the harness allows it.
+
+
+## Progress (2026-10-09)
+
+Root cause as planned: `refuseInactiveSubworkflows` returned a `fmt.Errorf`, `Workflows.problem` had no case for it and answered `serverProblem(..."workflow operation failed")`.
+
+What changed.
+- internal/repository/workflows.go: `SubworkflowRefusalError` (node id/name, JSON-pointer path of the `workflowId` parameter, child id and name, `Missing`). The inactive sentence now names the child as `"Billing" (wf_...)`; the missing-target sentence is unchanged. `errors.As`-able, so the editor and every API caller can tell the two apart.
+- internal/api/handlers/workflows.go: `problem` maps it through `subworkflowProblem` to a 422 whose `detail` is the whole sentence (the CLI envelope's `error.message` and the MCP tool result are built from `detail`, so neither needed code) plus one `errors[]` entry at `body/nodes/<i>/parameters/workflowId` carrying a `WorkflowValidationIssue{code: config.invalid, nodeId}`. There is no unknown-credential activation refusal on main (a missing credential is the compiler's `config.required` via `compileProblem`), so I matched the compile refusals' shape: 422 plus that value.
+- Tests: internal/repository/subworkflow_activation_test.go (typed error, fields, path), internal/api/subworkflow_activation_test.go (new file, own `newSubworkflowAPI` helper because the shared helper leaves the extractor off, which is why this went unnoticed), internal/cli/verbs_workflow_subworkflow_test.go (CLI exit 2 / `bad_request` / status 422 and MCP `workflow_activate`, against real stores).
+- skills/kilasflow-triggers/SKILL.md: sentence corrected; `make generate-skills-index-check` still clean.
+
+Deviations. The ticket mentions SUB_WORKFLOWS.md: the `kilasflow-flow-patterns` skill is not on main, so no edit there. The CLI exit for a 422 is the existing usage-class exit (`bad_request`); I did not add a new CLI ErrCode.
+
+Left: nothing.
