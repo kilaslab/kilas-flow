@@ -3,7 +3,9 @@ package n8n
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/kilaslab/kilas-flow/internal/workflow"
@@ -93,27 +95,45 @@ func importTags(raw json.RawMessage) ([]string, []ImportIssue) {
 			issues = append(issues, droppedTag("a tag with an empty name was not carried"))
 			continue
 		}
+		if err := workflow.CheckTag(trimmed); err != nil {
+			var refused *workflow.TagError
+			if errors.As(err, &refused) {
+				// The reason quotes the tag shortened, never whole.
+				issues = append(issues, droppedTag("the tag %s %s, so it was not carried", quoteShort(refused.Tag), refused.Problem))
+			} else {
+				issues = append(issues, droppedTag("the tag %s cannot be carried: %s", quoteShort(trimmed), err.Error()))
+			}
+			continue
+		}
+		key := workflow.TagKey(trimmed)
+		if earlier, duplicate := first[key]; duplicate {
+			issues = append(issues, droppedTag(
+				"the tag %s was not carried: it repeats %s, and KilasFlow compares tags ignoring case, so it is a duplicate", quoteShort(trimmed), quoteShort(earlier)))
+			continue
+		}
+		// Only now is the tag kept, so only now can it be said to have been
+		// carried differently: a padded name that was refused above is one
+		// dropped issue, not a lossy one and a dropped one.
 		if trimmed != name {
 			issues = append(issues, ImportIssue{
 				Severity: SeverityLossy, Field: "tags",
-				Reason: fmt.Sprintf("the tag %q was carried as %q: whitespace around a tag is trimmed", name, trimmed),
+				Reason: fmt.Sprintf("the tag %s was carried as %s: whitespace around a tag is trimmed", quoteShort(name), quoteShort(trimmed)),
 			})
-			name = trimmed
 		}
-		if err := workflow.CheckTag(name); err != nil {
-			issues = append(issues, droppedTag("%s, so it was not carried", err.Error()))
-			continue
-		}
-		key := workflow.TagKey(name)
-		if earlier, duplicate := first[key]; duplicate {
-			issues = append(issues, droppedTag(
-				"the tag %q was not carried: it repeats %q, and KilasFlow compares tags ignoring case, so it is a duplicate", name, earlier))
-			continue
-		}
-		first[key] = name
-		kept = append(kept, name)
+		first[key] = trimmed
+		kept = append(kept, trimmed)
 	}
 	return kept, issues
+}
+
+// quoteShort quotes a tag for a reason, cut to 40 characters so that a hostile
+// name cannot make one report line enormous.
+func quoteShort(text string) string {
+	const limit = 40
+	if runes := []rune(text); len(runes) > limit {
+		return strconv.Quote(string(runes[:limit]) + "…")
+	}
+	return strconv.Quote(text)
 }
 
 // tagName reads one entry's name, or says why the entry has none to read.

@@ -47,26 +47,44 @@ func TagKey(tag string) string {
 // constants above.
 func CheckTag(tag string) error {
 	if tag == "" {
-		return fmt.Errorf("a tag must not be empty")
+		return &TagError{Problem: "must not be empty"}
 	}
 	if !utf8.ValidString(tag) {
-		return fmt.Errorf("tag %q is not valid UTF-8", tag)
+		return &TagError{Tag: tag, Problem: "is not valid UTF-8"}
 	}
 	if strings.TrimSpace(tag) != tag {
-		return fmt.Errorf("tag %q must not start or end with whitespace", tag)
+		return &TagError{Tag: tag, Problem: "must not start or end with whitespace"}
 	}
 	for _, r := range tag {
 		switch {
 		case r == ',':
-			return fmt.Errorf("tag %q must not contain a comma", tag)
+			return &TagError{Tag: tag, Problem: "must not contain a comma"}
 		case unicode.IsControl(r) || r == '\u2028' || r == '\u2029':
-			return fmt.Errorf("tag %q must not contain a control character", tag)
+			return &TagError{Tag: tag, Problem: "must not contain a control character"}
 		}
 	}
 	if tagLength(tag) > MaxTagLength {
-		return fmt.Errorf("tag %q is longer than %d characters", tag, MaxTagLength)
+		return &TagError{Tag: tag, Problem: fmt.Sprintf("is longer than %d characters", MaxTagLength)}
 	}
 	return nil
+}
+
+// TagError is why one tag cannot be stored. It keeps the tag apart from the
+// problem so that a caller reporting on someone else's data (the n8n importer)
+// can quote a shortened tag instead of the whole of a hostile one.
+type TagError struct {
+	// Tag is the offending tag; empty for the empty tag.
+	Tag string
+	// Problem completes the sentence "the tag ...", for example "must not
+	// contain a comma".
+	Problem string
+}
+
+func (err *TagError) Error() string {
+	if err.Tag == "" {
+		return "a tag " + err.Problem
+	}
+	return fmt.Sprintf("tag %q %s", err.Tag, err.Problem)
 }
 
 // tagLength is a tag's length in UTF-16 code units.

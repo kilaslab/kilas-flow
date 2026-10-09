@@ -160,6 +160,7 @@ func TestImportedTagsStayWithinWhatAWorkflowMayCarry(t *testing.T) {
 		{"a comma", `[{"name":"a,b"},{"name":"Prod"}]`, "Prod", n8n.SeverityDropped, []string{"comma"}},
 		{"a control character", `[{"name":"a\u0007b"},{"name":"Prod"}]`, "Prod", n8n.SeverityDropped, []string{"control"}},
 		{"a case-insensitive duplicate", `[{"name":"Prod"},{"name":"prod"},{"name":"billing"}]`, "Prod|billing", n8n.SeverityDropped, []string{"prod", "duplicate"}},
+		{"a padded name that is then refused is dropped, not lossy", `[{"name":"  a,b "},{"name":"Prod"}]`, "Prod", n8n.SeverityDropped, []string{"comma"}},
 		{"a name padded with spaces is trimmed", `[{"name":"  Prod "}]`, "Prod", n8n.SeverityLossy, []string{"trimmed"}},
 		{"more than twenty tags", "[" + strings.Join(twentyOne, ",") + "]", strings.Join(tagNames(twentyOne[:20]), "|"), n8n.SeverityDropped, []string{"20"}},
 		{"tags that is an object", `{"name":"Prod"}`, "", n8n.SeverityDropped, []string{"list"}},
@@ -228,6 +229,64 @@ func TestManyRefusedTagsAreReportedInBoundedSpace(t *testing.T) {
 	}
 	if issues := tagIssues(result); len(issues) != 1 {
 		t.Errorf("reported %d tag issues for an over-long list, want one: %+v", len(issues), issues)
+	}
+}
+
+// A name that is padded and then refused (or repeats an earlier tag) was never
+// carried, so it is one dropped issue, not a "carried differently" line and a
+// "not carried" line about the same tag.
+func TestAPaddedTagThatIsRefusedIsReportedOnce(t *testing.T) {
+	t.Parallel()
+
+	for name, fixture := range map[string]struct {
+		tags string
+		want string
+	}{
+		"padded with a comma":     {`[{"name":"  a,b "},{"name":"Prod"}]`, "Prod"},
+		"padded and too long":     {`[{"name":"  ` + strings.Repeat("x", 25) + ` "},{"name":"Prod"}]`, "Prod"},
+		"padded duplicate":        {`[{"name":"Prod"},{"name":" prod "}]`, "Prod"},
+		"padded and then refused": {`[{"name":" a\u0007b "},{"name":"Prod"}]`, "Prod"},
+	} {
+		result := importFixture(t, taggedFixture(fixture.tags))
+		if got := strings.Join(result.Document.Tags, "|"); got != fixture.want {
+			t.Errorf("%s: kept %q, want %q", name, got, fixture.want)
+		}
+		issues := tagIssues(result)
+		if len(issues) != 1 || issues[0].Severity != n8n.SeverityDropped {
+			t.Errorf("%s: reported %+v, want one dropped issue", name, issues)
+		}
+	}
+
+	padded := importFixture(t, taggedFixture(`[{"name":" Prod "}]`))
+	if issues := tagIssues(padded); len(issues) != 1 || issues[0].Severity != n8n.SeverityLossy || strings.Join(padded.Document.Tags, "|") != "Prod" {
+		t.Errorf("a padded name that is kept: tags %q, issues %+v; want Prod and one lossy issue", padded.Document.Tags, issues)
+	}
+}
+
+// What the report quotes of a hostile name is shortened, so no single tag can
+// make a report enormous.
+func TestAReasonQuotesAtMostAShortenedTag(t *testing.T) {
+	t.Parallel()
+
+	huge := strings.Repeat("é", 5000)
+	for name, tags := range map[string]string{
+		"too long":           `[{"name":"` + huge + `"}]`,
+		"with a comma":       `[{"name":"` + huge + `,"}]`,
+		"with a control":     `[{"name":"` + huge + `\u0007"}]`,
+		"padded and kept":    `[{"name":"  ` + strings.Repeat("a", 20) + `  "}]`,
+		"padded and refused": `[{"name":"  ` + huge + `  "}]`,
+		"a long bare entry":  `["` + huge + `"]`,
+		"an object entry":    `[{"id":"` + huge + `"}]`,
+	} {
+		issues := tagIssues(importFixture(t, taggedFixture(tags)))
+		if len(issues) == 0 {
+			t.Errorf("%s: nothing was reported", name)
+		}
+		for _, issue := range issues {
+			if len(issue.Reason) > 600 {
+				t.Errorf("%s: a reason is %d bytes long: %.80s…", name, len(issue.Reason), issue.Reason)
+			}
+		}
 	}
 }
 
