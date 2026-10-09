@@ -41,6 +41,7 @@ kilasflow_not_shipped:
 
 ## Strong defaults
 
+- Start from the validated example: `kilasflow skills show kilasflow-debugging --reference EXAMPLE.md` is a small document with a Code node and the order to read its run in: `exec get`, `exec trace`, then `debug eval`.
 - Start with `kilasflow context`: server URL, readiness, health, identity, workflows, datastores and the node-type count in one read-only call, where a failed section says so under its own error instead of disappearing (internal/cli/context.go, `contextPayload`).
 - Find the run with `kilasflow exec list` (`list-executions`): `--workflow`, `--status` (repeatable, for example `failed`), `--trigger` and `--limit`/`--cursor`. The listing is summaries only — no input, output, error or trace (internal/api/handlers/executions.go, `ExecutionSummary`) — so the record itself still comes from `kilasflow exec get <executionId>`.
 - Read a node run in this order: `status` first, because a node nothing was delivered to is `skipped` rather than failed; then `error` with its code; then `input`; then `output`. `attempt` counts retries of one run and `runIndex` counts the Nth time a node ran, so a retry and a loop iteration are different rows by design (internal/execution/records.go).
@@ -117,4 +118,5 @@ something is wrong
 
 | File | Read when |
 | --- | --- |
+| EXAMPLE.md | you want a small document to run and then read back, with the commands to read it in the order that finds the fault |
 | TRACE_READING.md | you have an execution id and need to read a node run, the event vocabulary or the difference between a validation refusal and a run failure without guessing |

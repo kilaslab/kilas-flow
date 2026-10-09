@@ -39,7 +39,8 @@
         "No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch"
       ],
       "references": [
-        "references/CREDENTIAL_TYPES.md"
+        "references/CREDENTIAL_TYPES.md",
+        "references/EXAMPLE.md"
       ]
     },
     {
@@ -135,6 +136,7 @@
         "No single-node retry verb. `exec retry` reruns the whole workflow with the same input and trigger, so a failed node is retried by running the workflow again"
       ],
       "references": [
+        "references/EXAMPLE.md",
         "references/TRACE_READING.md"
       ]
     },

@@ -41,6 +41,7 @@ kilasflow_not_shipped:
 
 ## Strong defaults
 
+- Start from the validated example: `kilasflow skills show kilasflow-credentials --reference EXAMPLE.md` has the `create-credential` body, with placeholders where the secret goes, and the HTTP Request node that names the stored credential by id.
 - Find before you create. `kilasflow credential list` (`list-credentials`, with `--limit` and `--cursor`) is names, types and stamps only — a credential that already exists and works is a credential nobody has to store again (internal/cli/verbs_credential.go).
 - Read one with `kilasflow credential get <credentialId>` (`get-credential`); the response carries the non-secret fields as stored, `allowedDomains`, and the placeholder for what is secret.
 - The catalogue is served, not guessed. `kilasflow api list-credential-types` (`list-credential-types`) returns every type and each type's editor fields, so a field name or option is read from the server rather than recalled (internal/api/handlers/credentials.go, `ListTypes`; internal/credentials/builtin.go).
@@ -115,4 +116,5 @@ what are you doing?
 
 | File | Read when |
 | --- | --- |
+| EXAMPLE.md | you are storing a credential or attaching one to a node and need the request body and the `credentials` map written out |
 | CREDENTIAL_TYPES.md | you need a credential type's id, its fields, which of them are secret, where its authentication is placed in a request, or whether it has a probe |
