@@ -6,6 +6,7 @@ kilasflow_commands:
   - kilasflow tenant list
   - kilasflow tenant get
   - kilasflow tenant users
+  - kilasflow tenant delete
   - kilasflow auth whoami
   - kilasflow context
   - kilasflow api
@@ -32,7 +33,7 @@ kilasflow_expression_roots: []
 kilasflow_not_shipped:
   - 'No embed verb: create-embed-session and create-stream-ticket are served and reached through the escape hatch'
   - 'No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch'
-  - 'No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes)'
+  - 'No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet'
   - 'No Go library: embedding is the embed session handshake, the iframe editor and the tenant-realm reads, never an import'
 ---
 
@@ -50,7 +51,7 @@ kilasflow_not_shipped:
 - Account lifecycle is four operator operations on one tenant's accounts: `create-tenant-user` makes an account that can sign in immediately, `disable-tenant-user` stops it signing in from the next request while keeping the row so the workflows it authored still have a name, `enable-tenant-user` clears that marker so it signs in again with its existing password, and `set-tenant-user-password` is the operator's reset — the old password stops working at once (internal/api/handlers/admin.go).
 - A key can be narrowed instead of tenant-wide: the `scopes` vocabulary an embed session uses except `workflow:publish` and `workflow:activate`, an optional `workflowId` binding, and an optional `expiresAt`. A workflow binding without scopes is refused, because a tenant-wide key is not narrowed (internal/api/handlers/auth.go; internal/embed/embed.go, `NormalizeKeyScopes`).
 - Verify which tenant a configured credential acts as with `kilasflow auth whoami`, which is the `get-me` operation and prints `tenantId`, `kind`, `label`, `keyId` and `userId` (internal/cli/verbs_auth.go). Begin a session with `kilasflow context`, one read-only call covering the server, the identity, workflows, datastores and node types (internal/cli/context.go).
-- The operator's view of the deployment is three read-only verbs, each requiring an operator credential: `kilasflow tenant list` (`list-tenants`), `kilasflow tenant get <id>` (`get-tenant`) and `kilasflow tenant users <id>` (`list-tenant-users`, whose projection carries no password hash). A customer's own key gets the refusal as exit 3 with `error.code = "scope_denied"`, never a quietly filtered listing (internal/cli/verbs_tenant.go; internal/api/handlers/admin.go).
+- The operator's view of the deployment is three read-only verbs, each requiring an operator credential: `kilasflow tenant list` (`list-tenants`), `kilasflow tenant get <id>` (`get-tenant`) and `kilasflow tenant users <id>` (`list-tenant-users`, whose projection carries no password hash). Offboarding is the fourth, `kilasflow tenant delete <id> --yes`. A customer's own key gets the refusal as exit 3 with `error.code = "scope_denied"`, never a quietly filtered listing (internal/cli/verbs_tenant.go; internal/api/handlers/admin.go).
 - Mint the editor session with the escape hatch: `kilasflow api create-embed-session --body @session.json` (`--path name=value`, `--body @file.json` and `--list` are the verb's own flags). The body names exactly one subject — `workflowId` or `datastoreId`, never both — plus `scopes`, the exact `origin`, and optionally `ttlSeconds` and `branding`. The response carries the token, where to load the iframe, its expiry, the granted scopes, the origin and the merged branding; a datastore session has an empty `embedUrl` because it has no editor to open (internal/api/handlers/embed.go; internal/cli/verbs_api.go).
 - The scope vocabulary is seven values: `workflow:read`, `workflow:write`, `workflow:run`, `workflow:publish`, `workflow:activate`, `datastore:read`, `datastore:write`. A session must carry at least one, and implication runs downward only — write, run, publish and activate each imply read, datastore:write implies datastore:read. Nothing implies write, run, publish or activate, and a scope outside the vocabulary is refused at mint rather than ignored (internal/embed/embed.go, `Allows`, `scopesMatchSubject`).
 - Publishing and activation are three levels a host grants on purpose: `workflow:write` saves drafts and is refused a publish, `workflow:publish` pins a named revision as the version production traffic runs, and `workflow:activate` turns the workflow on and off through the same compile and `node.not_available` checks as the dashboard. Both are embed-session scopes only; a scoped API key cannot be minted with them (internal/api/middleware/scope.go, `permits`; internal/embed/embed.go, `NormalizeKeyScopes`).
@@ -58,7 +59,7 @@ kilasflow_not_shipped:
 - Watch a run through a ticket, not a credential: mint `create-stream-ticket` after checking the execution belongs to your tenant (the server checks inside the caller's tenant too), then spend the single-use ticket as the `ticket` query parameter on `stream-execution-events` (`GET /executions/{id}/events`). A ticket names one execution and lives at most 30 seconds, because it travels in a query string and therefore lands in proxy logs (internal/api/handlers/auth.go; internal/auth/session.go, `MaxTicketTTL`; internal/api/middleware/auth.go).
 - White-label with values, never markup: `name`, `logoUrl` (an absolute https URL), `accent`, `hideRun`, `hideSave`. The deployment's `branding.name` and `branding.logo` are defaults that the session's own values win over field by field, the merged set comes back in the mint response, and hiding a control never stops an action because the server enforces the scopes (internal/embed/embed.go, `Branding`, `WithDefaults`; docs/src/content/docs/guides/embedding.md).
 - The host shares one database rather than supplying storage: every tenant's rows live in the same tables of the same database, and isolation is a tenant scope carried by the repository call's signature rather than a separate store or an interface a host implements (docs/src/content/docs/concepts/tenancy-and-embedding.md).
-- Deleting a customer is one operation, and it is safe to repeat: `delete-tenant` through the escape hatch with an operator credential. A repeat reports `tenantRemoved: false` with every count at zero, which is what confirms the deletion finished (internal/api/handlers/admin.go; docs/src/content/docs/operate/tenant-deletion.md).
+- Deleting a customer is one operation, and it is safe to repeat: `kilasflow tenant delete <tenantId> --yes` (`delete-tenant`) with an operator credential, a guarded verb that refuses without the flag. A repeat reports `tenantRemoved: false` with every count at zero, which is what confirms the deletion finished (internal/api/handlers/admin.go; docs/src/content/docs/operate/tenant-deletion.md).
 - Take the operator credential from the environment or a file, never as a literal argument: the CLI reads `KILASFLOW_TOKEN` or the file named by `--token-file <path>`, and `kilasflow auth login` reads the credential from stdin when the token flag's value is a bare dash, so it never lands in shell history or a process listing (internal/cli/config.go, `resolveToken`; internal/cli/verbs_auth.go).
 
 ## Decision tree
@@ -92,15 +93,15 @@ what are you doing?
 |     -> kilasflow auth whoami, then kilasflow tenant get <id>
 |
 +-- a customer leaves
-      -> confirm, then delete-tenant; repeat until the counts are zero
+      -> confirm, then kilasflow tenant delete <tenantId> --yes; repeat until the counts are zero
 ```
 
 ## Not shipped yet
 
-- No embed verb: create-embed-session and create-stream-ticket are served and reached through the escape hatch — mint both with `kilasflow api`, passing the body with `--body @file.json` (or `--body -` from stdin) and reading the token, the embed URL and the expiry out of the envelope.
-- No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch — `kilasflow api create-api-key`, `kilasflow api list-api-keys` and `kilasflow api revoke-api-key --path id=<keyId>` are the calls; nothing in the verb tree mints or revokes a key. The one key operation under a tenant is create-tenant-api-key, an operator action on another tenant's behalf, and it is reached the same way.
-- No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes) — every one of them is an operation the server serves, so reach it with `kilasflow api <operation-id>` and `--body @file.json`, and treat the guarded writes as user decisions rather than agent housekeeping.
-- No Go library: embedding is the embed session handshake, the iframe editor and the tenant-realm reads, never an import — a host integration talks to the HTTP API with its own client (the TypeScript SDK under `sdk/`, or the reference host under `sdk/examples/reference-host`), and nothing in this repository is a Go package a host application links against.
+- No embed verb: create-embed-session and create-stream-ticket are served and reached through the escape hatch. Mint both with `kilasflow api`, passing the body with `--body @file.json` (or `--body -` from stdin) and reading the token, the embed URL and the expiry out of the envelope.
+- No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch. `kilasflow api create-api-key`, `kilasflow api list-api-keys` and `kilasflow api revoke-api-key --path id=<keyId>` are the calls; nothing in the verb tree mints or revokes a key. The one key operation under a tenant is create-tenant-api-key, an operator action on another tenant's behalf, and it is reached the same way.
+- No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet. Every one of them is an operation the server serves, so reach it with `kilasflow api <operation-id>` and `--body @file.json`, and treat the guarded writes as user decisions rather than agent housekeeping. Credential, datastore and tenant deletes do have guarded verbs that take `--yes`.
+- No Go library: embedding is the embed session handshake, the iframe editor and the tenant-realm reads, never an import. A host integration talks to the HTTP API with its own client (the TypeScript SDK under `sdk/`, or the reference host under `sdk/examples/reference-host`), and nothing in this repository is a Go package a host application links against.
 
 ## Anti-patterns
 

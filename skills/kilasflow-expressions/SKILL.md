@@ -36,7 +36,7 @@ kilasflow_not_shipped: []
 
 1. The allowlist is the server's, not yours. A body must begin with a root on a fixed list, and every call resolves against a closed set of names (internal/expression/roots.go, `Roots`; internal/expression/methods.go, `FunctionNames`). Read the live list with `kilasflow api get-expression-grammar` (`get-expression-grammar`) before writing a root or a function you have not seen served: a name recalled from another tool resolves to nothing here.
 2. A parameter is evaluated only when it carries the marker: `{"mode": "expression", "value": "{{ … }}"}`. A plain string containing `{{ }}` is still data (internal/expression/expression.go, `IsExpression`). n8n's leading `=` is translated by the importer and never reaches the evaluator (internal/interop/n8n).
-3. There is no debug eval. Nothing evaluates a body for you, and `get-expression-grammar` returns the surface rather than a value. Prove an expression by running the workflow — `kilasflow run <workflowId> --wait` (`run-workflow`) — and read the result back from the run.
+3. Prove an expression before you trust it. `get-expression-grammar` returns the surface rather than a value, so evaluate against a finished run instead: `kilasflow debug eval --execution <executionId> --node <nodeId> '<expression>'` (`eval-expression`) reads the node's stored trace, and a fresh `kilasflow run <workflowId> --wait` (`run-workflow`) produces one to read.
 4. `$env` is not the process environment and an expression is not where a secret goes: `$env` reaches only variables exported as `KILASFLOW_WORKFLOW_ENV_*` (cmd/kilasflow/main.go, `workflowEnvironment`), and a credential is attached to a node by id.
 
 ## Strong defaults

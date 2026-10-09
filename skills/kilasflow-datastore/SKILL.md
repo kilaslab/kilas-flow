@@ -8,6 +8,13 @@ kilasflow_commands:
   - kilasflow datastore get
   - kilasflow datastore rows
   - kilasflow datastore export
+  - kilasflow datastore create
+  - kilasflow datastore rename
+  - kilasflow datastore delete
+  - kilasflow datastore clear
+  - kilasflow datastore columns add
+  - kilasflow datastore columns rename
+  - kilasflow datastore columns drop
   - kilasflow api
 kilasflow_operations:
   - list-datastores
@@ -34,7 +41,7 @@ kilasflow_nodes:
 kilasflow_expression_roots:
   - $json
 kilasflow_not_shipped:
-  - 'No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes)'
+  - 'No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet'
   - 'No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet'
   - 'No storage substitution for the datastore: one database serves every tenant, and there is no interface a host implements'
 ---
@@ -42,7 +49,7 @@ kilasflow_not_shipped:
 ## Non-negotiables
 
 1. Read the schema before you write a row. `kilasflow datastore get <datastoreId>` (`get-datastore`) is the only thing that says which columns exist and what type each holds; a write naming anything else is refused, and nothing creates a column on your way in (internal/api/handlers/datastores.go, internal/datastore/idents.go).
-2. There is no verb for a row write, a schema change or a CSV import. Reach those through `kilasflow api <operation-id>` (`api`) with `--path`, `--body` and `--header`; the four read verbs are the whole datastore CLI (internal/cli/verbs_datastore.go).
+2. A row write and a CSV import have no verb: reach them through `kilasflow api <operation-id>` (`api`) with `--path`, `--body` and `--header`. A schema change does have one, and it is guarded: `kilasflow datastore create`, `rename`, `delete`, `clear` and `columns add|rename|drop` refuse without `--yes` (exit 3, `confirmation_required`), and `--yes` is passed only on the user's explicit instruction. `kilasflow api <operation-id>` asks for the same confirmation when the operation is one of those.
 3. Never send an empty filter to a write. An update, delete, upsert or increment with no condition is refused 422: an empty filter matches nothing by refusal, never the whole table, because one that compiled to no predicate would rewrite or delete every row and answer 200 (internal/api/handlers/datastores.go, `refuseEmptyFilter`).
 4. A counter is `increment-datastore-rows`, never read-then-write. A value you got from `get-datastore-row` and wrote back with `update-datastore-rows` is a lost update waiting for the second worker; the increment adds in one statement and returns the value its own statement produced (internal/datastore/concurrency.go).
 
@@ -57,7 +64,7 @@ kilasflow_not_shipped:
 - Make a write conditional on a stamp a read returned: `ifUpdatedAt` on `update-datastore-rows` and `delete-datastore-rows` turns it into compare-and-swap on that row's `updatedAt`, must match exactly one row, and answers 409 with the row's current stamp when it moved (internal/datastore/concurrency.go; internal/api/handlers/datastores.go).
 - Move rows as CSV: `kilasflow datastore export <datastoreId>` (`export-datastore-rows`) streams RFC 4180 CSV to stdout, `--out rows.csv` writes the file 0600 and reports `path` and `bytes`, and the API's `includeSystemColumns` adds `id`, `createdAt` and `updatedAt` for a backup rather than for a sheet somebody will edit (internal/cli/verbs_datastore.go, internal/api/handlers/datastores_csv.go).
 - Import CSV with `kilasflow api import-datastore-rows --path id=<datastoreId> --header Content-Type=text/csv --body @rows.csv`: the body is a raw `text/csv` file, not JSON, and every record is validated before any row is written (internal/cli/client.go, internal/api/handlers/datastores_csv.go).
-- Change the schema through the escape hatch: `create-datastore` (`name`, optionally `columns[{name,type}]`), `rename-datastore`, `add-datastore-column`, `rename-datastore-column`, `delete-datastore-column`, `clear-datastore` (removes every row and keeps the schema) and `delete-datastore` (204). A column name is 1-63 bytes matching `^[a-zA-Z][a-zA-Z0-9_]*$`, and `id`, `createdAt`, `updatedAt` and `dryRunState` are reserved case-insensitively (internal/datastore/idents.go).
+- Change the schema with the guarded verbs: `kilasflow datastore create <name> --yes` (`create-datastore`; the verb takes only the name, so add columns afterwards or send `name` and `columns[{name,type}]` in one call with `kilasflow api create-datastore --body @table.json`), `kilasflow datastore rename <datastoreId> <newName> --yes` (`rename-datastore`), `kilasflow datastore columns add <datastoreId> <name> --type <type> --yes` (`add-datastore-column`), `kilasflow datastore columns rename <datastoreId> <name> <newName> --yes` (`rename-datastore-column`), `kilasflow datastore columns drop <datastoreId> <name> --yes` (`delete-datastore-column`, which also drops the values), `kilasflow datastore clear <datastoreId> --yes` (`clear-datastore`, removes every row and keeps the schema) and `kilasflow datastore delete <datastoreId> --yes` (`delete-datastore`, 204). A column name is 1-63 bytes matching `^[a-zA-Z][a-zA-Z0-9_]*$`, and `id`, `createdAt`, `updatedAt` and `dryRunState` are reserved case-insensitively (internal/datastore/idents.go).
 - Inside a workflow use the node rather than the API: `kilasflow.datastore` carries the row operations `insert`, `get`, `update`, `upsert`, `increment`, `delete`, `ifExists` and `ifNotExists` and the table operations `create`, `list`, `rename`, `deleteTable` and `clear`. Its `dataTableId` locator resolves By-ID or By-Name in the tenant's own catalogue, `columns` is the resource mapper (`Values to Send`, automatic mapping intersects the item's keys with the live schema), `match` is Any/All Conditions, and `filters.conditions[i]` is the `keyName`/`condition`/`keyValue` triple. Only the value slots are expression-capable (`keyValue` supports `$json`, and so does a mapped value); `keyName` and `counterColumn` are column names and never expressions, a condition's operator is never one either, and neither is a whole condition row, so an incoming item supplies only the value it compares (nodes/datastore.go).
 - `kilasflow.datastoreTool` is the agent tool: it binds one table and performs one of `get` (the default), `insert`, `update`, `upsert` or `delete`. A `get` freezes that table's columns into a closed schema, answers filtered reads from the fixed ten-operator vocabulary, and caps a call at 50 rows by default, 200 rows and 256 KiB. A write takes its values from the `$fromAI` calls in its parameters, which are its whole schema, runs through the node's own write rules (a matching write needs a condition, and only a mapped column's value or a condition's `keyValue` may be an expression or call `$fromAI`: the write's structure is written literally), hands the model's values to an expression as data it computes with and never as code it runs (a `$fromAI` key must be declared one way everywhere), and answers `operation`, `affected` and the rows. An `insert` that maps no column reads instead, which is what keeps tools built before writes existed reading; an `update` or `upsert` that maps none is refused (nodes/datastore.go).
 - On a write tool the author's operator is final and the model fills only the value it compares, so `neq`, `like`, `ilike`, `gt`, `gte`, `lt` or `lte` against a model-filled `keyValue` can still match many rows (`delete` where `id` `neq` the model's value deletes every row but one, and a `%` under `like` matches them all): use `eq` on a column that names one row when a write is meant to touch one (nodes/datastore.go).
@@ -93,8 +100,9 @@ what are you doing?
 |     -> kilasflow datastore export <datastoreId> > rows.csv
 |
 +-- changing the schema
-|     -> add-datastore-column / rename-datastore-column / delete-datastore-column,
-|        create-datastore, rename-datastore, clear-datastore, delete-datastore
+|     -> kilasflow datastore create / rename / clear / delete
+|        kilasflow datastore columns add / rename / drop
+|        all guarded: they refuse without --yes, so ask the user first
 |
 +-- refused 409 on a conditional write
 |     -> the row moved after you read it: re-read, re-apply against the new stamp
@@ -106,9 +114,9 @@ what are you doing?
 
 ## Not shipped yet
 
-- No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes) — the operations are served, so reach each one with `kilasflow api <operation-id>` and `--path`/`--body` until a verb exists for it.
-- No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet — pass it yourself with `kilasflow api insert-datastore-row --header Idempotency-Key=<key>` (and the same on `upsert-datastore-row`), and treat a write you cannot key as one that a retry performs twice.
-- No storage substitution for the datastore: one database serves every tenant, and there is no interface a host implements — size the server's database for the tables the tenant writes, and treat a datastore as tenant data that lives in that database rather than in a store the host supplies.
+- No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet. The operations are served, so reach each one with `kilasflow api <operation-id>` and `--path`/`--body` until a verb exists for it. Credential, datastore and tenant deletes do have guarded verbs that take `--yes`.
+- No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet. Pass it yourself with `kilasflow api insert-datastore-row --header Idempotency-Key=<key>` (and the same on `upsert-datastore-row`), and treat a write you cannot key as one that a retry performs twice.
+- No storage substitution for the datastore: one database serves every tenant, and there is no interface a host implements. Size the server's database for the tables the tenant writes, and treat a datastore as tenant data that lives in that database rather than in a store the host supplies.
 
 ## Anti-patterns
 

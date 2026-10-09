@@ -16,7 +16,7 @@ kilasflow_nodes:
   - kilasflow.unsupported
 kilasflow_expression_roots: []
 kilasflow_not_shipped:
-  - 'No pack install verb: a pack directory is loaded from the configured paths at boot, and pack validate is the only pack verb'
+  - 'No pack install verb: a pack directory is loaded from the configured paths at boot. The only pack verb is `pack validate`'
 ---
 
 ## Non-negotiables
@@ -76,7 +76,7 @@ what are you doing?
 
 ## Not shipped yet
 
-- No pack install verb: a pack directory is loaded from the configured paths at boot, and pack validate is the only pack verb — there is no runtime install, no hot reload and no boot-time fetch over the network. Put the directory under the configured packs directory (`packs.dir`, `KILASFLOW_PACKS_DIR`) or embed the pack in the binary, then restart the process; the registry is read-only once the server is serving.
+- No pack install verb: a pack directory is loaded from the configured paths at boot. The only pack verb is `pack validate`. There is no runtime install, no hot reload and no boot-time fetch over the network. Put the directory under the configured packs directory (`packs.dir`, `KILASFLOW_PACKS_DIR`) or embed the pack in the binary, then restart the process; the registry is read-only once the server is serving.
 
 ## Anti-patterns
 

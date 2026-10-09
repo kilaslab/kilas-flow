@@ -11,6 +11,7 @@ kilasflow_commands:
   - kilasflow tenant list
   - kilasflow tenant get
   - kilasflow tenant users
+  - kilasflow tenant delete
   - kilasflow api
 kilasflow_operations:
   - get-health
@@ -26,8 +27,7 @@ kilasflow_operations:
 kilasflow_nodes: []
 kilasflow_expression_roots: []
 kilasflow_not_shipped:
-  - 'No skills verbs: kilasflow skills list, show, install, check and export do not ship in this bundle yet'
-  - 'No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes)'
+  - 'No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet'
   - 'No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch'
 ---
 
@@ -36,13 +36,13 @@ kilasflow_not_shipped:
 1. Read the installation before you change it. `kilasflow context` is one read-only briefing — server, identity, workflows, datastores, node types — and it is the only cheap way to learn what you are pointed at. `kilasflow health` (`get-health`) is liveness and touches no dependency; it answers `200` through a database outage. Readiness is a different question and has its own verb.
 2. Never route traffic on liveness. `kilasflow ready` (`get-ready`) answers `503`, which the CLI carries back as exit code 6, when the database is unreachable or when a datastore is behind the schema version this build serves. That exit code means wait, then retry; it does not mean the process is broken.
 3. Nothing migrates on demand. Schema migrations are applied at boot, and a failed migration is a container that does not start rather than a server running against the wrong schema. There is no migrate verb to reach for, so an upgrade is: back up, start the new build, watch the first boot, then check readiness.
-4. Never offboard a tenant to test something. The `delete-tenant` operation is irreversible, runs on the operator credential alone, and there is no export-before-delete and no soft delete. Reach it as `kilasflow api delete-tenant --path id=<tenantId>` and only on an explicit instruction; a customer's own valid key gets `403` and cannot even learn whether the tenant exists.
+4. Never offboard a tenant to test something. The `delete-tenant` operation is irreversible, runs on the operator credential alone, and there is no export-before-delete and no soft delete. Reach it as `kilasflow tenant delete <tenantId> --yes`, a guarded verb that exits 3 with `confirmation_required` without the flag, and only on an explicit instruction; a customer's own valid key gets `403` and cannot even learn whether the tenant exists.
 
 ## Strong defaults
 
 - Begin with `kilasflow version`, then `kilasflow context`. `kilasflow version` prints the binary's version and, when a server is configured, the version the server reports; an unreachable server is information here, not a failure.
 - The identity is the authority. `kilasflow auth whoami` (`get-me`) prints the tenant, the scopes, the workflow binding and the expiry of the configured credential, and never the credential itself. A key with scopes is an agent token; an empty scope set is the legacy tenant-wide key.
-- The operator surface is three reads. `kilasflow tenant list` (`list-tenants`), `kilasflow tenant get <tenantId>` (`get-tenant`) and `kilasflow tenant users <tenantId>` (`list-tenant-users`) all need a key scoped to the operator tenant; anything else is refused with `403` and exit code 3, and the refusal is the server's, not a filtered listing.
+- The operator surface is three reads and one guarded delete. `kilasflow tenant list` (`list-tenants`), `kilasflow tenant get <tenantId>` (`get-tenant`), `kilasflow tenant users <tenantId>` (`list-tenant-users`) and `kilasflow tenant delete <tenantId> --yes` (`delete-tenant`) all need a key scoped to the operator tenant; anything else is refused with `403` and exit code 3, and the refusal is the server's, not a filtered listing.
 - One binary, three shapes. `--role both` (the default) runs API, workers and scheduler in one process; `--role api` serves the API and the scheduler with no workers; `--role worker` runs workers alone. SQLite refuses a split role at startup, because one file and one writer is a corruption story rather than a scaling story; a split deployment means PostgreSQL.
 - Keys are minted and revoked through the escape hatch today: `kilasflow api create-api-key --body @key.json` (`create-api-key`), `kilasflow api list-api-keys` (`list-api-keys`) and `kilasflow api revoke-api-key --path id=<keyId>` (`revoke-api-key`). The body carries scopes and an optional workflow binding; the value comes back once and is never readable again. A scoped key may not mint another key — that answers `403` with `scope_denied` — so minting stays a tenant-wide or operator act.
 - Back up before every upgrade, per driver: SQLite is the data directory plus its `-wal`/`-shm` siblings, copied after a checkpoint or with the process stopped and restored with the container user's ownership; PostgreSQL is a dump taken with the database's own tools against the pinned pgvector major, restored into a server that can provide the same extensions.
@@ -75,7 +75,7 @@ what are you doing?
 |                datastore:read, datastore:write
 |
 +-- offboarding one customer
-|     -> kilasflow api delete-tenant --path id=<tenantId>   ONLY on instruction
+|     -> kilasflow tenant delete <tenantId> --yes   ONLY on instruction
 |        it is irreversible and converges: send it again and read the counts
 |
 +-- a node type says "unavailable"
@@ -86,9 +86,8 @@ what are you doing?
 
 ## Not shipped yet
 
-- No skills verbs: kilasflow skills list, show, install, check and export do not ship in this bundle yet — the bundle is written and gated in the repository, and `kilasflow help` lists no `skills` path, so a harness installs the files by hand until that ticket lands.
-- No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes) — every one of those operations is served, so reach it with `kilasflow api <operation-id>`, `--path` for a placeholder and `--body @file.json` for a body, and treat the missing `--yes` guard as your own responsibility to ask the user first.
-- No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch — the design lists a `tenant api-keys` verb and it is deliberately absent, because the only key operation under a tenant path mints a credential for somebody else, and listing the caller's own keys is the flat `list-api-keys` operation.
+- No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet. Every one of those operations is served, so reach it with `kilasflow api <operation-id>`, `--path` for a placeholder and `--body @file.json` for a body. Credential, datastore and tenant deletes do have guarded verbs that take `--yes`.
+- No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch. The design lists a `tenant api-keys` verb and it is deliberately absent, because the only key operation under a tenant path mints a credential for somebody else, and listing the caller's own keys is the flat `list-api-keys` operation.
 
 ## Anti-patterns
 

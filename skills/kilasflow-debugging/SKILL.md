@@ -29,7 +29,7 @@ kilasflow_nodes:
 kilasflow_expression_roots:
   - $json
 kilasflow_not_shipped:
-  - 'No single-node retry verb: exec retry reruns the whole workflow with the same input and trigger, so a failed node is retried by running the workflow again'
+  - 'No single-node retry verb. `exec retry` reruns the whole workflow with the same input and trigger, so a failed node is retried by running the workflow again'
 ---
 
 ## Non-negotiables
@@ -99,7 +99,7 @@ something is wrong
 
 ## Not shipped yet
 
-- No single-node retry verb: exec retry reruns the whole workflow with the same input and trigger, so a failed node is retried by running the workflow again — a re-run is a fresh execution and repeats every side effect its earlier node runs performed, so re-run the whole workflow only once you have read the trace, and prefer a node's own `retryOnFail` settings when the upstream is merely flaky.
+- No single-node retry verb. `exec retry` reruns the whole workflow with the same input and trigger, so a failed node is retried by running the workflow again. A re-run is a fresh execution and repeats every side effect its earlier node runs performed, so re-run the whole workflow only once you have read the trace, and prefer a node's own `retryOnFail` settings when the upstream is merely flaky.
 
 ## Anti-patterns
 

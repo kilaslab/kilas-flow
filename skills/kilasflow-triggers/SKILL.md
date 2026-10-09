@@ -5,6 +5,8 @@ kilasflow_skills_version: 1
 kilasflow_commands:
   - kilasflow run
   - kilasflow schedule list
+  - kilasflow workflow activate
+  - kilasflow workflow deactivate
   - kilasflow workflow get
   - kilasflow workflow publish-events
   - kilasflow exec list
@@ -32,10 +34,9 @@ kilasflow_nodes:
   - kilasflow.errorTrigger
 kilasflow_expression_roots: []
 kilasflow_not_shipped:
-  - 'No activation verb: activation and deactivation are the activate-workflow and deactivate-workflow operations through the escape hatch'
   - 'No webhook discovery verb: the list-workflow-webhooks operation is served, but no verb lists the webhook URLs of a workflow yet'
   - 'No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet'
-  - 'No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes)'
+  - 'No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet'
 ---
 
 ## Non-negotiables
@@ -62,7 +63,7 @@ kilasflow_not_shipped:
 - Schedules are rows that activation keeps in step with the document. Read them with `kilasflow schedule list` (`list-schedules`, `--limit` and `--cursor`) and look at `cron`, `active` and `nextRunAt` (internal/api/handlers/schedules.go; internal/repository/workflows.go, `syncSchedules`). A schedule finer than the 15-second tick fires once per tick, not more often (internal/scheduler/scheduler.go, `TickResolution`).
 - The publish trail is a read: `kilasflow workflow publish-events <workflowId>` (`list-workflow-publish-events`) records `published`, `unpublished` and `restored` with the actor and the reason (internal/api/handlers/workflows.go, `WorkflowPublishEventResource`). Activation writes one; deactivation writes the version that stopped serving.
 - Confirm a delivery became a run with `kilasflow exec list --workflow <workflowId> --trigger webhook` (`list-executions`, `--status` is repeatable) and read the record with `kilasflow exec get <executionId>` (`get-execution`).
-- Anything without a verb is one call away: `kilasflow api activate-workflow --path id=<workflowId>` (`activate-workflow`) turns a workflow on, and `kilasflow api deactivate-workflow --path id=<workflowId>` (`deactivate-workflow`, idempotent, retains the pinned revision) turns it off. Activation's answer carries `notices[]`, one per trigger that still needs you to paste a URL somewhere (internal/api/handlers/workflows.go, `ActivationResource`).
+- Turning a workflow on is a guarded verb: `kilasflow workflow activate <workflowId> --yes` (`activate-workflow`) publishes the endpoint and exits 3 with `confirmation_required` without `--yes`, which is passed only on the user's explicit instruction. `kilasflow workflow deactivate <workflowId> --yes` (`deactivate-workflow`, idempotent, retains the pinned revision) turns it off. Activation's answer carries `notices[]`, one per trigger that still needs you to paste a URL somewhere (internal/api/handlers/workflows.go, `ActivationResource`).
 - A called workflow must be **active**: a sub-workflow execution is created already claimed and pinned to the called workflow's active revision, so a call to one that is deactivated fails the calling node (internal/repository/executions.go, `StartChild`; nodes/subworkflow.go). Activation refuses that document up front and names the node — "which is not active: activate that workflow first, then activate this one" — and reports a missing target differently, because the two need different fixes (internal/repository/workflows.go, `refuseInactiveSubworkflows`). A child run is its own execution row with `parentExecutionId`.
 - A failure can be wired rather than watched: `settings.errorWorkflow` names another workflow's ID, and the engine starts it from `kilasflow.errorTrigger` with the error, after the failed run is terminal and never on a cancellation (internal/engine/service.go, `runErrorWorkflow`; nodes/error_workflow.go).
 - Answer the caller from inside the run with `kilasflow.respondToWebhook`: the node publishes its status, headers and body as an event, so the caller is answered at that moment while the rest of the graph keeps going (nodes/webhook.go, `executeRespond`).
@@ -74,7 +75,7 @@ a workflow did not start
 |
 +-- is it active?
 |     -> kilasflow workflow get <workflowId>: active=false means no route and no schedule row
-|        kilasflow api activate-workflow --path id=<workflowId>
+|        kilasflow workflow activate <workflowId> --yes   (ask the user first)
 |        a 409 here is a binding conflict: the same method bound twice on one route,
 |        which an import declaring a single method beside a method list can produce
 |
@@ -110,10 +111,9 @@ a workflow did not start
 
 ## Not shipped yet
 
-- No activation verb: activation and deactivation are the activate-workflow and deactivate-workflow operations through the escape hatch — no verb path exists for either, so reach them through `kilasflow api` with `--path id=<workflowId>`, and read the workflow back to confirm `active` and `activeVersion` moved.
-- No webhook discovery verb: the list-workflow-webhooks operation is served, but no verb lists the webhook URLs of a workflow yet — ask the server through `kilasflow api list-workflow-webhooks --path id=<workflowId>`, which mints the route on first read, so an address can be handed to a sender before the workflow is ever activated.
-- No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet — a retried `kilasflow run` is a second execution. Send the header through the escape hatch if the retry must be safe, and remember a webhook delivery is deduplicated separately, by the sender's delivery id.
-- No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes) — reach each operation through `kilasflow api`, and expect the schedule rows a workflow's own trigger owns to be created and removed by activation rather than by hand.
+- No webhook discovery verb: the list-workflow-webhooks operation is served, but no verb lists the webhook URLs of a workflow yet. Ask the server through `kilasflow api list-workflow-webhooks --path id=<workflowId>`, which mints the route on first read, so an address can be handed to a sender before the workflow is ever activated.
+- No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet. A retried `kilasflow run` is a second execution. Send the header with `kilasflow api run-workflow --header Idempotency-Key=<key>` if the retry must be safe, and remember a webhook delivery is deduplicated separately, by the sender's delivery id.
+- No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet. Reach each operation through `kilasflow api`, and expect the schedule rows a workflow's own trigger owns to be created and removed by activation rather than by hand. Credential, datastore and tenant deletes do have guarded verbs that take `--yes`.
 
 ## Anti-patterns
 

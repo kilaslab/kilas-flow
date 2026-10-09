@@ -6,6 +6,9 @@ kilasflow_commands:
   - kilasflow credential list
   - kilasflow credential get
   - kilasflow credential test
+  - kilasflow credential create
+  - kilasflow credential update
+  - kilasflow credential delete
   - kilasflow workflow get
   - kilasflow api
 kilasflow_operations:
@@ -25,7 +28,7 @@ kilasflow_nodes:
   - kilasflow.httpRequest
 kilasflow_expression_roots: []
 kilasflow_not_shipped:
-  - 'No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes)'
+  - 'No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet'
   - 'No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch'
 ---
 
@@ -33,7 +36,7 @@ kilasflow_not_shipped:
 
 1. A credential is referenced by id: it never appears in a workflow document, a CLI argument or chat. A node names one by its credential *type* — `credentials: {"<credentialType>": "<credentialId>"}` — the document stores that id and nothing else (internal/workflow/document.go, `Node.Credentials`), and a credential entry that is an empty string is refused as a missing reference.
 2. A Read returns the public half only. `kilasflow credential get <credentialId>` (`get-credential`) and `kilasflow credential list` (`list-credentials`) never return a secret: secret fields come back as the redaction placeholder, and a stored secret is never returned after it is written, not even to the caller that wrote it (internal/api/handlers/credentials.go, `credentialResource`; internal/credentials/credentials.go, `Split`).
-3. Deleting or replacing a credential is destructive, and no verb guards it today (see Not shipped yet). Confirm with the user, and read every workflow that names the id first.
+3. Storing, replacing or deleting a credential is a guarded verb: `kilasflow credential create`, `credential update` and `credential delete` refuse without `--yes`, exiting 3 with `confirmation_required`. Confirm with the user before passing it, and read every workflow that names the id first.
 4. A write is not a check. `kilasflow credential test <credentialId>` (`test-credential`) runs the type's own probe; a 2xx from a create or an update runs nothing (internal/api/handlers/credentials.go, `Test`).
 
 ## Strong defaults
@@ -42,6 +45,7 @@ kilasflow_not_shipped:
 - Read one with `kilasflow credential get <credentialId>` (`get-credential`); the response carries the non-secret fields as stored, `allowedDomains`, and the placeholder for what is secret.
 - The catalogue is served, not guessed. `kilasflow api list-credential-types` (`list-credential-types`) returns every type and each type's editor fields, so a field name or option is read from the server rather than recalled (internal/api/handlers/credentials.go, `ListTypes`; internal/credentials/builtin.go).
 - Test before saving and after saving. `kilasflow credential test <credentialId>` (`test-credential`) probes a stored one without sending the secret back; `kilasflow api test-credential-payload --path type=<credentialType> --body @payload.json` (`test-credential-payload`) probes one that has not been saved, and a redacted field plus `credentialId` in that body resolves the stored secret so an edit is tested against what is actually held (internal/api/handlers/credentials.go, `TestPayload` and `mergeStoredSecrets`). A type with no probe answers `untestable`, which is not a failure.
+- Writes are guarded verbs. `kilasflow credential create --file cred.json --yes` (`create-credential`) stores the body `{name, type, fields}` once, `kilasflow credential update <credentialId> --file cred.json --yes` (`update-credential`) replaces it, and `kilasflow credential delete <credentialId> --yes` (`delete-credential`) removes it; `--file -` reads the body from stdin. Every value in `fields` is a `<placeholder>` in a skill and the owner's own value in a real call. Read the request schema first with `kilasflow api create-credential --schema`. The type catalogue is served, not listed here: `kilasflow api list-credential-types` prints every type and its fields.
 - Writes are one call each through the escape hatch: `kilasflow api create-credential --body @cred.json` (`create-credential`), `kilasflow api update-credential --path id=<credentialId> --body @cred.json` (`update-credential`, where the type is immutable after creation, and a field left at the placeholder keeps its stored value), and `kilasflow api delete-credential --path id=<credentialId>` (`delete-credential`, answered 204). The value is supplied once, by whoever owns it, and read from their own tooling or environment rather than echoed into a transcript.
 - Scope where it may be sent. `allowedDomains` holds the hosts a credential may reach; an exact entry matches one host, and a `*.` entry matches subdomains but never the bare parent (internal/credentials/credentials.go, `AllowsHost`; docs/src/content/docs/concepts/credentials.md). An empty list means the type's default: `api.openai.com` for `openAiApi`, `openrouter.ai` for `openRouterApi`, Google's hosts for the Google types, and the host of the credential's own `baseUrl` for `telegramApi` and `wahaApi`; only the generic HTTP types are unrestricted when empty (internal/credentials/scope.go). A typed list replaces the default. An agent token may not save or run a workflow that attaches an unscoped credential to a node that calls out, so scope a generic HTTP credential before a narrowed token builds with it. This narrows the instance egress policy, never replaces it.
 - Read the reference before editing a workflow. `kilasflow workflow get <workflowId>` (`get-workflow`) shows `nodes[].credentials`, and the compiler requires a non-empty reference for every credential a node type declares — `config.required` with the path `/nodes/N/credentials/<type>` when it is missing (internal/workflow/compiler.go). `kilasflow.httpRequest` is the shape to have in mind: it declares `httpBasicAuth`, `httpHeaderAuth`, `httpBearerAuth`, `httpQueryAuth` and `httpCustomAuth` (nodes/http.go).
@@ -70,17 +74,17 @@ what are you doing?
 |
 +-- store a new one
 |     -> whoever owns the value supplies it once, into a body file
-|        kilasflow api create-credential --body @cred.json
+|        kilasflow credential create --file cred.json --yes
 |        then kilasflow credential get <credentialId> and credential test it
 |
 +-- change one
 |     -> kilasflow credential get <credentialId> first
 |        send only the fields that change; leave the rest at the placeholder
-|        kilasflow api update-credential --path id=<credentialId> --body @cred.json
+|        kilasflow credential update <credentialId> --file cred.json --yes
 |
 +-- remove one
 |     -> which workflows name it? kilasflow workflow get <workflowId>
-|        ask the user, then kilasflow api delete-credential --path id=<credentialId>
+|        ask the user, then kilasflow credential delete <credentialId> --yes
 |
 +-- which fields does a type have, and where does it go in a request?
 |     -> references/CREDENTIAL_TYPES.md
@@ -92,8 +96,8 @@ what are you doing?
 
 ## Not shipped yet
 
-- No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet (credential, datastore and tenant delete writes do have guarded verbs that take --yes) — every one of them is served, so reach it through kilasflow api with --path and --body, and treat the missing verb as the missing guard: confirm with the user before a write that cannot be undone, then read the resource back.
-- No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch — mint, list and revoke keys through kilasflow api with --body and --path, and note that the token comes back once from the mint and is never returned again, so it has to be stored by whoever asked for it.
+- No schedule-write, pack-install or tenant-create verbs: schedule create, update and delete, pack install and tenant create have no verbs yet. Every one of them is served, so reach it through kilasflow api with --path and --body, and confirm with the user before a write that cannot be undone, then read the resource back. Credential, datastore and tenant deletes do have guarded verbs that take `--yes`.
+- No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch. Mint, list and revoke keys through kilasflow api with --body and --path, and note that the token comes back once from the mint and is never returned again, so it has to be stored by whoever asked for it.
 
 ## Anti-patterns
 
