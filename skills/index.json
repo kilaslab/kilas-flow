@@ -252,6 +252,7 @@
       ],
       "notShipped": [],
       "references": [
+        "references/EXAMPLE.md",
         "references/EXPRESSION_ROOTS.md"
       ]
     },

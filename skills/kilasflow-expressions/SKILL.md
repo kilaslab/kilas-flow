@@ -41,6 +41,7 @@ kilasflow_not_shipped: []
 
 ## Strong defaults
 
+- Start from the validated example: `kilasflow skills show kilasflow-expressions --reference EXAMPLE.md` computes values in two Set nodes, reads one node from the next by name, and keeps a plain `{{ }}` string as text.
 - Read the parameter you are about to fill: `kilasflow node describe <type>` (`list-node-types`) prints the keys, their kinds and which of them accept a value. The body of an expression parameter may mix literal text with `{{ }}` placeholders (internal/expression/expression.go, `Evaluate`).
 - The current item is `$json`: `{{ $json.email }}`. A path that does not exist resolves to undefined — null on its own, nothing when mixed with text — while a structural mistake names the path and fails the node (docs/src/content/docs/reference/expression-grammar.md, "Absent values").
 - An earlier node's corresponding item is `$node["Name"].json.field`: the paired item when the runtime recorded lineage, otherwise the item at the same position, and never the first item (internal/expression/roots.go, `nodeWrapper`).
@@ -107,4 +108,5 @@ what should the parameter read?
 
 | File | Read when |
 | --- | --- |
+| EXAMPLE.md | you are writing your first expression, or need the marker, a node lookup and a literal brace string shown in a document that runs |
 | EXPRESSION_ROOTS.md | you need the root table, what each root yields, the node accessors, the lineage rule, the `$env` narrowing, or the date dialect |
