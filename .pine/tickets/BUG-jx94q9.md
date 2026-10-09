@@ -28,8 +28,8 @@ Reported by the Track H2 coder in the 2026-10-09 parallel wave.
 A `dropped` issue for `settings.executionOrder`.
 
 # Acceptance Criteria
-- [x] `executionOrder: "v1"` produces no import issue; `"v0"` (or anything else) is reported as lossy with a reason saying KilasFlow runs v1 order. Evidence: `TestExecutionOrderIsSilentForV1AndLossyForAnythingElse` (v1 silent; v0, "v2" and a number each give exactly one lossy `settings.executionOrder` issue whose reason says KilasFlow always runs the v1 order, and no dropped `settings` issue).
-- [x] Export → import of a workflow reports no settings issue; the skills round-trip test no longer needs its allowance. Evidence: `TestAnExportedWorkflowDeclaresTheExecutionOrderItRunsIn` now imports its own export, asserts no issue with a `settings*` field, and that a second export carries identical settings. The skills round-trip test is not on main (it lives on another track's branch), so its one-entry allowance has to be dropped when that branch lands: see Progress.
+- [x] `executionOrder: "v1"` produces no import issue; `"v0"` (or anything else) is reported as lossy with a reason saying KilasFlow runs v1 order. Evidence: `TestExecutionOrderIsSilentForV1AndLossyForAnythingElse` (v1 silent; v0, "v2", a number, a 300-byte object and a 300-byte string each give exactly one lossy `settings.executionOrder` issue whose reason says KilasFlow always runs the v1 order, is previewed and cut, and no dropped `settings` issue); `TestAnAbsentExecutionOrderStaysSilent` pins the absent key.
+- [x] Export → import of a workflow reports no settings issue; the skills round-trip test no longer needs its allowance. Evidence: `TestAnExportedWorkflowDeclaresTheExecutionOrderItRunsIn` imports its own export, asserts no `settings*` issue and identical settings on a second export. On the merged tree the allowance in internal/skills/examples_test.go `TestImportExportExampleRoundTripsThroughN8n` is removed (the review's follow-up patch), so any import issue now fails that test; skills/kilasflow-import-export/references/EXAMPLE.md says the order survives silently.
 - [x] `TestAnImportedWorkflowKeepsItsTimezone` and the round-trip fidelity tests are updated accordingly. Evidence: `TestAnImportedWorkflowKeepsItsTimezone` asserts no settings issue for v1 + timezone; `annotatedFixture` gained `saveDataSuccessExecution` so `TestImportReportsEveryDroppedElement` still covers the dropped-settings path.
 
 
@@ -63,3 +63,12 @@ Deviations and notes.
 - docs/.../n8n-migration.md around the export limits still says the exported document carries an empty `settings` object, which stopped being true with BUG-6gkd12 (the export writes the timezone, timeout, error workflow and executionOrder). That is export-side docs drift outside this ticket; not touched.
 
 Left: nothing.
+
+## Review round (2026-10-09)
+
+Merged main into the branch; the skills conflicts went to main's side and the reviewer's follow-up patch removed the `settings` allowance from the skills round-trip test and rewrote import-export references/EXAMPLE.md, so the Progress note above that says the allowance is not on main is superseded: it was on main after the merge, and is gone now (`go test ./internal/skills/...` passes).
+
+Review fixes.
+- A non-string or very long `executionOrder` was formatted with `%v` of the whole value into the reason. It is now JSON-encoded and cut with the importer's existing `preview` helper (60 bytes), so a hostile file cannot make the message enormous.
+- An absent `executionOrder` (n8n's legacy v0 default) stays silent; MAPPING_LIMITS.md and guides/n8n-migration.md now say so.
+- CHANGELOG.md [Unreleased] has the Fixed entry.
