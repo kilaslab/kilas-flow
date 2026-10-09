@@ -161,11 +161,15 @@ usual translation, takes the tool's name from the node's name (as n8n does),
 and carries `toolDescription`. When n8n was left to generate the description
 from the operation, one is written and reported as `lossy`. The model's
 `$fromAI` values reach the node as values: a value containing `{{ }}` is sent
-as those characters. What kind of call the tool makes — its resource, its
-operation, and for PostgreSQL its query, delete command and options — stays the
-author's, so a `$fromAI` there is refused. A tool whose base node is mapped but
-that has no tool form here yet (Google Drive's, for one) imports as a
-placeholder that says so.
+as those characters. A tool form takes `$fromAI` inside an expression only,
+which is how n8n writes it; one in plain text, in any spelling, is refused.
+What kind of call the tool makes — its resource, its operation, and for
+PostgreSQL its query, delete command and options — stays the author's, so a
+`$fromAI`, an expression or `{{ }}` text there is refused. Inside a tool form,
+`$json` and `$input` are the item the agent is answering, as they are for an
+n8n sub-node, and `$('Node')` reads earlier nodes through that item's lineage.
+A tool whose base node is mapped but that has no tool form here yet (Google
+Drive's, for one) imports as a placeholder that says so.
 
 **The PostgreSQL tool never runs SQL the model wrote.** n8n splices an
 expression in the query into the statement text, so a `postgresTool` whose
