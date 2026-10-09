@@ -1,10 +1,10 @@
 ---
 id: FEAT-e898nz
 title: 'Workflow tags: a stored, listed field that n8n import and export round-trip'
-status: doing
+status: done
 priority: low
 created: "2026-10-08T16:58:07Z"
-updated: "2026-10-09T11:03:29Z"
+updated: "2026-10-09T12:14:04Z"
 ---
 
 # Description
@@ -105,3 +105,106 @@ Read as a behaviour reference only, from n8n's public source on GitHub (master),
 - Skill prose that should mention `tags` and `--tag` (Track H's area).
 - A version-history diff that shows a tags-only revision.
 - The SDK's `listWorkflows()` takes no parameters today and was left alone, so the SDK has no `tag` argument yet.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-10-09.
+
+- Base: `f0a3f9eb` (last commit at or before ticket created 2026-10-08)
+- Commits (19):
+  - `54f82333` — merge: a workflow carries tags that the list shows and filters, the CLI and MCP filter by, and n8n import and export round-trip (FEAT-e898nz, BUG-6gkd12)
+  - `13d6cfec` — chore(pine): FEAT-e898nz records the review fixes
+  - `4f772052` — FEAT-e898nz: the list's rename and duplicate save through toWorkflowInput, and an untouched tags field sends the tags read at save time
+  - `12001906` — FEAT-e898nz: a test pins the OpenAPI tags cap to workflow.MaxTags
+  - `b8bffffc` — FEAT-e898nz: a padded tag the importer refuses is one dropped issue, and a report quotes at most a shortened tag
+  - `f5714b55` — FEAT-e898nz: the reference host sends the whole document back on update, so the fields a document gains later are not dropped
+  - `b8797350` — FEAT-e898nz: the line-separator checks in workflow tags are written as escapes, not as invisible characters
+  - `3c1645e2` — chore(pine): FEAT-e898nz and BUG-6gkd12 record what tags did, the n8n facts checked and the verification run
+  - `639137d9` — chore(pine): FEAT-e898nz gets its description and acceptance criteria
+  - `ac193fc3` — FEAT-e898nz: the n8n migration guide and the CLI reference describe workflow tags
+  - `99c646bd` — FEAT-e898nz: the dashboard shows a workflow's tags as chips, filters by tag and edits tags in the rename dialog, and no editor save drops them
+  - `7f559e2e` — FEAT-e898nz: the regenerated web client, SDK types, API reference and CLI command reference carry tags
+  - `38544282` — FEAT-e898nz: kilasflow workflow list takes --tag, and the MCP workflow_list tool takes the same argument
+  - `54f07ac8` — FEAT-e898nz: n8n import keeps a workflow's tag names and export writes them back as name-only objects
+  - `72d704d8` — FEAT-e898nz: the workflows API accepts, returns and filters by tags
+  - `f477533a` — FEAT-e898nz: the workflow list reads each workflow's tags and filters by one from a per-tenant index kept in the revision's own transaction
+  - `d3554277` — FEAT-e898nz: a workflow document carries optional tags, validated and declared in the published schema
+  - `ce0645fb` — chore(pine): the 2026-10-09 parallel wave moves its tickets to doing
+  - `f0a3f9eb` — chore(pine): BUG-6gkd12's tags wait on a workflow tags field, ticketed as its own feature
+- Files changed (base → working tree):
+
+```
+ .pine/memory/n8n-reference.md                      |   3 +-
+ .pine/memory/persistence.md                        |   3 +-
+ .pine/tickets/BUG-2d1pdx.md                        |  49 +++
+ .pine/tickets/BUG-6gkd12.md                        |  12 +-
+ .pine/tickets/BUG-9pmv8y.md                        |   4 +-
+ .pine/tickets/BUG-b4cb1c.md                        |   4 +-
+ .pine/tickets/BUG-b8bwhw.md                        |   6 +-
+ .pine/tickets/BUG-kkkrmx.md                        |  35 +++
+ .pine/tickets/BUG-n6p7qy.md                        |   4 +-
+ .pine/tickets/BUG-vbw239.md                        |  31 ++
+ .pine/tickets/BUG-x28fsx.md                        |   6 +-
+ .pine/tickets/BUG-ywbvfa.md                        |   8 +-
+ .pine/tickets/EPIC-brpz48.md                       |   4 +-
+ .pine/tickets/EPIC-hkypt5.md                       |   8 +-
+ .pine/tickets/FEAT-cf5n4j.md                       |  21 ++
+ .pine/tickets/FEAT-e898nz.md                       |  92 +++++-
+ .pine/tickets/FEAT-gcq50s.md                       |   8 +-
+ .pine/tickets/FEAT-p75n7j.md                       |   6 +-
+ .pine/tickets/FEAT-qae4sh.md                       |   4 +-
+ .pine/tickets/FEAT-r87gtj.md                       |   4 +-
+ .pine/tickets/FEAT-vntngh.md                       |   4 +-
+ .pine/tickets/FEAT-zm3wh2.md                       |   4 +-
+ docs/src/content/docs/guides/embedding.md          |  12 +-
+ docs/src/content/docs/guides/n8n-migration.md      |  25 +-
+ docs/src/content/docs/operate/tenant-deletion.md   |   3 +-
+ docs/src/content/docs/reference/api/workflows.md   |   1 +
+ docs/src/content/docs/reference/cli.md             |   6 +
+ internal/api/handlers/workflows.go                 |  17 +-
+ internal/api/workflow_tags_test.go                 | 342 +++++++++++++++++++++
+ internal/cli/verbs_workflow.go                     |  38 ++-
+ internal/cli/verbs_workflow_tag_test.go            |  84 +++++
+ internal/database/migrate_test.go                  |   1 +
+ internal/interop/n8n/n8n.go                        |   9 +-
+ internal/interop/n8n/tags.go                       | 182 +++++++++++
+ internal/interop/n8n/tags_test.go                  | 312 +++++++++++++++++++
+ internal/repository/postgres_execution_test.go     |   1 +
+ internal/repository/prefix_test.go                 |  40 +++
+ internal/repository/table_names_test.go            |  11 +
+ internal/repository/tenant_rows.go                 |   3 +-
+ internal/repository/workflow_history.go            |   4 +
+ internal/repository/workflow_tags.go               |  87 ++++++
+ internal/repository/workflow_tags_test.go          | 283 +++++++++++++++++
+ internal/repository/workflows.go                   |  32 ++
+ internal/tenantpurge/harness_test.go               |   2 +
+ internal/tenantpurge/purge.go                      |   2 +-
+ internal/tenantpurge/purge_test.go                 |   2 +-
+ internal/workflow/document.go                      |   9 +
+ internal/workflow/tags.go                          | 113 +++++++
+ internal/workflow/tags_test.go                     | 188 +++++++++++
+ migrations/postgres/000025_workflow_tags.down.sql  |   5 +
+ migrations/postgres/000025_workflow_tags.up.sql    |  36 +++
+ migrations/sqlite/000025_workflow_tags.down.sql    |   5 +
+ migrations/sqlite/000025_workflow_tags.up.sql      |  35 +++
+ nodes/openai_credential_url_test.go                |  18 +-
+ schemas/workflow-v1.schema.json                    |   8 +-
+ sdk/CHANGELOG.md                                   |   7 +
+ sdk/examples/reference-host/server.mjs             |  12 +-
+ sdk/src/generated/models.ts                        |  15 +
+ skills/using-kilasflow-skills/SKILL.md             |   2 +-
+ web/messages/en/workflows.json                     |  15 +-
+ web/messages/id/workflows.json                     |  15 +-
+ web/src/lib/api/generated/models/document.ts       |   2 +
+ .../api/generated/models/listWorkflowsParams.ts    |   5 +
+ .../api/generated/models/workflowDocumentInput.ts  |   6 +
+ .../lib/api/generated/models/workflowSummary.ts    |   2 +
+ .../components/dashboard/workflow-tag-chips.svelte |  27 ++
+ web/src/lib/dashboard/workflow-list.test.ts        | 138 ++++++++-
+ web/src/lib/dashboard/workflow-list.ts             |  99 +++++-
+ web/src/lib/workflow-editor/document.test.ts       |  18 +-
+ web/src/lib/workflow-editor/document.ts            |  14 +-
+ web/src/lib/workflow-editor/workflow-input.ts      |  27 ++
+ .../routes/(dashboard)/app/workflows/+page.svelte  |  81 +++--
+ 72 files changed, 2602 insertions(+), 119 deletions(-)
+```
