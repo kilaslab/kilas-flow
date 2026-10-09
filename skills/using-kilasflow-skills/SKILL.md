@@ -167,7 +167,7 @@ kilasflow credential get            get-credential                     read one 
 kilasflow credential test           test-credential                    run the credential type's probe and report pass or fail
 kilasflow credential create         create-credential [guarded]        store a credential from a JSON document (--file <path>|-, guarded)
 kilasflow credential update         update-credential [guarded]        replace a stored credential from a JSON document (--file <path>|-, guarded)
-kilasflow credential delete         delete-credential [guarded]        remove a stored credential (guarded)
+kilasflow credential delete         delete-credential [guarded]        remove a stored credential; one a workflow attaches is refused unless --force (guarded)
 kilasflow datastore list            list-datastores                    list datastores (--limit, --cursor)
 kilasflow datastore get             get-datastore                      read one datastore and its columns
 kilasflow datastore rows            list-datastore-rows                read one page of a datastore's rows (--limit, --cursor)
