@@ -63,6 +63,8 @@ checks only matter if your change reaches the API surface or the configuration.
 | `make generate-types-check` | the committed SDK types match the served OpenAPI document |
 | `make generate-api-reference-check` | the committed API reference pages match the served document |
 | `make generate-config-reference-check` | the configuration reference and `config.example.yaml` match the `Config` structs |
+| `make generate-docs-facts-check` | the docs' exit-code tables and node-catalogue size match what the binary registers; `make generate-docs-facts` rewrites them |
+| `make smoke-cli-examples` | every shell example in `reference/cli.md` runs against a booted server and ends with the exit code its `# exit N` comment names |
 | `make sdk-package-check` | the packed SDK installs into a scratch project and typechecks under `bundler`, `node16` and `nodenext` |
 | `make sdk-example-check` | `examples/host-page` runs against the packed SDK: installed into a scratch copy outside the repository, booted against a stub KilasFlow, with raw `..%2f` probes at its static route |
 | `make sdk-release-check` | every gate a release has to pass, in one command (`sdk-check`, `sdk-test`, `sdk-build`, `sdk-version-check`, `generate-types-check`, `sdk-package-check`, `sdk-example-check`) |
@@ -89,6 +91,7 @@ CI runs it on your pull request, so it is not part of the local loop.
 | Command | What it proves |
 | --- | --- |
 | `make smoke-sqlite` | the embedded binary against a fresh temporary SQLite database |
+| `make smoke-cli` | the agent CLI against a booted server: command tree, envelope, exit codes and the configuration chain |
 | `make smoke-dev` | the Vite development proxy against a temporary Go server |
 | `make smoke-docker` | the non-root Docker image with a temporary persisted SQLite bind mount |
 | `make smoke-postgres` | the Docker image against a temporary Compose PostgreSQL service |

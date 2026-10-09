@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "name": "Orders",
+  "nodes": [
+    { "id": "manual", "name": "Manual Trigger", "type": "kilasflow.manual", "typeVersion": 1, "position": { "x": 0, "y": 0 } },
+    {
+      "id": "http_request",
+      "name": "HTTP Request",
+      "type": "kilasflow.httpRequest",
+      "typeVersion": 1,
+      "position": { "x": 240, "y": 0 },
+      "parameters": { "method": "GET", "url": "{{SERVER_URL}}/api/v1/health" }
+    },
+    {
+      "id": "set",
+      "name": "Set",
+      "type": "kilasflow.set",
+      "typeVersion": 1,
+      "position": { "x": 480, "y": 0 },
+      "parameters": { "assignments": { "assignments": [{ "name": "n", "value": 1, "type": "number" }] } }
+    }
+  ],
+  "connections": [
+    { "id": "c1", "kind": "main", "source": { "nodeId": "manual", "port": "main" }, "target": { "nodeId": "http_request", "port": "main" } },
+    { "id": "c2", "kind": "main", "source": { "nodeId": "http_request", "port": "main" }, "target": { "nodeId": "set", "port": "main" } }
+  ],
+  "settings": {}
+}

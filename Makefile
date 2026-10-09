@@ -620,3 +620,17 @@ clean: ## Remove build artifacts
 .PHONY: smoke-cli
 smoke-cli: ## Prove the agent CLI against a booted server
 	sh scripts/smoke-cli.sh
+
+# The CLI reference is what an agent copies from, so its examples are run, not
+# read: scripts/cli-examples boots the binary this target just built against a
+# fresh SQLite database, seeds the ids the page names as shell variables by
+# driving the same binary, and runs every shell example in reference/cli.md with
+# `sh -c`, comparing each exit code with the page's `# exit N` annotation (0 when
+# there is none). It also checks the catalogue the server really serves against
+# the size node-registry.md states. The server's egress guard stays on: the one
+# address the examples call is admitted by exact host and port. The flag and
+# argument shape of every example is checked without a server by `go test
+# ./internal/cli`; this is the half that needs one.
+.PHONY: smoke-cli-examples
+smoke-cli-examples: build ## Run every cli.md example against a booted server
+	$(GO) run ./scripts/cli-examples -binary $(BIN_DIR)/$(APP_NAME)

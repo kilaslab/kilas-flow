@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "name": "Nightly sync",
+  "nodes": [
+    { "id": "manual", "name": "Manual Trigger", "type": "kilasflow.manual", "typeVersion": 1, "position": { "x": 0, "y": 0 } }
+  ],
+  "connections": [],
+  "settings": {}
+}

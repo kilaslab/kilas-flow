@@ -6,7 +6,7 @@ name: CI
 #   test            go test ./... -race, against real PostgreSQL, MySQL and MariaDB
 #   drift           the committed API client, SDK types, docs reference, config reference, and docs facts (catalogue size, exit codes) still match the binary
 #   sdk             the host SDK typechecks, tests, compiles, and packs into a tarball a consumer can install
-#   smoke           the binary, the Vite proxy and the distroless image all serve
+#   smoke           the binary, the agent CLI (and every example in its reference page), the Vite proxy and the distroless image all serve
 #   smoke-postgres  the image against a Compose PostgreSQL (not on pull requests)
 #   e2e             Playwright against a real binary and SPA, one isolated instance per test
 #   image           the image still cross-builds for every published architecture
@@ -347,6 +347,19 @@ jobs:
       # Boots a real binary against a fresh SQLite database and asserts
       # /api/v1/health, /api/openapi.json and the SPA history fallback.
       - run: make smoke-sqlite
+
+      # The agent CLI against a booted server: the command tree, the envelope, the
+      # exit codes and the configuration chain, driven the way an agent drives
+      # them. It existed in the Makefile before it ran anywhere, so a regression in
+      # the CLI's contract reached main unnoticed; it builds the binary itself.
+      - run: make smoke-cli
+
+      # The CLI reference is what an agent copies from, so every shell example in
+      # docs/.../reference/cli.md is run against a freshly booted server and must
+      # end with the exit code its `# exit N` comment names (0 without one). The
+      # same run compares the catalogue the server serves with the size the docs
+      # state. Runs after smoke-sqlite and smoke-cli, which have already built.
+      - run: make smoke-cli-examples
 
       # Proves the Vite proxy, which no unit test can reach: a broken proxy
       # config breaks every contributor's `make dev` and nothing else catches it.

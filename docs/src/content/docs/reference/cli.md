@@ -29,6 +29,14 @@ Two rules keep it honest:
   server under an older name. It was deleted rather than kept as a second
   entry point, so there is one name to document and one to remember.
 
+The examples on this page run as written. The ids a server issues are shell
+variables — `$WORKFLOW_ID`, `$VERSION_ID`, `$EXECUTION_ID`, `$CREDENTIAL_ID`,
+`$DATASTORE_ID` and `$CURSOR` — which you fill from the command that made them
+(`--quiet` prints just the id); `$TOKEN` is an API token you hold. A trailing
+`# exit N` says the example ends with that exit code, and every example without
+one exits 0. `make smoke-cli-examples` runs each of them against a booted
+server in CI, so an example that stops being true fails the build.
+
 ## Coexistence with the server binary
 
 The binary keeps its original meaning: **`kilasflow` with no subcommand serves**.
@@ -147,9 +155,10 @@ today, and the CLI can be complete on day one.
 ```bash
 kilasflow api --list                            # every id this server serves
 kilasflow api create-workflow --schema          # its parameters and body schema; calls nothing
-kilasflow api get-workflow --path id=wf_01J8ZP
-kilasflow api run-workflow --path id=wf_1 --body '{"input":{"n":1}}'
-kilasflow api export-datastore-rows --path id=ds_1 --out rows.csv
+kilasflow api get-workflow --path id="$WORKFLOW_ID"
+kilasflow api run-workflow --path id="$WORKFLOW_ID" --body '{"input":{"n":1}}'
+kilasflow api export-datastore-rows --path id="$DATASTORE_ID" --out rows.csv
+kilasflow api not-an-operation                  # exit 2: refused before anything is called
 ```
 
 - `--list` prints the operation ids **the running server serves**, read from its
@@ -270,19 +279,20 @@ should be one request.
 
 ```bash
 kilasflow workflow list --limit 20 --json
-kilasflow workflow get wf_01J8ZP
+kilasflow workflow get "$WORKFLOW_ID"
 kilasflow workflow create --file workflow.json --quiet   # the new id
 kilasflow workflow validate --file patch.json            # exit 0, then read data.valid
 kilasflow workflow validate --file - --quiet < patch.json  # true / false
-kilasflow workflow duplicate wf_01J8ZP --name "Orders (copy)" --quiet  # the copy's id
-kilasflow workflow versions wf_01J8ZP --cursor cur_2
-kilasflow workflow get-version wf_01J8ZP wfv_01J8ZP
-kilasflow workflow publish-events wf_01J8ZP
-kilasflow workflow export wf_01J8ZP --format n8n
-kilasflow workflow diagnostics wf_01J8ZP --version-id wfv_01J8ZP
-kilasflow workflow activate wf_01J8ZP --yes      # publishes the endpoint
-kilasflow workflow deactivate wf_01J8ZP --yes
-kilasflow workflow delete wf_01J8ZP --yes
+kilasflow workflow duplicate "$WORKFLOW_ID" --name "Orders (copy)" --quiet  # the copy's id
+kilasflow workflow versions "$WORKFLOW_ID" --limit 20 --cursor "$CURSOR"
+kilasflow workflow get-version "$WORKFLOW_ID" "$VERSION_ID"
+kilasflow workflow publish-events "$WORKFLOW_ID"
+kilasflow workflow export "$WORKFLOW_ID" --format n8n
+kilasflow workflow diagnostics "$WORKFLOW_ID" --version-id "$VERSION_ID"
+kilasflow workflow activate "$WORKFLOW_ID" --yes      # publishes the endpoint
+kilasflow workflow deactivate "$WORKFLOW_ID" --yes
+kilasflow workflow delete "$WORKFLOW_ID" --yes
+kilasflow workflow get "$WORKFLOW_ID"                 # exit 4: it is gone
 ```
 
 - A listing's payload is `{items, count, nextCursor}`. The API is not uniform —
@@ -326,9 +336,9 @@ kilasflow workflow delete wf_01J8ZP --yes
 Starts a run, and optionally waits for it.
 
 ```bash
-kilasflow run wf_01J8ZP --input '{"n":1}' --trigger manual
-kilasflow run wf_01J8ZP --input-file payload.json --wait --quiet   # the execution id
-kilasflow run wf_01J8ZP --revision wfv_01J8ZP                     # a pinned revision
+kilasflow run "$WORKFLOW_ID" --input '{"n":1}' --trigger manual
+kilasflow run "$WORKFLOW_ID" --input-file payload.json --wait --quiet   # the execution id
+kilasflow run "$WORKFLOW_ID" --revision "$VERSION_ID"                   # a pinned revision
 ```
 
 - The body is `{"input": <json>, "triggerNodeId": <node>, "workflowVersionId":
@@ -361,12 +371,12 @@ kilasflow run wf_01J8ZP --revision wfv_01J8ZP                     # a pinned rev
 Execution history and the live feed.
 
 ```bash
-kilasflow exec list --workflow wf_01J8ZP --status failed --limit 10
-kilasflow exec get exec_01K7
-kilasflow exec cancel exec_01K7
-kilasflow exec retry exec_01K7 --quiet            # the new execution id
-kilasflow exec trace exec_01K7 --json
-kilasflow exec tail exec_01K7
+kilasflow exec list --workflow "$WORKFLOW_ID" --status failed --limit 10
+kilasflow exec get "$EXECUTION_ID"
+kilasflow exec cancel "$EXECUTION_ID"
+kilasflow exec retry "$EXECUTION_ID" --quiet            # the new execution id
+kilasflow exec trace "$EXECUTION_ID" --json
+kilasflow exec tail "$EXECUTION_ID"
 ```
 
 - `exec list` takes `--workflow`, `--status` (repeatable), `--trigger`,
@@ -405,10 +415,11 @@ kilasflow exec tail exec_01K7
 Answering a question about a run without starting another one.
 
 ```bash
-kilasflow debug eval '$("HTTP Request").first().json.id' --execution exec_01K7
-kilasflow debug eval '$json.url' --execution exec_01K7 --node http_request
-kilasflow debug eval '$json.url' --execution exec_01K7 --node http_request --run 2 --item 1
-kilasflow debug eval '$json.n' --execution exec_01K7 --node set --quiet   # the value alone
+kilasflow debug eval '$("HTTP Request").first().json.status' --execution "$EXECUTION_ID"
+kilasflow debug eval '$json.status' --execution "$EXECUTION_ID" --node set
+kilasflow debug eval '$json.status' --execution "$EXECUTION_ID" --node set --run 0 --item 0
+kilasflow debug eval '$("Set").first().json.n' --execution "$EXECUTION_ID" --quiet   # the value alone
+kilasflow debug eval '$json.status' --execution "$EXECUTION_ID" --node set --run 3   # exit 2: the node ran once
 ```
 
 - `debug eval <expression> --execution <id>` evaluates one expression against the
@@ -437,9 +448,9 @@ kilasflow debug eval '$json.n' --execution exec_01K7 --node set --quiet   # the 
   a `403` exits 3 (`scope_denied`), and another tenant's execution is a `404`
   that exits 4, the same as any other execution read.
 - `--quiet` prints the value as compact JSON, so
-  `kilasflow debug eval '$json.n' --execution exec_1 --quiet` is usable in a
-  pipeline; the type stays in the envelope, because `1` and `"1"` are the same
-  question answered two ways.
+  `kilasflow debug eval '$("Set").first().json.n' --execution "$EXECUTION_ID" --quiet`
+  is usable in a pipeline; the type stays in the envelope, because `1` and `"1"`
+  are the same question answered two ways.
 
 ## `kilasflow node`
 
@@ -449,7 +460,8 @@ these verbs are how an agent finds out what it may put in a document.
 ```bash
 kilasflow node list --json                       # the whole catalogue
 kilasflow node describe kilasflow.httpRequest    # one entry, newest version
-kilasflow node options kilasflow.httpRequest --property channel --credential cred_1
+kilasflow node options kilasflow.executeWorkflow --property workflowId --mode list
+kilasflow node describe httpRequest              # exit 4: a type is matched exactly, with its namespace
 ```
 
 - `node list` and `node describe` drive the same operation. `describe` needs no
@@ -460,12 +472,15 @@ kilasflow node options kilasflow.httpRequest --property channel --credential cre
   message — a type is a name the caller has to remember, and a bare "not found"
   is not something an agent can act on. `--quiet` on `node list` prints one type
   per line, which is exactly what `describe` takes.
-- `node options` resolves a property whose valid values live on the customer's
-  own service, which is why it needs `--credential`: the loader runs under the
-  host's egress policy with a credential from the caller's own tenant, and the
-  server refuses a credential id that is not. `--property` is required; the
+- `node options` resolves the values a property offers at edit time. When they
+  live on the customer's own service (a model list, the tables of a database) the
+  call takes `--credential <credentialId>`: the loader runs under the host's
+  egress policy with a credential from the caller's own tenant, and the server
+  refuses a credential id that is not. A property the server answers itself, such
+  as `executeWorkflow`'s `workflowId`, needs none, and a resource locator needs
+  `--mode list` to say which of its modes to list. `--property` is required; the
   request body carries `property`, and `version`, `mode` and `credentialId` only
-  when they were given.
+  when they were given. A type that does not have the property exits 4.
 - The catalogue is not paged (the operation takes no parameters), so neither
   verb takes `--limit` or `--cursor`.
 
@@ -473,11 +488,12 @@ kilasflow node options kilasflow.httpRequest --property channel --credential cre
 
 ```bash
 kilasflow credential list --limit 20
-kilasflow credential get cred_01J8ZP
-kilasflow credential test cred_01J8ZP --quiet   # true / false
-kilasflow credential create --file smtp.json --yes --quiet   # the new id
-kilasflow credential update cred_01J8ZP --file smtp.json --yes
-kilasflow credential delete cred_01J8ZP --yes
+kilasflow credential get "$CREDENTIAL_ID"
+kilasflow credential test "$CREDENTIAL_ID" --quiet   # true / false
+kilasflow credential create --file credential.json --yes --quiet   # the new id
+kilasflow credential update "$CREDENTIAL_ID" --file credential.json --yes
+kilasflow credential delete "$CREDENTIAL_ID" --yes
+kilasflow credential create --file credential.json        # exit 3: a guarded verb without --yes
 ```
 
 - No secret value is ever returned: the API's read projections leave it out, and
@@ -486,7 +502,7 @@ kilasflow credential delete cred_01J8ZP --yes
   credential type's declared probe and stores nothing. It prints the verdict
   (`ok`, `detail`, `untestable`, and which fields came from storage rather than
   from the request); `--quiet` prints the API's own boolean, so
-  `kilasflow credential test cred_1 --quiet && …` is a real branch.
+  `kilasflow credential test "$CREDENTIAL_ID" --quiet && …` is a real branch.
 - `create` and `update` take `--file <path>|-` and send the document
   **unchanged**, the way `workflow create` does: the fields a credential type
   declares are the server's, so a body that is not valid JSON is refused with
@@ -504,17 +520,18 @@ kilasflow credential delete cred_01J8ZP --yes
 
 ```bash
 kilasflow datastore list
-kilasflow datastore get ds_01J8ZP
-kilasflow datastore rows ds_01J8ZP --limit 50 --cursor cur_2
-kilasflow datastore export ds_01J8ZP > rows.csv
-kilasflow datastore export ds_01J8ZP --out rows.csv --json
+kilasflow datastore get "$DATASTORE_ID"
+kilasflow datastore rows "$DATASTORE_ID" --limit 50
+kilasflow datastore export "$DATASTORE_ID" > rows.csv
+kilasflow datastore export "$DATASTORE_ID" --out rows.csv --json
 kilasflow datastore create orders --yes --quiet          # the new id
-kilasflow datastore rename ds_01J8ZP orders-2026 --yes
-kilasflow datastore columns add ds_01J8ZP note --type string --yes
-kilasflow datastore columns rename ds_01J8ZP note memo --yes
-kilasflow datastore columns drop ds_01J8ZP memo --yes
-kilasflow datastore clear ds_01J8ZP --yes                # reports the rows removed
-kilasflow datastore delete ds_01J8ZP --yes
+kilasflow datastore rename "$DATASTORE_ID" orders-2026 --yes
+kilasflow datastore columns add "$DATASTORE_ID" note --type string --yes
+kilasflow datastore columns rename "$DATASTORE_ID" note memo --yes
+kilasflow datastore columns drop "$DATASTORE_ID" memo --yes
+kilasflow datastore clear "$DATASTORE_ID" --yes                # reports the rows removed
+kilasflow datastore delete "$DATASTORE_ID" --yes
+kilasflow datastore delete "$DATASTORE_ID"                     # exit 3: a guarded verb without --yes
 ```
 
 - `datastore rows` reads one page of a datastore's rows. The API's row filter
@@ -591,13 +608,15 @@ no server, no credential, no request. It wraps the same loader the server uses,
 which is the point — what it accepts is what the server would register.
 
 ```bash
-kilasflow pack validate ./packs/telegram
-kilasflow pack validate ./packs/telegram/pack.json --json
+kilasflow pack validate ./my-pack                         # a directory: pack.sha256, then pack.json
+kilasflow pack validate ./packs/telegram/pack.json --json  # or the manifest itself
+kilasflow pack validate ./packs/telegram                  # exit 1: that directory has no pack.sha256
+kilasflow pack validate ./no-such-pack                    # exit 2: nothing was checked
 ```
 
 - A directory is checked the way an install reads it: the `pack.sha256` sidecar
-  first, then `pack.json`. A **missing path** is exit 2, because nothing was
-  checked and "your pack is invalid" would be a lie.
+  (the hex SHA-256 of `pack.json`) first, then `pack.json`. A **missing path** is
+  exit 2, because nothing was checked and "your pack is invalid" would be a lie.
 - `data` is `{path, ok, issues}` with every problem the validator found, not just
   the first: an author fixing one problem per run is the failure this exists to
   prevent. Each issue carries `severity` (`error` — everything the validator
@@ -682,7 +701,7 @@ shell drives. It is a verb of this binary rather than a second executable, so th
 shipped image carries one command.
 
 ```bash
-kilasflow mcp serve --url http://127.0.0.1:8080   # the credential comes from KILASFLOW_TOKEN
+kilasflow mcp serve   # the server comes from KILASFLOW_URL, the credential from KILASFLOW_TOKEN
 ```
 
 - **One tool per verb**, named after the verb's path with spaces replaced by
@@ -880,7 +899,13 @@ Precedence, highest first:
 `http://127.0.0.1:8080`, the default installation's address. An explicitly empty
 `--url ''` means "no server" — `version` then reports only the binary's own
 version, and a verb that needs a server exits 2 with a message naming all four
-ways to set one.
+ways to set one:
+
+```bash
+kilasflow version --url ''
+kilasflow workflow list --url ''      # exit 2: no server URL
+kilasflow health --url http://127.0.0.1:1   # exit 1: nothing is listening, so network_error
+```
 
 The file is TOML, holds `url` and `token`, and is written `0600` by
 `auth login`, which also tightens the mode of a file it did not create: this
