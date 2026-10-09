@@ -119,9 +119,9 @@ func TestExternalReferenceResolvesOnTheResolvePathOnly(t *testing.T) {
 		t.Fatalf("read raw payload: %v", err)
 	}
 	payload := row.Payload
-	sealed, err := cipher.Decrypt(payload)
+	sealed, err := cipher.Open(payload, credentials.CredentialAAD(tenant.ID, created.ID, created.Type))
 	if err != nil {
-		t.Fatalf("Decrypt() error = %v", err)
+		t.Fatalf("Open() error = %v", err)
 	}
 	if sealed["apiKey"] != "ext://prod-vault/prod/openai" {
 		t.Fatalf("stored payload = %q, want the sealed reference", sealed["apiKey"])
