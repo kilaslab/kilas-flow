@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "Orders (draft)",
+  "nodes": [
+    { "id": "manual", "name": "Manual Trigger", "type": "kilasflow.manual", "typeVersion": 1, "position": { "x": 0, "y": 0 } },
+    {
+      "id": "set",
+      "name": "Set",
+      "type": "kilasflow.set",
+      "typeVersion": 1,
+      "position": { "x": 240, "y": 0 },
+      "parameters": { "assignments": { "assignments": [{ "name": "status", "value": "draft", "type": "string" }] } }
+    }
+  ],
+  "connections": [
+    { "id": "c1", "kind": "main", "source": { "nodeId": "manual", "port": "main" }, "target": { "nodeId": "set", "port": "main" } }
+  ],
+  "settings": {}
+}

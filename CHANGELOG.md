@@ -23,6 +23,18 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- The CLI reference's examples run as written, and CI runs them. Every shell
+  example in the [Agent CLI](/reference/cli/) page is executed against a booted
+  server (`make smoke-cli-examples`), the ids a server issues are shell
+  variables (`$WORKFLOW_ID`, `$EXECUTION_ID`, ...), and a command that is
+  expected to fail says so in a trailing `# exit N`. The page's exit-code tables
+  and the node catalogue's size on the registry and "What KilasFlow is" pages
+  are generated from the binary (`make generate-docs-facts`), as is the
+  credential-type count on the credentials page, which now lists the two Google
+  types it had missed. `make smoke-cli`, which existed but ran nowhere, is now
+  part of the smoke job.
+  `mcp_catalogue`, `mcp_transport` and `unexpected_shape` are named in the
+  error-code vocabulary.
 - Code (JavaScript) (`kilasflow.jsCode`): n8n JavaScript Code nodes run, on
   goja, an ECMAScript engine linked into the binary, with no Node.js process
   involved. An imported Code node keeps its source byte for byte and runs, and
