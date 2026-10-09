@@ -112,6 +112,26 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   checkout — which is what makes them work from the distroless image. See
   [`kilasflow skills`](/reference/cli/#kilasflow-skills).
 
+- Two agent skills: `kilasflow-ai-agents` (wiring a chat model, memory, tools and
+  an output parser into an agent by AI connection kind; choosing a model node and
+  its credential, including a local OpenAI-compatible server; the retrieval
+  ingest graph) and `kilasflow-flow-patterns` (loops over batches, files as
+  binary references, and a parent calling a child workflow). Both are listed in
+  the router skill, and a test fails when a skill is missing from it.
+- Every skill ships `references/EXAMPLE.md`: a minimal, connected, validated
+  example, fenced as `json kilasflow-workflow` or `json kilasflow-request
+  <operation-id>`. `go test` and `make skills-check` compile each workflow
+  through `kilasflow workflow validate` and send each request body to its real
+  operation against an in-process server holding the shipped catalogue, so an
+  example that drifts from the product fails the build. The examples show the
+  stored shape of every complex property kind (assignment collection, resource
+  locator, resource mapper, fixed collection, key/value), and the n8n example
+  is exported and imported again by a test.
+- The skills checker refuses a skill that cites the product's own source tree
+  (`internal/`, `nodes/`, `cmd/`, `web/src/`, `sdk/`, ...) and a test resolves
+  every `(docs: <slug>)` and `skills show <skill> --reference <FILE>` citation,
+  so the bundle points an installed agent at pages it can read.
+
 - Pack-trigger lifecycle templates can send a structured parameter (a list or
   an object) as JSON through `{{ .ParameterJSON.<key> }}`, and a `set` request
   can `capture` values from its JSON answer (`capture: {key: "data.id"}`) for
@@ -515,6 +535,12 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   so the two cannot disagree. It names the loop even beside other blocking
   issues, where the compiler would only reach the loop once those were fixed.
 
+- The skills no longer tell an agent that shipped verbs do not exist: activation,
+  deactivation and delete, `workflow validate` and `duplicate`, `run --revision`,
+  the guarded credential, datastore and tenant writes, the `skills` verbs and
+  `--skills-used` are described as the binary has them. A drift test now reads
+  every sentence of a skill's not-shipped claims, and the whole bundle's prose,
+  for a shipped verb, flag or operation denied in any wording.
 
 ### Security
 
