@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kilaslab/kilas-flow/internal/loadoptions"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
@@ -27,15 +28,6 @@ const (
 
 // sheetsAPIRoot is a variable only so a test can aim it at a stub.
 var sheetsAPIRoot = googleSheetsAPIBase
-
-// The loaders behind the node's pickers. They are registered by the option
-// resolver (internal/loadoptions), and these names are the contract between the
-// two packages.
-const (
-	googleSheetsDocumentsLoader = "googleSheets.documents"
-	googleSheetsSheetsLoader    = "googleSheets.sheets"
-	googleSheetsColumnsLoader   = "googleSheets.columns"
-)
 
 // Sheet operations, using n8n's value strings.
 const (
@@ -73,7 +65,7 @@ func sheetsDocumentLocator(credentialType string) node.PropertyDefinition {
 			{
 				Name: "list", Label: "From list", Kind: node.PropertyOptions, Placeholder: "Choose…",
 				LoadOptions: &node.OptionsLoader{
-					Source: property.LoaderInternal, Name: googleSheetsDocumentsLoader, CredentialType: credentialType,
+					Source: property.LoaderInternal, Name: loadoptions.GoogleSheetsDocumentsLoader, CredentialType: credentialType,
 				},
 			},
 			{
@@ -100,7 +92,7 @@ func sheetsSheetLocator(credentialType string) node.PropertyDefinition {
 			{
 				Name: "list", Label: "From list", Kind: node.PropertyOptions, Placeholder: "Choose…",
 				LoadOptions: &node.OptionsLoader{
-					Source: property.LoaderInternal, Name: googleSheetsSheetsLoader, CredentialType: credentialType,
+					Source: property.LoaderInternal, Name: loadoptions.GoogleSheetsSheetsLoader, CredentialType: credentialType,
 					DependsOn: []string{"documentId"},
 				},
 			},
@@ -158,7 +150,7 @@ func googleSheetsNode() node.Definition {
 				Key: "columns", Label: "Columns", Kind: node.PropertyResourceMapper,
 				Mapper: &node.ResourceMapperDeclaration{
 					Schema: &node.OptionsLoader{
-						Source: property.LoaderInternal, Name: googleSheetsColumnsLoader,
+						Source: property.LoaderInternal, Name: loadoptions.GoogleSheetsColumnsLoader,
 						CredentialType: GoogleSheetsCredentialType,
 						DependsOn:      []string{"documentId", "sheetName", "operation"},
 					},
