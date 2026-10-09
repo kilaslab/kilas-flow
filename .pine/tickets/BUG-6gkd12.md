@@ -92,7 +92,7 @@ none
 
 # Acceptance Criteria
 - [x] Node `notes`/`notesInFlow` are part of the canonical node and round-trip
-- [ ] Workflow `settings.executionOrder` is exported; tags round-trip (executionOrder: done; tags: open, the canonical document has no place for them)
+- [x] Workflow `settings.executionOrder` is exported; tags round-trip (executionOrder: done 2026-10-08; tags: done 2026-10-09 by FEAT-e898nz, `TestAWorkflowsTagsRoundTrip` in internal/interop/n8n/tags_test.go and the API export check in `TestAnImportedN8nWorkflowKeepsItsTagsAndExportsThem`)
 - [x] A node's authored `typeVersion` is kept when the translator can write it (If ≥ 2.2 is not downgraded)
 - [x] The document returned by `workflow get` passes `workflow validate` unchanged (`id` is accepted and ignored)
 
@@ -134,3 +134,9 @@ Notes (2026-10-08): a node's `notes` and `notesInFlow` are carried in the canoni
 
 Tags (2026-10-08, 23:58): the repository, workflow and API layers have no tags field anywhere, so n8n `tags` have nowhere to be carried. That needs a stored workflow field first, which is FEAT-e898nz; this ticket now depends on it.
 
+
+## Progress (2026-10-09)
+
+Done, the last open criterion (tags round-trip): the canonical document now has a `tags` field (FEAT-e898nz), the importer reads each n8n `tags` entry's `name` in file order (the id and timestamps are instance-local and are ignored), and the exporter writes `"tags":[{"name":...}]` in document order with no invented ids, leaving the key out when there are none. `TestAWorkflowsTagsRoundTrip` imports a file whose tags carry ids and timestamps, exports it, and imports the export again; the names, order and case come back unchanged and nothing is reported about tags. Every criterion of this ticket is now ticked; it can move to done once FEAT-e898nz does.
+
+What was checked about n8n's side (behaviour only, in my own words, recorded in full on FEAT-e898nz): a tag entry with only a name, no id, imports cleanly, because n8n matches or creates tags by name and generates the id itself; and a tag name is limited to 24 characters, counted in UTF-16 code units.
