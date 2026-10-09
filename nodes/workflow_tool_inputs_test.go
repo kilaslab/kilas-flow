@@ -200,6 +200,31 @@ func TestWorkflowToolMapperFixesAColumnWhateverItHolds(t *testing.T) {
 	}
 }
 
+// A mapper whose own value is one expression has no columns to read until it
+// runs, which is the whole-expression case: it fixes every field, and what it
+// produces is the input, not the mapper's own `mode` and `value` keys.
+func TestWorkflowToolMapperWhoseValueIsAnExpressionIsTheWholeInput(t *testing.T) {
+	t.Parallel()
+
+	expression := map[string]any{"mode": "expression", "value": `{{ { "unit": "F" } }}`}
+	mapper := map[string]any{"mappingMode": "defineBelow", "value": expression, "matchingColumns": []any{}}
+
+	entries, whole, present := nodes.WorkflowToolInputs(mapper)
+	if !whole || !present || len(entries) != 0 {
+		t.Fatalf("WorkflowToolInputs() = (%v, whole %v, present %v), want a whole expression with no entries", entries, whole, present)
+	}
+
+	_, sent := runCelsiusTool(t, mapper, `{"input":{"tempC":37}}`)
+	for _, key := range []string{"mode", "value", "mappingMode", "matchingColumns"} {
+		if _, leaked := sent[key]; leaked {
+			t.Errorf("sub-workflow input = %#v: the key %q must not reach the sub-workflow", sent, key)
+		}
+	}
+	if len(sent) != 2 || sent["tempC"] != float64(37) || sent["unit"] != "F" {
+		t.Errorf("sub-workflow input = %#v, want the model's tempC and the expression's unit", sent)
+	}
+}
+
 // A mapper that has not been touched yet leaves every declared column to the
 // model, the same as no workflowInputs at all.
 func TestWorkflowToolMapperWithNoValuesOffersEveryColumn(t *testing.T) {

@@ -3002,6 +3002,12 @@ func WorkflowToolInputs(raw any) (entries map[string]any, whole bool, present bo
 		return nil, true, true
 	}
 	if mapping, ok := property.ReadMapping(raw); ok {
+		if expression.IsExpression(mapping.Values) {
+			// A mapper whose own value is one expression: no columns to read
+			// until it runs, so it is the whole-expression case, not a column
+			// map with columns named `mode` and `value`.
+			return nil, true, true
+		}
 		return mapping.Values, false, true
 	}
 	if plain, ok := raw.(map[string]any); ok {
@@ -3160,7 +3166,13 @@ func workflowToolInput(agentNode string, parameters map[string]any, item workflo
 	if !present {
 		return workflow.Item{JSON: merged}, nil
 	}
-	if !whole {
+	if whole {
+		// One expression stands for the input; inside a mapper it is the
+		// mapper's value, and the mapper's own keys still do not cross.
+		if mapping, isMapper := property.ReadMapping(raw); isMapper {
+			raw = mapping.Values
+		}
+	} else {
 		// Only the fields the author wrote cross: a mapper's own keys
 		// (mappingMode, schema, ...) describe the form, not the call.
 		raw = entries
