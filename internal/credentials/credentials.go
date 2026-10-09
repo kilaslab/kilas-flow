@@ -343,13 +343,20 @@ func Apply(request *http.Request, typeID string, fields map[string]string) error
 // Base64 and hex are both accepted so operators can paste whichever their
 // secret manager emits.
 func KeyFromEnvironment(name string) ([]byte, error) {
+	decoded, _, err := KeyFromEnvironmentFormat(name)
+	return decoded, err
+}
+
+// KeyFromEnvironmentFormat is KeyFromEnvironment that also reports how the
+// value was encoded, so boot can warn about a raw string.
+func KeyFromEnvironmentFormat(name string) ([]byte, KeyFormat, error) {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
-		return nil, fmt.Errorf("%w: set %s", ErrNoKey, name)
+		return nil, 0, fmt.Errorf("%w: set %s", ErrNoKey, name)
 	}
-	decoded, err := decodeKey(raw)
+	decoded, format, err := ParseKey(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%s %w", name, err)
+		return nil, 0, fmt.Errorf("%s %w", name, err)
 	}
-	return decoded, nil
+	return decoded, format, nil
 }

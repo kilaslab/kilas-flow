@@ -446,7 +446,7 @@ func run(args []string) error {
 	var oauthSigningKey []byte
 	var credentialStore *repository.GORMCredentialStore
 	var credentialCipher *credentials.Cipher
-	key, keyErr := masterKey(ctx, cfg)
+	cipher, oauthKey, keyErr := loadCredentialKeys(ctx, cfg, log)
 	switch {
 	case errors.Is(keyErr, credentials.ErrNoKey):
 		log.Warn("credential encryption key is not set; credential storage is disabled",
@@ -455,11 +455,7 @@ func run(args []string) error {
 	case keyErr != nil:
 		return fmt.Errorf("credential encryption key: %w", keyErr)
 	default:
-		oauthSigningKey = append([]byte(nil), key...)
-		cipher, err := credentials.NewCipher(key)
-		if err != nil {
-			return err
-		}
+		oauthSigningKey = oauthKey
 		credentialStore = repository.NewCredentialStore(db.DB, cipher)
 		credentialCipher = cipher
 	}
@@ -473,7 +469,7 @@ func run(args []string) error {
 	// clearly and the middleware refuses every token, rather than the editor
 	// silently being frameable.
 	var embedIssuer *embed.Issuer
-	if embedKey, err := credentials.KeyFromEnvironment(cfg.Embed.SigningKeyEnv); err == nil {
+	if embedKey, err := signingKeyFromEnvironment(cfg.Embed.SigningKeyEnv, log); err == nil {
 		issuer, issuerErr := newEmbedIssuer(embedKey, cfg)
 		if issuerErr != nil {
 			return fmt.Errorf("configure embed sessions: %w", issuerErr)
@@ -492,7 +488,7 @@ func run(args []string) error {
 	// producing a server nobody can reach.
 	authStore := repository.NewAuthStore(db.DB)
 	var authIssuer *auth.Issuer
-	signingKey, signingErr := credentials.KeyFromEnvironment(cfg.Auth.SigningKeyEnv)
+	signingKey, signingErr := signingKeyFromEnvironment(cfg.Auth.SigningKeyEnv, log)
 	switch {
 	case signingErr == nil:
 		issuer, issuerErr := auth.NewIssuer(signingKey, cfg.Auth.SessionTTL, nil)
@@ -1463,30 +1459,95 @@ func outboundPolicy(cfg config.OutboundHTTP) safehttp.Policy {
 // transient network error at boot silently disabling every credential would
 // be worse than not starting, so the manager path never degrades into the
 // no-key one.
-func masterKey(ctx context.Context, cfg config.Config) ([]byte, error) {
+func masterKey(ctx context.Context, cfg config.Config) ([]byte, credentials.KeyFormat, error) {
 	if strings.TrimSpace(cfg.Secrets.ManagerAddr) == "" {
-		return credentials.KeyFromEnvironment(cfg.Security.EncryptionKeyEnv)
+		return credentials.KeyFromEnvironmentFormat(cfg.Security.EncryptionKeyEnv)
 	}
 	policy := outboundPolicy(cfg.Outbound)
 	provider, err := credentials.NewVaultProvider(
 		cfg.Secrets.ManagerAddr, os.Getenv(cfg.Secrets.ManagerTokenEnv), policy)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", credentials.ErrManagerUnreachable, err)
+		return nil, 0, fmt.Errorf("%w: %v", credentials.ErrManagerUnreachable, err)
 	}
 	if err := provider.Health(ctx); err != nil {
-		return nil, fmt.Errorf("%w: %v", credentials.ErrManagerUnreachable, err)
+		return nil, 0, fmt.Errorf("%w: %v", credentials.ErrManagerUnreachable, err)
 	}
-	key, err := credentials.KeyFromManager(ctx, provider, cfg.Secrets.MasterKey)
+	key, format, err := credentials.KeyFromManagerFormat(ctx, provider, cfg.Secrets.MasterKey)
 	if err != nil {
 		// Partial configuration is rejected by config.Validate, so a NoKey
 		// here means the reference itself is empty: refusing beats running
 		// an install whose operator believes the manager is in charge.
 		if errors.Is(err, credentials.ErrNoKey) {
-			return nil, fmt.Errorf("secrets.master_key is required when secrets.manager_addr is set: %w", err)
+			return nil, 0, fmt.Errorf("secrets.master_key is required when secrets.manager_addr is set: %w", err)
 		}
+		return nil, 0, err
+	}
+	return key, format, nil
+}
+
+// loadCredentialKeys reads the credential master key and returns everything
+// this process uses it for: the cipher that seals credentials and webhook
+// lifecycle state, and the key that signs the OAuth Connect state.
+//
+// ErrNoKey passes through unchanged so the caller can start with credential
+// storage disabled; any other error refuses the boot.
+func loadCredentialKeys(ctx context.Context, cfg config.Config, log *slog.Logger) (*credentials.Cipher, []byte, error) {
+	key, format, err := masterKey(ctx, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	if strings.TrimSpace(cfg.Secrets.ManagerAddr) == "" {
+		warnRawKey(log, format, "variable", cfg.Security.EncryptionKeyEnv)
+	} else {
+		warnRawKey(log, format, "secret", cfg.Secrets.MasterKey)
+	}
+	return credentialKeys(key)
+}
+
+// credentialKeys derives the credential cipher and the OAuth signing key from
+// one master key.
+//
+// The signing key is an HKDF output of the master key rather than the master
+// key itself: the state and PKCE verifier it makes travel through URLs and
+// cookies, and nothing computed from them should have touched the key that
+// seals every stored secret. A Connect popup that is open while this key
+// changes — at the upgrade that introduced the derivation, or at a rotation —
+// fails once and the user presses Connect again.
+func credentialKeys(master []byte) (*credentials.Cipher, []byte, error) {
+	cipher, err := credentials.NewCipher(master)
+	if err != nil {
+		return nil, nil, err
+	}
+	oauthKey, err := credentials.DeriveKey(master, credentials.OAuthStateKeyInfo)
+	if err != nil {
+		return nil, nil, fmt.Errorf("derive the oauth signing key: %w", err)
+	}
+	return cipher, oauthKey, nil
+}
+
+// signingKeyFromEnvironment reads a 32-byte key the way the master key is read
+// and warns when it is a raw string. The embed and auth signing keys go
+// through it.
+func signingKeyFromEnvironment(name string, log *slog.Logger) ([]byte, error) {
+	key, format, err := credentials.KeyFromEnvironmentFormat(name)
+	if err != nil {
 		return nil, err
 	}
+	warnRawKey(log, format, "variable", name)
 	return key, nil
+}
+
+// warnRawKey says, once per key at boot, that a key is a 32-character string
+// used as its own bytes. It is accepted — refusing it would lock the
+// installation out of everything sealed under it — but a typed passphrase is
+// not 256 bits of randomness, and the fix is a generated key and a rotation.
+// The key itself is never logged.
+func warnRawKey(log *slog.Logger, format credentials.KeyFormat, attrs ...any) {
+	if format != credentials.KeyFormatRaw {
+		return
+	}
+	log.Warn("key holds a 32-character string used as raw key bytes, not a generated key: "+
+		"generate one with openssl rand -base64 32 and rotate to it", attrs...)
 }
 
 // workflowEnvironment is the allowlist behind the `$env` expression root.
