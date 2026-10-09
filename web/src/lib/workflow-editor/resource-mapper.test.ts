@@ -196,6 +196,35 @@ describe('readMapping of a plain object written before the property was a mapper
 		expect(isWholeExpression({ unit: 'F' })).toBe(false);
 		expect(isWholeExpression(undefined)).toBe(false);
 	});
+
+	// The server's rule (nodes.WorkflowToolInputs): a mapper whose own value is
+	// one expression has no columns until it runs, so it is the same case. Read
+	// as a column map it showed columns named `mode` and `value`.
+	describe('a mapper whose own value is one expression', () => {
+		const wrapped = {
+			mappingMode: MAPPING_MANUAL,
+			value: { mode: 'expression', value: '{{ { "unit": "F" } }}' },
+			matchingColumns: [],
+			schema: [{ id: 'tempC', displayName: 'tempC', type: 'number' }]
+		};
+
+		it('is a whole expression', () => {
+			expect(isWholeExpression(wrapped)).toBe(true);
+			expect(isWholeExpression({ ...wrapped, value: { unit: 'F' } })).toBe(false);
+			expect(isWholeExpression({ ...wrapped, mappingMode: '' })).toBe(false);
+		});
+
+		it('reads as no columns, keeping its schema copy', () => {
+			const read = readMapping(optedIn, wrapped);
+			expect(read.value).toEqual({});
+			expect(read.mappingMode).toBe(MAPPING_MANUAL);
+			expect(read.schema).toEqual(wrapped.schema);
+		});
+
+		it('reads exactly as before for a mapper that did not opt in', () => {
+			expect(readMapping(columns, wrapped).value).toEqual(wrapped.value);
+		});
+	});
 });
 
 describe('fromAIType', () => {

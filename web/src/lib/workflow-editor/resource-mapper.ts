@@ -46,9 +46,19 @@ function isMapperShaped(value: Record<string, unknown>): boolean {
  *
  * Which columns it produces is only known when it runs, so no per-column editor
  * can show it; the form says so instead of writing an empty mapping over it.
+ * A mapper whose own `value` is one expression is the same case, as the server
+ * reads it (nodes.WorkflowToolInputs): it is not a column map with columns
+ * named `mode` and `value`.
  */
 export function isWholeExpression(value: unknown): boolean {
-	return isExpression(value);
+	if (isExpression(value)) return true;
+	return isObject(value) && isMapperShaped(value) && isExpression(value.value);
+}
+
+/** The template of a whole expression, in either of the two shapes it is stored in. */
+export function wholeExpressionTemplate(value: unknown): string {
+	if (isExpression(value)) return value.value;
+	return isObject(value) && isExpression(value.value) ? value.value.value : '';
 }
 
 /**
@@ -68,9 +78,12 @@ export function readMapping(property: PropertyDefinition, value: unknown): Mappi
 	if (property.mapper?.modelDefinable && !isWholeExpression(value) && !isMapperShaped(value)) {
 		return { mappingMode: MAPPING_MANUAL, value: { ...value }, matchingColumns: [] };
 	}
+	// A mapper of the model switch whose own value is one expression has no
+	// columns to show; its schema copy and mode are kept.
+	const columnsHeld = property.mapper?.modelDefinable && isWholeExpression(value) ? {} : isObject(value.value) ? value.value : {};
 	return {
 		mappingMode: typeof value.mappingMode === 'string' && value.mappingMode !== '' ? value.mappingMode : fallback,
-		value: isObject(value.value) ? value.value : {},
+		value: columnsHeld,
 		matchingColumns: Array.isArray(value.matchingColumns)
 			? value.matchingColumns.filter((column): column is string => typeof column === 'string')
 			: [],
