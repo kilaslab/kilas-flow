@@ -249,3 +249,85 @@ func TestNodeOptionsLoadsADependentPropertyThroughTheRealServer(t *testing.T) {
 		}
 	}
 }
+
+// The MCP tool for `node options` is generated from the verb's flags, so the two
+// new flags must arrive in the schema and must reach the request the same way
+// they do on a command line: --param as an array of name=value strings,
+// --parameters as a JSON string.
+func TestMCPNodeOptionsPublishesAndSendsTheParameterFlags(t *testing.T) {
+	srv, api := mcpStub(t, map[string]http.HandlerFunc{
+		apiPrefix + "/auth/me": jsonBody(http.StatusOK, identityWithoutScopes),
+		apiPrefix + "/node-types/kilasflow.lmChatOpenAi/load-options": jsonBody(http.StatusOK,
+			`{"options":[{"label":"gpt","value":"gpt"}]}`),
+	})
+
+	session := startMCPServe(t, srv.URL)
+	session.initialize()
+
+	listing := mcpResult(t, session.request("tools/list", nil))
+	tools, _ := listing["tools"].([]any)
+	var properties map[string]any
+	for _, entry := range tools {
+		tool, _ := entry.(map[string]any)
+		if tool["name"] == "node_options" {
+			schema, _ := tool["inputSchema"].(map[string]any)
+			properties, _ = schema["properties"].(map[string]any)
+		}
+	}
+	if properties == nil {
+		t.Fatal("tools/list does not publish node_options")
+	}
+	param, _ := properties["param"].(map[string]any)
+	items, _ := param["items"].(map[string]any)
+	if param["type"] != "array" || items["type"] != "string" {
+		t.Errorf("node_options.param = %v, want an array of strings", properties["param"])
+	}
+	parameters, _ := properties["parameters"].(map[string]any)
+	if parameters["type"] != "string" {
+		t.Errorf("node_options.parameters = %v, want a string", properties["parameters"])
+	}
+
+	answer := session.call("node_options", map[string]any{
+		"node_type":  "kilasflow.lmChatOpenAi",
+		"property":   "model",
+		"mode":       "list",
+		"credential": "cred_1",
+		"param":      []any{"baseUrl=https://llm.example.test/v1", "region=eu"},
+		"parameters": `{"limit":10,"region":"us"}`,
+	})
+	if answer.isError {
+		t.Fatalf("node_options failed: %q", answer.text)
+	}
+
+	var sent *recordedCall
+	for index := range api.calls {
+		if api.calls[index].Method == http.MethodPost {
+			sent = &api.calls[index]
+		}
+	}
+	if sent == nil {
+		t.Fatalf("no load-options request reached the server: %+v", api.calls)
+	}
+	var body struct {
+		Property     string         `json:"property"`
+		Mode         string         `json:"mode"`
+		CredentialID string         `json:"credentialId"`
+		Parameters   map[string]any `json:"parameters"`
+	}
+	if err := json.Unmarshal([]byte(sent.Body), &body); err != nil {
+		t.Fatalf("the request body is not JSON: %v (%q)", err, sent.Body)
+	}
+	if body.Property != "model" || body.Mode != "list" || body.CredentialID != "cred_1" {
+		t.Errorf("body = %+v, want the property, mode and credential beside the parameters", body)
+	}
+	// --param wins over the same key of --parameters, exactly as on a command line.
+	want := map[string]any{"baseUrl": "https://llm.example.test/v1", "region": "eu", "limit": float64(10)}
+	if len(body.Parameters) != len(want) {
+		t.Fatalf("body.parameters = %v, want %v", body.Parameters, want)
+	}
+	for key, value := range want {
+		if body.Parameters[key] != value {
+			t.Errorf("body.parameters[%q] = %v, want %v", key, body.Parameters[key], value)
+		}
+	}
+}
