@@ -40,7 +40,7 @@ kilasflow_not_shipped: []
 - Visibility is `visibleWhen` (equality shorthand) or `displayOptions` (the full rule, which replaces the shorthand), always evaluated against the parameters with defaults filled in (internal/property/property.go, `WithDefaults`, `VisibleProperty`). That is why a field you expected is absent: `kilasflow.merge`'s `fieldsToMatch` appears only when `mode` is `combineByFields` (nodes/core.go, `mergeNode`).
 - Some ports are computed from the configuration: `kilasflow.switch` declares one output per rule, and `kilasflow.merge` takes its input count from `numberInputs`, so a connection must name a port the configuration actually produced (nodes/flow.go, `switchNode`; nodes/core.go, `mergeNode`).
 - The `kind` decides the stored value shape, and the set of kinds is closed — the server refuses an unknown one at registration (internal/property/property.go, `KnownKinds`). See references/PROPERTY_KINDS.md for every kind and what it stores.
-- A value on the customer's service is loaded, not guessed: `kilasflow node options <type> --property <key>` takes `--version`, `--mode` (a resource locator's mode) and `--credential <credentialId>`. A partially configured node goes through the escape hatch instead: `kilasflow api load-node-property-options --path type=<type> --body @node.json`. See references/LOAD_OPTIONS.md.
+- A value on the customer's service is loaded, not guessed: `kilasflow node options <type> --property <key>` takes `--version`, `--mode` (a resource locator's mode), `--credential <credentialId>` and the parameters the list depends on, `--param name=value` (repeatable) or `--parameters '<json object>'`. The same body as a file goes through the escape hatch: `kilasflow api load-node-property-options --path type=<type> --body @node.json`. See references/LOAD_OPTIONS.md.
 - A resource mapper's columns are the sibling operation: `kilasflow api load-node-property-schema --path type=<type> --body @mapper.json` (`load-node-property-schema`).
 - Presentation is served, not remembered: `kilasflow api get-node-icon --path type=<type>` (`get-node-icon`, with `--query theme=light` or `dark`) answers only for a node that ships artwork; a `builtin:` glyph resolves to a component the editor already has and returns no bytes (internal/node/registry.go, `BuiltinIconPrefix`; internal/api/handlers/nodes.go, `Icon`).
 - A document may carry a version this installation does not register: resolution is downward, so a node imported as n8n's Set 3.4 runs against version 1's shape without the document being rewritten, and `typeVersion` left unset means the registry's current version (internal/node/registry.go, `Resolve`; docs/src/content/docs/concepts/node-registry.md, "A worked example").
@@ -63,8 +63,8 @@ what are you configuring?
 |     -> one of the definition's own options; never a value you invented
 |
 +-- a value that lives on the customer's service
-|     -> kilasflow node options <type> --property <key> [--version] [--mode] [--credential <credentialId>]
-|        a partially configured node: kilasflow api load-node-property-options --path type=<type> --body @node.json
+|     -> kilasflow node options <type> --property <key> [--version] [--mode] [--credential <credentialId>] [--param name=value] [--parameters <json>]
+|        the same body as a file: kilasflow api load-node-property-options --path type=<type> --body @node.json
 |
 +-- a resource mapper's columns
 |     -> kilasflow api load-node-property-schema --path type=<type> --body @mapper.json

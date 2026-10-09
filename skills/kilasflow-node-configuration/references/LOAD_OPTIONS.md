@@ -14,11 +14,11 @@ internal/api/handlers/nodes.go, `LoadOptions`).
 | `load-node-property-options` | `POST /node-types/{type}/load-options` | an option list: `{label, value}` pairs |
 | `load-node-property-schema` | `POST /node-types/{type}/load-schema` | a resource mapper's columns |
 
-A list that depends only on the property is one verb away:
+An option list is one verb away, including the parameters it depends on:
 
 ```bash
-kilasflow node options kilasflow.postgres --property table --mode list --credential <credentialId>
-kilasflow api load-node-property-options --path type=<type> --body @node.json
+kilasflow node options kilasflow.postgres --property table --mode list --param schema=public --credential <credentialId>
+kilasflow node options kilasflow.lmChatOpenAi --property model --mode list --parameters '{"baseUrl":"https://api.openai.com/v1"}' --credential <credentialId>
 kilasflow api load-node-property-schema --path type=<type> --body @mapper.json
 ```
 
@@ -29,10 +29,19 @@ parameter as its dependency and the `postgres` credential type, and its
 `table` as dependencies (nodes/postgres_v2.go; internal/loadoptions/sql.go).
 
 `--property` is required and the verb refuses to run without it; `--version`,
-`--mode` and `--credential` are sent only when given (internal/cli/verbs_node.go,
-`runNodeOptions`). A node that is already half configured is more than the verb
-exposes: `parameters` and `workflowId` are part of the operation's body and only
-the escape hatch carries them (internal/api/handlers/nodes.go, `loadOptionsInput`).
+`--mode`, `--credential`, `--param` and `--parameters` are sent only when given
+(internal/cli/verbs_node.go, `runNodeOptions`). The node as far as it is
+configured goes in as the request's `parameters`: `--param name=value` sets one
+parameter as a string and repeats, `--parameters` takes the whole object as
+JSON, `@file.json` or `-` for stdin (the way to send a number, a boolean or a
+resource locator), and a `--param` overrides the same key of `--parameters`.
+Only the loader's `dependsOn` keys are read from it, so a list that stays empty
+with a `reason` such as "need the service address to be filled in first" is
+missing one of those. `workflowId`, which bounds an embed session's lookup, is
+the one part of the operation's body the verb does not carry; that and a body
+you would rather keep in a file go through `kilasflow api
+load-node-property-options --path type=<type> --body @node.json`
+(internal/api/handlers/nodes.go, `loadOptionsInput`).
 
 ## The request body
 
