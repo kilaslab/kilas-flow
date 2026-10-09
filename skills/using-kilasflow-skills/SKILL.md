@@ -44,7 +44,7 @@ kilasflow_not_shipped: []
 ## Strong defaults
 
 - Start from the validated example: `kilasflow skills show using-kilasflow-skills --reference EXAMPLE.md` is a connected two-node document and the five commands that save, run and read it back; every other skill's example is a larger version of it.
-- Open every session with `kilasflow context`. It is one read-only call carrying the server, the identity, the workflows, the datastores and the node-type count, and it is local, so it works before you know anything else (internal/cli/context.go).
+- Open every session with `kilasflow context`. It is one read-only call carrying the server, the identity, the workflows, the datastores and the node-type count, and it is local, so it works before you know anything else.
 - Reach the whole API through `kilasflow api <operation-id>` (`api`) whenever a verb does not exist: `--path name=value` fills a placeholder, `--body @file.json` sends a body, `--header name=value` sends a header, and `--list` prints the ids the running server actually serves. It refuses what a scoped token refuses — a naming bypass, not an authority bypass.
 - Expression before Code node. A value read or transformed with `{{ }}` is visible in the document and in every trace; a Code node hides it. Invoke the kilasflow-expressions skill before writing one.
 - Validate before you save. `kilasflow workflow validate --file wf.json` (`validate-workflow-document`) checks a draft the way the API would, compiles it, and saves nothing; fix every diagnostic it prints, then `kilasflow workflow create --file wf.json`.
@@ -134,8 +134,7 @@ what is in front of you?
 <!-- generated:command-reference -->
 ```text
 # every verb this binary implements, and the operation it drives.
-# generated from `kilasflow help --json` by scripts/skills-command-reference;
-# run `make generate-skills-command-reference` after the command tree changes.
+# generated from `kilasflow help --json`, and regenerated whenever the command tree changes.
 kilasflow serve                     local                              run the API, worker and scheduler (the default when no verb is given)
 kilasflow version                   local                              print this binary's version and, when a server is reachable, its version
 kilasflow health                    get-health                         report that the process is up (does not check dependencies)

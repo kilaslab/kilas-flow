@@ -181,8 +181,7 @@ func render(tree []verb) string {
 		beginMarker,
 		"```text",
 		"# every verb this binary implements, and the operation it drives.",
-		"# generated from `kilasflow help --json` by "+generator+";",
-		"# run `make generate-skills-command-reference` after the command tree changes.",
+		"# generated from `kilasflow help --json`, and regenerated whenever the command tree changes.",
 	)
 	for index := range tree {
 		lines = append(lines, fmt.Sprintf("%-*s  %-*s  %s",
@@ -265,6 +264,18 @@ func validate(document string, tree []verb) error {
 	parsed, err := skills.Parse(skillName, []byte(document))
 	if err != nil {
 		return fmt.Errorf("the rendered %s does not load: %w", skillName, err)
+	}
+
+	// The document is parsed alone, so the reference files beside it are read
+	// from the checkout: the router carries an example in references/, and the
+	// bundle's rules compare its reference table with what is there.
+	root, err := repoRoot()
+	if err != nil {
+		return err
+	}
+	parsed.References, parsed.ReferenceText, err = skills.LoadReferences(os.DirFS(filepath.Join(root, "skills", skillName)))
+	if err != nil {
+		return fmt.Errorf("read the references of %s: %w", skillName, err)
 	}
 
 	findings := skills.Check([]skills.Skill{parsed})
