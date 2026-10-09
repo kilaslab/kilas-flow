@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kilaslab/kilas-flow/internal/expression"
 	"github.com/kilaslab/kilas-flow/internal/jsrun"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/scheduler"
@@ -3615,6 +3616,22 @@ func queryReplacementToKilas(value any) (any, []Unsupported) {
 		if strings.TrimSpace(typed) == "" {
 			return nil, nil
 		}
+		// An expression is not split on its commas. n8n resolves each {{ }}
+		// segment of it on its own and binds each result as one value,
+		// ignoring the text between segments; splitting the stored text first
+		// bound the expressions' source as literal strings.
+		if template, isExpression := strings.CutPrefix(typed, "="); isExpression {
+			template = strings.TrimLeft(template, "=")
+			if bodies, err := expression.Bodies(template); err == nil && len(bodies) > 0 {
+				bound := make([]any, 0, len(bodies))
+				for _, body := range bodies {
+					bound = append(bound, expressionValue("{{ "+strings.TrimSpace(body)+" }}"))
+				}
+				return bound, nil
+			}
+			// No segment: n8n splits the text as it does a fixed value.
+			typed = template
+		}
 		// Split, filter, then trim — n8n's own stringToArray, in that order.
 		// The order is observable: it drops an empty entry from "a,,b" but
 		// keeps a whitespace-only one from "a, ,b", which trims to the empty
@@ -3815,6 +3832,9 @@ func queryReplacementToN8N(value any) (string, []Lossy) {
 	default:
 		return "", nil
 	}
+	if slices.ContainsFunc(bound, expression.IsExpression) {
+		return queryReplacementSegments(bound)
+	}
 	parts := make([]string, 0, len(bound))
 	for _, entry := range bound {
 		text := fmt.Sprintf("%v", entry)
@@ -3833,6 +3853,34 @@ func queryReplacementToN8N(value any) (string, []Lossy) {
 		return "", nil
 	}
 	return strings.Join(parts, ","), nil
+}
+
+// queryReplacementSegments writes bound values that include expressions as
+// n8n's expression replacement: one {{ }} segment per value, which n8n
+// resolves one by one. A fixed value becomes a segment holding its JSON
+// literal, because n8n ignores the text between segments.
+func queryReplacementSegments(bound []any) (string, []Lossy) {
+	segments := make([]string, 0, len(bound))
+	for _, entry := range bound {
+		if !expression.IsExpression(entry) {
+			literal, err := json.Marshal(entry)
+			if err != nil {
+				return "", []Lossy{{Field: "queryParameters", Severity: SeverityDropped, Reason: "a bound value " +
+					"could not be written as an n8n query replacement, so the replacements were left out"}}
+			}
+			segments = append(segments, "{{ "+string(literal)+" }}")
+			continue
+		}
+		template := strings.TrimSpace(entry.(map[string]any)["value"].(string))
+		bodies, err := expression.Bodies(template)
+		if err != nil || len(bodies) != 1 || !strings.HasPrefix(template, "{{") || !strings.HasSuffix(template, "}}") {
+			return "", []Lossy{{Field: "queryParameters", Severity: SeverityDropped, Reason: "a bound value is an " +
+				"expression that is not exactly one {{ }} segment, which n8n's query replacements cannot carry, so " +
+				"the replacements were left out and the query will run unbound"}}
+		}
+		segments = append(segments, template)
+	}
+	return "=" + strings.Join(segments, ", "), nil
 }
 
 // n8nConditionName is the inverse of postgresConditionOperators.
@@ -5644,20 +5692,11 @@ func memoryToN8N(node workflow.Node) (map[string]any, []Lossy) {
 func httpToolToKilas(node Node) (map[string]any, []Unsupported) {
 	parameters, issues := httpToKilas(node)
 
-	// n8n has no tool-name parameter at all: the name a model calls is derived
-	// from the node's own canvas name. Deriving it the same way is what keeps an
-	// imported system prompt that named the tool still naming the same tool.
-	parameters["toolName"] = nodes.NormalizeToolName(node.Name)
-
-	description := node.Parameters["toolDescription"]
-	if description == nil || description == "" {
-		// Required here, and a model given no description cannot know when to
-		// call the tool. Filling the gap visibly beats failing compilation with
-		// nothing for the author to look at.
-		parameters["toolDescription"] = "Calls " + node.Name + "."
-	} else {
-		parameters["toolDescription"] = fromN8NValue(description)
-	}
+	// The tool's name derives from the node's canvas name, as n8n's does, and
+	// a missing description is filled visibly rather than failing compilation
+	// with nothing for the author to look at (withToolFields). Not reported:
+	// n8n's own default for this tool is the node's generic description.
+	issues = append(issues, withToolFields(node, parameters, false)...)
 
 	// n8n lets the model fill {placeholder} segments of the URL, declared in a
 	// placeholderDefinitions collection. This server's tool takes its arguments
@@ -5682,15 +5721,7 @@ func httpToolToN8N(node workflow.Node) (map[string]any, []Lossy) {
 
 	// The name the model calls is the node's canvas name in n8n and a parameter
 	// here, so a tool renamed away from its node name cannot be expressed.
-	if name := stringParameter(node.Parameters, "toolName"); name != "" && name != nodes.NormalizeToolName(node.Name) {
-		lossy = append(lossy, Lossy{
-			Severity: SeverityLossy, Field: "toolName",
-			Reason: fmt.Sprintf(
-				"the model called this tool %q. n8n derives a tool's name from the node's own name, "+
-					"so after export it is called %q; rename the node to keep the old name.", name, nodes.NormalizeToolName(node.Name)),
-		})
-	}
-	return parameters, lossy
+	return parameters, append(lossy, toolNameLossy(node)...)
 }
 
 // --- Workflow Tool and Structured Output Parser --------------------------------

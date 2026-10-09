@@ -59,6 +59,10 @@ func registry(t *testing.T) *node.Registry {
 	}); err != nil {
 		t.Fatalf("waha.Register() error = %v", err)
 	}
+	// The packs' agent-tool forms, as the server registers them after the packs.
+	if err := nodes.RegisterPackToolForms(catalogue); err != nil {
+		t.Fatalf("RegisterPackToolForms() error = %v", err)
+	}
 	return catalogue
 }
 
@@ -744,10 +748,12 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.filter ↔ kilasflow.filter",
 		"n8n-nodes-base.formTrigger ↔ kilasflow.formTrigger",
 		"n8n-nodes-base.gmail ↔ kilasflow.gmail",
+		"n8n-nodes-base.gmailTool ↔ kilasflow.gmailTool",
 		"n8n-nodes-base.gmailTrigger ↔ kilasflow.gmailTrigger",
 		"n8n-nodes-base.googleDrive ↔ kilasflow.googleDrive",
 		"n8n-nodes-base.googleDriveTrigger ↔ kilasflow.googleDriveTrigger",
 		"n8n-nodes-base.httpRequest ↔ kilasflow.httpRequest",
+		"n8n-nodes-base.httpRequestTool ↔ kilasflow.httpTool",
 		"n8n-nodes-base.if ↔ kilasflow.if",
 		"n8n-nodes-base.limit ↔ kilasflow.limit",
 		"n8n-nodes-base.manualTrigger ↔ kilasflow.manual",
@@ -755,6 +761,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.mySql ↔ kilasflow.mysql",
 		"n8n-nodes-base.noOp ↔ kilasflow.noOp",
 		"n8n-nodes-base.postgres ↔ kilasflow.postgres",
+		"n8n-nodes-base.postgresTool ↔ kilasflow.postgresTool",
 		"n8n-nodes-base.removeDuplicates ↔ kilasflow.removeDuplicates",
 		"n8n-nodes-base.respondToWebhook ↔ kilasflow.respondToWebhook",
 		"n8n-nodes-base.scheduleTrigger ↔ kilasflow.schedule",
@@ -767,6 +774,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.summarize ↔ kilasflow.summarize",
 		"n8n-nodes-base.switch ↔ kilasflow.switch",
 		"n8n-nodes-base.telegram ↔ pack.telegram",
+		"n8n-nodes-base.telegramTool ↔ pack.telegramTool",
 		"n8n-nodes-base.telegramTrigger ↔ kilasflow.telegramTrigger",
 		"n8n-nodes-base.wait ↔ kilasflow.wait",
 		"n8n-nodes-base.webhook ↔ kilasflow.webhook",
@@ -857,6 +865,9 @@ func TestMirroredNodeTypesMatchTheNodePack(t *testing.T) {
 		"google drive trigger": {n8n.GoogleDriveTriggerNodeType, nodes.GoogleDriveTriggerNodeType},
 		"gmail":                {n8n.GmailNodeType, nodes.GmailNodeType},
 		"gmail trigger":        {n8n.GmailTriggerNodeType, nodes.GmailTriggerNodeType},
+		"gmail tool":           {n8n.GmailToolNodeType, nodes.GmailToolNodeType},
+		"postgres tool":        {n8n.PostgresToolNodeType, nodes.PostgresToolNodeType},
+		"telegram tool":        {n8n.TelegramToolNodeType, nodes.TelegramToolNodeType},
 		"javascript code":      {n8n.JSCodeNodeType, nodes.JSCodeNodeType},
 		"foreign code":         {n8n.ForeignCodeNodeType, nodes.ForeignCodeNodeType},
 	} {

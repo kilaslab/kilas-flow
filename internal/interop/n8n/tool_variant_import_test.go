@@ -86,26 +86,26 @@ func TestAToolVariantWithNoKilasFlowToolSaysSo(t *testing.T) {
 	t.Parallel()
 
 	result := importFixture(t, `{
-	  "name": "Mail agent",
+	  "name": "Drive agent",
 	  "nodes": [
-	    {"id":"d","name":"Send Email","type":"n8n-nodes-base.gmailTool","typeVersion":2.1,"position":[400,200],"parameters":{
-	      "sendTo":"={{ $fromAI('to') }}","subject":"Hello","message":"Hi","options":{}
+	    {"id":"d","name":"Find File","type":"n8n-nodes-base.googleDriveTool","typeVersion":3,"position":[400,200],"parameters":{
+	      "resource":"fileFolder","queryString":"={{ $fromAI('name') }}"
 	    }}
 	  ],
 	  "connections": {}
 	}`)
-	if got := nodeByName(result.Document, "Send Email").Type; got != n8n.UnsupportedNodeType {
-		t.Fatalf("gmailTool imported as %q, want the placeholder until a Gmail tool exists", got)
+	if got := nodeByName(result.Document, "Find File").Type; got != n8n.UnsupportedNodeType {
+		t.Fatalf("googleDriveTool imported as %q, want the placeholder until a Drive tool exists", got)
 	}
 	var named bool
 	for _, issue := range result.Unsupported {
-		if issue.Severity == n8n.SeverityBlocking && issue.NodeName == "Send Email" &&
-			strings.Contains(issue.Reason, "n8n-nodes-base.gmail") && strings.Contains(issue.Reason, "tool") &&
+		if issue.Severity == n8n.SeverityBlocking && issue.NodeName == "Find File" &&
+			strings.Contains(issue.Reason, "n8n-nodes-base.googleDrive") && strings.Contains(issue.Reason, "tool") &&
 			!strings.Contains(issue.Reason, "no equivalent") {
 			named = true
 		}
 	}
 	if !named {
-		t.Errorf("no blocking diagnostic says the Gmail node imports but its tool form does not: %#v", result.Unsupported)
+		t.Errorf("no blocking diagnostic says the Drive node imports but its tool form does not: %#v", result.Unsupported)
 	}
 }
