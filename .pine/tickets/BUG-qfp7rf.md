@@ -57,3 +57,19 @@ Found in review of BUG-pc284d (2026-10-09). The settle delay exists because `num
 - web/messages/en/editor.json
 - web/messages/id/editor.json
 - e2e/tests/vector-store-ports.spec.ts
+
+## Progress (2026-10-09)
+
+State when the session stopped (branch worktree-agent-ab728406a999eaf54):
+
+Done and committed (e0a50b4d, vitest 1178 pass, pnpm check 0 errors), not yet called by the editor:
+- `staleConnections(document, nodeID, definitions)` and `describeConnections(connections, nodes, limit)` in `web/src/lib/workflow-editor/ports.ts`. Tests: `ports.stale.test.ts` (vector store modes, insert store main input, Switch rule, Merge input count including the transient value 1, error output, other nodes untouched, unknown definition not judged).
+- `createPortSettler` / `PORT_SETTLE_MS` (500 ms) in `web/src/lib/workflow-editor/port-settle.ts`: one timer per node, restarts on each edit, runs with the edit's history key; shorter than the history coalesce window (700 ms) so the removal joins the edit's undo step. Tests: `port-settle.test.ts`, including a `record()` check that the removal coalesces into one history entry.
+- Copy: `editor_connections_removed` (plural, params count / node / detail) in `web/messages/en/editor.json` and `id/editor.json`.
+
+In the working tree, NOT committed: `web/src/lib/components/workflow-editor/workflow-editor.svelte` — `updateProperty` calls `portSettler.schedule(nodeId, historyKey)` after the edit; `removeStrandedConnections(nodeID, key)` removes `staleConnections(draft, ...)` with `replaceDraft(..., { key })` (same key, so one undo step), drops them from `selectedEdgeIDs`, and sets `canvasMessage` (the status line) to the new message; `const portSettler = createPortSettler(removeStrandedConnections)` with `$effect(() => () => portSettler.cancel())`; `undo()` and `redo()` clear `canvasMessage` (a notice saying "Undo brings it back" is stale once undone). `pnpm check` and `pnpm test` were green with it.
+
+Remaining:
+1. Update `e2e/tests/vector-store-ports.spec.ts`, which still asserts the OLD behaviour (the stale wire stays in the saved document and Execute reports it) and will fail once the editor hunks land. New flow: select Mode "Retrieve as Tool", expect the handles, expect a status line containing "Removed 1 connection that Policies Store has no port for any more" and "Policies Store vectorStore → Handbook Tool vectorStore" (it appears after about 500 ms); click Undo and expect the Mode select back on "retrieve", the `vectorStore` handle and the `c-store` edge back, and the notice gone; select "Insert Documents", wait for the notice again, Save, and fetch the stored workflow: `c-store` must be absent and `c-embeddings` present.
+2. Commit the editor hunks and the spec together, run the spec (`cd e2e && pnpm exec playwright test tests/vector-store-ports.spec.ts`, rebuild needed for the web change), and tick the criteria.
+3. Not covered yet by a vitest at component level: the typed-edit case (a Merge's input count) is covered only by `port-settle.test.ts` and `ports.stale.test.ts`; consider a manual check in the editor by backspacing the number.

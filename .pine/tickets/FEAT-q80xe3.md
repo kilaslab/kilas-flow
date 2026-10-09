@@ -59,3 +59,7 @@ Found in review of BUG-pc284d (2026-10-09). Related: FEAT-zm3wh2 (retrieve mode 
 - nodes/testdata/ports_for.golden.json
 
 # Attachments
+
+## Progress (2026-10-09)
+
+Not started; only filed. It stays blocked on BUG-w1jp70 (its dependency), whose catalogue-filter half is already committed (e0a50b4d), so the picker now lists sub-node providers for a slot. What this ticket needs on top of that: a way for `catalogEntries` to offer a type once per mode with the mode's parameter values and resolved ports. `nodes/testdata/ports_for.golden.json` (BUG-pc284d) already holds the resolved ports per mode, so the variants can be derived from it in a test, or from an API field if that route is chosen.

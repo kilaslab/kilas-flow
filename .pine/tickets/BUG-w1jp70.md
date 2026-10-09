@@ -54,3 +54,19 @@ Found in review of BUG-pc284d (2026-10-09). Related: the picker filters on a nod
 - web/src/lib/workflow-editor/catalog.ts — catalogEntries
 - web/src/lib/workflow-editor/ports.ts — connectionFromCanvas
 - web/src/lib/workflow-editor/document.ts — positionAfter
+
+## Progress (2026-10-09)
+
+State when the session stopped (branch worktree-agent-ab728406a999eaf54):
+
+Done and committed (e0a50b4d, vitest 1178 pass, pnpm check 0 errors):
+- `catalogEntries` in `web/src/lib/workflow-editor/catalog.ts` ignores `acceptsMain` when `providesKind` is set, so the slot picker lists providers. This part is live in the editor already (node-picker.svelte calls it). Test: `catalog.test.ts` "for an attachment slot", with realistic sub-nodes that have no main input.
+- `connectionForPickedNode` in `ports.ts`: from a main output the port feeds the picked node's main input; from an attachment slot (`kind` set) the picked node's output of that kind feeds the slot, through `connectionFromCanvas`. Test: `ports.picked.test.ts` (direction, Tools slot, main still main-to-main, null when nothing of the kind, full single-slot port refused).
+- `positionBelow` in `document.ts` (under the consumer, steps right past what is there). Test: `document.test.ts`.
+
+Done in the working tree but NOT committed (it sits in the same file as the BUG-qfp7rf wiring and its e2e is not updated yet): `web/src/lib/components/workflow-editor/workflow-editor.svelte` `addNode` now (a) places a node picked for a slot with `positionBelow` when `pendingKind` is set, (b) builds the connection with `connectionForPickedNode(... pendingKind ...)` instead of looking for an input of the slot's kind. Imports `positionBelow` and `connectionForPickedNode` were added. A copy of that diff is at the orchestrator scratchpad `workflow-editor-wiring.patch` (it also holds the BUG-qfp7rf hunks).
+
+Remaining:
+1. Commit the `addNode` hunks (re-apply the working-tree diff; `pnpm check` and `pnpm test` were green with it).
+2. Add `e2e/tests/attachment-slot-picker.spec.ts`: seed Manual Trigger -> AI Agent with no model wired (`kilasflow.agent`, main connection only); click the button named "Add a Chat Model to Agent" (aria label `canvas_node_attachment_add_aria`); in the dialog check the options are providers only (a Chat Model is listed, HTTP Request is not); click the Chat Model option; expect the new node's edge (ariaLabel "<name> model to Agent model") and that the "Add a Chat Model to Agent" button is gone; save and check the stored connection is `ai_languageModel` from the new node's `model` to the Agent's `model`. Run with `cd e2e && pnpm exec playwright test tests/attachment-slot-picker.spec.ts` (first run builds the binary through global-setup; `KILASFLOW_E2E_PREBUILT=1` reuses it afterwards, but the web change needs a rebuild).
+3. Tick the criteria with evidence once the e2e passes.
