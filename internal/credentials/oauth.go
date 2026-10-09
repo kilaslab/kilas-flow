@@ -22,8 +22,14 @@ import (
 const (
 	GoogleDriveOAuthType = "googleDriveOAuth2Api"
 	GmailOAuthType       = "gmailOAuth2"
-	googleTokenURL       = "https://oauth2.googleapis.com/token"
-	googleAuthURL        = "https://accounts.google.com/o/oauth2/v2/auth"
+	// GoogleSheetsOAuthType and GoogleSheetsTriggerOAuthType are n8n's own
+	// credential type IDs, byte for byte. n8n keeps the action node and the
+	// trigger on separate types, so an imported workflow names one or the
+	// other and each must land on the type it names.
+	GoogleSheetsOAuthType        = "googleSheetsOAuth2Api"
+	GoogleSheetsTriggerOAuthType = "googleSheetsTriggerOAuth2Api"
+	googleTokenURL               = "https://oauth2.googleapis.com/token"
+	googleAuthURL                = "https://accounts.google.com/o/oauth2/v2/auth"
 )
 
 // GoogleDefaultDomains is the host allowlist every Google credential gets when
@@ -66,7 +72,31 @@ func googleOAuthType(id, display, description, scope string) Type {
 
 // IsGoogleOAuth reports whether a stored credential type talks to Google.
 func IsGoogleOAuth(typeID string) bool {
-	return typeID == GoogleDriveOAuthType || typeID == GmailOAuthType
+	switch typeID {
+	case GoogleDriveOAuthType, GmailOAuthType, GoogleSheetsOAuthType, GoogleSheetsTriggerOAuthType:
+		return true
+	default:
+		return false
+	}
+}
+
+// GoogleDefaultScope is the scope list Connect asks for when a credential was
+// saved with none: the default its own type declares. It is empty for a type
+// that is not a Google one.
+func GoogleDefaultScope(typeID string) string {
+	if !IsGoogleOAuth(typeID) {
+		return ""
+	}
+	definition, found := Lookup(typeID)
+	if !found {
+		return ""
+	}
+	for _, field := range definition.Fields {
+		if field.Key == "scope" {
+			return strings.TrimSpace(field.Default)
+		}
+	}
+	return ""
 }
 
 // OAuthState is the CSRF payload the Connect popup round-trips through Google.

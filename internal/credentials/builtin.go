@@ -286,6 +286,17 @@ func RegisterAll(registry *Registry) error {
 		googleOAuthType("gmailOAuth2", "Gmail OAuth2",
 			"Connects to Gmail. Client ID and secret can be from your Google Cloud project or the platform app.",
 			"https://www.googleapis.com/auth/gmail.modify"),
+		// n8n's two Sheets types, under the IDs an imported workflow names.
+		// The scope lists mirror what n8n requests (space-separated), and the
+		// field stays editable: drive.metadata is a restricted Google scope, so
+		// an operator whose OAuth client is not verified for it can drop it and
+		// still use the url and id locator modes.
+		googleOAuthType(GoogleSheetsOAuthType, "Google Sheets OAuth2",
+			"Connects to Google Sheets. Client ID and secret can be from your Google Cloud project or the platform app.",
+			"https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata"),
+		googleOAuthType(GoogleSheetsTriggerOAuthType, "Google Sheets Trigger OAuth2",
+			"Connects the Google Sheets Trigger. Client ID and secret can be from your Google Cloud project or the platform app.",
+			"https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata"),
 		{
 			ID: "sqlite", DisplayName: "SQLite file",
 			Description: "Opens a SQLite file in this tenant's own directory on the server. The file is created on first use if it does not exist.",

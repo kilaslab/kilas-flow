@@ -94,7 +94,7 @@ the type:
 | --- | --- |
 | `openAiApi` | the host of the credential's own **Base URL** — `api.openai.com` by default, or the gateway or OpenAI-compatible endpoint you set |
 | `openRouterApi` | `openrouter.ai` only |
-| `googleDriveOAuth2Api`, `gmailOAuth2` | the Google API and sign-in hosts |
+| `googleDriveOAuth2Api`, `gmailOAuth2`, `googleSheetsOAuth2Api`, `googleSheetsTriggerOAuth2Api` | the Google API and sign-in hosts |
 | `telegramApi` | the host of the credential's own **Base URL** — `api.telegram.org` by default, or your local Bot API server |
 | `wahaApi` | the host of the credential's own **Base URL** |
 | `httpBasicAuth`, `httpHeaderAuth`, `httpBearerAuth`, `httpQueryAuth`, `httpCustomAuth`, and any pack type with no default | any host |
@@ -492,7 +492,7 @@ node, which never runs. See
 `DefaultDomains`, `Unscoped`), `internal/workflow/compiler.go`
 (`undeclaredCredentials`), `internal/credentials/registry.go` (`Placement`,
 `Authentication`, `ApplyAuthentication`, `RunTest`),
-`internal/credentials/builtin.go` (the built-in types, including Google Drive and Gmail OAuth2),
+`internal/credentials/builtin.go` (the built-in types, including Google Drive, Gmail and Google Sheets OAuth2),
 `internal/repository/credentials.go` (the storage split and `Resolve`),
 `internal/engine/authenticate.go` (the domain check on the run path),
 `internal/engine/secret_scrub.go` and `internal/credentials/scrub.go` (scrubbing
