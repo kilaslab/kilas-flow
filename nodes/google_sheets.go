@@ -17,6 +17,9 @@ const (
 	GoogleSheetsTriggerExecutorID = "core.googleSheetsTrigger"
 	GoogleSheetsNodeType          = "kilasflow.googleSheets"
 	GoogleSheetsTriggerNodeType   = "kilasflow.googleSheetsTrigger"
+	// GoogleSheetsToolNodeType is the node as an AI Agent's tool, a row of the
+	// tool-form table (tool_form.go).
+	GoogleSheetsToolNodeType = "kilasflow.googleSheetsTool"
 	// GoogleSheetsCredentialType and GoogleSheetsTriggerCredentialType are two
 	// credential types because n8n has two: a workflow names one or the other,
 	// and an import must land each node on the type it named.

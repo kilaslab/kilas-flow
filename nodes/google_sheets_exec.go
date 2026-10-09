@@ -76,6 +76,12 @@ func (executor *GoogleSheetsExecutor) execute(ctx context.Context, ir workflow.I
 	if authentication := textValue(first["authentication"], "oAuth2"); authentication != "oAuth2" {
 		return nil, fmt.Errorf("node %q: authentication %q is not supported, only OAuth2", ir.Name, authentication)
 	}
+	if request.FromAIArguments != nil {
+		// Run as an agent's tool form: refused before anything is sent to Google.
+		if err := refuseSheetsToolRun(operation, resolved); err != nil {
+			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
+		}
+	}
 
 	run := &sheetsRun{executor: executor, ctx: ctx, request: request, ir: ir, cache: map[string][][]any{}}
 	docID, err := sheetsDocumentID(first["documentId"])

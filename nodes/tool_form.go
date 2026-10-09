@@ -86,6 +86,14 @@ var toolForms = []toolForm{
 		validate:       validatePostgresTool,
 	},
 	{
+		toolType: GoogleSheetsToolNodeType, baseType: GoogleSheetsNodeType, baseVersion: workflow.V(1),
+		displayName: "Google Sheets Tool",
+		description: "Lets an AI Agent look rows up, add them, change them and delete them in a Google Sheets tab. " +
+			"The spreadsheet, the tab and the columns are the author's; the model supplies values only.",
+		structuralKeys: sheetsToolStructuralKeys,
+		validate:       validateGoogleSheetsTool,
+	},
+	{
 		toolType: TelegramToolNodeType, baseType: telegramPackNodeType, baseVersion: workflow.V(1),
 		displayName: "Telegram Tool",
 		description: "Lets an AI Agent send Telegram messages and run the Telegram node's other operations.",

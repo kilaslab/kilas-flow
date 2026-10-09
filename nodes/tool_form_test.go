@@ -40,7 +40,7 @@ func formExpression(template string) map[string]any {
 	return map[string]any{"mode": "expression", "value": template}
 }
 
-// One row per tool form. A new form (googleSheetsTool) is one more row.
+// One row per tool form. A new form is one more row.
 var toolFormRows = []struct {
 	toolType, baseType string
 	version            workflow.TypeVersion
@@ -65,6 +65,16 @@ var toolFormRows = []struct {
 			"where": []any{map[string]any{
 				"field": "email", "operator": "equals", "value": formExpression("{{ $fromAI('email') }}"),
 			}},
+		},
+	},
+	{
+		toolType: nodes.GoogleSheetsToolNodeType, baseType: nodes.GoogleSheetsNodeType, version: workflow.V(1), source: node.SourceBuiltin,
+		valid: map[string]any{
+			"toolDescription": "Looks an order up.", "operation": "read",
+			"documentId": sheetsLocator("id", sheetsDoc), "sheetName": sheetsLocator("name", "Sheet1"),
+			"filtersUI": map[string]any{"values": []any{map[string]any{
+				"lookupColumn": "Order ID", "lookupValue": formExpression("{{ $fromAI('order', 'the order id') }}"),
+			}}},
 		},
 	},
 	{
