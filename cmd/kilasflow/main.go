@@ -755,10 +755,7 @@ func run(args []string) error {
 		pollService, pollErr := poller.New(poller.Options{
 			Cursors:  repository.NewPollCursorStore(db.DB),
 			Versions: workflows,
-			Handlers: map[string]poller.Handler{
-				nodes.GmailTriggerNodeType:       nodes.NewGmailPoller(outboundPolicy(cfg.Outbound)),
-				nodes.GoogleDriveTriggerNodeType: nodes.NewGoogleDrivePoller(outboundPolicy(cfg.Outbound)),
-			},
+			Handlers: nodes.PollHandlers(outboundPolicy(cfg.Outbound)),
 			Queue: func(ctx context.Context, tenantID, workflowID, versionID, triggerNodeID string, payload json.RawMessage) error {
 				_, err := runtime.QueuePolled(ctx, tenantID, workflowID, versionID, triggerNodeID, payload)
 				return err

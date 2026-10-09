@@ -105,7 +105,10 @@ type sheetsRun struct {
 	request  engine.Request
 	ir       workflow.IRNode
 	docID    string
-	tabs     []sheetsTab
+	// credentialType is the credential the calls are signed with: the node's,
+	// or the trigger's own.
+	credentialType string
+	tabs           []sheetsTab
 	// cache holds values already read in this call, keyed by range and render
 	// options. Every write empties it, so a read after a write is never stale.
 	cache map[string][][]any
@@ -254,7 +257,11 @@ func (run *sheetsRun) valuesURL(rangeA1 string) string {
 
 // call sends one request as the node's Sheets credential.
 func (run *sheetsRun) call(method, rawURL string, query url.Values, body any, dest any) error {
-	return run.executor.google.json(run.ctx, run.request, run.ir, GoogleSheetsCredentialType, method, rawURL, query, body, dest)
+	credentialType := run.credentialType
+	if credentialType == "" {
+		credentialType = GoogleSheetsCredentialType
+	}
+	return run.executor.google.json(run.ctx, run.request, run.ir, credentialType, method, rawURL, query, body, dest)
 }
 
 // findTab loads the spreadsheet's tabs once and finds the one a locator names.

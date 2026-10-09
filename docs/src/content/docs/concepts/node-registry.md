@@ -10,8 +10,8 @@ during composition at startup and is read-only for the rest of the process's
 life, which is what makes compiled graphs and the metadata served to the editor
 deterministic.
 
-A default install holds **62 distinct node types across 69
-type-and-version pairs**: 59 types (64 pairs) compiled into the binary, counting
+A default install holds **64 distinct node types across 71
+type-and-version pairs**: 61 types (66 pairs) compiled into the binary, counting
 the `kilasflow.unsupported` import placeholder, and 3 types (5 pairs) from the
 declarative packs it ships with. A pack loaded from `packs.dir` adds to that.
 The list of record is [`GET /api/v1/node-types`](/reference/api/), which serves
