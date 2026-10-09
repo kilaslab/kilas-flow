@@ -226,6 +226,9 @@ jobs:
   drift:
     name: Generated client drift
     runs-on: ubuntu-latest
+    # A runner stuck on a generator that boots a binary would otherwise hold for
+    # the default six hours; the job takes a few minutes.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -330,6 +333,11 @@ jobs:
   smoke:
     name: Smoke
     runs-on: ubuntu-latest
+    # Most of these steps boot a server and wait for it, and the CLI examples
+    # run dozens of commands against one. Each is bounded itself, but a hung step
+    # must not hold the runner for the default six hours: the job, image build
+    # included, takes well under half an hour.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

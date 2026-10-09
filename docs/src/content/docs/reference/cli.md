@@ -820,7 +820,7 @@ $ kilasflow health --quiet
 ok
 
 $ kilasflow workflow create --file wf.json --quiet   # the new workflow id
-wf_01J8ZP…
+wf_01a12070-fc70-7d1f-ac07-b630e724fa81
 ```
 
 ## Exit codes

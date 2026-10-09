@@ -36,7 +36,7 @@ type server struct {
 // has none. The workflow the examples run calls this server's own health
 // endpoint, so the one address it needs is admitted by exact host and port; the
 // private-network switch stays off.
-func startServer(binary, work string) (*server, error) {
+func startServer(ctx context.Context, binary, work string) (*server, error) {
 	port, err := freePort()
 	if err != nil {
 		return nil, err
@@ -93,7 +93,7 @@ func startServer(binary, work string) (*server, error) {
 		close(started.exited)
 	}()
 
-	if err := started.waitReady(); err != nil {
+	if err := started.waitReady(ctx); err != nil {
 		started.stop()
 
 		return nil, err
@@ -104,8 +104,8 @@ func startServer(binary, work string) (*server, error) {
 
 // waitReady polls /api/v1/ready until it answers, the process dies, or the
 // deadline passes. A server that died is reported with its own log.
-func (s *server) waitReady() error {
-	ctx, cancel := context.WithTimeout(context.Background(), bootTimeout)
+func (s *server) waitReady(parent context.Context) error {
+	ctx, cancel := context.WithTimeout(parent, bootTimeout)
 	defer cancel()
 
 	client := &http.Client{Timeout: 2 * time.Second}
@@ -113,6 +113,8 @@ func (s *server) waitReady() error {
 		select {
 		case <-s.exited:
 			return fmt.Errorf("the server exited while booting:\n%s", s.readLog())
+		case <-parent.Done():
+			return fmt.Errorf("interrupted while the server was booting")
 		case <-ctx.Done():
 			return fmt.Errorf("the server was not ready after %s:\n%s", bootTimeout, s.readLog())
 		case <-time.After(200 * time.Millisecond):

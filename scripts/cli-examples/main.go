@@ -41,8 +41,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kilaslab/kilas-flow/internal/docexamples"
@@ -68,6 +70,11 @@ const (
 	// so an example that outlives this is stuck rather than slow.
 	commandTimeout = 90 * time.Second
 
+	// killDelay is how long the runner waits, after killing a stuck command, for
+	// its output to close before it stops waiting. A child that left the command's
+	// process group can hold the pipe open long after the command is gone.
+	killDelay = 5 * time.Second
+
 	// serverURLPlaceholder is replaced in the fixtures with the booted server's
 	// address, so the workflow the examples run calls the server it runs on.
 	serverURLPlaceholder = "{{SERVER_URL}}"
@@ -92,13 +99,20 @@ func main() {
 		fmt.Fprintln(os.Stderr, "cli-examples: -binary is required (build it with `make build`)")
 		os.Exit(2)
 	}
-	if err := run(options{binary: *binary, page: *page, keep: *keep}); err != nil {
+	// An interrupt or a termination ends the run the way a failure does: the
+	// commands in flight are killed, and run returns, so the server is stopped and
+	// the scratch directory removed. Without this the process dies where it stands
+	// and leaves both behind.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := run(ctx, options{binary: *binary, page: *page, keep: *keep})
+	stop()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "cli-examples: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(opts options) error {
+func run(ctx context.Context, opts options) error {
 	root, err := splice.RepoRoot()
 	if err != nil {
 		return err
@@ -135,13 +149,13 @@ func run(opts options) error {
 		defer os.RemoveAll(work)
 	}
 
-	server, err := startServer(binary, work)
+	server, err := startServer(ctx, binary, work)
 	if err != nil {
 		return err
 	}
 	defer server.stop()
 
-	r, err := newRunner(binary, work, server.url, os.Stdout)
+	r, err := newRunner(ctx, binary, work, server.url, os.Stdout)
 	if err != nil {
 		return err
 	}
@@ -149,17 +163,28 @@ func run(opts options) error {
 		r.fail("%v", err)
 	}
 	r.runAll(examples, opts.page)
+	if ctx.Err() != nil {
+		return fmt.Errorf("interrupted after %d examples", r.executed)
+	}
 
 	return r.verdict(opts.page, server.logPath, opts.keep)
 }
 
 // runner executes examples against one booted server and keeps the verdict.
 type runner struct {
+	// ctx ends when the run is interrupted; every command the runner starts is
+	// killed with it.
+	ctx     context.Context
 	binary  string
 	scratch string
 	binDir  string
 	url     string
 	out     io.Writer
+
+	// timeout bounds one command, and waitDelay is how long the runner waits for a
+	// killed command's output to close before it stops waiting.
+	timeout   time.Duration
+	waitDelay time.Duration
 
 	counter  int
 	executed int
@@ -167,7 +192,7 @@ type runner struct {
 	failures []string
 }
 
-func newRunner(binary, work, url string, out io.Writer) (*runner, error) {
+func newRunner(ctx context.Context, binary, work, url string, out io.Writer) (*runner, error) {
 	scratch := filepath.Join(work, "scratch")
 	binDir := filepath.Join(work, "bin")
 	for _, dir := range []string{scratch, binDir} {
@@ -216,7 +241,10 @@ func newRunner(binary, work, url string, out io.Writer) (*runner, error) {
 		}
 	}
 
-	return &runner{binary: binary, scratch: scratch, binDir: binDir, url: url, out: out}, nil
+	return &runner{
+		ctx: ctx, binary: binary, scratch: scratch, binDir: binDir, url: url, out: out,
+		timeout: commandTimeout, waitDelay: killDelay,
+	}, nil
 }
 
 // writeDirectoryPack lays a pack out the way an operator installs one: a
@@ -265,12 +293,11 @@ func (r *runner) environ(extra map[string]string) []string {
 
 // shell runs one command line with sh and returns its exit code and output.
 func (r *runner) shell(text string, extra map[string]string) (code int, output string, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	ctx, cancel := context.WithTimeout(r.ctx, r.timeout)
 	defer cancel()
 
 	command := exec.CommandContext(ctx, "sh", "-c", text)
-	command.Dir = r.scratch
-	command.Env = r.environ(extra)
+	r.bound(command, extra)
 	var combined limitedBuffer
 	command.Stdout, command.Stderr = &combined, &combined
 
@@ -278,8 +305,10 @@ func (r *runner) shell(text string, extra map[string]string) (code int, output s
 	switch {
 	case runErr == nil:
 		return 0, combined.String(), nil
+	case r.ctx.Err() != nil:
+		return -1, combined.String(), fmt.Errorf("interrupted")
 	case ctx.Err() != nil:
-		return -1, combined.String(), fmt.Errorf("did not finish in %s", commandTimeout)
+		return -1, combined.String(), fmt.Errorf("did not finish in %s", r.timeout)
 	}
 	var exit *exec.ExitError
 	if errors.As(runErr, &exit) {
@@ -293,23 +322,37 @@ func (r *runner) shell(text string, extra map[string]string) (code int, output s
 // stdout. Seeding is part of the proof as well: a verb that cannot create what
 // the examples act on fails the run here.
 func (r *runner) cli(args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	ctx, cancel := context.WithTimeout(r.ctx, r.timeout)
 	defer cancel()
 
 	command := exec.CommandContext(ctx, r.binary, args...)
-	command.Dir = r.scratch
-	command.Env = r.environ(nil)
+	r.bound(command, nil)
 	// stdout is read whole, because a caller parses it: `node list` is the whole
 	// catalogue, far past what an example's output is kept to.
 	var stdout bytes.Buffer
 	var stderr limitedBuffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	if err := command.Run(); err != nil {
+		if r.ctx.Err() != nil {
+			return "", fmt.Errorf("interrupted while seeding with `kilasflow %s`", strings.Join(args, " "))
+		}
+		if ctx.Err() != nil {
+			err = fmt.Errorf("did not finish in %s", r.timeout)
+		}
+
 		return "", fmt.Errorf("seeding with `kilasflow %s` failed: %w\n%s%s",
 			strings.Join(args, " "), err, limit(stdout.String()), stderr.String())
 	}
 
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// bound sets what every command the runner starts shares: where it runs, what
+// it sees, and how it is stopped (see stopWithGroup).
+func (r *runner) bound(command *exec.Cmd, extra map[string]string) {
+	command.Dir = r.scratch
+	command.Env = r.environ(extra)
+	stopWithGroup(command, r.waitDelay)
 }
 
 // runAll runs the page's examples block by block, seeding each block afresh.
@@ -323,6 +366,9 @@ func (r *runner) runAll(examples []docexamples.Example, page string) {
 	}
 
 	for _, block := range blocks {
+		if r.ctx.Err() != nil {
+			return
+		}
 		texts := make([]string, 0, len(block))
 		for _, example := range block {
 			if !example.ServerPath {
@@ -343,6 +389,9 @@ func (r *runner) runAll(examples []docexamples.Example, page string) {
 		}
 
 		for _, example := range block {
+			if r.ctx.Err() != nil {
+				return
+			}
 			if example.ServerPath {
 				// Running it would start a second server, which does not return.
 				r.skipped = append(r.skipped, fmt.Sprintf("%s:%d %s", page, example.Line, example.Text))
@@ -371,6 +420,10 @@ func (r *runner) execute(page string, example docexamples.Example, seeded map[st
 	}
 
 	code, output, err := r.shell(example.Text, vars)
+	if r.ctx.Err() != nil {
+		// The run was interrupted: this example did not fail, it was stopped.
+		return
+	}
 	r.executed++
 	where := fmt.Sprintf("%s:%d", page, example.Line)
 	switch {
