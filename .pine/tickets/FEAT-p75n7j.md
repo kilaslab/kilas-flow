@@ -1,7 +1,7 @@
 ---
 id: FEAT-p75n7j
-title: "Design tokens v2 (\"Kunyit\") and theme plumbing: namespaced --kf-* tokens, dark-first, one-value accent override"
-status: todo
+title: 'Design tokens v2 ("Kunyit") and theme plumbing: namespaced --kf-* tokens, dark-first, one-value accent override'
+status: doing
 priority: high
 labels:
     - frontend
@@ -10,7 +10,7 @@ labels:
     - visual-revamp
 parent: EPIC-3en6xr
 created: "2026-09-23T03:05:15Z"
-updated: "2026-09-23T03:05:15Z"
+updated: "2026-10-09T11:03:29Z"
 ---
 
 # Description

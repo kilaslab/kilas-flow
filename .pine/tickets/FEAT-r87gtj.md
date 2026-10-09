@@ -1,7 +1,7 @@
 ---
 id: FEAT-r87gtj
 title: 'Credential crypto hygiene: AAD binding, key versioning, separate OAuth key, warning on a raw key'
-status: todo
+status: doing
 priority: low
 labels:
     - security
@@ -9,7 +9,7 @@ labels:
     - crypto
 parent: EPIC-brpz48
 created: "2026-09-25T12:48:09Z"
-updated: "2026-09-25T12:48:09Z"
+updated: "2026-10-09T11:03:29Z"
 ---
 
 # Description

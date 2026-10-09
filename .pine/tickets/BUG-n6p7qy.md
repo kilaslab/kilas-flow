@@ -1,7 +1,7 @@
 ---
 id: BUG-n6p7qy
 title: 'Workflow Tool: sub-workflow''s typed inputs not offered to the model; every failure reported as ''not active'''
-status: todo
+status: doing
 priority: medium
 labels:
     - ai
@@ -9,7 +9,7 @@ labels:
     - subworkflow
 parent: EPIC-8rbys7
 created: "2026-09-23T01:56:13Z"
-updated: "2026-10-08T15:59:05Z"
+updated: "2026-10-09T11:03:29Z"
 ---
 
 # Description

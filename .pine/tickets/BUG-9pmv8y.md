@@ -1,7 +1,7 @@
 ---
 id: BUG-9pmv8y
 title: Real RAG templates lose the main edge into the insert-mode vector store
-status: todo
+status: doing
 priority: high
 labels:
     - n8n
@@ -11,7 +11,7 @@ deps:
     - FEAT-zm3wh2
 parent: EPIC-8rbys7
 created: "2026-09-23T01:17:54Z"
-updated: "2026-10-08T16:37:18Z"
+updated: "2026-10-09T11:03:29Z"
 ---
 
 # Description

@@ -1,14 +1,14 @@
 ---
 id: FEAT-qae4sh
 title: Credential audit trail and delete-in-use protection
-status: todo
+status: doing
 priority: low
 labels:
     - credentials
     - audit
 parent: EPIC-brpz48
 created: "2026-09-25T12:48:09Z"
-updated: "2026-09-25T12:48:09Z"
+updated: "2026-10-09T11:03:29Z"
 ---
 
 # Description

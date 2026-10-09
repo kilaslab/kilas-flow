@@ -1,7 +1,7 @@
 ---
 id: BUG-x28fsx
 title: 'Skills bundle content: 10 of 13 skills describe verbs as unshipped, no copy-paste JSON shapes, no AI/loop/binary coverage'
-status: todo
+status: doing
 priority: high
 labels:
     - skills
@@ -9,7 +9,7 @@ labels:
     - agents
 parent: EPIC-8rbys7
 created: "2026-09-23T03:06:00Z"
-updated: "2026-09-23T03:06:00Z"
+updated: "2026-10-09T11:03:29Z"
 ---
 
 # Description

@@ -1,7 +1,7 @@
 ---
 id: BUG-b8bwhw
 title: Importer does not map *Tool variants of native nodes (httpRequestTool, gmailTool, postgresTool)
-status: todo
+status: doing
 priority: medium
 labels:
     - n8n
@@ -11,7 +11,7 @@ deps:
     - FEAT-cf5n4j
 parent: EPIC-8rbys7
 created: "2026-09-23T01:17:54Z"
-updated: "2026-10-08T16:58:14Z"
+updated: "2026-10-09T11:03:29Z"
 ---
 
 # Description

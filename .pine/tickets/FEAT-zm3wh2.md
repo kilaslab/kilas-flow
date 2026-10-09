@@ -1,7 +1,7 @@
 ---
 id: FEAT-zm3wh2
 title: Vector store retrieve mode, Vector Store Tool, Qdrant and In-Memory stores
-status: todo
+status: doing
 priority: medium
 labels:
     - n8n
@@ -10,7 +10,7 @@ labels:
     - rag
 parent: EPIC-8rbys7
 created: "2026-09-23T01:17:54Z"
-updated: "2026-09-23T01:17:54Z"
+updated: "2026-10-09T11:03:29Z"
 ---
 
 # Description

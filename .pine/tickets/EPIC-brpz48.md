@@ -1,13 +1,13 @@
 ---
 id: EPIC-brpz48
 title: 'Credential security hardening: the 2026-09-25 audit and live test of the common credential types'
-status: todo
+status: doing
 priority: high
 labels:
     - security
     - credentials
 created: "2026-09-25T12:47:14Z"
-updated: "2026-09-25T12:47:14Z"
+updated: "2026-10-09T11:03:29Z"
 ---
 
 # Description

@@ -1,7 +1,7 @@
 ---
 id: BUG-6gkd12
 title: 'Round-trip fidelity: node notes, settings, tags dropped; versions shifted (If downgraded); get→validate not symmetric'
-status: todo
+status: doing
 priority: low
 labels:
     - importer
@@ -10,7 +10,7 @@ deps:
     - FEAT-e898nz
 parent: EPIC-8rbys7
 created: "2026-09-23T01:35:50Z"
-updated: "2026-10-08T16:58:07Z"
+updated: "2026-10-09T11:03:29Z"
 ---
 
 # Description

@@ -1,7 +1,7 @@
 ---
 id: FEAT-vntngh
 title: Google Sheets node, trigger and tool (the most-used n8n app node)
-status: todo
+status: doing
 priority: critical
 labels:
     - n8n
@@ -10,7 +10,7 @@ labels:
     - google
 parent: EPIC-8rbys7
 created: "2026-09-23T01:17:54Z"
-updated: "2026-09-23T01:17:54Z"
+updated: "2026-10-09T11:03:29Z"
 ---
 
 # Description

@@ -1,7 +1,7 @@
 ---
 id: BUG-b4cb1c
 title: 'Board/doc drift: FEAT-3taswf ''done'' but @kilasflow/sdk not on npm; stale node counts; CLI help nouns'
-status: todo
+status: doing
 priority: medium
 labels:
     - board-hygiene
@@ -9,7 +9,7 @@ labels:
     - cli
 parent: EPIC-8rbys7
 created: "2026-09-23T01:34:44Z"
-updated: "2026-10-08T16:30:00Z"
+updated: "2026-10-09T11:03:29Z"
 ---
 
 # Description
