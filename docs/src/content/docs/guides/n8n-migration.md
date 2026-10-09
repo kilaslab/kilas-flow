@@ -129,11 +129,38 @@ an `&` inside `{{ $json.query }}` no longer truncates the request line.
 | `@n8n/n8n-nodes-langchain.lmChatOpenRouter` | `kilasflow.lmChatOpenRouter` |
 | `@n8n/n8n-nodes-langchain.memoryBufferWindow` | `kilasflow.memoryBuffer` |
 | `@n8n/n8n-nodes-langchain.toolHttpRequest` | `kilasflow.httpTool` |
+| `n8n-nodes-base.httpRequestTool` | `kilasflow.httpTool` |
+| `n8n-nodes-base.gmailTool` | `kilasflow.gmailTool` |
+| `n8n-nodes-base.postgresTool` | `kilasflow.postgresTool` |
+| `n8n-nodes-base.telegramTool` | `pack.telegramTool` |
 
 An AI cluster's typed edges — `ai_languageModel`, `ai_memory`, `ai_tool` — need
 no translation. n8n keys a connection by its source node, and for a typed
 channel the source is the sub-node and the target is the agent it configures,
 which is the direction KilasFlow already uses.
+
+**A node's agent-tool form imports as the same node's tool.** n8n offers a node
+to an agent as its own type with `Tool` appended, at the node's own versions,
+with the node's parameters plus a tool description. KilasFlow's tool forms are
+the same: the node's parameters and credentials, run by the node's own
+executor when the model calls the tool. So the import reads the node with its
+usual translation, takes the tool's name from the node's name (as n8n does),
+and carries `toolDescription`. When n8n was left to generate the description
+from the operation, one is written and reported as `lossy`. The model's
+`$fromAI` values reach the node as values: a value containing `{{ }}` is sent
+as those characters. What kind of call the tool makes — its resource, its
+operation, and for PostgreSQL its query, delete command and options — stays the
+author's, so a `$fromAI` there is refused. A tool whose base node is mapped but
+that has no tool form here yet (Google Drive's, for one) imports as a
+placeholder that says so.
+
+**The PostgreSQL tool never runs SQL the model wrote.** n8n splices an
+expression in the query into the statement text, so a `postgresTool` whose
+query calls `$fromAI` is a **blocking** diagnostic. Put `$1`, `$2` placeholders
+in the query and the values in Query Parameters (n8n's query replacements, one
+bound value per `{{ }}` segment), or use the select, insert, update or delete
+operation, whose values are bound. A table or schema name the model chooses is
+allowed, because every identifier is quoted when the statement is built.
 
 ### Code
 

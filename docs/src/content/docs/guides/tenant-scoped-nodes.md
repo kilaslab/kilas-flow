@@ -64,6 +64,10 @@ A few rules make it predictable:
 
 - **One entry per node type.** A WAHA install needs two entries, `pack.waha=acme`
   and `pack.wahaTrigger=acme`, because the trigger is a node type of its own.
+- **A node's agent-tool form follows the node.** `pack.telegramTool` runs the
+  Telegram node for an AI Agent, so scoping `pack.telegram` scopes its tool form
+  with it, and an entry naming the tool form itself refuses the boot with a
+  message naming the node to scope instead.
 - **It replaces the manifest's set** for that type. A single entry narrows what
   the manifest declared, and listing a different tenant widens it; the two are
   not merged.
@@ -136,6 +140,8 @@ with a scope that matches nothing:
   closed rather than silently scoping nobody;
 - an entry naming a built-in type, which can never be scoped because the engine
   names some of them (the sub-workflow trigger, the error trigger);
+- an entry naming a node's agent-tool form, which always shares the node's own
+  scope;
 - a `visibleTo` list present but empty in a manifest.
 
 A typo in a *tenant ID* is not checked against the identity store, because
