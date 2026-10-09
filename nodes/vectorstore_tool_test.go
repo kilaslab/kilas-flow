@@ -199,11 +199,12 @@ func (store *answerToolSearchStore) Delete(context.Context, string, string, []st
 }
 
 // answerToolProvider is one OpenAI-compatible endpoint serving both
-// embeddings and scripted chat turns, recording every chat request body.
+// embeddings and scripted chat turns, recording every request body.
 type answerToolProvider struct {
-	server *httptest.Server
-	mu     sync.Mutex
-	chats  []string
+	server     *httptest.Server
+	mu         sync.Mutex
+	chats      []string
+	embeddings []string
 }
 
 func newAnswerToolProvider(t *testing.T, turns []string) *answerToolProvider {
@@ -212,13 +213,14 @@ func newAnswerToolProvider(t *testing.T, turns []string) *answerToolProvider {
 	turn := 0
 	provider.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if strings.HasSuffix(r.URL.Path, "/embeddings") {
-			fmt.Fprint(w, `{"data":[{"embedding":[1,0,0,0],"index":0}]}`)
-			return
-		}
 		body, _ := io.ReadAll(r.Body)
 		provider.mu.Lock()
 		defer provider.mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, "/embeddings") {
+			provider.embeddings = append(provider.embeddings, string(body))
+			fmt.Fprint(w, `{"data":[{"embedding":[1,0,0,0],"index":0}]}`)
+			return
+		}
 		provider.chats = append(provider.chats, string(body))
 		if turn >= len(turns) {
 			fmt.Fprint(w, assistantAnswer("out of script"))
@@ -235,6 +237,44 @@ func (provider *answerToolProvider) recordedChats() []string {
 	provider.mu.Lock()
 	defer provider.mu.Unlock()
 	return append([]string(nil), provider.chats...)
+}
+
+func (provider *answerToolProvider) recordedEmbeddings() []string {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	return append([]string(nil), provider.embeddings...)
+}
+
+// answerToolOverProvider builds the answering tool against the provider for
+// both retrieval and the tool's model, over the given store.
+func answerToolOverProvider(t *testing.T, provider *answerToolProvider, store nodes.VectorStore) ai.Tool {
+	t.Helper()
+	policy := answerToolPolicy(t, provider.server.URL)
+	agent := nodes.NewAgentExecutor(nil, policy, nil, nodes.WithAgentVectorStore(store, nodes.NewEmbeddingsExecutor(policy, availableVectorStub{})))
+	storeDescriptor, _ := answerToolStoreItem(provider.server.URL).JSON["$ai"].(map[string]any)
+	modelDescriptor, _ := modelItem(provider.server.URL).JSON["$ai"].(map[string]any)
+	tool, err := nodes.VectorStoreAnswerToolFromForTest(context.Background(), agent, workflow.IRNode{Name: "AI Agent"}, map[string]any{
+		"kind": "vectorStoreAnswer", "name": "hr_policies", "description": "HR and employee policies",
+		"store": storeDescriptor, "model": modelDescriptor,
+	}, engine.Request{Credentials: answerToolCredentials(), Execution: agentExecution()})
+	if err != nil {
+		t.Fatalf("toolFrom = %v", err)
+	}
+	return tool
+}
+
+// answerToolChatMessages decodes one recorded chat request's messages.
+func answerToolChatMessages(t *testing.T, body string) (messages []map[string]any, payload map[string]any) {
+	t.Helper()
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		t.Fatalf("chat body is not JSON: %v", err)
+	}
+	raw, _ := payload["messages"].([]any)
+	for _, entry := range raw {
+		message, _ := entry.(map[string]any)
+		messages = append(messages, message)
+	}
+	return messages, payload
 }
 
 // answerToolPolicy is the default outbound policy with one exact loopback
