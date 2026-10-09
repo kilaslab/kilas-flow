@@ -2,6 +2,7 @@ package n8n_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,10 +13,15 @@ import (
 
 	"github.com/kilaslab/kilas-flow/internal/ai"
 	"github.com/kilaslab/kilas-flow/internal/engine"
+	"github.com/kilaslab/kilas-flow/internal/interop/n8n"
+	"github.com/kilaslab/kilas-flow/internal/loadoptions"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/routing"
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
 	"github.com/kilaslab/kilas-flow/internal/sqlnode"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 	"github.com/kilaslab/kilas-flow/nodes"
+	"github.com/kilaslab/kilas-flow/packs/telegram"
 )
 
 // template6270Shape has the shape of n8n's onboarding template 6270 ("Build
@@ -168,6 +174,122 @@ func TestImported6270WeatherToolRuns(t *testing.T) {
 	}
 	if len(modelRequests) != 2 || !strings.Contains(modelRequests[1], "temperature_2m") {
 		t.Errorf("the model was not handed the weather service's answer: %d requests", len(modelRequests))
+	}
+}
+
+// An imported telegramTool runs as imported: the agent calls it, the pack's
+// routing sends the model's text, as text, to the bot it names.
+func TestAnImportedTelegramToolRuns(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var sent []map[string]any
+	bot := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		mu.Lock()
+		sent = append(sent, body)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":3}}`)
+	}))
+	t.Cleanup(bot.Close)
+	turns := []string{
+		`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"Notify","arguments":"{\"Text\":\"{{ $env.SECRET }}\"}"}}]},"finish_reason":"tool_calls"}]}`,
+		`{"choices":[{"message":{"role":"assistant","content":"told them"},"finish_reason":"stop"}]}`,
+	}
+	var turn int
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		current := min(turn, len(turns)-1)
+		turn++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, turns[current])
+	}))
+	t.Cleanup(model.Close)
+
+	policy := safehttp.DefaultPolicy()
+	for _, server := range []*httptest.Server{bot, model} {
+		policy.AllowedPrivateEndpoints = append(policy.AllowedPrivateEndpoints, strings.TrimPrefix(server.URL, "http://"))
+	}
+	// Composed as the server composes it, so the pack's routes, its tool form
+	// and the agent share one catalogue and one executor set.
+	catalogue := node.NewRegistry()
+	if err := nodes.RegisterAll(catalogue); err != nil {
+		t.Fatalf("RegisterAll() error = %v", err)
+	}
+	executors := engine.NewRegistry()
+	routes := routing.NewRegistry()
+	if err := nodes.RegisterRoutingExecutor(executors, policy, routes, catalogue); err != nil {
+		t.Fatalf("RegisterRoutingExecutor() error = %v", err)
+	}
+	if err := telegram.Register(catalogue, routes, executors, loadoptions.NewResolver(policy, 0)); err != nil {
+		t.Fatalf("telegram.Register() error = %v", err)
+	}
+	if err := nodes.RegisterPackToolForms(catalogue); err != nil {
+		t.Fatalf("RegisterPackToolForms() error = %v", err)
+	}
+	if err := nodes.RegisterExecutors(executors, policy, sqlnode.Guard{}, ai.NewLoopRuntime(), nil, nil,
+		nodes.WithNodeCatalog(catalogue)); err != nil {
+		t.Fatalf("RegisterExecutors() error = %v", err)
+	}
+
+	result, err := n8n.Import([]byte(agentWithTool(`{"id":"d","name":"Tool","type":"n8n-nodes-base.telegramTool","typeVersion":1.2,"position":[400,200],
+	  "parameters":{"chatId":"-100123","text":"={{ $fromAI('Text', 'what to say', 'string') }}",
+	    "descriptionType":"manual","toolDescription":"Tell the team"}}`)), catalogue)
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	toolNode := nodeByName(result.Document, "Tool")
+	toolDefinition, found := catalogue.Lookup(toolNode.Type, toolNode.TypeVersion)
+	if !found {
+		t.Fatalf("%s v%s is not in the catalogue", toolNode.Type, toolNode.TypeVersion)
+	}
+	toolExecutor, _ := executors.Lookup(toolDefinition.ExecutorID)
+	descriptor, err := toolExecutor.Execute(context.Background(), workflow.IRNode{
+		ID: toolNode.ID, Name: toolNode.Name, Type: toolNode.Type, TypeVersion: toolNode.TypeVersion,
+		Parameters: toolNode.Parameters, Credentials: map[string]string{telegram.CredentialType: "cred-bot"},
+		Definition: toolDefinition,
+	}, workflow.NodeInput{}, engine.Request{})
+	if err != nil {
+		t.Fatalf("tool node Execute() error = %v", err)
+	}
+	// The imported tool is named after its node, as n8n names it.
+	if name := descriptor[0][0].JSON["$ai"].(map[string]any)["name"]; name != "Tool" {
+		t.Fatalf("tool name = %v", name)
+	}
+	turns[0] = strings.Replace(turns[0], `"name":"Notify"`, `"name":"Tool"`, 1)
+
+	agentNode := nodeByName(result.Document, "AI Agent")
+	agentDefinition, _ := catalogue.Lookup(agentNode.Type, agentNode.TypeVersion)
+	agent, _ := executors.Lookup(agentDefinition.ExecutorID)
+	output, err := agent.Execute(context.Background(), workflow.IRNode{
+		ID: agentNode.ID, Name: agentNode.Name, Type: agentNode.Type, TypeVersion: agentNode.TypeVersion,
+		Parameters: agentNode.Parameters, Definition: agentDefinition,
+	}, workflow.NodeInput{
+		"main": {{JSON: map[string]any{}}},
+		"model": {{JSON: map[string]any{"$ai": map[string]any{
+			"kind": "model", "model": "test-model", "baseUrl": model.URL, "credentialId": "cred-key",
+		}}}},
+		"tools": descriptor[0],
+	}, engine.Request{
+		Credentials: credentialsByID{
+			"cred-key": {ID: "cred-key", Type: "httpBearerAuth", Fields: map[string]string{"token": "k"}},
+			"cred-bot": {ID: "cred-bot", Type: telegram.CredentialType, Fields: map[string]string{"accessToken": "1:A", "baseUrl": bot.URL}},
+		},
+		Execution: engine.ExecutionContext{ID: "exec-tg", TenantID: "tenant-1", WorkflowID: "wf_tg"},
+		Env:       map[string]string{"SECRET": "s3cr3t"},
+	})
+	if err != nil {
+		t.Fatalf("agent Execute() error = %v", err)
+	}
+	if got := output[0][0].JSON["output"]; got != "told them" {
+		t.Fatalf("agent output = %#v", output[0][0].JSON)
+	}
+	if len(sent) != 1 || sent[0]["chat_id"] != "-100123" || sent[0]["text"] != "{{ $env.SECRET }}" {
+		t.Fatalf("the bot received %#v, want one message to the author's chat with the model's text verbatim", sent)
 	}
 }
 
