@@ -17,12 +17,13 @@ the ones to wire, and nothing here should be copied over them.
 
 ## What it needs
 
-- **PostgreSQL with the pgvector extension.** `kilasflow.vectorStore` and
-  `kilasflow.embeddings` are registered on every install but are unavailable on
+- **PostgreSQL with the pgvector extension, for the vector store.**
+  `kilasflow.vectorStore` is registered on every install but is unavailable on
   SQLite, and `workflow validate` reports that as a diagnostic on the vector
-  store node ("need PostgreSQL with the pgvector extension"). Everything else in
-  the graph below validates on SQLite; do not edit the graph to make the
-  diagnostic go away, change the database. On PostgreSQL the extension has to
+  store node ("needs PostgreSQL with the pgvector extension"). The embeddings
+  node is not affected: it calls an OpenAI-compatible HTTP API and runs on either
+  database, and everything else in the graph below validates on SQLite. Do not
+  edit the graph to make the diagnostic go away, change the database. On PostgreSQL the extension has to
   exist when the server boots (`CREATE EXTENSION vector`, or the pinned pgvector
   image), or the same diagnostic names the missing extension.
 - **An embedding model of a supported width.** The store keeps one table per
