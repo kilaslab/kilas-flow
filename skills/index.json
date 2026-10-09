@@ -395,6 +395,7 @@
         "No tenant api-keys verb: create-api-key, list-api-keys and revoke-api-key are served and reached through the escape hatch"
       ],
       "references": [
+        "references/EXAMPLE.md",
         "references/UPGRADE_ORDER.md"
       ]
     },
@@ -533,7 +534,9 @@
       "nodes": [],
       "expressionRoots": [],
       "notShipped": [],
-      "references": []
+      "references": [
+        "references/EXAMPLE.md"
+      ]
     }
   ]
 }

@@ -40,6 +40,7 @@ kilasflow_not_shipped:
 
 ## Strong defaults
 
+- Start from the validated example: `kilasflow skills show kilasflow-operations --reference EXAMPLE.md` is a scheduled readiness probe, the workflow-shaped version of `kilasflow ready`.
 - Begin with `kilasflow version`, then `kilasflow context`. `kilasflow version` prints the binary's version and, when a server is configured, the version the server reports; an unreachable server is information here, not a failure.
 - The identity is the authority. `kilasflow auth whoami` (`get-me`) prints the tenant, the scopes, the workflow binding and the expiry of the configured credential, and never the credential itself. A key with scopes is an agent token; an empty scope set is the legacy tenant-wide key.
 - The operator surface is three reads and one guarded delete. `kilasflow tenant list` (`list-tenants`), `kilasflow tenant get <tenantId>` (`get-tenant`), `kilasflow tenant users <tenantId>` (`list-tenant-users`) and `kilasflow tenant delete <tenantId> --yes` (`delete-tenant`) all need a key scoped to the operator tenant; anything else is refused with `403` and exit code 3, and the refusal is the server's, not a filtered listing.
@@ -105,4 +106,5 @@ what are you doing?
 
 | File | Read when |
 | --- | --- |
+| EXAMPLE.md | you want a workflow that watches the installation on a clock, and what a readiness probe should read |
 | UPGRADE_ORDER.md | you are backing up, upgrading, restoring or switching drivers, or offboarding a tenant and need the order the boot and the deletion really run in |

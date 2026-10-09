@@ -43,6 +43,7 @@ kilasflow_not_shipped: []
 
 ## Strong defaults
 
+- Start from the validated example: `kilasflow skills show using-kilasflow-skills --reference EXAMPLE.md` is a connected two-node document and the five commands that save, run and read it back; every other skill's example is a larger version of it.
 - Open every session with `kilasflow context`. It is one read-only call carrying the server, the identity, the workflows, the datastores and the node-type count, and it is local, so it works before you know anything else (internal/cli/context.go).
 - Reach the whole API through `kilasflow api <operation-id>` (`api`) whenever a verb does not exist: `--path name=value` fills a placeholder, `--body @file.json` sends a body, `--header name=value` sends a header, and `--list` prints the ids the running server actually serves. It refuses what a scoped token refuses — a naming bypass, not an authority bypass.
 - Expression before Code node. A value read or transformed with `{{ }}` is visible in the document and in every trace; a Code node hides it. Invoke the kilasflow-expressions skill before writing one.
@@ -219,3 +220,9 @@ kilasflow mcp serve                 local                              serve the
 - "There is no verb for it, so it cannot be done" → the verbs are a convenience over the API, not the API → `kilasflow api --list` prints the operations the running server serves.
 - "An embed session is broken because it cannot delete or import" → a session can never delete, import or manage datastores, at any scope, and activates only with `workflow:activate` → do those from the operator's own credential, and read references/SESSION_AUTHORITY.md in kilasflow-embedding.
 - "The agent token has the scope, so the call will work" → an embed session is confined to the workflow and the resources of the revision it was minted from, and a scoped key is bounded by its own `scopes` → read the refusal: exit code 3 with `scope_denied` means drop the step, not retry it.
+
+## Reference files
+
+| File | Read when |
+| --- | --- |
+| EXAMPLE.md | you have not yet picked a skill and want a small document to save, run and read back |
