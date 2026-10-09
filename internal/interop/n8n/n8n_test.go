@@ -729,6 +729,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter ↔ kilasflow.textSplitter",
 		"@n8n/n8n-nodes-langchain.toolCalculator ↔ kilasflow.calculatorTool",
 		"@n8n/n8n-nodes-langchain.toolHttpRequest ↔ kilasflow.httpTool",
+		"@n8n/n8n-nodes-langchain.toolVectorStore ↔ kilasflow.vectorStoreTool",
 		"@n8n/n8n-nodes-langchain.toolWorkflow ↔ kilasflow.workflowTool",
 		"@n8n/n8n-nodes-langchain.vectorStorePGVector ↔ kilasflow.vectorStorePGVector",
 		"n8n-nodes-base.aggregate ↔ kilasflow.aggregate",
@@ -859,6 +860,7 @@ func TestMirroredNodeTypesMatchTheNodePack(t *testing.T) {
 		"gmail trigger":        {n8n.GmailTriggerNodeType, nodes.GmailTriggerNodeType},
 		"javascript code":      {n8n.JSCodeNodeType, nodes.JSCodeNodeType},
 		"foreign code":         {n8n.ForeignCodeNodeType, nodes.ForeignCodeNodeType},
+		"vector store tool":    {n8n.VectorStoreToolNodeType, nodes.VectorStoreToolNodeType},
 	} {
 		if pair[0] != pair[1] {
 			t.Errorf("%s node type: adapter has %q, node pack has %q", name, pair[0], pair[1])

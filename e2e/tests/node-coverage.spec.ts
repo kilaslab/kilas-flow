@@ -100,6 +100,7 @@ const VALIDATION_COVERAGE = [
 	'kilasflow.mcpClientTool@1',
 	'kilasflow.vectorStore@1',
 	'kilasflow.vectorStorePGVector@1',
+	'kilasflow.vectorStoreTool@1',
 	'kilasflow.googleDrive@1',
 	'kilasflow.googleDriveTrigger@1',
 	'kilasflow.gmail@1',
@@ -911,6 +912,14 @@ test('the agent cluster fails closed without wiring or credentials', async ({ se
 	const dsToolAttempt = await startRun(server.baseURL, dsToolId);
 	expect(dsToolAttempt.status).toBe(422);
 	expect(errorText(dsToolAttempt.body)).toContain('toolDescription is required');
+
+	// The Vector Store Tool answers from a retrieve-mode store with a chat
+	// model of its own, so it needs a live LLM to run; validation is its
+	// headless tier, and the description is what it names first.
+	const vsToolId = await createWorkflow(server.baseURL, 'Coverage Vector Store Tool Bare', [manual(), node('tool', 'Tool', 'kilasflow.vectorStoreTool', 1, {})], []);
+	const vsToolAttempt = await startRun(server.baseURL, vsToolId);
+	expect(vsToolAttempt.status).toBe(422);
+	expect(errorText(vsToolAttempt.body)).toContain('toolDescription is required');
 });
 
 test('datastore rows insert and read back headless', async ({ server }) => {

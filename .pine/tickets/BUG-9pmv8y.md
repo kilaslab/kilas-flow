@@ -39,7 +39,7 @@ The importer re-routes `X → store(insert)` main onto the attached Document Loa
 
 # Acceptance Criteria
 - [x] An n8n main edge into an insert-mode vector store is re-routed onto the attached Default Data Loader (or the store keeps a main input), with an info note
-- [ ] Templates 3647, 16706 and 5908, from their real JSON, import with the ingest path connected and no held-back edges (ingest path: met for all three and 18957. 3647, 5908 and 18957 hold nothing back. 16706 still holds back its retrieval side, see Progress)
+- [x] Templates 3647, 16706 and 5908, from their real JSON, import with the ingest path connected and no held-back edges (met for all three and 18957 on 2026-10-09: `TestRealRAGTemplatesKeepTheirIngestPath`, now failing on any held-back edge, passes against freshly fetched copies; see Progress (2026-10-09))
 - [x] The hand-authored RAG fixtures are replaced or complemented by the real template JSON as regression fixtures (complemented: the real JSON cannot be committed, see Fix)
 
 # Implementation Plan
@@ -78,3 +78,16 @@ Tests:
 ## Progress
 
 What is left is outside the ingest path. In 16706, the second "Postgres PGVector Store" carries no `mode`, so n8n's default `retrieve` applies. It feeds "Answer questions with a vector store" (toolVectorStore) over `ai_vectorStore`. That edge and the store's `ai_embedding` edge are still held back, because KilasFlow has no retrieve mode and no `ai_vectorStore` output (`nodes/rag.go`). FEAT-zm3wh2 (vector store retrieve mode and Vector Store Tool) owns that. Close this ticket once FEAT-zm3wh2 lands and `TestRealRAGTemplatesKeepTheirIngestPath/16706` logs nothing held back.
+
+## Progress (2026-10-09)
+
+FEAT-zm3wh2 landed the vector-store retrieve mode and the Vector Store Tool, so 16706's retrieval side imports. Its store has no `mode` and now imports as `retrieve` with n8n's default table `n8n_vectors`. "Answer questions with a vector store" imports as `kilasflow.vectorStoreTool`, and both the `ai_embedding` and `ai_vectorStore` edges land.
+
+`TestRealRAGTemplatesKeepTheirIngestPath` now fails on any held-back edge instead of logging it. It was run against freshly fetched copies of all four templates (`.corpus-cache/n8n-templates/`, gitignored, fetched from api.n8n.io on 2026-10-09):
+
+```
+KILASFLOW_N8N_TEMPLATES_DIR=$PWD/.corpus-cache/n8n-templates go test ./internal/interop/n8n -run TestRealRAGTemplatesKeepTheirIngestPath -v -count=1
+--- PASS: TestRealRAGTemplatesKeepTheirIngestPath/3647, /16706, /5908, /18957
+```
+
+Nothing is held back for any of them. 16706 still imports two unsupported placeholders (the OpenAI audio-transcribe node and Postgres Chat Memory); those are not edges and are outside this ticket.
