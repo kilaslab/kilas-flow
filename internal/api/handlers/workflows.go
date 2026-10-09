@@ -1054,21 +1054,21 @@ func (handler *Workflows) problem(ctx context.Context, err error) error {
 	return serverProblem(ctx, "workflow operation failed", err)
 }
 
-// subworkflowProblem is a 422 whose detail is the whole sentence, so a client
-// that only reads the headline (the CLI envelope's error.message, an MCP tool
-// result) still gets the node and the child, plus the one config.invalid issue
-// the editor can place on the node.
-func subworkflowProblem(refusal *repository.SubworkflowRefusalError) error {
-	message := refusal.Error()
-	return &huma.ErrorModel{
-		Status: http.StatusUnprocessableEntity,
-		Detail: message,
-		Errors: []*huma.ErrorDetail{{
-			Message:  message,
+// subworkflowProblem is a 422 whose detail is the whole sentence (every
+// sentence, when several nodes are refused), so a client that only reads the
+// headline (the CLI envelope's error.message, an MCP tool result) still gets the
+// nodes and the children, plus one config.invalid issue per node that the editor
+// can place on it.
+func subworkflowProblem(refused *repository.SubworkflowRefusalError) error {
+	problem := &huma.ErrorModel{Status: http.StatusUnprocessableEntity, Detail: refused.Error()}
+	for _, refusal := range refused.Refusals {
+		problem.Errors = append(problem.Errors, &huma.ErrorDetail{
+			Message:  refusal.Error(),
 			Location: "body" + refusal.Path,
 			Value:    WorkflowValidationIssue{Code: workflow.ErrorInvalidConfig, NodeID: refusal.NodeID},
-		}},
+		})
 	}
+	return problem
 }
 
 func draftProblem(err error) error {

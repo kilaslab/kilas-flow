@@ -1228,12 +1228,17 @@ func importSettings(source map[string]any) (map[string]any, []ImportIssue) {
 	// The order n8n runs a workflow's branches in. This server always runs the
 	// v1 order, which is also what an export declares, so v1 describes this
 	// server exactly and needs no issue. Anything else asks for an order that
-	// will not be honoured and is named rather than ignored.
+	// will not be honoured and is named rather than ignored. An absent key stays
+	// silent: it is what n8n reads as its legacy order, but the file did not ask
+	// for anything, and every KilasFlow export states the key.
 	if order, present := source["executionOrder"]; present && order != "v1" {
+		// Quoted and cut: the value is the file's, and a hostile one must not
+		// make the message enormous.
+		encoded, _ := json.Marshal(order)
 		issues = append(issues, ImportIssue{
 			Severity: SeverityLossy, Field: "settings.executionOrder",
-			Reason: fmt.Sprintf("this workflow ran in n8n's %v execution order; KilasFlow always runs the v1 order, "+
-				"so the order its branches run in may differ", order),
+			Reason: fmt.Sprintf("this workflow asked for the execution order %s; KilasFlow always runs the v1 order, "+
+				"so the order its branches run in may differ", preview(encoded)),
 		})
 	}
 	zone, _ := source["timezone"].(string)

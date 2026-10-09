@@ -557,48 +557,60 @@ func (store *GORMWorkflowStore) publish(ctx context.Context, tenant TenantScope,
 // compiler's cycle check, which is the right error for it, and a self-reference
 // is not a target that has to be active.
 //
-// The two failures are one *SubworkflowRefusalError each and both name the
-// node: a target that does not exist in this tenant (deleted, or never
-// imported) and one that exists but is not active (still a draft, or
-// deactivated). "Not active" is deliberately not reported as "not found": they
-// need different fixes.
+// Every calling node is checked and every one that cannot run is in the
+// refusal, so a workflow with three bad calls is fixed in one round trip and not
+// three. The two failures name the node and are kept apart: a target that does
+// not exist in this tenant (deleted, or never imported) and one that exists but
+// is not active (still a draft, or deactivated). "Not active" is deliberately
+// not reported as "not found": they need different fixes.
 func refuseInactiveSubworkflows(tx *gorm.DB, tenant TenantScope, workflowID string, document workflow.Document, extract SubworkflowExtractor) error {
 	if extract == nil {
 		return nil
 	}
+	var refused []SubworkflowRefusal
 	for _, call := range extract(document) {
 		target := strings.TrimSpace(call.WorkflowID)
 		if target == "" || target == workflowID {
 			continue
 		}
-		refusal := &SubworkflowRefusalError{
+		refusal := SubworkflowRefusal{
 			NodeID: call.NodeID, NodeName: call.NodeName, Path: subworkflowCallPath(document, call.NodeID), WorkflowID: target,
 		}
 		var model workflowModel
 		if err := tx.Where("tenant_id = ? AND id = ?", tenant.ID, target).First(&model).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				refusal.Missing = true
-				return refusal
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("look up the workflow node %q calls: %w", call.NodeName, err)
 			}
-			return fmt.Errorf("look up the workflow node %q calls: %w", call.NodeName, err)
+			refusal.Missing = true
+			refused = append(refused, refusal)
+			continue
 		}
 		if !model.Active {
 			refusal.WorkflowName = model.Name
-			return refusal
+			refused = append(refused, refusal)
 		}
 	}
-	return nil
+	if len(refused) == 0 {
+		return nil
+	}
+	return &SubworkflowRefusalError{Refusals: refused}
 }
 
 // SubworkflowRefusalError is the refusal of an activation whose document calls
-// a workflow that cannot run.
+// workflows that cannot run, one SubworkflowRefusal per calling node.
 //
 // It is a typed error, not a formatted string, because the caller has to turn
 // it into an answer: a bare string reached the API as an unknown failure and
 // became a 500 "workflow operation failed", with the node and the child named
-// only in the server log. The API maps this to a 422, and the editor uses the
-// node to point at the call that has to change.
+// only in the server log. The API maps this to a 422 with one errors[] entry per
+// node, and the editor uses each node to point at the call that has to change.
 type SubworkflowRefusalError struct {
+	// Refusals is never empty, in the document's node order.
+	Refusals []SubworkflowRefusal
+}
+
+// SubworkflowRefusal is one node whose called workflow cannot run.
+type SubworkflowRefusal struct {
 	// NodeID and NodeName are the calling node.
 	NodeID   string
 	NodeName string
@@ -614,17 +626,28 @@ type SubworkflowRefusalError struct {
 	Missing bool
 }
 
-func (e *SubworkflowRefusalError) Error() string {
-	if e.Missing {
+// Error is the sentence for this node.
+func (r SubworkflowRefusal) Error() string {
+	if r.Missing {
 		return fmt.Sprintf("node %q (%s) calls workflow %q, which does not exist in this workspace: point it at a workflow that is active, or remove the node",
-			e.NodeName, e.NodeID, e.WorkflowID)
+			r.NodeName, r.NodeID, r.WorkflowID)
 	}
-	child := fmt.Sprintf("%q", e.WorkflowID)
-	if e.WorkflowName != "" {
-		child = fmt.Sprintf("%q (%s)", e.WorkflowName, e.WorkflowID)
+	child := fmt.Sprintf("%q", r.WorkflowID)
+	if r.WorkflowName != "" {
+		child = fmt.Sprintf("%q (%s)", r.WorkflowName, r.WorkflowID)
 	}
 	return fmt.Sprintf("node %q (%s) calls workflow %s, which is not active: activate that workflow first, then activate this one",
-		e.NodeName, e.NodeID, child)
+		r.NodeName, r.NodeID, child)
+}
+
+// Error joins the sentences, so a caller that prints only the message still
+// learns every node.
+func (e *SubworkflowRefusalError) Error() string {
+	sentences := make([]string, 0, len(e.Refusals))
+	for _, refusal := range e.Refusals {
+		sentences = append(sentences, refusal.Error())
+	}
+	return strings.Join(sentences, "; ")
 }
 
 // subworkflowCallPath is where the calling node keeps the workflow it calls, as

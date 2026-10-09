@@ -267,7 +267,7 @@ in part — each reported as a **dropped** diagnostic:
 
 | Field | Why it is not carried |
 | --- | --- |
-| `settings` | Everything except the timezone, the workflow's own `executionTimeout` and `errorWorkflow`, and the execution order (KilasFlow always runs `v1`, which every export writes and which imports without an issue; any other value is reported as lossy). The save-data flags and the other globals have no KilasFlow equivalent yet. The three carried keys matter: a scheduled workflow whose zone was dropped runs at the wrong hour every day, the timeout is the workflow's run budget, and an error workflow is started from its own error trigger when a run of this one fails. A zone this server cannot resolve is reported as lossy rather than silently falling back to UTC; so are n8n's `-1` "no timeout" (this server always applies the instance's budget) and an `errorWorkflow` id, because n8n's ids survive the trip only if that workflow was imported too. |
+| `settings` | Everything except the timezone, the workflow's own `executionTimeout` and `errorWorkflow`, and the execution order (KilasFlow always runs `v1`, which every export writes and which imports without an issue; any other value is reported as lossy, and a file that names none stays silent). The save-data flags and the other globals have no KilasFlow equivalent yet. The three carried keys matter: a scheduled workflow whose zone was dropped runs at the wrong hour every day, the timeout is the workflow's run budget, and an error workflow is started from its own error trigger when a run of this one fails. A zone this server cannot resolve is reported as lossy rather than silently falling back to UTC; so are n8n's `-1` "no timeout" (this server always applies the instance's budget) and an `errorWorkflow` id, because n8n's ids survive the trip only if that workflow was imported too. |
 | `pinData` | Pinned test data is an n8n editor feature. It is dropped rather than parked under a reserved key, because carrying data nothing reads would create a second silent-drop problem a release later. The nodes that had data pinned will run for real. |
 | `meta` | n8n instance metadata describing where the workflow came from. It has no meaning in another installation. |
 | `staticData` | n8n's per-workflow scratch space that its nodes persist between runs. KilasFlow keeps its own for each workflow (see [Helpers and static data](/guides/code-javascript/#helpers-and-static-data)), but the values n8n had are not carried: the imported workflow starts from empty static data. |
@@ -861,7 +861,7 @@ enforces that on every run rather than trusting anyone to remember it.
   `errorWorkflow` — all three carried, and all three honoured — and for the
   execution order: KilasFlow always runs the `v1` order, so a file that says
   `v1` (every KilasFlow export does) imports without an issue and `v0` is
-  reported as lossy. The rest is reported as dropped rather than quietly
+  reported as lossy; a file with no execution order at all stays silent. The rest is reported as dropped rather than quietly
   applied.
 
 For what exists more broadly and what does not, start with

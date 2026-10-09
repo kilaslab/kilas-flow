@@ -3189,6 +3189,8 @@ func TestExecutionOrderIsSilentForV1AndLossyForAnythingElse(t *testing.T) {
 		{"v0", `"v0"`, true},
 		{"a later order", `"v2"`, true},
 		{"not a string", `1`, true},
+		{"a long object", `{"order":"` + strings.Repeat("x", 300) + `"}`, true},
+		{"a long string", `"` + strings.Repeat("y", 300) + `"`, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -3223,10 +3225,35 @@ func TestExecutionOrderIsSilentForV1AndLossyForAnythingElse(t *testing.T) {
 			if !strings.Contains(issue.Reason, "v1") || !strings.Contains(issue.Reason, "always") {
 				t.Errorf("reason = %q, want it to say KilasFlow always runs the v1 order", issue.Reason)
 			}
+			// The value is the file's, so it is quoted and cut rather than pasted
+			// whole into a message a client will show.
+			if len(issue.Reason) > 250 || strings.Contains(issue.Reason, strings.Repeat("x", 100)) || strings.Contains(issue.Reason, strings.Repeat("y", 100)) {
+				t.Errorf("reason = %q (%d bytes), want the order previewed and cut", issue.Reason, len(issue.Reason))
+			}
 			if _, carried := result.Document.Settings["executionOrder"]; carried {
 				t.Errorf("settings = %#v, want the order not carried: nothing here reads it", result.Document.Settings)
 			}
 		})
+	}
+}
+
+// A file with no executionOrder at all asked for nothing: n8n would open it in
+// its legacy order, but the import has nothing the file said to report.
+func TestAnAbsentExecutionOrderStaysSilent(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, `{
+	  "name": "No order",
+	  "settings": {"timezone": "Asia/Jakarta"},
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}}
+	  ],
+	  "connections": {}
+	}`)
+	for _, issue := range result.Unsupported {
+		if strings.HasPrefix(issue.Field, "settings") {
+			t.Errorf("issue = %#v, want none for a file that does not name an execution order", issue)
+		}
 	}
 }
 

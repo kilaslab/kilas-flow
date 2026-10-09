@@ -105,7 +105,9 @@ that workflow was imported too.
 runs n8n's `v1` order, so `"v1"` (which every export writes) imports silently and
 export then import adds no `settings` issue. `"v0"`, any other value or a
 non-string is reported **lossy** as `settings.executionOrder`, saying KilasFlow
-runs the v1 order, and is not carried.
+runs the v1 order, and is not carried. A file with **no** `executionOrder` stays
+silent too: n8n would open it in its legacy `v0` order, but the file asked for
+nothing, so there is nothing to report.
 
 ## Node-level elements
 

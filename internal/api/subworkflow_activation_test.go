@@ -165,6 +165,44 @@ func TestActivatingAParentWhoseSubworkflowIsGoneAnswers422SayingItDoesNotExist(t
 	}
 }
 
+// A parent with two bad calls is told about both at once: one errors[] entry per
+// node, each placeable on its own node, and both sentences in the detail.
+func TestActivatingAParentWithTwoBadSubworkflowCallsNamesBothNodes(t *testing.T) {
+	handler := newSubworkflowAPI(t)
+
+	child := createWorkflow(t, handler, validManualWorkflow("Billing child"))
+	document := subworkflowCaller("Two bad calls", child.ID)
+	document.Nodes = append(document.Nodes, workflow.Node{
+		ID: "second", Name: "Run archive", Type: nodes.ExecuteWorkflowNodeType, TypeVersion: workflow.V(1),
+		Parameters: map[string]any{"workflowId": map[string]any{"__rl": true, "mode": "id", "value": "wf_gone"}},
+	})
+	document.Connections = append(document.Connections, workflow.Connection{
+		ID: "c2", Kind: workflow.ConnectionMain,
+		Source: workflow.Endpoint{NodeID: "call", Port: "main"},
+		Target: workflow.Endpoint{NodeID: "second", Port: "main"},
+	})
+	parent := createWorkflow(t, handler, document)
+
+	problem := postForProblem(t, handler, "/api/v1/workflows/"+parent.ID+"/activate", http.StatusUnprocessableEntity)
+	for _, want := range []string{"Run billing", "Billing child", "not active", "Run archive", "wf_gone", "does not exist"} {
+		if !strings.Contains(problem.Detail, want) {
+			t.Errorf("problem detail = %q, want it to contain %q", problem.Detail, want)
+		}
+	}
+	if len(problem.Errors) != 2 {
+		t.Fatalf("problem errors = %#v, want one entry per bad node", problem.Errors)
+	}
+	for index, want := range []struct{ node, location string }{
+		{"call", "body/nodes/1/parameters/workflowId"},
+		{"second", "body/nodes/2/parameters/workflowId"},
+	} {
+		got := problem.Errors[index]
+		if got.Value.NodeID != want.node || got.Value.Code != string(workflow.ErrorInvalidConfig) || got.Location != want.location {
+			t.Errorf("errors[%d] = %+v, want config.invalid on node %s at %s", index, got, want.node, want.location)
+		}
+	}
+}
+
 // Publishing a revision goes through the same gate as activation, so it answers
 // the same refusal rather than a 500 of its own.
 func TestPublishingAParentWhoseSubworkflowIsInactiveAnswersTheSame422(t *testing.T) {
