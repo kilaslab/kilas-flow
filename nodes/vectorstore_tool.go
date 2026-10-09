@@ -315,6 +315,8 @@ func (tool *vectorStoreAnswerTool) Invoke(ctx context.Context, arguments json.Ra
 	if err != nil {
 		return "", fmt.Errorf("node %q: tool %q: %w", tool.agentNode, tool.name, err)
 	}
+	// The agent's usage is what its run cost, this call included.
+	ai.RecordToolUsage(ctx, response.Usage)
 	answer := strings.TrimSpace(response.Message.Content)
 	if answer == "" {
 		return "", fmt.Errorf("node %q: tool %q: the chat model returned no answer", tool.agentNode, tool.name)

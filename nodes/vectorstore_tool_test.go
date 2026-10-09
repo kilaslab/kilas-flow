@@ -504,6 +504,11 @@ func TestAgentAnswersThroughAVectorStoreToolOverARetrieveStore(t *testing.T) {
 	if store.tenant != "tenant-answer" || store.collection != "hr" || store.topK != 2 {
 		t.Errorf("search = tenant %q collection %q topK %d", store.tenant, store.collection, store.topK)
 	}
+	// The agent's usage is what the run cost: its own two turns (10 and 5
+	// tokens) and the tool's model call (5).
+	if usage, _ := agentOutput[0][0].JSON["usage"].(map[string]any); usage["totalTokens"] != float64(20) {
+		t.Errorf("agent usage = %#v, want 20 total tokens, the tool's model call included", usage)
+	}
 	chats := provider.recordedChats()
 	if len(chats) != 3 {
 		t.Fatalf("chat calls = %d, want agent, tool model, agent", len(chats))
