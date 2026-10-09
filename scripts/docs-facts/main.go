@@ -34,6 +34,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kilaslab/kilas-flow/internal/cli"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/shippedcatalogue"
 	"github.com/kilaslab/kilas-flow/scripts/internal/splice"
@@ -42,6 +43,8 @@ import (
 const (
 	catalogueBegin = "<!-- generated:catalogue-size -->"
 	catalogueEnd   = "<!-- /generated:catalogue-size -->"
+	exitCodesBegin = "<!-- generated:exit-codes -->"
+	exitCodesEnd   = "<!-- /generated:exit-codes -->"
 
 	// regenerate is what a stale page is told to run.
 	regenerate = "make generate-docs-facts"
@@ -92,6 +95,9 @@ func facts() ([]fact, error) {
 	size := func() (string, error) { return sentence, nil }
 
 	return []fact{
+		{name: "exit codes", path: "docs/src/content/docs/reference/cli.md",
+			begin: exitCodesBegin, end: exitCodesEnd,
+			body: func() (string, error) { return cli.RenderExitCodeReference(), nil }},
 		{name: "catalogue size", path: "docs/src/content/docs/concepts/node-registry.md",
 			begin: catalogueBegin, end: catalogueEnd, body: size},
 		{name: "catalogue size", path: "docs/src/content/docs/start/what-kilasflow-is.md",

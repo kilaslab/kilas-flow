@@ -731,6 +731,10 @@ kilasflow mcp serve --url http://127.0.0.1:8080   # the credential comes from KI
   them has its own version echoed back, and anything else is answered with the
   newest. The modern `initialize`-less revisions (`2026-07-28` and later) are out
   of scope here.
+- **Failures** exit 1. `error.code = "mcp_catalogue"` is an ordinary envelope: the
+  tool list could not be built from the command tree, before the transport
+  started. `mcp_transport` means the stdio transport failed once it was running,
+  and so it is reported on stderr, because stdout belongs to the protocol.
 - **Deliberately not shipped**: the streamable HTTP transport, which design §6
   puts after stdio; `resources`, `prompts`, sampling and elicitation, which the
   adapter answers with `method not found` rather than declaring capabilities it
@@ -803,8 +807,13 @@ wf_01J8ZP…
 ## Exit codes
 
 The exit code is the machine-readable half of the contract: it tells an agent
-whether to fix the call, stop and ask, wait, or report.
+whether to fix the call, stop and ask, wait, or report. The tables below are
+generated from the binary's own exit-code table (`make generate-docs-facts`), so
+they cannot disagree with it, and every example on this page that exits
+non-zero says so in a trailing `# exit N` comment, which
+`make smoke-cli-examples` checks against a booted server.
 
+<!-- generated:exit-codes -->
 | Code | Meaning | Agent response |
 | --- | --- | --- |
 | 0 | success | continue |
@@ -815,32 +824,47 @@ whether to fix the call, stop and ask, wait, or report.
 | 5 | conflict (`409`) — optimistic concurrency, idempotency mismatch | re-read, then decide |
 | 6 | not ready (`503`, or `429`) — migrations outstanding, subsystem unconfigured, throttled | wait, then retry |
 
-Statuses the design's table does not name are mapped as well, and the mapping
-is part of the contract: `400` and `422` exit 2 (`bad_request`), `401` exits 3
-(`unauthenticated`), `429` exits 6 (`rate_limited`).
+The mapping from an HTTP status to the exit code and `error.code` is part of the contract:
 
-Code 3 is the important one, because it is not one condition. Three different
-refusals share it and are told apart by `error.code`:
+| HTTP status | Exit | `error.code` |
+| --- | --- | --- |
+| `200`, `201`, `202`, `204` | 0 | — |
+| `400`, `422` | 2 | `bad_request` |
+| `401` | 3 | `unauthenticated` |
+| `403` | 3 | `scope_denied` |
+| `404` | 4 | `not_found` |
+| `409` | 5 | `conflict` |
+| `429` | 6 | `rate_limited` |
+| `503` | 6 | `not_ready` |
+| any other `5xx` | 1 | `server_error` |
+| any other status | 1 | `http_error` |
+
+Code 3 is the important one, because it is not one condition. Three different refusals share it and are told apart by `error.code`:
 
 | `error.code` | Means |
 | --- | --- |
 | `scope_denied` | a `403`, or a guarded verb called with a scoped agent token: this credential may not do this, whatever the flags |
 | `unauthenticated` | a `401`: no usable credential was presented |
 | `confirmation_required` | a guarded verb was called without `--yes` |
+<!-- /generated:exit-codes -->
 
 The codes the CLI derives from a status, or raises for a local failure, are
 `usage`, `bad_request`, `not_found`, `conflict`, `not_ready`, `rate_limited`,
 `server_error`, `network_error` (the request never produced a response),
 `http_error` (a status the contract does not name), `config_error` (a
 configuration file that could not be read or written), `unexpected_response` (a
-response body that is not the shape the call needs), `output_error` (the
-invocation was right and the write it asked for was refused: exit 1, as a full
-disk or a read-only mount is not a mistake in the call) and `error` (a local
-failure that is not an HTTP result). That is the generic vocabulary, not a
-closed set: a verb that can name a failure only it can produce raises its own
-code — `execution_failed`, `invalid_pack`, `stream_closed`, `timeout`,
-`skills_drift`, `install_conflict`, `bundle_unreadable` — and
-documents it in that verb's section above.
+response body that is not the shape the call needs), `unexpected_shape` (the
+server's OpenAPI document, which `api --schema` reads, is not the shape the CLI
+needs), `output_error` (the invocation was right and the write it asked for was
+refused: exit 1, as a full disk or a read-only mount is not a mistake in the
+call) and `error` (a local failure that is not an HTTP result). That is the
+generic vocabulary, not a closed set: a verb that can name a failure only it can
+produce raises its own code — `execution_failed`, `invalid_pack`,
+`stream_closed`, `timeout`, `skills_drift`, `install_conflict`,
+`bundle_unreadable`, `mcp_catalogue` (`mcp serve` could not build its tool list
+from the command tree) and `mcp_transport` (its stdio transport failed) — and
+documents it in that verb's section above. A test fails when the CLI raises a
+code this page never names.
 
 ## Configuration and token handling
 

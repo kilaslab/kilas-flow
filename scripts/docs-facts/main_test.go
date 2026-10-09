@@ -110,6 +110,29 @@ func TestCheckReportsEveryStalePage(t *testing.T) {
 	}
 }
 
+// The command owns three sections today: the exit-code tables of the CLI
+// reference and the catalogue's size on the two pages that state it. A fact that
+// quietly left the list would leave its page unguarded.
+func TestFactsCoverTheExitCodesAndBothCataloguePages(t *testing.T) {
+	list, err := facts()
+	if err != nil {
+		t.Fatalf("facts() error = %v", err)
+	}
+	have := map[string]string{}
+	for _, entry := range list {
+		have[entry.path] = entry.name
+	}
+	for path, name := range map[string]string{
+		"docs/src/content/docs/reference/cli.md":           "exit codes",
+		"docs/src/content/docs/concepts/node-registry.md":  "catalogue size",
+		"docs/src/content/docs/start/what-kilasflow-is.md": "catalogue size",
+	} {
+		if have[path] != name {
+			t.Errorf("facts() has %q for %s, want %q", have[path], path, name)
+		}
+	}
+}
+
 // The committed pages are the real subject: this is the same comparison
 // `make generate-docs-facts-check` makes, run by `go test ./...` so a node added
 // in one change cannot reach main with the docs' size untouched.
