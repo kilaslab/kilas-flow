@@ -623,6 +623,46 @@ func TestTheAgentResolvesAToolFormsBaseItselfOrRefuses(t *testing.T) {
 	}
 }
 
+// A condition whose column an expression computes, and which comes out empty
+// (a model that sent no column name, an item without the field), is refused
+// rather than dropped: dropping it makes a select or a delete match more rows
+// than the author wrote it to. A row the author left blank is still skipped.
+func TestAComputedConditionColumnThatResolvesEmptyIsRefused(t *testing.T) {
+	t.Parallel()
+
+	executor := nodes.NewPostgresV2Executor(sqlGuard(), sqlnode.DefaultCeiling())
+	run := func(where []any) error {
+		_, err := executor.Execute(context.Background(), workflow.IRNode{
+			ID: "db", Name: "Database", Type: nodes.PostgresNodeType, TypeVersion: workflow.V(2),
+			Parameters: map[string]any{
+				"operation": "deleteTable", "deleteCommand": "delete",
+				"table": map[string]any{"__rl": true, "mode": "name", "value": "orders"},
+				"where": where,
+			},
+			Credentials: map[string]string{"postgres": "cred-db"},
+		}, workflow.NodeInput{"main": {{JSON: map[string]any{"column": "", "id": float64(7)}}}}, engine.Request{
+			Credentials: credentialMap{"cred-db": {ID: "cred-db", Type: "postgres", Fields: map[string]string{"host": "db.invalid"}}},
+		})
+		return err
+	}
+	err := run([]any{
+		map[string]any{"field": "status", "operator": "equals", "value": "open"},
+		map[string]any{"field": formExpression("{{ $json.column }}"), "operator": "equals", "value": formExpression("{{ $json.id }}")},
+	})
+	if err == nil || !strings.Contains(err.Error(), "condition 2") {
+		t.Fatalf("Execute() error = %v, want condition 2 refused before anything connects", err)
+	}
+	// A blank row is the author's, and is skipped as before: the run gets as
+	// far as connecting.
+	err = run([]any{
+		map[string]any{"field": "status", "operator": "equals", "value": "open"},
+		map[string]any{"field": "", "operator": "equals", "value": ""},
+	})
+	if err == nil || strings.Contains(err.Error(), "condition") {
+		t.Fatalf("Execute(blank row) error = %v, want it to reach the connection", err)
+	}
+}
+
 // A descriptor is data: one that names an executor of its choosing still runs
 // the base node the tool type names, found on the server.
 func TestADescriptorCannotNameItsExecutor(t *testing.T) {

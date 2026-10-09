@@ -352,6 +352,11 @@ func (executor *SQLOperationExecutor) Execute(ctx context.Context, ir workflow.I
 			})
 		}
 		statement, err := buildSQLStatement(executor.dialect, parameters, item, options)
+		if err == nil {
+			if refusal := refuseEmptyComputedColumns(ir.Parameters["where"], parameters["where"]); refusal != nil {
+				statement, err = sqlnode.Statement{}, refusal
+			}
+		}
 		if err != nil && mode != BatchingIndependently {
 			return nil, fmt.Errorf("node %q: item %d: %w", ir.Name, index+1, err)
 		}
@@ -602,6 +607,29 @@ func postgresConditions(value any) ([]sqlbuild.Comparison, error) {
 		})
 	}
 	return comparisons, nil
+}
+
+// refuseEmptyComputedColumns refuses a condition whose column an expression
+// computes and which resolved to nothing. postgresConditions skips a row with
+// no column, which is right for a row the author left blank and wrong for one
+// whose column came from data or from an agent's model: the condition would
+// vanish and the statement match more rows than it was written to — every row,
+// for a delete with one condition.
+func refuseEmptyComputedColumns(unresolved, resolved any) error {
+	authored, _ := unresolved.([]any)
+	rows, _ := resolved.([]any)
+	for index, entry := range authored {
+		row, _ := entry.(map[string]any)
+		if !expression.IsExpression(row["field"]) || index >= len(rows) {
+			continue
+		}
+		resolvedRow, _ := rows[index].(map[string]any)
+		if strings.TrimSpace(textValue(resolvedRow["field"], "")) == "" {
+			return fmt.Errorf("condition %d takes its column from an expression that resolved to nothing; it is "+
+				"refused rather than dropped, because the statement would then match more rows than it was written to", index+1)
+		}
+	}
+	return nil
 }
 
 // postgresOperator maps the shared condition vocabulary onto the builder's.
