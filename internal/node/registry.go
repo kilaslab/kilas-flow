@@ -137,6 +137,12 @@ type Definition struct {
 	// Tagged json:"-" deliberately: the catalogue is served to every tenant, and
 	// which tenants a node is reserved for is not theirs to read.
 	VisibleTo []string `json:"-"`
+	// ToolFormOf names the node type this one is the agent-tool form of. A
+	// tool form runs its base's executor with its base's credentials, so it
+	// can never be visible where its base is not: the registry refuses one
+	// registered before its base or with a different scope, refuses an
+	// operator grant naming it, and rescopes it whenever its base is scoped.
+	ToolFormOf string `json:"-"`
 }
 
 // WebhookDeclaration is how a node type says it answers an inbound request.
@@ -343,6 +349,9 @@ func (registry *Registry) register(definition Definition, source Source) error {
 			definition.Type, definition.Version, existing.Source, source)
 	}
 	if err := registry.checkScopeAgrees(definition.Type, definition.Version, tenants); err != nil {
+		return err
+	}
+	if err := registry.checkToolFormScope(definition.Type, definition.ToolFormOf, tenants); err != nil {
 		return err
 	}
 	registry.definitions[key] = cloneDefinition(definition)
