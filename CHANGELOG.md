@@ -29,8 +29,10 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   variables (`$WORKFLOW_ID`, `$EXECUTION_ID`, ...), and a command that is
   expected to fail says so in a trailing `# exit N`. The page's exit-code tables
   and the node catalogue's size on the registry and "What KilasFlow is" pages
-  are generated from the binary (`make generate-docs-facts`), and `make
-  smoke-cli`, which existed but ran nowhere, is now part of the smoke job.
+  are generated from the binary (`make generate-docs-facts`), as is the
+  credential-type count on the credentials page, which now lists the two Google
+  types it had missed. `make smoke-cli`, which existed but ran nowhere, is now
+  part of the smoke job.
   `mcp_catalogue`, `mcp_transport` and `unexpected_shape` are named in the
   error-code vocabulary.
 - Code (JavaScript) (`kilasflow.jsCode`): n8n JavaScript Code nodes run, on
