@@ -134,8 +134,8 @@ const EXCLUSIONS = {
 		'The Google sign-in is bound to the browser that starts it, and a backend client cannot be that browser. ' +
 		'The response sets an HttpOnly nonce cookie scoped to the OAuth callback and the callback completes only ' +
 		'when that cookie comes back with the state ("this sign-in was not started in this browser"); the state ' +
-		'also records the starting request\'s Origin as the postMessage target and the redirect URI comes from ' +
-		'its Host. A KilasFlowClient runs on a host\'s server with a bearer key and its transport reads only the ' +
+		'also records the starting request\'s Origin as the postMessage target and, unless server.public_url is ' +
+		'set, the redirect URI comes from its Host. A KilasFlowClient runs on a host\'s server with a bearer key and its transport reads only the ' +
 		'JSON body, so the cookie would stay in the server process while the end user\'s browser opened the ' +
 		'returned authorizeUrl without it and was refused at the callback. An embed session is refused the ' +
 		'whole /credentials mutation prefix and the browser entry carries no API client by design, so the ' +

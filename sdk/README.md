@@ -75,8 +75,8 @@ One operation has no method on purpose: `start-credential-oauth` (`POST
 /credentials/{id}/oauth/start`), the Google Connect popup. The sign-in is bound
 to the browser that starts it — the response sets an `HttpOnly` cookie that the
 OAuth callback requires, and a backend client would keep that cookie in the
-server process instead of the customer's browser — so only the dashboard, in its
-own session, can start one. `createCredential` still creates the credential
+server process instead of the customer's browser — so only a browser can
+complete one, in practice the dashboard in its own session. `createCredential` still creates the credential
 record; the Connect step happens in the dashboard.
 
 `convertWorkflowFragment` is the translator `importWorkflow` uses, without the
