@@ -7,6 +7,13 @@ until the server surface it targets is considered stable; see `README.md`.
 
 ## Unreleased
 
+- **Additive**: workflow tags. `Document` and `WorkflowDocumentInput` take an
+  optional `tags` list (at most 20, each 1 to 24 characters, unique ignoring
+  case; a save without `tags` clears them, so a client that rewrites a document
+  must send back the `tags` it read), and every `WorkflowSummary` carries
+  `tags`, an array that is empty when the workflow has none. The list endpoint
+  takes a `tag` filter. A client that builds a `WorkflowSummary` literal in
+  TypeScript must add `tags: []`.
 - **Additive**: `deleteTenant`, covering `DELETE /api/v1/tenants/{id}`. It
   deletes a customer and everything it owns — executions and their payload
   files, workflows and versions, credentials, schedules, webhook deliveries,

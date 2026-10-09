@@ -21,4 +21,10 @@ export interface WorkflowDocumentInput {
   nodes: Node[] | null;
   schemaVersion: number;
   settings: WorkflowDocumentInputSettings;
+  /**
+     * Optional labels that group workflows. At most 20; each 1 to 24 characters with no leading or trailing whitespace, no comma and no control character; unique ignoring case. Order and case are kept. The list filters by one with ?tag=
+     * @maxItems 20
+     * @nullable
+     */
+  tags?: string[] | null;
 }

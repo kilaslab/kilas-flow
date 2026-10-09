@@ -104,7 +104,7 @@ type WorkflowSummary struct {
 	UpdatedAt      time.Time `json:"updatedAt"`
 	// Tags is always an array, empty when the workflow has none, so a client
 	// never has to tell an absent field from a null one.
-	Tags []string `json:"tags" doc:"The latest revision's tags, in the order they were written; empty when it has none"`
+	Tags []string `json:"tags" nullable:"false" doc:"The latest revision's tags, in the order they were written; empty when it has none"`
 }
 
 // ExecutionRequestResource reports the durable request created by a manual
