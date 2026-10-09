@@ -564,6 +564,11 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   every sentence of a skill's not-shipped claims, and the whole bundle's prose,
   for a shipped verb, flag or operation denied in any wording.
 
+- The message a SQLite install shows for the vector store, and the one a PostgreSQL
+  without the pgvector extension shows at start, name the vector store node alone.
+  They used to say the embeddings node needs pgvector too, which it never did: it
+  calls an OpenAI-compatible HTTP API and runs on either database.
+
 - n8n import: a Postgres PGVector Store saved with no `mode` imports in n8n's
   default mode, retrieve, and one saved with no table name reads n8n's default
   table, `n8n_vectors`, instead of `documents`. Template 16706 now imports with
