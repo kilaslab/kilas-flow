@@ -278,6 +278,21 @@ func TestTheExampleHarnessRefusesAMiswiredAgent(t *testing.T) {
 	}
 }
 
+// A request example is only worth running if a wrong body fails. `data` was the
+// mistake the audit made for a credential (CLI-5): the operation wants `fields`,
+// and the handler refuses a body without it.
+func TestTheExampleHarnessRefusesAMalformedRequest(t *testing.T) {
+	server := newExampleServer(t)
+
+	problems := server.sendRequest(t, skills.Example{
+		Path: "skills/kilasflow-fixture/references/EXAMPLE.md", Kind: skills.ExampleRequest,
+		Operation: "create-credential", JSON: `{"name": "Upstream", "type": "httpHeaderAuth", "data": {}}`,
+	})
+	if len(problems) == 0 {
+		t.Fatal("`api create-credential` accepted a body that carries `data` instead of `fields`")
+	}
+}
+
 // kilasflow-node-configuration teaches the stored shape of every property kind
 // an agent has to write by hand, and the compiler does not refuse a legacy or
 // undeclared shape on its own (property.ReadLocator accepts a bare string, for

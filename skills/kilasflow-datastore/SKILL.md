@@ -56,6 +56,7 @@ kilasflow_not_shipped:
 ## Strong defaults
 
 - Open with `kilasflow context`: server, identity, workflows, datastores and node types in one read-only call.
+- Start from the validated example: `kilasflow skills show kilasflow-datastore --reference EXAMPLE.md` has the `create-datastore` body, and a workflow that inserts with automatic column mapping and reads the row back with a filter.
 - Enumerate tables with `kilasflow datastore list` (`list-datastores`, `--limit` 1-500 defaulting to 100 and `--cursor` from the previous page); then `kilasflow datastore get <datastoreId>` (`get-datastore`) for `id`, `name` and `columns[{name,type}]`, where a type is one of `string`, `number`, `boolean` or `date` (internal/api/handlers/datastores.go).
 - Read rows with `kilasflow datastore rows <datastoreId>` (`list-datastore-rows`, `--limit` defaulting to 25 and clamped at 100, `--cursor` to keep paging) (internal/datastore/filter.go). The filter query language is not exposed on this verb: use `kilasflow api list-datastore-rows --path id=<datastoreId> --query match=all --query columnName=status --query condition=eq --query value=active`, and read references/FILTERS.md before writing one.
 - Read one row back with `kilasflow api get-datastore-row --path id=<datastoreId> --path rowId=<rowId>` (`get-datastore-row`); a write answers with the rows it wrote, so this is for re-reading later, not for verifying the last call.
@@ -133,4 +134,5 @@ what are you doing?
 
 | File | Read when |
 | --- | --- |
+| EXAMPLE.md | you are creating a table or pointing a workflow at one and need the create body, the locator, the column mapper and a filter written out |
 | FILTERS.md | you are writing a filter for a read, update, delete, upsert or increment, or you need the operator list, value coercion, match mode or paging rules |

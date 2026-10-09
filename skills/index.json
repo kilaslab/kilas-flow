@@ -95,6 +95,7 @@
         "No storage substitution for the datastore: one database serves every tenant, and there is no interface a host implements"
       ],
       "references": [
+        "references/EXAMPLE.md",
         "references/FILTERS.md"
       ]
     },
