@@ -120,6 +120,28 @@ describe('controlOwnsKey', () => {
 		).toBe(true);
 	});
 
+	// Tab is keyboard navigation (BUG-ywbvfa). On the canvas it opens the node
+	// picker, n8n-style, but on a toolbar button, an inspector control or a tab
+	// it must move focus: swallowing it there trapped a keyboard user on the
+	// first control of the editor.
+	it('gives Tab to a focused control and keeps it for add-step on the canvas', () => {
+		const role = (r: string) =>
+			({ tagName: 'DIV', closest: (selector: string) => (selector.includes(`role="${r}"`) ? {} : null) }) as unknown as EventTarget;
+		expect(controlOwnsKey({ tagName: 'BUTTON' } as unknown as EventTarget, 'Tab')).toBe(true);
+		expect(controlOwnsKey({ tagName: 'A' } as unknown as EventTarget, 'Tab')).toBe(true);
+		expect(controlOwnsKey({ tagName: 'SUMMARY' } as unknown as EventTarget, 'Tab')).toBe(true);
+		for (const r of ['button', 'tab', 'menuitem', 'switch', 'checkbox', 'option', 'combobox']) {
+			expect(controlOwnsKey(role(r), 'Tab'), r).toBe(true);
+		}
+		// The canvas region, a node (role="group") and the page itself.
+		expect(controlOwnsKey({ tagName: 'DIV', closest: () => null } as unknown as EventTarget, 'Tab')).toBe(false);
+		expect(controlOwnsKey(role('group'), 'Tab')).toBe(false);
+		expect(controlOwnsKey({ tagName: 'BODY' } as unknown as EventTarget, 'Tab')).toBe(false);
+		expect(controlOwnsKey(null, 'Tab')).toBe(false);
+		expect(editorShortcut(press('Tab'), { tagName: 'BUTTON' } as unknown as EventTarget)).toBeNull();
+		expect(editorShortcut(press('Tab'), { tagName: 'DIV', closest: () => null } as unknown as EventTarget)).toBe('add-step');
+	});
+
 	// Only Enter is contended: a button does not own Cmd+S, and the canvas
 	// shortcut for it has to keep working while one has focus.
 	it('leaves the canvas keys a focused button does not own', () => {
