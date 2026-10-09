@@ -81,3 +81,42 @@ func assertCredentialEventsRecordTheActor(t *testing.T, db *database.DB) {
 		t.Fatalf("RecordCredentialEvent() without a cipher error = %v", err)
 	}
 }
+
+// The OAuth callback looks up one event — the connect-started row with its
+// state's nonce hash — rather than reading a credential's whole trail.
+func TestFindCredentialEventMatchesActionAndDetailUnderTheTenant(t *testing.T) {
+	eachDriver(t, assertFindCredentialEvent)
+}
+
+func assertFindCredentialEvent(t *testing.T, db *database.DB) {
+	ctx := context.Background()
+	store := repository.NewCredentialStore(db.DB, stateCipher(t, 0x56))
+	tenant, other := repository.TenantScope{ID: "drv-find-event"}, repository.TenantScope{ID: "drv-find-event-other"}
+	created := mustBearer(t, store, tenant, "Drive", "token")
+	keyA := repository.Actor{Kind: repository.ActorKindKey, Label: "a", KeyID: "key_a"}
+	userB := repository.Actor{Kind: repository.ActorKindUser, Label: "b@acme.example"}
+	for _, event := range []repository.CredentialEvent{
+		{CredentialID: created.ID, Action: repository.CredentialEventConnectStarted, Actor: keyA, Detail: "nonce-a"},
+		{CredentialID: created.ID, Action: repository.CredentialEventConnectStarted, Actor: userB, Detail: "nonce-b"},
+		{CredentialID: created.ID, Action: repository.CredentialEventTested, Actor: userB, Detail: "nonce-a"},
+	} {
+		if err := store.RecordCredentialEvent(ctx, tenant, event); err != nil {
+			t.Fatalf("RecordCredentialEvent() error = %v", err)
+		}
+	}
+
+	found, ok, err := store.FindCredentialEvent(ctx, tenant, created.ID, repository.CredentialEventConnectStarted, "nonce-a")
+	if err != nil || !ok || !sameActor(found.Actor, keyA) {
+		t.Fatalf("FindCredentialEvent(nonce-a) = %+v, %t, %v, want key A's start", found, ok, err)
+	}
+	found, ok, err = store.FindCredentialEvent(ctx, tenant, created.ID, repository.CredentialEventConnectStarted, "nonce-b")
+	if err != nil || !ok || !sameActor(found.Actor, userB) {
+		t.Fatalf("FindCredentialEvent(nonce-b) = %+v, %t, %v, want user B's start", found, ok, err)
+	}
+	if _, ok, err := store.FindCredentialEvent(ctx, tenant, created.ID, repository.CredentialEventConnectStarted, "nonce-c"); err != nil || ok {
+		t.Fatalf("FindCredentialEvent(unknown) = %t, %v, want no match", ok, err)
+	}
+	if _, ok, err := store.FindCredentialEvent(ctx, other, created.ID, repository.CredentialEventConnectStarted, "nonce-a"); err != nil || ok {
+		t.Fatalf("FindCredentialEvent() under another tenant = %t, %v, want no match", ok, err)
+	}
+}

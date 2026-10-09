@@ -84,14 +84,38 @@ func (store *GORMCredentialStore) CredentialEvents(ctx context.Context, tenant T
 	}
 	events := make([]CredentialEvent, 0, len(models))
 	for _, model := range models {
-		events = append(events, CredentialEvent{
-			CredentialID: model.CredentialID, CredentialName: model.CredentialName,
-			CredentialType: model.CredentialType, Action: model.Action,
-			Actor:  Actor{Kind: model.ActorKind, Label: model.ActorLabel, KeyID: model.ActorKeyID},
-			Detail: model.Detail, CreatedAt: model.CreatedAt,
-		})
+		events = append(events, credentialEventFromModel(model))
 	}
 	return events, nil
+}
+
+// FindCredentialEvent returns the newest event of one credential with this
+// action and detail, and whether there is one. The OAuth callback uses it to
+// find the connect-started row its state's nonce hash names, with one indexed
+// lookup instead of reading the credential's whole trail.
+func (store *GORMCredentialStore) FindCredentialEvent(ctx context.Context, tenant TenantScope, credentialID, action, detail string) (CredentialEvent, bool, error) {
+	if err := tenant.validate(); err != nil {
+		return CredentialEvent{}, false, err
+	}
+	var models []credentialEventModel
+	if err := store.db.WithContext(ctx).
+		Where("tenant_id = ? AND credential_id = ? AND action = ? AND detail = ?", tenant.ID, credentialID, action, detail).
+		Order("created_at DESC, id DESC").Limit(1).Find(&models).Error; err != nil {
+		return CredentialEvent{}, false, fmt.Errorf("find credential event: %w", err)
+	}
+	if len(models) == 0 {
+		return CredentialEvent{}, false, nil
+	}
+	return credentialEventFromModel(models[0]), true, nil
+}
+
+func credentialEventFromModel(model credentialEventModel) CredentialEvent {
+	return CredentialEvent{
+		CredentialID: model.CredentialID, CredentialName: model.CredentialName,
+		CredentialType: model.CredentialType, Action: model.Action,
+		Actor:  Actor{Kind: model.ActorKind, Label: model.ActorLabel, KeyID: model.ActorKeyID},
+		Detail: model.Detail, CreatedAt: model.CreatedAt,
+	}
 }
 
 // truncateEventText keeps a value inside its column. PostgreSQL refuses an

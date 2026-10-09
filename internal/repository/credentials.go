@@ -36,6 +36,9 @@ type CredentialRepository interface {
 	// CredentialEvents reads it back, newest first.
 	RecordCredentialEvent(context.Context, TenantScope, CredentialEvent) error
 	CredentialEvents(context.Context, TenantScope, string) ([]CredentialEvent, error)
+	// FindCredentialEvent returns the newest event of one credential with an
+	// action and detail, and whether there is one.
+	FindCredentialEvent(ctx context.Context, tenant TenantScope, credentialID, action, detail string) (CredentialEvent, bool, error)
 	// CredentialUsers lists the workflows whose draft or published version
 	// attaches the credential.
 	CredentialUsers(context.Context, TenantScope, string) ([]CredentialUser, error)

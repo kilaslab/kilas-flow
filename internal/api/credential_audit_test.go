@@ -198,3 +198,74 @@ func TestOAuthConnectIsAttributedToTheBrowserThatStartedIt(t *testing.T) {
 		t.Errorf("details = %q / %q, want the shared nonce hash", connectedEvent.Detail, startedEvent.Detail)
 	}
 }
+
+// Two people press Connect on one credential: an API key A, then a signed-in
+// user B. A's popup is the one that comes back. The connect is A's, not B's,
+// even though B's start is the newer row on the trail.
+func TestAConnectIsAttributedToItsOwnStartWhenTwoAreOpen(t *testing.T) {
+	fake := newFakeGoogle(t)
+	server, keys := newAuthenticatedAPIWith(t, func(deps *api.Deps) {
+		deps.Config.Server.PublicURL = "https://app.test"
+		deps.OAuthSigningKey = signingKey(41)
+		deps.OAuthTokenURL = fake.server.URL
+		deps.OAuthHTTP = fake.server.Client()
+	}, "acme")
+	keyA := keys["acme"]
+	listed, err := server.store.ListAPIKeys(context.Background(), repository.TenantScope{ID: "acme"})
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("ListAPIKeys() = %d keys, %v", len(listed), err)
+	}
+	hash, err := auth.HashPassword("hunter2")
+	if err != nil {
+		t.Fatalf("HashPassword() error = %v", err)
+	}
+	if _, err := server.store.CreateUser(context.Background(),
+		repository.TenantScope{ID: "acme"}, "b@acme.example", "B", hash); err != nil {
+		t.Fatalf("CreateUser() error = %v", err)
+	}
+	login := server.call(t, http.MethodPost, "/api/v1/auth/login", "", map[string]any{
+		"email": "b@acme.example", "password": "hunter2",
+	})
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d (body: %s)", login.Code, login.Body)
+	}
+	sessionB := login.Result().Cookies()[0]
+
+	credentialID := createdCredentialID(t, auditCall(t, server, http.MethodPost, "/api/v1/credentials", keyA, map[string]any{
+		"name": "Drive", "type": credentials.GoogleDriveOAuthType,
+		"fields": map[string]string{"clientId": "tenant-cid", "clientSecret": "tenant-csec"},
+	}, nil))
+	start := func(recorder *httptest.ResponseRecorder) (string, []*http.Cookie) {
+		t.Helper()
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("oauth start = %d (body: %s)", recorder.Code, recorder.Body)
+		}
+		var started struct {
+			AuthorizeURL string `json:"authorizeUrl"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &started); err != nil {
+			t.Fatalf("decode the start response: %v", err)
+		}
+		authorize, err := url.Parse(started.AuthorizeURL)
+		if err != nil {
+			t.Fatalf("authorize URL: %v", err)
+		}
+		fake.saw(authorize.Query().Get("code_challenge"))
+		return authorize.Query().Get("state"), recorder.Result().Cookies()
+	}
+	path := "/api/v1/credentials/" + credentialID + "/oauth/start"
+	stateA, cookiesA := start(auditCall(t, server, http.MethodPost, path, keyA, nil, map[string]string{"Origin": "https://editor.example"}))
+	_, _ = start(auditCallWithCookie(t, server, http.MethodPost, path, sessionB, map[string]any{}, map[string]string{"Origin": "https://editor.example"}))
+
+	if callback := finishConnect(t, server.handler, stateA, cookiesA); !connected(callback) {
+		t.Fatalf("A's callback = %s, want connected", callback.Body)
+	}
+	events := credentialEventsOf(t, server, "acme", credentialID)
+	if len(events) < 3 || events[0].Action != repository.CredentialEventConnected ||
+		events[1].Action != repository.CredentialEventConnectStarted || events[1].Actor.Kind != repository.ActorKindUser {
+		t.Fatalf("trail = %v, want connected after B's and A's connect-started", eventActions(events))
+	}
+	if actor := events[0].Actor; actor.Kind != repository.ActorKindKey || actor.KeyID != listed[0].ID {
+		t.Fatalf("connected actor = %+v, want key A (%s), not user B", actor, listed[0].ID)
+	}
+}

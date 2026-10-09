@@ -336,17 +336,16 @@ func (handler *Credentials) OAuthCallback() http.Handler {
 // Nobody is the answer when that event is missing, which only happens when
 // recording it failed.
 func (handler *Credentials) connectStartedBy(ctx context.Context, tenant repository.TenantScope, state credentials.OAuthState) repository.Actor {
-	events, err := handler.store.CredentialEvents(ctx, tenant, state.CredentialID)
+	started, found, err := handler.store.FindCredentialEvent(ctx, tenant, state.CredentialID,
+		repository.CredentialEventConnectStarted, state.NonceHash)
 	if err != nil {
 		slog.ErrorContext(ctx, "reading who started a Google sign-in failed", slog.String("error", err.Error()))
 		return repository.Actor{}
 	}
-	for _, event := range events {
-		if event.Action == repository.CredentialEventConnectStarted && event.Detail == state.NonceHash {
-			return event.Actor
-		}
+	if !found {
+		return repository.Actor{}
 	}
-	return repository.Actor{}
+	return started.Actor
 }
 
 func writeOAuthResult(w http.ResponseWriter, ok bool, detail, origin string) {

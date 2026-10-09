@@ -50,7 +50,6 @@ func (store *GORMCredentialStore) CredentialUsers(ctx context.Context, tenant Te
 		Active     bool
 		Definition []byte
 	}
-	var rows []candidate
 	versions := store.db.NamingStrategy.TableName("workflow_versions")
 	workflows := store.db.NamingStrategy.TableName("workflows")
 	statement := fmt.Sprintf(
@@ -59,14 +58,24 @@ func (store *GORMCredentialStore) CredentialUsers(ctx context.Context, tenant Te
 			" WHERE v.tenant_id = ? AND w.deleted_at IS NULL"+
 			" AND (v.revision = w.latest_revision OR v.id = w.active_version_id)",
 		versions, workflows)
-	if err := store.db.WithContext(ctx).Raw(statement, tenant.ID).Scan(&rows).Error; err != nil {
+	// Streamed one row at a time, and only a definition that contains the id
+	// is decoded: a tenant's definitions are never all held in memory at once.
+	// Nothing else is queried while the cursor is open, which matters on
+	// SQLite's single connection.
+	rows, err := store.db.WithContext(ctx).Raw(statement, tenant.ID).Rows()
+	if err != nil {
 		return nil, fmt.Errorf("find the workflows using credential: %w", err)
 	}
+	defer rows.Close()
 
 	needle := []byte(credentialID)
 	byWorkflow := map[string]*CredentialUser{}
 	nodeSets := map[string]map[string]struct{}{}
-	for _, row := range rows {
+	for rows.Next() {
+		var row candidate
+		if err := store.db.ScanRows(rows, &row); err != nil {
+			return nil, fmt.Errorf("read a workflow definition: %w", err)
+		}
 		if !bytes.Contains(row.Definition, needle) {
 			continue
 		}
@@ -90,6 +99,10 @@ func (store *GORMCredentialStore) CredentialUsers(ctx context.Context, tenant Te
 			}
 			nodeSets[row.WorkflowID][label] = struct{}{}
 		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("find the workflows using credential: %w", err)
 	}
 
 	users := make([]CredentialUser, 0, len(byWorkflow))
