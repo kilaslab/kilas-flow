@@ -2,9 +2,7 @@
 
 The authority half of an embed session: the middleware's per-request rule, the
 confinement minted into the token, the stream ticket, and the failures an
-integrator actually sees. Sources: internal/api/middleware/embed.go,
-internal/api/handlers/embed.go and `embedscope.go`, internal/auth/session.go,
-internal/api/handlers/auth.go.
+integrator actually sees (docs: concepts/tenancy-and-embedding).
 
 ## The per-request rule
 
