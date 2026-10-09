@@ -53,6 +53,18 @@ func TestRetrieveModeDeclaresAnEmbeddingInputAndAVectorStoreOutput(t *testing.T)
 				t.Errorf("load ports = %+v -> %+v, want the Get Many ports %+v -> %+v", loadInputs, loadOutputs, getManyInputs, getManyOutputs)
 			}
 
+			// Stored native graphs: `operation` is not `mode`. An operation
+			// spelled retrieve kept meaning a search before the mode existed,
+			// and it still declares the search's main ports, never the
+			// retrieve ones.
+			main := []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}}
+			for _, operation := range []string{"retrieve", "search"} {
+				inputs, outputs := definition.PortsFor(map[string]any{"operation": operation}, workflow.V(1))
+				if !reflect.DeepEqual(inputs, main) || !reflect.DeepEqual(outputs, main) {
+					t.Errorf("operation %q ports = %+v -> %+v, want main -> main", operation, inputs, outputs)
+				}
+			}
+
 			toolInputs, toolOutputs := definition.PortsFor(map[string]any{"mode": "retrieve-as-tool"}, workflow.V(1))
 			if len(toolInputs) != 1 || toolInputs[0].Kind != workflow.ConnectionEmbedding {
 				t.Errorf("retrieve-as-tool inputs = %+v, want the embedding port alone", toolInputs)
