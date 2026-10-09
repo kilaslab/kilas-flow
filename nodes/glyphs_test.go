@@ -28,6 +28,10 @@ var glyphVariants = map[string]string{
 	"kilasflow.executeWorkflowTrigger": "kilasflow.executeWorkflow",
 	"kilasflow.workflowTool":           "kilasflow.executeWorkflow",
 	"pack.wahaTrigger":                 "pack.waha",
+	// Tool forms (tool_form.go) draw their base node's glyph.
+	"kilasflow.gmailTool":    "kilasflow.gmail",
+	"kilasflow.postgresTool": "kilasflow.postgres",
+	"pack.telegramTool":      "pack.telegram",
 }
 
 // TestEveryNodeTypeHasAGlyphOfItsOwn refuses two catalogue types that draw

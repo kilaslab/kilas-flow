@@ -36,10 +36,10 @@ engine's own store.
 The engine, the editor, the node registry, encrypted credential storage, the
 expression evaluator, webhook and cron triggers, sub-workflows, durable waits,
 opt-in authentication, the n8n importer and exporter, and the embedded-editor
-session flow are all implemented and covered by tests. The registry serves 62
-distinct node types out of the box, across 69 type-and-version pairs: 59 types
-(64 pairs) compiled into the binary, counting the import placeholder for
-unsupported nodes, and 3 types (5 pairs) from the declarative packs it ships
+session flow are all implemented and covered by tests. The registry serves 65
+distinct node types out of the box, across 72 type-and-version pairs: 61 types
+(66 pairs) compiled into the binary, counting the import placeholder for
+unsupported nodes, and 4 types (6 pairs) from the declarative packs it ships
 with. [`GET /api/v1/node-types`](/reference/api/) is the list of record, and a
 test fails when this sentence stops matching the registrations behind it.
 

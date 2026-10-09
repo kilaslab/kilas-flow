@@ -76,6 +76,10 @@ func shippedCatalogue(t *testing.T) (compiled, packs catalogueCount) {
 	}); err != nil {
 		t.Fatalf("waha.Register() error = %v", err)
 	}
+	// The packs' agent-tool forms (pack.telegramTool), as run() registers them.
+	if err := nodes.RegisterPackToolForms(packRegistry); err != nil {
+		t.Fatalf("RegisterPackToolForms() error = %v", err)
+	}
 	return countCatalogue(compiledRegistry), countCatalogue(packRegistry)
 }
 
