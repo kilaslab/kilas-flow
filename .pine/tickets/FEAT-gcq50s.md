@@ -5,9 +5,9 @@ status: todo
 priority: low
 labels:
     - parity
-parent: EPIC-hkypt5
+parent: EPIC-8rbys7
 created: "2026-09-21T12:03:36Z"
-updated: "2026-09-21T13:30:00Z"
+updated: "2026-10-09T11:01:23Z"
 ---
 
 # Description
@@ -26,7 +26,9 @@ Work deliberately left out of the first RAG/Google slice. The shipped subset is 
 Separate tickets per area when someone needs them. Do not block 16706/3647/4799/5908 shapes on this list.
 
 # Notes
-OCR, Pinecone, Q&A Chain retriever, Google Sheets, and tenant `CREATE EXTENSION` stay out of scope.
+OCR, Pinecone, Q&A Chain retriever and tenant `CREATE EXTENSION` stay out of scope. Google Sheets is no longer out of scope: FEAT-vntngh owns it. The vector-store retrieve mode, Vector Store Tool and the in-memory store are owned by FEAT-zm3wh2.
+
+Re-parented (2026-10-09) from EPIC-hkypt5 to the parity backlog EPIC-8rbys7: it is a low-priority list of remaining Drive/Gmail/RAG surface, to be split into its own tickets when someone needs an area, and it no longer holds the RAG-templates epic open.
 
 # Related Files
 
