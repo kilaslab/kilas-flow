@@ -80,6 +80,36 @@ describe('nodeShape', () => {
 	});
 });
 
+describe('nodeShape for a node whose ports follow its configuration', () => {
+	// BUG-pc284d: a vector store is a plain main-to-main step as the picker shows
+	// it, and a hub the moment its mode gives it attachment ports. The tile has
+	// to be cut from the ports the node really has, or its attachment labels
+	// print over the name a step draws beneath it.
+	const declared = definition([MAIN], [MAIN], 'AI');
+	const retrieve = { inputs: [{ name: 'embedding', kind: 'ai_embedding' }], outputs: [{ name: 'vectorStore', kind: 'ai_vectorStore' }] };
+	const insert = { inputs: [{ name: 'embedding', kind: 'ai_embedding' }, { name: 'document', kind: 'ai_document' }], outputs: [MAIN] };
+	const cluster = { inputs: [], outputs: [{ name: 'embedding', kind: 'ai_embedding' }] };
+
+	it('reads the resolved ports, not the declared ones', () => {
+		expect(nodeShape(declared)).toBe('step');
+		expect(nodeShape(declared, retrieve)).toBe('hub');
+		expect(nodeShape(declared, insert)).toBe('hub');
+		expect(nodeVisual(declared, retrieve).shape).toBe('hub');
+	});
+
+	it('draws a cluster embeddings node as the sub-node circle it is', () => {
+		const embeddings = definition([MAIN], [MAIN, { name: 'embedding', kind: 'ai_embedding' }], 'AI');
+		expect(nodeShape(embeddings, cluster)).toBe('attachment');
+		// The sequential shape is the declared one: it still takes items on main.
+		expect(nodeShape(embeddings, { inputs: embeddings.inputs ?? [], outputs: embeddings.outputs ?? [] })).toBe('attachment');
+	});
+
+	it('keeps the declared silhouette when no resolved ports are offered', () => {
+		expect(nodeShape(declared, undefined)).toBe('step');
+		expect(nodeVisual(declared).shape).toBe('step');
+	});
+});
+
 describe('port partitioning', () => {
 	it('splits main ports from attachment ports and tolerates a null list', () => {
 		const ports = [MAIN, { name: 'model', kind: 'ai_languageModel' }, { name: 'tools', kind: 'ai_tool' }];

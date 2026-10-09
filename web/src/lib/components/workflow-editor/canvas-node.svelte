@@ -69,7 +69,11 @@
 				)
 			: data.definition
 	);
-	const visual = $derived(nodeVisual(effectiveDefinition));
+	// Resolved before the tile is cut: a vector store is a step as the picker
+	// shows it and a hub once its mode gives it attachment ports, and a hub carries
+	// its name inside the tile where a step prints it underneath.
+	const ports = $derived(resolvedPorts(node, effectiveDefinition));
+	const visual = $derived(nodeVisual(effectiveDefinition, ports));
 	const subtitle = $derived(
 		isPlaceholder
 			? // The raw original type ("@n8n/n8n-nodes-langchain.toolSerpApi") is
@@ -84,7 +88,6 @@
 	const palette = $derived(stickyPalette(node.parameters?.color));
 	const runs = $derived(markdownRuns(node.parameters?.content));
 
-	const ports = $derived(resolvedPorts(node, effectiveDefinition));
 	const mainInputs = $derived(mainPorts(ports.inputs));
 	const mainOutputs = $derived(mainPorts(ports.outputs));
 	const attachmentInputs = $derived(attachmentPorts(ports.inputs));
