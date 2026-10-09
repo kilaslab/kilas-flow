@@ -4,7 +4,7 @@ name: CI
 #
 #   lint            go vet, gofmt, svelte-check, and the web vitest suite
 #   test            go test ./... -race, against real PostgreSQL, MySQL and MariaDB
-#   drift           the committed API client, SDK types, docs reference, and config reference still match the binary
+#   drift           the committed API client, SDK types, docs reference, config reference, and docs facts (catalogue size, exit codes) still match the binary
 #   sdk             the host SDK typechecks, tests, compiles, and packs into a tarball a consumer can install
 #   smoke           the binary, the Vite proxy and the distroless image all serve
 #   smoke-postgres  the image against a Compose PostgreSQL (not on pull requests)
@@ -251,7 +251,7 @@ jobs:
       # eliminate. Each prints its own "…is stale" message on failure, naming the
       # generate command to run.
       #
-      # `if: always()` on all four: they are independent, and stopping at the
+      # `if: always()` on every check below: they are independent, and stopping at the
       # first one hid the other stale artifacts — a run that regenerated only the
       # client it was told about left the next one to fail on someone else's
       # afternoon. A failed step still fails the job.
@@ -277,6 +277,14 @@ jobs:
       - name: Configuration reference
         if: always()
         run: make generate-config-reference-check
+
+      # The docs' catalogue size and exit-code tables are written from the
+      # registrations and the exit-code table in Go by scripts/docs-facts, so a
+      # node added or an exit code changed cannot leave a page stating the old
+      # fact. Go only, like the configuration reference above.
+      - name: Docs facts
+        if: always()
+        run: make generate-docs-facts-check
 
   sdk:
     name: Host SDK
