@@ -232,6 +232,50 @@ func TestRestoringARevisionRestoresItsTagsInTheList(t *testing.T) {
 	}
 }
 
+// An n8n file's tags arrive as the workflow's tags, show in the list, and go
+// back out in n8n's shape. A tag the importer cannot keep is reported and the
+// import still succeeds.
+func TestAnImportedN8nWorkflowKeepsItsTagsAndExportsThem(t *testing.T) {
+	handler, _, _ := newWorkflowAPI(t)
+	imported := importN8nWorkflow(t, handler, `{
+	  "name": "Tagged import",
+	  "nodes": [{"id":"a","name":"On click","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}}],
+	  "connections": {},
+	  "tags": [
+	    {"id":"t1","name":"Prod","createdAt":"2025-01-01T00:00:00.000Z","updatedAt":"2025-01-01T00:00:00.000Z"},
+	    {"id":"t2","name":"bad,tag"},
+	    {"id":"t3","name":"billing"}
+	  ]
+	}`)
+	var tagReport []importIssueResponse
+	for _, issue := range imported.Unsupported {
+		if issue.Field == "tags" {
+			tagReport = append(tagReport, issue)
+		}
+	}
+	if len(tagReport) != 1 || !strings.Contains(tagReport[0].Reason, "bad,tag") {
+		t.Errorf("tag issues = %+v, want exactly one, naming bad,tag", tagReport)
+	}
+
+	rows := requestJSON[[]taggedSummary](t, handler, http.MethodGet, "/api/v1/workflows?tag=prod", nil, http.StatusOK)
+	if len(rows) != 1 || strings.Join(rows[0].Tags, "|") != "Prod|billing" {
+		t.Fatalf("the list after the import = %+v, want the workflow with Prod|billing", rows)
+	}
+
+	exported := requestJSON[struct {
+		Workflow json.RawMessage `json:"workflow"`
+	}](t, handler, http.MethodGet, "/api/v1/workflows/"+imported.Workflow.ID+"/export", nil, http.StatusOK)
+	var file struct {
+		Tags []map[string]any `json:"tags"`
+	}
+	if err := json.Unmarshal(exported.Workflow, &file); err != nil {
+		t.Fatalf("decode export = %v", err)
+	}
+	if len(file.Tags) != 2 || file.Tags[0]["name"] != "Prod" || file.Tags[1]["name"] != "billing" || len(file.Tags[0]) != 1 {
+		t.Errorf("exported tags = %v, want [{name:Prod} {name:billing}] with no invented ids", file.Tags)
+	}
+}
+
 func TestTheOpenAPIDocumentsTags(t *testing.T) {
 	handler, _, _ := newWorkflowAPI(t)
 	recorder := get(t, handler, "/api/openapi.json")
