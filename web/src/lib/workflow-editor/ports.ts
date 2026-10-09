@@ -1,14 +1,24 @@
-import type { Connection, Definition, Node, Port } from '$lib/api/generated/models';
+import type { Connection, Definition, Document, Node, Port } from '$lib/api/generated/models';
 import * as m from '$lib/paraglide/messages.js';
 import { resolveDefinition } from './document';
 
 // A few node types derive their ports from their own parameters on the server
-// (nodes/flow.go, nodes/datastore.go). The canvas has to derive them the same
-// way, or a Switch's branches collapse into one dead handle and a wire the
-// compiler would accept is refused before it is drawn.
+// (nodes/flow.go, nodes/datastore.go, nodes/rag.go). The canvas has to derive
+// them the same way, or a Switch's branches collapse into one dead handle and a
+// wire the compiler would accept is refused before it is drawn.
+//
+// Every type listed here mirrors a Go `PortsFor`, and a hand-written mirror
+// drifts. The vector stores and the embeddings node are therefore held to a
+// table the Go suite generates from the real registry
+// (nodes/testdata/ports_for.golden.json, read by ports.golden.test.ts), and a
+// Go test fails when a registered node resolves its ports in Go without
+// appearing in that table or being named as mirrored by hand.
 const SWITCH_NODE_TYPE = 'kilasflow.switch';
 const MERGE_NODE_TYPE = 'kilasflow.merge';
 const DATASTORE_NODE_TYPE = 'kilasflow.datastore';
+const VECTOR_STORE_NODE_TYPE = 'kilasflow.vectorStore';
+const VECTOR_STORE_PGVECTOR_NODE_TYPE = 'kilasflow.vectorStorePGVector';
+const EMBEDDINGS_NODE_TYPE = 'kilasflow.embeddings';
 
 // Both numbers come from a document rather than from the user, so both are
 // bounded before anything builds a port for them.
@@ -104,6 +114,93 @@ export function connectionFromCanvas(
 	};
 }
 
+/**
+ * The connection a node picked from the picker gets, when the picker was opened
+ * from a port of an existing node.
+ *
+ * Two directions share this path. Opened from a main OUTPUT (`kind` null), the
+ * new node is the next step: the port feeds its main input. Opened from an
+ * empty attachment INPUT slot (`kind` is the slot's kind), the new node is the
+ * provider — a model, a memory, a tool — so its own output of that kind feeds
+ * the slot. Looking for an input of the slot's kind on the new node, as this
+ * did, finds nothing on a sub-node and added it unwired (BUG-w1jp70).
+ *
+ * Built through `connectionFromCanvas`, so a connection the canvas would refuse
+ * (a full single-slot port, a node type the port does not accept) is never made.
+ */
+export function connectionForPickedNode(
+	picked: { id: string; ports: { inputs: Port[]; outputs: Port[] } },
+	from: { nodeID: string; port: string },
+	kind: string | null,
+	nodes: Node[],
+	definitions: Definition[],
+	existing: Connection[],
+	newConnectionID?: () => string
+): Connection | null {
+	if (kind) {
+		const output = picked.ports.outputs.find((port) => port.kind === kind);
+		if (!output) return null;
+		return connectionFromCanvas(
+			{ source: picked.id, sourceHandle: output.name, target: from.nodeID, targetHandle: from.port },
+			nodes,
+			definitions,
+			existing,
+			newConnectionID
+		);
+	}
+	const input = picked.ports.inputs.find((port) => port.kind === 'main');
+	if (!input) return null;
+	return connectionFromCanvas(
+		{ source: from.nodeID, sourceHandle: from.port, target: picked.id, targetHandle: input.name },
+		nodes,
+		definitions,
+		existing,
+		newConnectionID
+	);
+}
+
+/**
+ * The connections of one node that name a port its current configuration does
+ * not have.
+ *
+ * The canvas draws an edge only when both of its handles exist, so a wire to a
+ * port a mode change, a lost Switch rule, a lower Merge input count or a
+ * switched-off error output took away is stored but never drawn: it cannot be
+ * selected or deleted, and the compiler names it only when the workflow is
+ * activated or run (BUG-qfp7rf). The editor removes these in the step that
+ * stranded them.
+ *
+ * Only the edited node's own connections are judged, on both sides of it. A
+ * node whose type has no definition here is not judged at all: its ports are
+ * unknown, which is not the same as absent.
+ */
+export function staleConnections(document: Document, nodeID: string, definitions: Definition[]): Connection[] {
+	const node = (document.nodes ?? []).find((candidate) => candidate.id === nodeID);
+	if (!node) return [];
+	const definition = resolveDefinition(node.type, node.typeVersion, definitions);
+	if (!definition) return [];
+
+	const ports = resolvedPorts(node, definition);
+	return (document.connections ?? []).filter(
+		(connection) =>
+			(connection.source.nodeId === nodeID && !ports.outputs.some((port) => port.name === connection.source.port)) ||
+			(connection.target.nodeId === nodeID && !ports.inputs.some((port) => port.name === connection.target.port))
+	);
+}
+
+/**
+ * One line naming connections the way a reader knows them — by node name and
+ * port, not by id — for the notice that says what was removed. At most `limit`
+ * are spelled out; the rest are counted.
+ */
+export function describeConnections(connections: Connection[], nodes: Node[] | null | undefined, limit = 3): string {
+	const names = new Map((nodes ?? []).map((node) => [node.id, node.name]));
+	const label = (id: string, port: string) => `${names.get(id) ?? id} ${port}`;
+	const shown = connections.slice(0, limit).map((connection) => `${label(connection.source.nodeId, connection.source.port)} → ${label(connection.target.nodeId, connection.target.port)}`);
+	const hidden = connections.length - shown.length;
+	return hidden > 0 ? `${shown.join('; ')}; +${hidden} more` : shown.join('; ');
+}
+
 function lookupPort(
 	nodeID: string,
 	portName: string,
@@ -148,6 +245,15 @@ export function resolvedPorts(node: Node, definition: Definition): { inputs: Por
 			return { inputs: mergeInputs(node.parameters), outputs: withErrorPort(outputs, node.settings) };
 		case DATASTORE_NODE_TYPE:
 			return { inputs, outputs: withErrorPort(datastoreOutputs(node.parameters, outputs), node.settings) };
+		case VECTOR_STORE_NODE_TYPE:
+		case VECTOR_STORE_PGVECTOR_NODE_TYPE: {
+			const store = vectorStorePorts(node.parameters);
+			return { inputs: store.inputs, outputs: withErrorPort(store.outputs, node.settings) };
+		}
+		case EMBEDDINGS_NODE_TYPE: {
+			const embeddings = embeddingsPorts(node.parameters);
+			return { inputs: embeddings.inputs, outputs: withErrorPort(embeddings.outputs, node.settings) };
+		}
 		default:
 			return { inputs, outputs: withErrorPort(outputs, node.settings) };
 	}
@@ -237,6 +343,101 @@ function datastoreOutputs(parameters: Node['parameters'], declared: Port[]): Por
 		];
 	}
 	return declared;
+}
+
+const MAIN_PORT: Port = { name: 'main', kind: 'main' };
+const EMBEDDING_PORT: Port = { name: 'embedding', kind: 'ai_embedding' };
+const DOCUMENT_PORT: Port = { name: 'document', kind: 'ai_document' };
+const TOOL_PORT: Port = { name: 'tool', kind: 'ai_tool' };
+const VECTOR_STORE_PORT: Port = { name: 'vectorStore', kind: 'ai_vectorStore' };
+/** What a retrieve-mode store needs: one embeddings model, and the compiler refuses it without. */
+const RETRIEVE_EMBEDDING_PORT: Port = { ...EMBEDDING_PORT, required: true, maxConnections: 1 };
+
+/**
+ * Go's textValue (nodes/http.go) followed by TrimSpace: an absent, null or
+ * empty value is the fallback, a string is itself, and any other JSON value
+ * becomes its JSON text. None of those last ones names a mode, but they are
+ * not empty either, so they must not fall through to the `operation`.
+ */
+function goText(value: unknown, fallback: string): string {
+	if (value === null || value === undefined) return fallback.trim();
+	if (typeof value === 'string') return (value === '' ? fallback : value).trim();
+	return (JSON.stringify(value) ?? fallback).trim();
+}
+
+/** Whether the document carries a `mode` key at all, which is all Go's `_, hasMode := parameters["mode"]` asks. */
+function hasModeKey(parameters: Node['parameters']): boolean {
+	return parameters !== undefined && parameters !== null && Object.hasOwn(parameters, 'mode') && parameters['mode'] !== undefined;
+}
+
+/**
+ * The mode a vector store runs in: nodes/rag.go `vectorStoreModeOf`, line for line.
+ *
+ * `retrieve` is only ever a *mode* — a native graph's `operation: retrieve`
+ * kept meaning a search. The lower-cased switch never sees the mixed-case
+ * "getMany"; it arrives through the default arm unchanged, and Go's
+ * `vectorStorePortsFor` matches it there. The golden pins the oddity (a
+ * "GETMANY" mode resolves to the plain main ports on the server), so it is
+ * reproduced rather than tidied.
+ */
+function vectorStoreModeOf(parameters: Node['parameters']): string {
+	let mode = goText(parameters?.['mode'], '');
+	if (mode.toLowerCase() === 'retrieve') return 'retrieve';
+	if (mode === '') mode = goText(parameters?.['operation'], 'insert');
+	switch (mode.toLowerCase()) {
+		case 'insert':
+			return 'insert';
+		case 'get_many':
+		case 'load':
+		case 'retrieve':
+		case 'search':
+			return 'getMany';
+		case 'retrieve-as-tool':
+		case 'retrieve_as_tool':
+		case 'retrieveastool':
+			return 'retrieve-as-tool';
+		case 'delete':
+			return 'delete';
+		default:
+			return mode;
+	}
+}
+
+/**
+ * The ports a vector store has in its mode: nodes/rag.go `vectorStorePortsFor`.
+ *
+ * A native graph that sets only `operation` stays on main in and out. Once a
+ * `mode` key is present — an n8n import writes one, and so does choosing it in
+ * the inspector — insert and Get Many take their embeddings (and documents) on
+ * typed ports, and the retrieve modes hand the store itself, or its tool, to
+ * the node that queries it.
+ */
+function vectorStorePorts(parameters: Node['parameters']): { inputs: Port[]; outputs: Port[] } {
+	const mainToMain = { inputs: [MAIN_PORT], outputs: [MAIN_PORT] };
+	switch (vectorStoreModeOf(parameters)) {
+		case 'insert':
+			return hasModeKey(parameters) ? { inputs: [EMBEDDING_PORT, DOCUMENT_PORT], outputs: [MAIN_PORT] } : mainToMain;
+		case 'getMany':
+			return hasModeKey(parameters) ? { inputs: [MAIN_PORT, EMBEDDING_PORT], outputs: [MAIN_PORT] } : mainToMain;
+		case 'retrieve-as-tool':
+			return { inputs: [EMBEDDING_PORT], outputs: [TOOL_PORT] };
+		case 'retrieve':
+			return { inputs: [RETRIEVE_EMBEDDING_PORT], outputs: [VECTOR_STORE_PORT] };
+		default:
+			return mainToMain;
+	}
+}
+
+/**
+ * The embeddings node: nodes/rag.go `embeddingsPortsFor`. In cluster mode (what
+ * an n8n import writes) it is a sub-node of the store, with no input and only
+ * the embedding output; otherwise it also embeds the items on main.
+ */
+function embeddingsPorts(parameters: Node['parameters']): { inputs: Port[]; outputs: Port[] } {
+	if (goText(parameters?.['mode'], '').toLowerCase() === 'cluster') {
+		return { inputs: [], outputs: [EMBEDDING_PORT] };
+	}
+	return { inputs: [MAIN_PORT], outputs: [MAIN_PORT, EMBEDDING_PORT] };
 }
 
 function createID(): string {

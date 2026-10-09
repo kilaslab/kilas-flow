@@ -75,6 +75,32 @@ describe('catalogEntries', () => {
 				.includes('pack.telegramTrigger')
 		).toBe(false);
 	});
+
+	// BUG-w1jp70: the "+" under an empty attachment slot asks for a node that
+	// PROVIDES the slot's kind. The picker also says it is "connecting", which
+	// asks for a main input, and a real sub-node has none: the list was empty.
+	describe('for an attachment slot', () => {
+		const subNodes: Definition[] = [
+			// As the server declares them: no inputs at all, one attachment output.
+			{ ...base, type: 'kilasflow.chatModel', displayName: 'Chat Model', category: 'AI', inputs: [], outputs: [{ name: 'model', kind: 'ai_languageModel' }] },
+			{ ...base, type: 'kilasflow.memoryBuffer', displayName: 'Memory', category: 'AI', inputs: [], outputs: [{ name: 'memory', kind: 'ai_memory' }] },
+			{ ...base, type: 'kilasflow.httpTool', displayName: 'HTTP Tool', category: 'AI', inputs: null, outputs: [{ name: 'tool', kind: 'ai_tool' }] },
+			base
+		];
+
+		it('lists the nodes that provide the kind even though they take no main input', () => {
+			const forModel = catalogEntries(subNodes, { acceptsMain: true, providesKind: 'ai_languageModel' });
+			expect(forModel.map((definition) => definition.type)).toEqual(['kilasflow.chatModel']);
+
+			const forTools = catalogEntries(subNodes, { acceptsMain: true, providesKind: 'ai_tool' });
+			expect(forTools.map((definition) => definition.type)).toEqual(['kilasflow.httpTool']);
+		});
+
+		it('still keeps sub-nodes out of the list for the next step after a main output', () => {
+			const next = catalogEntries(subNodes, { acceptsMain: true });
+			expect(next.map((definition) => definition.type)).toEqual(['kilasflow.set']);
+		});
+	});
 });
 
 describe('searchCatalog', () => {

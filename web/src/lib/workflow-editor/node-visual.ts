@@ -294,13 +294,18 @@ export function friendlyOriginalType(originalType: string | null | undefined): s
  * with its own glyph or artwork, its own accent and its own subtitle, and needs
  * no frontend change — which is the whole point, because a generated pack of a
  * hundred operations is not going to get hand-written entries.
+ *
+ * `ports` are the node's ports as its configuration resolves them
+ * (resolvedPorts). The silhouette follows those, not the type's static list: a
+ * vector store is a step as the picker shows it and a hub once its mode gives it
+ * embedding, document or vectorStore attachments.
  */
-export function nodeVisual(definition: Definition): NodeVisual {
+export function nodeVisual(definition: Definition, ports?: ResolvedPorts): NodeVisual {
 	return {
 		icon: builtinGlyph(definition),
 		iconURL: servedIconURL(definition),
 		accent: definition.iconColor || 'var(--muted-foreground)',
-		shape: nodeShape(definition)
+		shape: nodeShape(definition, ports)
 	};
 }
 
@@ -325,9 +330,12 @@ export function servedIconURL(definition: Definition, theme = 'light'): string |
 	return `/api/v1/node-types/${encodeURIComponent(definition.type)}/icon?version=${version}&theme=${encodeURIComponent(theme)}`;
 }
 
-export function nodeShape(definition: Definition): NodeShape {
-	const inputs = definition.inputs ?? [];
-	const outputs = definition.outputs ?? [];
+/** A node's ports once its own configuration has been applied. */
+export type ResolvedPorts = { inputs: Port[]; outputs: Port[] };
+
+export function nodeShape(definition: Definition, ports?: ResolvedPorts): NodeShape {
+	const inputs = ports?.inputs ?? definition.inputs ?? [];
+	const outputs = ports?.outputs ?? definition.outputs ?? [];
 
 	// Order matters. A tool has no inputs at all and would otherwise read as a
 	// trigger, so what a node *provides* is settled before what it consumes —

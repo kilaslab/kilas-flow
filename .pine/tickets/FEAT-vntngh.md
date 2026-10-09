@@ -230,3 +230,11 @@ Wave 2 is part done. Both commits below are green (`go test ./nodes/` passes, `g
 8. Tick AC2's tool half with that evidence, then run: `go test ./... -skip TestLuxonMatchesTheRecordedNodeGoldens`, every `make generate-*-check` (including `generate-api-check`, not run here because it needs `web-sync`), `make skills-check`, `pnpm check`, `pnpm test`, the e2e node-coverage spec, `go vet ./...`, `gofmt -l`.
 
 Follow-up worth its own ticket: the generic tool-form importer reports no blocking issue when a Gmail, Postgres or Telegram tool breaks a tool-form rule (it fails at validation instead); the typed refusal in step 1 would let `toolFormToKilas` do it for every form.
+<<<<<<< HEAD
+=======
+
+## Where wave 2 stopped (2026-10-09, 21:00)
+
+The session stopped at the owner's time box. Wave 1 (node, trigger, credentials, loaders, importer, 19200-shaped fixture) is on main. The wave-2 commits — the plan, `kilasflow.googleSheetsTool` as one tool-form row (`98f0363d`) and the regenerated counts (`84529e42`) — are on branch `worktree-agent-a3294cd4f4ee7e00c` and are NOT yet reviewed or merged. Resume there: steps 1–8 of "Progress, wave 2" above, then a review, then merge. Follow-up worth its own ticket: the generic tool-form importer reports no blocking issue when a Gmail, Postgres or Telegram tool breaks a tool-form rule (they fail at validation instead); step 1's typed `ToolFormRefusal` would let `toolFormToKilas` report it for every form.
+
+>>>>>>> main
