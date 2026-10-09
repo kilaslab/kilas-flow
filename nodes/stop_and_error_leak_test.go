@@ -27,6 +27,23 @@ func TestStopAndErrorNeverEvaluatesAResolvedMessage(t *testing.T) {
 	for name, parameters := range map[string]map[string]any{
 		"an errorMessage expression": {"errorMessage": map[string]any{"mode": "expression", "value": "{{ $json.reason }}"}},
 		"an errorObject expression":  {"errorObject": map[string]any{"mode": "expression", "value": "{{ $json.error }}"}},
+		// An object the author wrote whose fields are expressions: each field
+		// resolves to item data, which is not evaluated again.
+		"an object's errorMessage expression": {"errorObject": map[string]any{
+			"errorMessage": map[string]any{"mode": "expression", "value": "{{ $json.reason }}"},
+		}},
+		"an object's message expression": {"errorObject": map[string]any{
+			"message": map[string]any{"mode": "expression", "value": "{{ $json.reason }}"},
+		}},
+		"an object's errorDescription expression": {"errorObject": map[string]any{
+			"errorMessage":     "stopped",
+			"errorDescription": map[string]any{"mode": "expression", "value": "{{ $json.reason }}"},
+		}},
+		"an expression returning JSON text": {"errorObject": map[string]any{
+			"mode": "expression", "value": "{{ JSON.stringify({errorMessage: $json.reason}) }}",
+		}},
+		"an =-prefixed template with spaces": {"errorMessage": "  =  {{ $json.reason }}"},
+		"JSON text reading the item":         {"errorObject": `{"errorMessage":"{{ $json.reason }}"}`},
 	} {
 		_, err := executor.Execute(context.Background(), flowNode(t, nodes.StopAndErrorNodeType, parameters), input, request)
 		if err == nil {

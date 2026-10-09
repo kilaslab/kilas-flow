@@ -166,19 +166,23 @@ func executeStopAndError(ctx context.Context, node workflow.IRNode, input workfl
 // message. A message that cannot be resolved fails the node rather than
 // stopping the workflow with a half-rendered sentence.
 //
-// Each is evaluated exactly once (BUG-vqghpm). The author's plain-text
-// templates are made expressions before the single resolve, and an error
-// object the author wrote as JSON text has its fields' templates evaluated
-// once, after it is parsed. Nothing an expression produced is evaluated
-// again: a message built from a webhook body that held `{{ $env.SECRET }}`
-// used to fail the run with the secret's value.
+// Everything is evaluated exactly once, in one resolve (BUG-vqghpm). Before
+// it, the author's own text is normalised: a plain errorMessage holding `{{`
+// becomes an expression, and an error object the author wrote (as JSON text
+// or as an object) is parsed and its plain `{{` fields become expressions,
+// beside any it already holds. After it, nothing is evaluated: a field an
+// expression produced is data. A message built from a webhook body that held
+// `{{ $env.SECRET }}` used to fail the run with the secret's value.
 func stopAndErrorMessage(parameters map[string]any, ctx expression.Context) (string, error) {
 	authored := make(map[string]any, len(parameters))
 	for key, value := range parameters {
 		authored[key] = value
 	}
-	if text, isText := parameters["errorMessage"].(string); isText && strings.Contains(text, "{{") {
-		authored["errorMessage"] = map[string]any{"mode": "expression", "value": strings.TrimPrefix(strings.TrimSpace(text), "=")}
+	if text, isText := parameters["errorMessage"].(string); isText {
+		authored["errorMessage"] = templateStringsAsExpressions(text)
+	}
+	if object, written := authoredErrorObject(parameters["errorObject"]); written {
+		authored["errorObject"] = templateStringsAsExpressions(object)
 	}
 	resolved, err := expression.Resolve(authored, ctx)
 	if err != nil {
@@ -186,35 +190,12 @@ func stopAndErrorMessage(parameters map[string]any, ctx expression.Context) (str
 	}
 	message := strings.TrimSpace(textOf(resolved["errorMessage"]))
 	if message == "" {
-		object, ok := errorObjectOf(resolved["errorObject"])
-		if ok {
-			// JSON text the author wrote is the author's template; an object
-			// an expression produced is data.
-			authoredText := !expression.IsExpression(parameters["errorObject"])
-			field := func(key string) (string, error) {
-				text := strings.TrimSpace(textOf(object[key]))
-				if !authoredText || !strings.Contains(text, "{{") {
-					return text, nil
-				}
-				evaluated, err := expression.Evaluate(text, ctx)
-				if err != nil {
-					return "", err
-				}
-				return strings.TrimSpace(textOf(evaluated)), nil
-			}
-			if message, err = field("errorMessage"); err != nil {
-				return "", err
-			}
+		if object, ok := errorObjectOf(resolved["errorObject"]); ok {
+			message = strings.TrimSpace(textOf(object["errorMessage"]))
 			if message == "" {
-				if message, err = field("message"); err != nil {
-					return "", err
-				}
+				message = strings.TrimSpace(textOf(object["message"]))
 			}
-			description, err := field("errorDescription")
-			if err != nil {
-				return "", err
-			}
-			if description != "" {
+			if description := strings.TrimSpace(textOf(object["errorDescription"])); description != "" {
 				if message == "" {
 					message = description
 				} else {
@@ -227,6 +208,16 @@ func stopAndErrorMessage(parameters map[string]any, ctx expression.Context) (str
 		return "the workflow was stopped by a Stop and Error node with no message", nil
 	}
 	return message, nil
+}
+
+// authoredErrorObject is the error object the author wrote, before anything
+// is resolved: an object, or JSON text parsed into one. An expression is not
+// the author's object; what it produces is data.
+func authoredErrorObject(value any) (map[string]any, bool) {
+	if value == nil || expression.IsExpression(value) {
+		return nil, false
+	}
+	return errorObjectOf(value)
 }
 
 // errorObjectOf reads the error object an author gave, in either shape a
