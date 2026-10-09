@@ -1,14 +1,14 @@
 ---
 id: BUG-qfp7rf
 title: A connection a node's ports no longer have stays in the document but is never drawn, so it cannot be selected or deleted
-status: todo
+status: done
 priority: medium
 labels:
     - editor
     - canvas
 parent: EPIC-8rbys7
 created: "2026-10-09T13:43:17Z"
-updated: "2026-10-09T13:43:17Z"
+updated: "2026-10-09T13:53:32Z"
 ---
 
 # Description
@@ -82,3 +82,41 @@ The remaining steps above are done; the "In the working tree, NOT committed" par
 - Typed edits do not destroy wires: removal waits `PORT_SETTLE_MS` (500 ms) after the last edit of the node (`port-settle.test.ts`, fake timers). Not exercised in a browser: nobody has backspaced a Merge's input count in the running editor, so that remains a manual check.
 Also run green: `pnpm check` (0 errors), `pnpm test` (80 files, 1178 tests), the two new/changed specs and 18 neighbouring editor tests against a `make build-all` binary.
 Known limit: only the edited node's own wires are judged, so a stranded wire that arrives any other way (an import, a paste) is still reported only by the compiler on activate or run.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-10-09.
+
+- Base: `03b191e8` (last commit at or before ticket created 2026-10-09)
+- Commits (7):
+  - `05083cd0` — merge: the slot '+' offers and wires the right providers, and a wire a node's ports no longer have is removed in the edit's own undo step, with ports goldens that track every mode option (BUG-w1jp70, BUG-qfp7rf, BUG-pc284d review fixes)
+  - `aeda0e14` — chore(pine): BUG-w1jp70 and BUG-qfp7rf record what was done, with evidence
+  - `4c2e5539` — BUG-w1jp70, BUG-qfp7rf: a node picked for an attachment slot is wired from its output and placed under its consumer, and wires a mode change strands are removed in the edit's undo step with a notice
+  - `2848c0a1` — chore(pine): BUG-w1jp70, BUG-qfp7rf and FEAT-q80xe3 reach the board, with their partial work waiting on branch worktree-agent-ab728406a999eaf54
+  - `1f3ce489` — chore(pine): record the state and remaining steps of BUG-w1jp70, BUG-qfp7rf and FEAT-q80xe3
+  - `e0a50b4d` — BUG-w1jp70, BUG-qfp7rf: the slot picker filter, the picked-node wiring and position, the stranded-connection finder and the settle timer exist as tested pure functions, not yet used by the editor
+  - `479e0b08` — chore(pine): file BUG-w1jp70 (slot + picker is empty and wires the wrong way), BUG-qfp7rf (stranded connections are never drawn) and FEAT-q80xe3 (picker offers stores per mode role), found in review of BUG-pc284d
+- Files changed (base → working tree):
+
+```
+ .pine/tickets/BUG-pc284d.md                        | 483 ++++++++++++++++++++-
+ .pine/tickets/BUG-qfp7rf.md                        |  84 ++++
+ .pine/tickets/BUG-w1jp70.md                        | 120 +++++
+ .pine/tickets/FEAT-q80xe3.md                       |  65 +++
+ .pine/tickets/FEAT-vntngh.md                       |  56 +++
+ e2e/tests/attachment-slot-picker.spec.ts           |  55 +++
+ e2e/tests/vector-store-ports.spec.ts               |  33 +-
+ web/messages/en/editor.json                        |  10 +
+ web/messages/id/editor.json                        |  15 +
+ .../workflow-editor/workflow-editor.svelte         |  67 ++-
+ web/src/lib/workflow-editor/catalog.test.ts        |  26 ++
+ web/src/lib/workflow-editor/catalog.ts             |  10 +-
+ web/src/lib/workflow-editor/document.test.ts       |  20 +
+ web/src/lib/workflow-editor/document.ts            |  17 +
+ web/src/lib/workflow-editor/port-settle.test.ts    |  71 +++
+ web/src/lib/workflow-editor/port-settle.ts         |  42 ++
+ web/src/lib/workflow-editor/ports.picked.test.ts   | 126 ++++++
+ web/src/lib/workflow-editor/ports.stale.test.ts    | 159 +++++++
+ web/src/lib/workflow-editor/ports.ts               |  89 +++-
+ 19 files changed, 1516 insertions(+), 32 deletions(-)
+```
