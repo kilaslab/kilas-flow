@@ -43,6 +43,7 @@ var plantedCases = []plantedCase{
 	{dir: "literal-token-in-reference", rule: RuleSecretHygiene},
 	{dir: "secret-rule-missing", rule: RuleSecretHygiene},
 	{dir: "unshipped-command-in-fence", rule: RuleNotShippedCommands},
+	{dir: "source-path-citation", rule: RuleSourceCitations},
 }
 
 // Each fixture must be caught by the rule it was planted for, and by no other:
@@ -126,5 +127,51 @@ func TestCheckAcceptsACleanBundle(t *testing.T) {
 	}
 	if findings := Check(loaded); len(findings) != 0 {
 		t.Fatalf("Check(clean bundle) = %v, want no findings", findings)
+	}
+}
+
+// The rule must refuse what an installed bundle cannot open and spare what a
+// reader's own project has. Each case is a line of prose.
+func TestSourceCitationsRuleReadsPathsNotPunctuation(t *testing.T) {
+	cases := []struct {
+		name    string
+		text    string
+		refused bool
+	}{
+		{"an internal package path", "see internal/engine/runner.go", true},
+		{"a node source path", "the executor (nodes/http.go, `httpRequestNode`)", true},
+		{"a command path", "scaffold with cmd/nodepackgen", true},
+		{"a web source path", "the editor (web/src/lib/x.ts)", true},
+		{"a docs source path", "docs/src/content/docs/concepts/node-registry.md", true},
+		{"a bare Go file", "the runner (runner.go) retries", true},
+		{"a bare TypeScript file", "see store.ts for the shape", true},
+		{"a bare Svelte file", "Panel.svelte renders it", true},
+		{"a user's own relative path", "kilasflow pack validate ./packs/acme and ./nodes/mine", false},
+		{"an absolute path outside the tree", "mount /srv/internal/data", false},
+		{"the guest import path", "import github.com/kilaslab/kilas-flow/pkg/sdk", false},
+		{"a pack author's files", "write main.go and go.mod", false},
+		{"a docs citation", "(docs: concepts/execution-model)", false},
+		{"a skills citation", "`kilasflow skills show kilasflow-datastore --reference FILTERS.md`", false},
+		{"a word that merely contains a directory", "the external/ and nodes_modules/ words", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			skill := Skill{Name: "kilasflow-fixture", Path: "skills/kilasflow-fixture/SKILL.md", Body: tc.text}
+			got := len(checkSourceCitations(skill)) > 0
+			if got != tc.refused {
+				t.Fatalf("checkSourceCitations(%q) refused = %v, want %v", tc.text, got, tc.refused)
+			}
+		})
+	}
+}
+
+func TestSourceCitationsRuleSparesAFencedFileName(t *testing.T) {
+	skill := Skill{
+		Name: "kilasflow-fixture", Path: "skills/kilasflow-fixture/SKILL.md",
+		Body: "A pack's module:\n\n```\nmodule/handler.go\n```\n",
+	}
+	if findings := checkSourceCitations(skill); len(findings) != 0 {
+		t.Fatalf("a file name inside a fence was refused: %v", findings)
 	}
 }

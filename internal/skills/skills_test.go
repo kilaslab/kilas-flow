@@ -44,7 +44,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -828,5 +831,109 @@ func TestTheRouterNamesEverySkill(t *testing.T) {
 		if !strings.Contains(tree, "| `"+skill.Name+"` |") {
 			t.Errorf("the router's skills table has no row for %s", skill.Name)
 		}
+	}
+}
+
+// The bundle cites two kinds of thing instead of source files: a docs page,
+// written "(docs: concepts/execution-model)", and a file of the bundle,
+// written `kilasflow skills show <skill> --reference <FILE>.md`. A citation
+// that does not resolve is a pointer to nothing, which is worse than no
+// pointer, so every one is resolved here: a docs slug against the docs tree of
+// the checkout, and a reference against the skill it names.
+const docsRoot = "../../docs/src/content/docs"
+
+var (
+	docsCitation      = regexp.MustCompile(`docs: ([a-z0-9][a-z0-9/_-]*(?:, [a-z0-9][a-z0-9/_-]*)*)`)
+	referenceCitation = regexp.MustCompile("`kilasflow skills show ([a-z][a-z0-9-]*) --reference ([A-Za-z0-9_.-]+\\.md)`")
+)
+
+// citationProblems lists every docs slug and every skill reference the bundle
+// cites that does not resolve.
+func citationProblems(loaded []skills.Skill, docs string) []string {
+	byName := map[string]skills.Skill{}
+	for _, skill := range loaded {
+		byName[skill.Name] = skill
+	}
+
+	var problems []string
+	for _, document := range bundleDocuments(loaded) {
+		for _, match := range docsCitation.FindAllStringSubmatch(document.text, -1) {
+			for _, slug := range strings.Split(match[1], ", ") {
+				found := false
+				for _, extension := range []string{".md", ".mdx"} {
+					if _, err := os.Stat(filepath.Join(docs, filepath.FromSlash(slug)+extension)); err == nil {
+						found = true
+					}
+				}
+				if !found {
+					problems = append(problems, fmt.Sprintf("%s cites (docs: %s), which is not a page under docs/src/content/docs", document.path, slug))
+				}
+			}
+		}
+
+		for _, match := range referenceCitation.FindAllStringSubmatch(document.text, -1) {
+			skill, known := byName[match[1]]
+			if !known {
+				problems = append(problems, fmt.Sprintf("%s cites a reference of %s, which is not a skill of the bundle", document.path, match[1]))
+
+				continue
+			}
+			if _, present := skill.ReferenceText["references/"+match[2]]; !present {
+				problems = append(problems, fmt.Sprintf("%s cites %s --reference %s, which the skill does not ship", document.path, match[1], match[2]))
+			}
+		}
+	}
+
+	return problems
+}
+
+func TestSkillCitationsResolve(t *testing.T) {
+	loaded := embeddedBundle(t)
+
+	for _, problem := range citationProblems(loaded, docsRoot) {
+		t.Error(problem)
+	}
+
+	// The gate has to be reading something: the bundle cites docs pages, and a
+	// resolver whose pattern stopped matching would pass over an empty set.
+	cited := 0
+	for _, document := range bundleDocuments(loaded) {
+		cited += len(docsCitation.FindAllString(document.text, -1))
+	}
+	if cited < 10 {
+		t.Fatalf("the bundle cites %d docs pages, want at least 10: the citation pattern has stopped matching", cited)
+	}
+}
+
+func TestSkillCitationsRefuseWhatDoesNotResolve(t *testing.T) {
+	planted, err := skills.Parse("kilasflow-fixture", []byte(`---
+name: kilasflow-fixture
+description: Use when a citation is checked. Triggers on "citation".
+kilasflow_skills_version: 1
+kilasflow_commands: []
+kilasflow_operations: []
+kilasflow_nodes: []
+kilasflow_expression_roots: []
+kilasflow_not_shipped: []
+---
+
+## Non-negotiables
+
+- A real page (docs: concepts/execution-model), a made-up page (docs: concepts/no-such-page),
+  a real reference `+"`kilasflow skills show kilasflow-fixture --reference MISSING.md`"+` and a skill that is not here
+  `+"`kilasflow skills show kilasflow-nowhere --reference X.md`"+`.
+`))
+	if err != nil {
+		t.Fatalf("parse the planted skill: %v", err)
+	}
+
+	problems := strings.Join(citationProblems([]skills.Skill{planted}, docsRoot), "\n")
+	for _, want := range []string{"concepts/no-such-page", "MISSING.md", "kilasflow-nowhere"} {
+		if !strings.Contains(problems, want) {
+			t.Errorf("the resolver did not refuse %q; it reported:\n%s", want, problems)
+		}
+	}
+	if strings.Contains(problems, "concepts/execution-model") {
+		t.Errorf("the resolver refused a docs page that exists:\n%s", problems)
 	}
 }
