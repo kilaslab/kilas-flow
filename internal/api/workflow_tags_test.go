@@ -306,6 +306,17 @@ func TestTheOpenAPIDocumentsTags(t *testing.T) {
 			t.Errorf("OpenAPI schema %s has no tags property", name)
 		}
 	}
+	// The request schema's cap is written as a struct tag, so only a test keeps
+	// it equal to the constant ValidateDraft enforces.
+	var tagsProperty struct {
+		MaxItems int `json:"maxItems"`
+	}
+	if err := json.Unmarshal(schemas["WorkflowDocumentInput"].Properties["tags"], &tagsProperty); err != nil {
+		t.Fatalf("decode the tags property = %v", err)
+	}
+	if tagsProperty.MaxItems != workflow.MaxTags {
+		t.Errorf("WorkflowDocumentInput tags maxItems = %d, want workflow.MaxTags = %d", tagsProperty.MaxItems, workflow.MaxTags)
+	}
 	required := false
 	for _, field := range schemas["WorkflowSummary"].Required {
 		required = required || field == "tags"
