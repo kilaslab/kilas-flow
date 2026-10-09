@@ -86,6 +86,7 @@ func eachDriver(t *testing.T, run func(t *testing.T, db *database.DB)) {
 			db.Exec(`DELETE FROM workflows WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM secret_bindings WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM credentials WHERE tenant_id LIKE 'drv-%'`)
+			db.Exec(`DELETE FROM credential_events WHERE tenant_id LIKE 'drv-%'`)
 			// Identity last, and keys and users before the tenant they
 			// reference: both are ON DELETE RESTRICT.
 			db.Exec(`DELETE FROM api_keys WHERE tenant_id LIKE 'drv-%'`)

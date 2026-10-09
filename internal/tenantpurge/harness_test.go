@@ -517,10 +517,19 @@ func (env *purgeEnv) seedTenant(id string) *tenantSeed {
 		env.t.Fatalf("ClaimDelivery(%s) error = %v", id, err)
 	}
 
-	if _, err := env.secrets.Create(ctx, tenant, credentials.Record{
+	openAI, err := env.secrets.Create(ctx, tenant, credentials.Record{
 		Name: "openai", Type: "openAiApi", Fields: map[string]string{"apiKey": "seed-" + id},
-	}); err != nil {
+	})
+	if err != nil {
 		env.t.Fatalf("Create(credential %s) error = %v", id, err)
+	}
+	// Its audit trail names the tenant's credential and who wrote it.
+	if err := env.secrets.RecordCredentialEvent(ctx, tenant, repository.CredentialEvent{
+		CredentialID: openAI.ID, CredentialName: openAI.Name, CredentialType: openAI.Type,
+		Action: repository.CredentialEventCreated,
+		Actor:  repository.Actor{Kind: repository.ActorKindUser, Label: "owner@" + id + ".example"},
+	}); err != nil {
+		env.t.Fatalf("RecordCredentialEvent(%s) error = %v", id, err)
 	}
 	if _, err := env.secrets.CreateSecretBinding(ctx, tenant, credentials.Binding{
 		Name: "vault-" + id, Provider: "vault", Address: "https://vault.example",

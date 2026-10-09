@@ -32,6 +32,10 @@ type CredentialRepository interface {
 	Delete(context.Context, TenantScope, string) error
 	// Resolve returns the decrypted payload for runtime use only.
 	Resolve(context.Context, TenantScope, string) (credentials.Record, map[string]string, error)
+	// RecordCredentialEvent appends to a credential's audit trail, and
+	// CredentialEvents reads it back, newest first.
+	RecordCredentialEvent(context.Context, TenantScope, CredentialEvent) error
+	CredentialEvents(context.Context, TenantScope, string) ([]CredentialEvent, error)
 }
 
 // GORMCredentialStore persists credentials with their payload encrypted.

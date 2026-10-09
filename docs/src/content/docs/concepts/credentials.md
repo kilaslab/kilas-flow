@@ -451,6 +451,19 @@ for the Connect popup (`window.open`, never an iframe). The browser lands on
 `/oauth/callback`, which stores the tokens and posts a message to the opener.
 See the [HTTP API reference](/reference/api/).
 
+Every create, update, delete and test of a stored credential, and every Google
+Connect, appends a row to the `credential_events` table. A row names the
+credential as it was at the time (id, name and type) and who acted: `user` with
+the signed-in address, or `key` with the API key's name and id. Nobody is
+named when authentication is off. A test records its verdict (`ok`, `failed`
+or `untestable`). The Google callback arrives without a principal, so it is
+attributed to whoever started that Connect, matched by the nonce hash the
+two rows share. A token refresh is the server acting on its own and records
+nothing. The row is written after the operation succeeds and is not part of
+its transaction: if the audit insert fails, the error is logged and the
+operation still succeeds. There is no endpoint that reads the trail yet; query
+the table.
+
 ## Google Connect
 
 The popup's `state` is signed, but a signature only proves the server minted

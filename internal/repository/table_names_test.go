@@ -26,6 +26,7 @@ func TestTableNamesSurviveTheNamerRoundTrip(t *testing.T) {
 		"execution_node_runs":     executionNodeRunModel{}.TableName,
 		"execution_waits":         executionWaitModel{}.TableName,
 		"credentials":             credentialModel{}.TableName,
+		"credential_events":       credentialEventModel{}.TableName,
 		"secret_bindings":         secretBindingModel{}.TableName,
 		"webhook_bindings":        webhookBindingModel{}.TableName,
 		"webhook_routes":          webhookRouteModel{}.TableName,

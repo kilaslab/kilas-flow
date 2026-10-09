@@ -40,6 +40,7 @@ type authenticatedAPI struct {
 	embedIssuer *embed.Issuer
 	executions  *repository.GORMExecutionStore
 	broker      *events.Broker
+	credentials *repository.GORMCredentialStore
 }
 
 func signingKey(seed byte) []byte {
@@ -53,6 +54,14 @@ func signingKey(seed byte) []byte {
 // newAuthenticatedAPI builds a server with authentication on and one API key
 // per named tenant, returning the keys by tenant ID.
 func newAuthenticatedAPI(t *testing.T, tenantIDs ...string) (*authenticatedAPI, map[string]string) {
+	t.Helper()
+	return newAuthenticatedAPIWith(t, nil, tenantIDs...)
+}
+
+// newAuthenticatedAPIWith is newAuthenticatedAPI with a hook that adjusts the
+// server's dependencies before it is built, for a test that needs one more
+// collaborator configured (Google Connect, say) under authentication.
+func newAuthenticatedAPIWith(t *testing.T, adjust func(*api.Deps), tenantIDs ...string) (*authenticatedAPI, map[string]string) {
 	t.Helper()
 	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -118,13 +127,14 @@ func newAuthenticatedAPI(t *testing.T, tenantIDs ...string) (*authenticatedAPI, 
 	cfg := config.Default()
 	cfg.Auth.Enabled = true
 
-	handler := newTestServer(t, api.Deps{
+	credentialStore := repository.NewCredentialStore(db.DB, cipher)
+	deps := api.Deps{
 		Config:              cfg,
 		DB:                  db,
 		NodeRegistry:        registry,
 		Workflows:           repository.NewWorkflowStore(db.DB).WithWebhooks(webhook.Extract(registry, nodes.WebhookPath)),
 		Executions:          executions,
-		Credentials:         repository.NewCredentialStore(db.DB, cipher),
+		Credentials:         credentialStore,
 		Schedules:           repository.NewScheduleStore(db.DB),
 		ExecutionController: runtime,
 		Events:              broker,
@@ -132,11 +142,16 @@ func newAuthenticatedAPI(t *testing.T, tenantIDs ...string) (*authenticatedAPI, 
 		Tenants:             handlers.NewPrincipalTenants(""),
 		AuthStore:           authStore,
 		AuthIssuer:          issuer,
-	})
+	}
+	if adjust != nil {
+		adjust(&deps)
+	}
+	handler := newTestServer(t, deps)
 
 	return &authenticatedAPI{
 		handler: handler, store: authStore, issuer: issuer,
 		embedIssuer: embedIssuer, executions: executions, broker: broker,
+		credentials: credentialStore,
 	}, keys
 }
 

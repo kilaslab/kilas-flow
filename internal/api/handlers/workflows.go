@@ -10,7 +10,6 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/kilaslab/kilas-flow/internal/auth"
 	"github.com/kilaslab/kilas-flow/internal/execution"
 	"github.com/kilaslab/kilas-flow/internal/idempotency"
 	"github.com/kilaslab/kilas-flow/internal/node"
@@ -980,17 +979,7 @@ const skillsUsedHeader = "X-KilasFlow-Skills-Used"
 // definition, and so an installation with authentication disabled records the
 // same nothing everywhere rather than a different guess per verb.
 func audited(ctx context.Context, skillsUsed string) context.Context {
-	actor := repository.Actor{}
-	if principal, found := auth.PrincipalFrom(ctx); found {
-		actor.Label = principal.Label
-		actor.KeyID = principal.KeyID
-		switch principal.Kind {
-		case auth.KindAPIKey:
-			actor.Kind = repository.ActorKindKey
-		case auth.KindSession:
-			actor.Kind = repository.ActorKindUser
-		}
-	}
+	actor := requestActor(ctx)
 	for _, name := range strings.Split(skillsUsed, ",") {
 		if trimmed := strings.TrimSpace(name); trimmed != "" {
 			actor.Meta = append(actor.Meta, trimmed)

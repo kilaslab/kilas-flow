@@ -163,6 +163,10 @@ func (handler *Credentials) StartOAuth(ctx context.Context, input *oauthStartInp
 		return nil, huma.Error503ServiceUnavailable(err.Error())
 	}
 	challenge := credentials.PKCEChallenge(credentials.PKCEVerifier(handler.oauthSigningKey, nonce))
+	// The callback has no principal, so who pressed Connect is recorded now,
+	// under the nonce hash the state already carries, and the callback copies
+	// it from here rather than from anything in the URL.
+	handler.audit(ctx, tenant, record, repository.CredentialEventConnectStarted, nonceHash, requestActor(ctx))
 	return &oauthStartOutput{
 		SetCookie: oauthNonceCookie(redirect, nonceHash, nonce, int(credentials.OAuthStateTTL.Seconds())),
 		Body: oauthStartResource{
@@ -321,8 +325,28 @@ func (handler *Credentials) OAuthCallback() http.Handler {
 			writeOAuthResult(w, false, "could not store the google token", state.Origin)
 			return
 		}
+		handler.audit(r.Context(), tenant, record, repository.CredentialEventConnected, state.NonceHash,
+			handler.connectStartedBy(r.Context(), tenant, state))
 		writeOAuthResult(w, true, "", state.Origin)
 	})
+}
+
+// connectStartedBy is the actor who started the Connect a callback finishes:
+// the connect-started event of this credential with the state's nonce hash.
+// Nobody is the answer when that event is missing, which only happens when
+// recording it failed.
+func (handler *Credentials) connectStartedBy(ctx context.Context, tenant repository.TenantScope, state credentials.OAuthState) repository.Actor {
+	events, err := handler.store.CredentialEvents(ctx, tenant, state.CredentialID)
+	if err != nil {
+		slog.ErrorContext(ctx, "reading who started a Google sign-in failed", slog.String("error", err.Error()))
+		return repository.Actor{}
+	}
+	for _, event := range events {
+		if event.Action == repository.CredentialEventConnectStarted && event.Detail == state.NonceHash {
+			return event.Actor
+		}
+	}
+	return repository.Actor{}
 }
 
 func writeOAuthResult(w http.ResponseWriter, ok bool, detail, origin string) {
