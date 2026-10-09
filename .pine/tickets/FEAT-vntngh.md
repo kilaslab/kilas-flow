@@ -179,3 +179,32 @@ Done after the first review, on top of main merged in (docs catalogue count and 
 Risks added:
 
 - **Picker cost.** The Columns to Watch list and the columns mapper depend on the node's whole Options collection, because the loader framework's dependencies are top-level parameter keys, not paths. Ticking a column in Columns to Watch changes that collection and so loads the list again: two Google reads (the tab list and the header row), about 3% of a minute's per-user read quota each time. A path-style dependency (`options.dataLocationOnSheet`) would stop it but changes the framework in both the editor and the endpoint; not done here.
+
+# Plan (wave 2, 2026-10-09)
+
+Track C's generic tool-form mechanism is on main (`nodes/tool_form.go`, `internal/interop/n8n/tool_forms.go`), and so is the `resolveGoogleIR` fix (a resolved value is never evaluated again). Wave 2 is `kilasflow.googleSheetsTool` as one row of that table, with the importer line, a fixture, an agent run against the Sheets stub, and the literal-value regression test the first review asked for.
+
+**Shape of the tool.** One `toolForms` row: tool type `kilasflow.googleSheetsTool` over `kilasflow.googleSheets` v1. The agent runs the node's own executor (egress policy, credential check, batching and writes inherited), on the agent's current item, with the model's values reaching it only through `$fromAI` inside expressions.
+
+**Operations the tool allows: read (the default), append, appendOrUpdate, update and delete. Not clear.**
+
+- read, append, appendOrUpdate and update are what an assistant does with a table: look a row up, add one, change one. n8n template 19348 (read on 2026-10-09 into a scratch directory, never the repo) is an agent whose Sheets tool upserts an order by its ID with every column a `$fromAI` value.
+- delete is allowed because its reach is bounded by what the author fixes: whether rows or columns (`toDelete`) and how many (`numberToDelete`) are author-only, so one call removes a span of known size, and the model picks only where it starts.
+- clear is refused: it empties a whole tab or a range in one call, has no row-level scope to bound, and no assistant needs it. Validation and the importer both say so by name.
+
+**Author-only keys (a `$fromAI`, an expression or `{{ }}` in them is refused).** `documentId` and `sheetName` (the model never picks which spreadsheet or tab: a credential can see many, and a model steered by text in a cell must not roam across them), `options` (cell format, extra-field handling, the header row and the A1 range a read uses), `combineFilters`, `toDelete`, `numberToDelete`. Filter column names (`filtersUI` `lookupColumn`) are author-only too, and so are the keys of `columns.value` (a key holds no `{{`); only the values are the model's. The generic rules apply on top: `resource` and `operation` are the author's, no `$fromAI` in plain text, and `$fromAI` calls must agree.
+
+**Automatic column mapping is refused in the tool form**, as the PostgreSQL tool does and for the same reason: automatic mapping writes the running item's fields as the row, and a tool runs on the agent's input item, which is the conversation. At validation (`validateGoogleSheetsTool`, via the row's `validate`) for append, appendOrUpdate and update; at run time in the executor, whenever `request.FromAIArguments` is set, before any Google call. Two related guards in the same place: the "empty sheet falls back to automatic mapping" rule is off for a tool (it would make the item's keys the header), and the executor reads no item fields for a tool.
+
+**Importer.** One `toolVariants[GoogleSheetsNodeType]` line, with a translator that is the generic tool-form one plus the Sheets rules as blocking issues at import: `clear`, automatic mapping on a write, and a document, tab, option or filter column that is an expression. `descriptionType` and `toolDescription` cross as for every tool form. Export is the derived one.
+
+**Tests, written first.**
+
+1. `nodes`: the tool-form table row and the shared derivation test (`toolFormRows`); `TestTheGoogleSheetsToolKeepsItsCallsTheAuthors` (operations, author-only keys, filter columns, `columns.value` keys); `TestTheGoogleSheetsToolRefusesAutomaticMapping` at validation and at run time against the stub, with the ordinary node still mapping automatically.
+2. A scripted-model agent run against the Sheets stub: a read whose filter value is a `$fromAI` and an append whose column values are `$fromAI`, asserting what reached the stub and that a model-supplied `{{ $env.SECRET }}` arrives as text.
+3. The regression test: a cell holding `{{ $env.X }}` that flows through `={{ $json.x }}` into `columns.value` and into `filtersUI.lookupValue` is written and compared literally, for the plain node and for the tool.
+4. `internal/interop/n8n`: a hand-authored fixture shaped like template 19348 (an agent, a chat model, and Sheets tools whose columns are `$fromAI`, with n8n's override comment and backtick descriptions), imported with no blocking issue apart from credentials, compiled on the agent, exported and imported again.
+5. Glyph variant, the e2e node-coverage tier, the catalogue counts through `make generate-docs-facts` (never typed), `shippedcatalogue` unchanged unless a registration call changes.
+6. Skills: a validated query-side example in `skills/kilasflow-ai-agents/references/RAG.md` (Agent, chat model, `kilasflow.vectorStoreTool`, retrieve-mode store, embeddings), tool discovery left generic.
+
+Out of scope: a `clear` tool, a tool that picks its spreadsheet at run time.
