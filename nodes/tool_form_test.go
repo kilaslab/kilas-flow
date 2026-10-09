@@ -130,6 +130,18 @@ func TestToolFormsDeriveFromTheirBase(t *testing.T) {
 				"$fromAI in resource":    formWith(row.valid, "resource", "$fromAI('resource')"),
 				"inconsistent $fromAI":   formWith(row.valid, "extra", formExpression("{{ $fromAI('to', 'another description') }} {{ $fromAI('to', 'recipient') }}")),
 				"malformed $fromAI type": formWith(row.valid, "extra", formExpression("{{ $fromAI('x', 'y', 'paragraph') }}")),
+				// Every spelling the filler and the evaluator accept is a call.
+				"$fromai in operation":       formWith(row.valid, "operation", "$fromai('operation')"),
+				"$fromAi in operation":       formWith(row.valid, "operation", "$fromAi('operation')"),
+				"$fromAI ( in operation":     formWith(row.valid, "operation", "$fromAI ('operation')"),
+				"$FROMAI in operation":       formWith(row.valid, "operation", "$FROMAI('operation')"),
+				"template text in operation": formWith(row.valid, "operation", "{{ $json.operation }}"),
+				"template text in resource":  formWith(row.valid, "resource", "{{ 'message' }}"),
+				// A tool form takes the model's values through expressions only,
+				// so $fromAI in plain text is refused wherever it is written.
+				"plain $fromAI in a value": formWith(row.valid, "extra", "$fromAI('extra')"),
+				"plain $fromai in a value": formWith(row.valid, "extra", "Re: $fromai ('topic')"),
+				"plain $fromAI nested":     formWith(row.valid, "extra", map[string]any{"deep": []any{"$FromAI('x')"}}),
 			}
 			for name, parameters := range refused {
 				if err := tool.Validate(workflow.Node{Parameters: parameters}); err == nil {
@@ -151,6 +163,14 @@ func TestThePostgresToolKeepsTheSQLTheAuthors(t *testing.T) {
 		"$fromAI expression":  formExpression("{{ $fromAI('sql') }}"),
 		"any expression":      formExpression("SELECT * FROM t WHERE id = {{ $json.id }}"),
 		"$fromAI inside text": "SELECT * FROM t WHERE $fromAI('where')",
+		"$fromai":             "SELECT * FROM users WHERE $fromai('w')",
+		"$fromAi":             "SELECT * FROM users WHERE $fromAi('w')",
+		"$fromAI (":           "SELECT * FROM users WHERE $fromAI ('w')",
+		"$FROMAI":             "SELECT * FROM users WHERE $FROMAI('w')",
+		// Plain template text: the PostgreSQL node would send it as SQL, but a
+		// tool form's structural text is fixed, so a literal {{ belongs in a
+		// bound value instead.
+		"template text": "SELECT * FROM users WHERE name = '{{ $json.name }}'",
 	} {
 		err := tool.Validate(workflow.Node{Parameters: formWith(query, "query", value)})
 		if err == nil || !strings.Contains(err.Error(), "query") {

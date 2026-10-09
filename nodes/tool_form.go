@@ -170,7 +170,14 @@ func validateToolForm(form toolForm, base workflow.ConfigValidator) workflow.Con
 		if err := ai.CheckFromAIConsistent(n.Parameters); err != nil {
 			return err
 		}
-		if err := checkToolFormParameters(form, n.Parameters); err != nil {
+		parameters := make(map[string]any, len(n.Parameters))
+		for key, value := range n.Parameters {
+			// The tool's own naming is text for the model, never filled.
+			if key != "toolName" && key != "toolDescription" {
+				parameters[key] = value
+			}
+		}
+		if err := checkToolFormParameters(form, parameters); err != nil {
 			return err
 		}
 		if base != nil {
@@ -181,8 +188,16 @@ func validateToolForm(form toolForm, base workflow.ConfigValidator) workflow.Con
 }
 
 // checkToolFormParameters refuses a form whose kind of call the model could
-// choose. It runs when the node is validated and again when the agent builds
-// the tool, because a descriptor is data and the agent does not take its word.
+// choose, and a $fromAI written in plain text. It runs when the node is
+// validated and again when the agent builds the tool, because a descriptor is
+// data and the agent does not take its word.
+//
+// Plain text is refused rather than filled. A tool form's model values reach
+// the base executor only through FromAIArguments, as data an expression reads:
+// n8n writes every $fromAI inside an `=` expression, which imports as a
+// marker, and nothing that authors a tool form here writes one in plain text.
+// Filling plain text would splice the model's words into the parameter, which
+// is exactly what a structural key or SQL must never take.
 func checkToolFormParameters(form toolForm, parameters map[string]any) error {
 	if form.validate != nil {
 		if err := form.validate(workflow.Node{Parameters: parameters}); err != nil {
@@ -192,30 +207,44 @@ func checkToolFormParameters(form toolForm, parameters map[string]any) error {
 	for _, key := range append([]string{"resource", "operation"}, form.structuralKeys...) {
 		if value, present := parameters[key]; present && authorChoiceIsOpen(value) {
 			return fmt.Errorf("%s decides what kind of call this tool makes, so the workflow author sets it: "+
-				"it cannot call $fromAI or be an expression", key)
+				"it cannot call $fromAI, be an expression or hold {{ }}", key)
+		}
+	}
+	for _, key := range sortedParameterKeys(parameters) {
+		if holdsFromAIText(parameters[key]) {
+			return fmt.Errorf("%s calls $fromAI in plain text. A tool form takes the model's values through an "+
+				"expression only, so write it as {{ $fromAI('key', 'what it is') }}", key)
 		}
 	}
 	return nil
 }
 
 // authorChoiceIsOpen reports whether a value, at any depth, is or holds an
-// expression or a $fromAI call.
+// expression, a $fromAI call or template text.
 func authorChoiceIsOpen(value any) bool {
-	if holdsExpressionMarker(value) {
-		return true
+	return holdsExpressionMarker(value) || holdsFromAIText(value) || holdsTemplateText(value)
+}
+
+// holdsFromAIText reports whether a plain string at any depth (expression
+// markers aside, whose calls are read as data) names $fromAI. The match is a
+// superset of what the filler and the evaluator accept: any letter case,
+// with or without the parenthesis, so no spelling they honour gets past it.
+func holdsFromAIText(value any) bool {
+	if expression.IsExpression(value) {
+		return false
 	}
 	switch typed := value.(type) {
 	case string:
-		return strings.Contains(typed, "$fromAI(")
+		return strings.Contains(strings.ToLower(typed), "$fromai")
 	case map[string]any:
-		for _, nested := range typed {
-			if authorChoiceIsOpen(nested) {
+		for key, nested := range typed {
+			if strings.Contains(strings.ToLower(key), "$fromai") || holdsFromAIText(nested) {
 				return true
 			}
 		}
 	case []any:
 		for _, nested := range typed {
-			if authorChoiceIsOpen(nested) {
+			if holdsFromAIText(nested) {
 				return true
 			}
 		}
@@ -224,14 +253,16 @@ func authorChoiceIsOpen(value any) bool {
 }
 
 // validatePostgresToolQuery keeps the SQL the author's. An expression in
-// `query` is refused by the base node already; a $fromAI call in it, even in
-// a plain string, would have the model write the statement.
+// `query` is refused by the base node already; a $fromAI call in it, in any
+// spelling and even in plain text, would have the model write the statement.
+// Plain template text is refused as well: a tool form's SQL is fixed, and a
+// literal {{ belongs in a bound value.
 func validatePostgresToolQuery(n workflow.Node) error {
 	query := n.Parameters["query"]
 	if expression.IsExpression(query) || authorChoiceIsOpen(query) {
 		return fmt.Errorf("query is SQL the workflow author writes: the model may not write it, through $fromAI or an " +
-			"expression. Put $1, $2 placeholders in the query and the values in Query Parameters, or use the " +
-			"select, insert, update or delete operations, whose values are bound")
+			"expression, and it holds no {{ }}. Put $1, $2 placeholders in the query and the values in Query " +
+			"Parameters, or use the select, insert, update or delete operations, whose values are bound")
 	}
 	return nil
 }
@@ -358,6 +389,8 @@ type formTool struct {
 	executor    engine.Executor
 	node        workflow.IRNode
 	request     engine.Request
+	// item is the agent's input item this call answers (bindToolsToItem).
+	item workflow.Item
 }
 
 // Definition offers the model one typed property per $fromAI call. A form
@@ -370,9 +403,12 @@ func (tool *formTool) Definition() ai.ToolDefinition {
 	return ai.ToolDefinition{Name: tool.name, Description: tool.description, Parameters: schema}
 }
 
-// Invoke runs the base node once, on an empty item, with the model's
-// arguments in the request for its expressions to read. The result is what
-// the model reads, capped at httpToolMaxBytes like every tool's.
+// Invoke runs the base node once, on the agent's current input item, with
+// the model's arguments in the request for its expressions to read. Nothing
+// is written into the parameters: they hold no plain-text $fromAI (refused
+// when the tool was built), so the model's values reach the node only as the
+// values `$fromAI` returns. The result is what the model reads, capped at
+// httpToolMaxBytes like every tool's.
 func (tool *formTool) Invoke(ctx context.Context, arguments json.RawMessage) (string, error) {
 	supplied := map[string]any{}
 	if len(arguments) > 0 && json.Valid(arguments) {
@@ -381,21 +417,20 @@ func (tool *formTool) Invoke(ctx context.Context, arguments json.RawMessage) (st
 			supplied = decoded
 		}
 	}
-	parameters, fromAI, err := fillToolFromAI(tool.node.Parameters, supplied)
+	fromAI, err := toolFromAIArguments(tool.node.Parameters, supplied)
 	if err != nil {
 		return "", fmt.Errorf("tool %q: %w", tool.name, err)
 	}
-	if err := checkNoModelTemplates(tool.node.Parameters, parameters, "parameters"); err != nil {
-		return "", fmt.Errorf("tool %q: %w", tool.name, err)
-	}
-	// A copy of the node and of the request: a tool outlives one call, and
-	// the next call must not see this one's values.
-	node := tool.node
-	node.Parameters = parameters
+	// A copy of the request: a tool outlives one call, and the next call must
+	// not see this one's values.
 	request := tool.request
 	request.FromAIArguments = fromAI
 
-	output, err := tool.executor.Execute(ctx, node, workflow.NodeInput{"main": {{JSON: map[string]any{}}}}, request)
+	item := tool.item
+	if item.JSON == nil {
+		item.JSON = map[string]any{}
+	}
+	output, err := tool.executor.Execute(ctx, tool.node, workflow.NodeInput{"main": {item}}, request)
 	if err != nil {
 		return "", err
 	}
@@ -405,41 +440,22 @@ func (tool *formTool) Invoke(ctx context.Context, arguments json.RawMessage) (st
 	return httpToolObservation(output[0])
 }
 
-// checkNoModelTemplates refuses a plain string that gained `{{` when the
-// model's values were filled in. Some executors read a plain `{{ … }}` string
-// as a template the author wrote (the Google nodes, for n8n's nested
-// parameters), so a model value must never be able to write one.
-func checkNoModelTemplates(template, filled any, path string) error {
-	if expression.IsExpression(template) {
-		return nil
+// bindToolsToItem hands each tool form the agent's current input item, the
+// way n8n resolves a sub-node's `$json` against its root node's input: an
+// expression in the tool reads the item the agent is answering, and `$('Name')`
+// pairs through that item's lineage. Other tools are returned as they are.
+func bindToolsToItem(tools []ai.Tool, item workflow.Item) []ai.Tool {
+	bound := make([]ai.Tool, len(tools))
+	for index, tool := range tools {
+		if form, isForm := tool.(*formTool); isForm {
+			copied := *form
+			copied.item = item
+			bound[index] = &copied
+			continue
+		}
+		bound[index] = tool
 	}
-	switch typed := template.(type) {
-	case string:
-		// A whole-string json call is filled with an object or a list, so
-		// the model's value is searched at any depth.
-		text, isText := filled.(string)
-		if (isText && text != typed && strings.Contains(text, "{{")) || (!isText && holdsTemplateText(filled)) {
-			return fmt.Errorf("%s holds {{ once the model's values were filled in, and a tool never lets the model write a template", path)
-		}
-	case map[string]any:
-		object, _ := filled.(map[string]any)
-		for key, nested := range typed {
-			if err := checkNoModelTemplates(nested, object[key], path+"."+key); err != nil {
-				return err
-			}
-		}
-	case []any:
-		list, _ := filled.([]any)
-		for index, nested := range typed {
-			if index >= len(list) {
-				break
-			}
-			if err := checkNoModelTemplates(nested, list[index], fmt.Sprintf("%s[%d]", path, index)); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return bound
 }
 
 // holdsTemplateText reports whether a value holds a string with `{{` at any

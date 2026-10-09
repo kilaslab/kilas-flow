@@ -294,81 +294,68 @@ func TestTheGmailToolGetsTheMessageTheModelNames(t *testing.T) {
 	}
 }
 
-// A plain string is filled with the model's text in place. It must not come
-// out holding `{{`: the Google nodes read such a string as the author's
-// template, so the model would be writing one.
-func TestAFilledPlainStringThatGainsBracesIsRefused(t *testing.T) {
-	var calls int
-	gmail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls++
+// A tool form reads the item the agent is answering, as an n8n sub-node reads
+// its root node's input: `$json` and `$input` are that item, and the model's
+// values still arrive only through $fromAI.
+func TestAToolFormReadsTheAgentsInputItem(t *testing.T) {
+	var sent []string
+	gmail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Raw string `json:"raw"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		decoded, _ := base64.RawURLEncoding.DecodeString(body.Raw)
+		sent = append(sent, string(decoded))
 		_, _ = io.WriteString(w, `{"id":"sent-1"}`)
 	}))
 	t.Cleanup(gmail.Close)
 	t.Cleanup(nodes.SetGoogleAPIRootsForTest("", gmail.URL+"/gmail/v1"))
 
 	model := newRecordingModel(t,
-		toolCall("Send_Email", map[string]any{"topic": modelTemplate}),
-		assistantAnswer("gave up"),
+		toolCall("Reply", map[string]any{"body": "Thanks!"}),
+		assistantAnswer("replied"),
+		toolCall("Reply", map[string]any{"body": "Noted."}),
+		assistantAnswer("replied"),
 	)
 	harness := newFormHarness(t, allowing(model.server, gmail))
-	tool := harness.descriptor(t, nodes.GmailToolNodeType, workflow.V(1), "Send Email", map[string]any{
-		"toolDescription": "Sends an email.", "operation": "send", "to": "ops@example.com",
-		"subject": "Re: $fromAI('topic')", "message": "See subject.",
+	tool := harness.descriptor(t, nodes.GmailToolNodeType, workflow.V(1), "Reply", map[string]any{
+		"toolDescription": "Replies to the sender.", "operation": "send",
+		"to":      formExpression("{{ $json.from }}"),
+		"subject": formExpression("Re: {{ $input.first().json.topic }}"),
+		"message": formExpression("{{ $fromAI('body', 'the reply') }}"),
 	}, map[string]string{nodes.GmailCredentialType: "cred-gmail"})
 
-	if _, err := runFormAgent(t, harness.agent, model, []workflow.Item{tool}, credentialMap{
-		"cred-key": modelCredential(),
-		"cred-gmail": {
-			ID: "cred-gmail", Type: nodes.GmailCredentialType,
-			Fields: map[string]string{"access_token": "token"}, AllowedDomains: []string{httptestHost(gmail.URL)},
+	_, err := harness.agent.Execute(context.Background(), agentIR(t, map[string]any{"prompt": "Reply."}), workflow.NodeInput{
+		"main": {
+			{JSON: map[string]any{"from": "ana@example.com", "topic": "Q3"}},
+			{JSON: map[string]any{"from": "budi@example.com", "topic": "Q4"}},
 		},
-	}); err != nil {
+		"model": {modelItem(model.server.URL)},
+		"tools": {tool},
+	}, engine.Request{
+		Credentials: credentialMap{
+			"cred-key": modelCredential(),
+			"cred-gmail": {
+				ID: "cred-gmail", Type: nodes.GmailCredentialType,
+				Fields: map[string]string{"access_token": "token"}, AllowedDomains: []string{httptestHost(gmail.URL)},
+			},
+		},
+		Execution: agentExecution(),
+	})
+	if err != nil {
 		t.Fatalf("agent Execute() error = %v", err)
 	}
-	if calls != 0 {
-		t.Fatalf("Gmail was called %d times, want the call refused before it was made", calls)
+	if len(sent) != 2 {
+		t.Fatalf("Gmail received %d sends, want one per agent item", len(sent))
 	}
-	if turns := model.toolTurns(t); len(turns) != 1 || !strings.Contains(turns[0], "tool failed") || !strings.Contains(turns[0], "{{") {
-		t.Errorf("tool turns = %v, want the refusal", turns)
-	}
-}
-
-// The same holds one level down: a whole-string json $fromAI is filled with
-// an object, and a `{{` anywhere inside it would be a template the Google
-// node reads.
-func TestAFilledJSONValueHoldingBracesIsRefused(t *testing.T) {
-	var calls int
-	gmail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls++
-		_, _ = io.WriteString(w, `{"messages":[]}`)
-	}))
-	t.Cleanup(gmail.Close)
-	t.Cleanup(nodes.SetGoogleAPIRootsForTest("", gmail.URL+"/gmail/v1"))
-
-	model := newRecordingModel(t,
-		toolCall("Find_Mail", map[string]any{"filters": map[string]any{"sender": modelTemplate}}),
-		assistantAnswer("gave up"),
-	)
-	harness := newFormHarness(t, allowing(model.server, gmail))
-	tool := harness.descriptor(t, nodes.GmailToolNodeType, workflow.V(1), "Find Mail", map[string]any{
-		"toolDescription": "Finds mail.", "operation": "getAll",
-		"filters": "$fromAI('filters', 'the Gmail filters', 'json')",
-	}, map[string]string{nodes.GmailCredentialType: "cred-gmail"})
-
-	if _, err := runFormAgent(t, harness.agent, model, []workflow.Item{tool}, credentialMap{
-		"cred-key": modelCredential(),
-		"cred-gmail": {
-			ID: "cred-gmail", Type: nodes.GmailCredentialType,
-			Fields: map[string]string{"access_token": "token"}, AllowedDomains: []string{httptestHost(gmail.URL)},
-		},
-	}); err != nil {
-		t.Fatalf("agent Execute() error = %v", err)
-	}
-	if calls != 0 {
-		t.Fatalf("Gmail was called %d times, want the call refused before it was made", calls)
-	}
-	if turns := model.toolTurns(t); len(turns) != 1 || !strings.Contains(turns[0], "tool failed") {
-		t.Errorf("tool turns = %v, want the refusal", turns)
+	for index, want := range []struct{ to, subject, body string }{
+		{"ana@example.com", "Re: Q3", "Thanks!"},
+		{"budi@example.com", "Re: Q4", "Noted."},
+	} {
+		if !strings.Contains(sent[index], "To: "+want.to+"\r\n") || !strings.Contains(sent[index], "Subject: "+want.subject+"\r\n") ||
+			!strings.HasSuffix(sent[index], want.body) {
+			t.Errorf("send %d =\n%s\nwant to %s, subject %q and body %q", index, sent[index], want.to, want.subject, want.body)
+		}
 	}
 }
 
@@ -599,15 +586,26 @@ func TestTheAgentResolvesAToolFormsBaseItselfOrRefuses(t *testing.T) {
 			tool:  forged(func(d map[string]any) { d["toolType"] = nodes.HTTPToolNodeType }),
 			want:  "not a tool form",
 		},
-		"an executor named by the descriptor": {
-			// The descriptor cannot pick the executor: there is no field for
-			// it, and the operation it smuggles in is refused as structural.
+		"a model-chosen operation in a forged descriptor": {
 			agent: harness.agent,
 			tool: forged(func(d map[string]any) {
-				d["executorId"] = nodes.HTTPExecutorID
-				d["parameters"] = map[string]any{"operation": formExpression("{{ $fromAI('op') }}")}
+				d["parameters"] = map[string]any{"operation": "$fromai('op')", "table": d["parameters"].(map[string]any)["table"]}
 			}),
 			want: "operation",
+		},
+		"plain $fromAI in a forged descriptor": {
+			// The backstop for the validation rule: a tool form never fills
+			// plain text with the model's words.
+			agent: harness.agent,
+			tool: forged(func(d map[string]any) {
+				parameters := map[string]any{}
+				for key, value := range d["parameters"].(map[string]any) {
+					parameters[key] = value
+				}
+				parameters["limit"] = "$FromAI ('limit')"
+				d["parameters"] = parameters
+			}),
+			want: "plain text",
 		},
 		"a runtime with no catalogue": {
 			agent: nodes.NewAgentExecutor(ai.NewLoopRuntime(), allowing(model.server), nil),
@@ -622,6 +620,33 @@ func TestTheAgentResolvesAToolFormsBaseItselfOrRefuses(t *testing.T) {
 				t.Fatalf("Execute() error = %v, want one mentioning %q", err, testCase.want)
 			}
 		})
+	}
+}
+
+// A descriptor is data: one that names an executor of its choosing still runs
+// the base node the tool type names, found on the server.
+func TestADescriptorCannotNameItsExecutor(t *testing.T) {
+	t.Parallel()
+
+	model := newRecordingModel(t,
+		toolCall("Find", map[string]any{}),
+		assistantAnswer("found"),
+	)
+	captured := &capturedSQL{}
+	agent, harness := postgresFormAgent(t, model, captured)
+	tool := harness.descriptor(t, nodes.PostgresToolNodeType, workflow.V(2), "Find", map[string]any{
+		"toolDescription": "Finds.", "operation": "select",
+		"table": map[string]any{"__rl": true, "mode": "name", "value": "t"},
+	}, map[string]string{"postgres": "cred-db"})
+	descriptor := tool.JSON["$ai"].(map[string]any)
+	descriptor["executorId"] = nodes.HTTPExecutorID
+	descriptor["executor"] = nodes.HTTPExecutorID
+
+	if _, err := runFormAgent(t, agent, model, []workflow.Item{tool}, postgresCredentials()); err != nil {
+		t.Fatalf("agent Execute() error = %v", err)
+	}
+	if len(captured.statements) != 1 || captured.nodes[0].Type != nodes.PostgresNodeType {
+		t.Fatalf("the PostgreSQL executor ran %d statements, want the base node to run once whatever the descriptor named", len(captured.statements))
 	}
 }
 
