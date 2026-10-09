@@ -60,6 +60,8 @@ func RegisterAll(registry *node.Registry) error {
 		googleDriveTrigger(),
 		gmailNode(),
 		gmailTrigger(),
+		googleSheetsNode(),
+		googleSheetsTrigger(),
 		codeNode(),
 		stickyNoteNode(),
 		loopNode(),

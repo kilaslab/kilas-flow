@@ -24,6 +24,7 @@ var glyphVariants = map[string]string{
 	"kilasflow.httpTool":               "kilasflow.httpRequest",
 	"kilasflow.gmailTrigger":           "kilasflow.gmail",
 	"kilasflow.googleDriveTrigger":     "kilasflow.googleDrive",
+	"kilasflow.googleSheetsTrigger":    "kilasflow.googleSheets",
 	"kilasflow.telegramTrigger":        "pack.telegram",
 	"kilasflow.executeWorkflowTrigger": "kilasflow.executeWorkflow",
 	"kilasflow.workflowTool":           "kilasflow.executeWorkflow",

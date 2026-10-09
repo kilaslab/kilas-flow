@@ -4,12 +4,26 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kilaslab/kilas-flow/internal/poller"
 	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
-// ExtractPolls turns a document's Gmail and Drive triggers into the leased
-// cursor rows an activation stores.
+// PollHandlers is the poll handler for each trigger type ExtractPolls
+// recognises. It is the one list main wires into the poll service, so adding a
+// polling trigger means adding it here and in ExtractPolls, and a test holds
+// the two together.
+func PollHandlers(policy safehttp.Policy) map[string]poller.Handler {
+	return map[string]poller.Handler{
+		GmailTriggerNodeType:        NewGmailPoller(policy),
+		GoogleDriveTriggerNodeType:  NewGoogleDrivePoller(policy),
+		GoogleSheetsTriggerNodeType: NewGoogleSheetsPoller(policy),
+	}
+}
+
+// ExtractPolls turns a document's Gmail, Drive and Sheets triggers into the
+// leased cursor rows an activation stores.
 func ExtractPolls(document workflow.Document) []repository.PollTrigger {
 	triggers := make([]repository.PollTrigger, 0, 1)
 	for _, node := range document.Nodes {
@@ -17,7 +31,7 @@ func ExtractPolls(document workflow.Document) []repository.PollTrigger {
 			continue
 		}
 		switch node.Type {
-		case GmailTriggerNodeType, GoogleDriveTriggerNodeType:
+		case GmailTriggerNodeType, GoogleDriveTriggerNodeType, GoogleSheetsTriggerNodeType:
 		default:
 			continue
 		}

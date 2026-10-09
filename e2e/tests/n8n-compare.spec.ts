@@ -840,19 +840,25 @@ test('the editor-validated tier refuses with user-facing diagnostics', async ({ 
 		expect(errorText(remoteAttempt.body)).toContain(`requires a ${remote.credential} credential`);
 	}
 
+	const sheetsLocators = {
+		documentId: { __rl: true, mode: 'id', value: 'compare-document' },
+		sheetName: { __rl: true, mode: 'name', value: 'Sheet1' }
+	};
 	for (const remote of [
 		{ type: 'kilasflow.googleDrive', credential: 'googleDriveOAuth2Api' },
 		{ type: 'kilasflow.googleDriveTrigger', credential: 'googleDriveOAuth2Api' },
 		{ type: 'kilasflow.gmail', credential: 'gmailOAuth2' },
-		{ type: 'kilasflow.gmailTrigger', credential: 'gmailOAuth2' }
-	]) {
+		{ type: 'kilasflow.gmailTrigger', credential: 'gmailOAuth2' },
+		{ type: 'kilasflow.googleSheets', credential: 'googleSheetsOAuth2Api', parameters: { operation: 'read', ...sheetsLocators } },
+		{ type: 'kilasflow.googleSheetsTrigger', credential: 'googleSheetsTriggerOAuth2Api', parameters: sheetsLocators }
+	] as Array<{ type: string; credential: string; parameters?: Record<string, unknown> }>) {
 		const isTrigger = remote.type.endsWith('Trigger');
 		const remoteId = await createWorkflow(
 			server.baseURL,
 			`Compare ${remote.type}`,
 			isTrigger
-				? [node('node', 'Google', remote.type, 1, {})]
-				: [manual(), node('node', 'Google', remote.type, 1, { operation: 'search' })],
+				? [node('node', 'Google', remote.type, 1, remote.parameters ?? {})]
+				: [manual(), node('node', 'Google', remote.type, 1, remote.parameters ?? { operation: 'search' })],
 			isTrigger ? [] : [conn('c1', 'manual', 'main', 'node', 'main')]
 		);
 		const remoteAttempt = await startRun(server.baseURL, remoteId);

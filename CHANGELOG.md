@@ -171,6 +171,25 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   captured value (`secretCapture`); such a trigger refuses deliveries until the
   secret has been kept.
 
+- Google Sheets (`kilasflow.googleSheets`) and Google Sheets Trigger
+  (`kilasflow.googleSheetsTrigger`): n8n's Google Sheets nodes import onto
+  native nodes and run. The node reads, appends, updates, appends or updates,
+  deletes and clears rows with n8n's operation names, pickers for the document
+  and the tab (or an ID or link), and the same column mapper as the database
+  nodes; a read keys each row by its header and adds the sheet's own
+  `row_number`. The trigger polls on the leased cursor for `rowAdded`,
+  `rowUpdate` and `anyUpdate` by comparing row fingerprints, so it needs only
+  read access to spreadsheets; it watches up to 20,000 rows and starts a new
+  baseline when its settings change. Two OAuth2 credential types,
+  `googleSheetsOAuth2Api` and `googleSheetsTriggerOAuth2Api`, use the existing
+  Google Connect flow and refresh, and ask for the least scope each node needs
+  (`spreadsheets`, or `spreadsheets.readonly` for the trigger, plus
+  `drive.metadata.readonly` for the spreadsheet picker). Service-account sign-in, creating
+  or deleting spreadsheets and tabs, and the version 3 node shape are refused by
+  name at import, and a trigger set to emit the old or both versions of a row
+  imports as the new version with a note. The Google Sheets Tool for the AI
+  Agent is not part of this change.
+
 - Vector Store Tool (`kilasflow.vectorStoreTool`): an AI Agent tool that
   answers a question from a vector store. It takes a vector store in the new
   **Retrieve (for Vector Store Tool)** mode on its Vector Store port and a chat

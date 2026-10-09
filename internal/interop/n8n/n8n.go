@@ -581,6 +581,20 @@ var mappings = []mapping{
 		n8nType: "n8n-nodes-base.gmailTrigger", kilasType: GmailTriggerNodeType, kilasVersion: workflow.V(1),
 		exportTypeVersion: 1.2, toKilas: packToKilas, toN8N: packToN8N,
 	},
+	// Google Sheets and its trigger. The action node imports at the version it
+	// was authored at and goes back out at it; 4.7 is the pin because it is the
+	// newest n8n publishes. Version 3 has a different parameter shape and is not
+	// listed, so an import of it is blocked and an export never writes it.
+	{
+		n8nType: "n8n-nodes-base.googleSheets", kilasType: GoogleSheetsNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 4.7, publishedVersions: googleSheetsPublishedVersions,
+		toKilas: googleSheetsToKilas, toN8N: googleSheetsToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.googleSheetsTrigger", kilasType: GoogleSheetsTriggerNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, publishedVersions: []float64{1},
+		toKilas: googleSheetsTriggerToKilas, toN8N: googleSheetsTriggerToN8N,
+	},
 	// The OpenAI-compatible providers. Each publishes an endpoint that speaks
 	// OpenAI's protocol, so the native node is the same one in every case and
 	// only the base URL differs.

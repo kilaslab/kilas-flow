@@ -140,11 +140,9 @@ func (handler *Credentials) StartOAuth(ctx context.Context, input *oauthStartInp
 	}
 	scope := strings.TrimSpace(fields["scope"])
 	if scope == "" {
-		if record.Type == credentials.GmailOAuthType {
-			scope = "https://www.googleapis.com/auth/gmail.modify"
-		} else {
-			scope = "https://www.googleapis.com/auth/drive"
-		}
+		// The type's own default, not a guess between Gmail and Drive: a
+		// Sheets credential saved without a scope must not ask for Drive.
+		scope = credentials.GoogleDefaultScope(record.Type)
 	}
 	redirect := handler.oauthRedirectURL(input.Proto, input.Host, false)
 	origin := strings.TrimSpace(input.Origin)

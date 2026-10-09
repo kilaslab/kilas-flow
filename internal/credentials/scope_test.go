@@ -31,6 +31,8 @@ func TestAFixedHostCredentialIsConfinedToItsServiceByDefault(t *testing.T) {
 			"accessToken": "1:A",
 		}}, "api.telegram.org"},
 		{"gmail", credentials.Record{Type: credentials.GmailOAuthType}, "gmail.googleapis.com"},
+		{"google sheets", credentials.Record{Type: credentials.GoogleSheetsOAuthType}, "sheets.googleapis.com"},
+		{"google sheets trigger", credentials.Record{Type: credentials.GoogleSheetsTriggerOAuthType}, "sheets.googleapis.com"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

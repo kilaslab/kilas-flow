@@ -330,6 +330,11 @@ func run(args []string) error {
 	if err := loadoptions.RegisterSQL(optionLoader, sqlGuard); err != nil {
 		return fmt.Errorf("register the database option loaders: %w", err)
 	}
+	// The Google Sheets pickers read Google as the credential, under the same
+	// egress policy and the credential's own allowed hosts.
+	if err := loadoptions.RegisterGoogleSheets(optionLoader); err != nil {
+		return fmt.Errorf("register the Google Sheets option loaders: %w", err)
+	}
 	// Generated node packs. The definitions, their routing and their option
 	// loaders are registered together: a pack whose runtime is missing fails
 	// here rather than on its first execution.
@@ -788,10 +793,7 @@ func run(args []string) error {
 		pollService, pollErr := poller.New(poller.Options{
 			Cursors:  repository.NewPollCursorStore(db.DB),
 			Versions: workflows,
-			Handlers: map[string]poller.Handler{
-				nodes.GmailTriggerNodeType:       nodes.NewGmailPoller(outboundPolicy(cfg.Outbound)),
-				nodes.GoogleDriveTriggerNodeType: nodes.NewGoogleDrivePoller(outboundPolicy(cfg.Outbound)),
-			},
+			Handlers: nodes.PollHandlers(outboundPolicy(cfg.Outbound)),
 			Queue: func(ctx context.Context, tenantID, workflowID, versionID, triggerNodeID string, payload json.RawMessage) error {
 				_, err := runtime.QueuePolled(ctx, tenantID, workflowID, versionID, triggerNodeID, payload)
 				return err

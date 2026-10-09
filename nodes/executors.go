@@ -74,6 +74,8 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		GoogleDriveTriggerExecutorID:     GoogleDriveTriggerExecutor{},
 		GmailExecutorID:                  NewGmailExecutor(httpPolicy),
 		GmailTriggerExecutorID:           GmailTriggerExecutor{},
+		GoogleSheetsExecutorID:           NewGoogleSheetsExecutor(httpPolicy),
+		GoogleSheetsTriggerExecutorID:    GoogleSheetsTriggerExecutor{},
 		MCPClientToolExecutorID:          NewMCPClientToolExecutor(httpPolicy),
 		CodeExecutorID:                   codeExecutorOf(codeCompiler, settings),
 		LoopExecutorID:                   engine.ExecutorFunc(executeLoop),

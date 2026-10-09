@@ -293,3 +293,40 @@ describe('a resource mapper that lets the model fill a column', () => {
 		expect(markup).not.toContain('Remove mode');
 	});
 });
+
+// A multi-select fed by a loader (the column names of a sheet) shows what the
+// node already holds before the loader answers, and when it never does: a node
+// just imported from n8n has no credential to load with, so its saved choice is
+// all the editor has. Dropping it would hide the selection and leave no way to
+// untick it.
+describe('a multi-select property', () => {
+	const watched = (loaded: boolean): PropertyDefinition => ({
+		key: 'columnsToWatch',
+		label: 'Columns to Watch',
+		kind: 'multiOptions',
+		required: false,
+		...(loaded
+			? { loadOptions: { source: 'internal', name: 'googleSheets.headings', dependsOn: ['documentId'] } }
+			: { options: [{ label: 'Alpha', value: 'a' }] })
+	});
+
+	it('shows a saved selection as checked rows before its loader answers', () => {
+		const markup = html(watched(true), ['a', 'b']);
+
+		expect(markup).toMatch(/<input[^>]*type="checkbox"[^>]*checked[^>]*>\s*<span>a<\/span>/);
+		expect(markup).toMatch(/<input[^>]*type="checkbox"[^>]*checked[^>]*>\s*<span>b<\/span>/);
+	});
+
+	it('shows a saved value the declared options do not list, beside the ones they do', () => {
+		const markup = html(watched(false), ['a', 'gone']);
+
+		expect(markup).toMatch(/<input[^>]*checked[^>]*>\s*<span>Alpha<\/span>/);
+		expect(markup).toMatch(/<input[^>]*checked[^>]*>\s*<span>gone<\/span>/);
+	});
+
+	it('renders no row for a selection that is empty', () => {
+		const markup = html(watched(true), []);
+
+		expect(markup).not.toContain('type="checkbox"');
+	});
+});
