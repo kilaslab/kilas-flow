@@ -3,7 +3,7 @@
 // throws on anything else rather than guessing:
 //
 //   - hex (#rgb, #rgba, #rrggbb, #rrggbbaa), rgb()/rgba(), color(srgb …),
-//     `transparent`;
+//     oklab() (how browsers serialise computed colours), `transparent`;
 //   - absolute oklch(L C H [/ A]);
 //   - relative oklch(from <colour> <l> <c> <h> [/ <alpha>]), whose channels may
 //     be numbers, the keywords l/c/h/alpha, + - * /, parentheses and the
@@ -226,6 +226,23 @@ function parseRgb(inner: string): Oklch {
 	});
 }
 
+/** oklab(L a b [/ A]): how a browser serialises a color-mix(in oklab, …) result. */
+function parseOklab(inner: string): Oklch {
+	const { channels, alpha } = channelsAndAlpha(inner);
+	if (channels.length !== 3) throw new ColorParseError(`oklab() needs three channels: oklab(${inner})`);
+	const [l, a, b] = channels.map((text, i) => {
+		const value = text.endsWith('%') ? (Number.parseFloat(text) / 100) * (i === 0 ? 1 : 0.4) : Number(text);
+		return requireNumber(value, text, 'oklab()');
+	});
+	const c = Math.hypot(a, b);
+	return {
+		l,
+		c,
+		h: c < ACHROMATIC ? NaN : normalizeHue((Math.atan2(b, a) * 180) / Math.PI),
+		alpha: alpha === undefined ? 1 : requireNumber(parseAlphaLiteral(alpha), alpha, 'oklab() alpha')
+	};
+}
+
 /** color(srgb r g b [/ a]): how a browser may serialise a computed colour. */
 function parseColorFunction(inner: string): Oklch {
 	const { channels, alpha } = channelsAndAlpha(inner);
@@ -356,6 +373,8 @@ export function parseCssColor(input: string): Oklch {
 			return parseColorMix(inner);
 		case 'color':
 			return parseColorFunction(inner);
+		case 'oklab':
+			return parseOklab(inner);
 		default:
 			throw new ColorParseError(`unsupported colour function ${name}(): ${text}`);
 	}

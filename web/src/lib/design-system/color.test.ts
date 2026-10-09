@@ -16,7 +16,10 @@ describe('parseCssColor + toHex', () => {
 		['rgb(14 165 233)', '#0ea5e9'],
 		['rgb(14, 165, 233)', '#0ea5e9'],
 		['rgba(14, 165, 233, 0.5)', '#0ea5e980'],
-		['color(srgb 0.054902 0.647059 0.913725)', '#0ea5e9']
+		['color(srgb 0.054902 0.647059 0.913725)', '#0ea5e9'],
+		// How Chrome serialises a Tailwind opacity modifier (color-mix in oklab).
+		['oklab(0.82 -0.0122 0.1395)', '#e1c34b'],
+		['oklab(0.82 -0.0122 0.1395 / 0.5)', '#e1c34b80']
 	])('%s renders as %s', (input, hex) => {
 		expect(toHex(parseCssColor(input))).toBe(hex);
 	});
