@@ -277,29 +277,43 @@ func TestWorkflowToolPlainInputsStillExportAsTheyDid(t *testing.T) {
 func TestWorkflowToolWholeExpressionInputsAreReportedNotGarbled(t *testing.T) {
 	t.Parallel()
 
-	document := workflow.Document{
-		Nodes: []workflow.Node{
-			{ID: "w", Name: "Convert", Type: "kilasflow.workflowTool", TypeVersion: workflow.V(1), Parameters: map[string]any{
-				"toolName": "convert", "toolDescription": "Converts.",
-				"workflowId":     "wf_celsius",
-				"workflowInputs": map[string]any{"mode": "expression", "value": "{{ { unit: 'F' } }}"},
-			}},
+	expression := map[string]any{"mode": "expression", "value": "{{ { unit: 'F' } }}"}
+	for name, stored := range map[string]any{
+		"the inputs are the expression": expression,
+		// The server reads a mapper whose own value is one expression as the
+		// same case: columns named `mode` and `value` would be garbage in n8n.
+		"the mapper's own value is the expression": map[string]any{
+			"mappingMode": "defineBelow", "value": expression, "matchingColumns": []any{},
+			"schema": []any{map[string]any{"id": "tempC", "displayName": "tempC", "type": "number"}},
 		},
-	}
-	exported, err := n8n.Export(document, registry(t))
-	if err != nil {
-		t.Fatalf("Export() error = %v", err)
-	}
-	if _, carried := exported.Document.Nodes[0].Parameters["workflowInputs"]; carried {
-		t.Errorf("exported workflowInputs = %#v, want it left out rather than written as a column map", exported.Document.Nodes[0].Parameters["workflowInputs"])
-	}
-	reported := false
-	for _, issue := range exported.Lossy {
-		if issue.Field == "workflowInputs" {
-			reported = true
-		}
-	}
-	if !reported {
-		t.Errorf("lossy = %#v, want the dropped inputs named", exported.Lossy)
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			document := workflow.Document{
+				Nodes: []workflow.Node{
+					{ID: "w", Name: "Convert", Type: "kilasflow.workflowTool", TypeVersion: workflow.V(1), Parameters: map[string]any{
+						"toolName": "convert", "toolDescription": "Converts.",
+						"workflowId":     "wf_celsius",
+						"workflowInputs": stored,
+					}},
+				},
+			}
+			exported, err := n8n.Export(document, registry(t))
+			if err != nil {
+				t.Fatalf("Export() error = %v", err)
+			}
+			if _, carried := exported.Document.Nodes[0].Parameters["workflowInputs"]; carried {
+				t.Errorf("exported workflowInputs = %#v, want it left out rather than written as a column map", exported.Document.Nodes[0].Parameters["workflowInputs"])
+			}
+			reported := false
+			for _, issue := range exported.Lossy {
+				if issue.Field == "workflowInputs" {
+					reported = true
+				}
+			}
+			if !reported {
+				t.Errorf("lossy = %#v, want the dropped inputs named", exported.Lossy)
+			}
+		})
 	}
 }
