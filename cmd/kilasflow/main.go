@@ -1512,7 +1512,17 @@ func loadCredentialKeys(ctx context.Context, cfg config.Config, log *slog.Logger
 	if err != nil {
 		return nil, nil, err
 	}
-	return credentialKeys(key, secondary)
+	keyring, oauthKey, err := credentialKeys(key, secondary)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Legacy payloads carry no AAD, so while they open, a copy taken before
+	// the reseal could open in another row. An operator who has resealed
+	// everything refuses them for good.
+	if cfg.Security.LegacySeals == config.LegacySealsRefuse {
+		keyring = keyring.RefusingLegacySeals()
+	}
+	return keyring, oauthKey, nil
 }
 
 // secondaryKey reads the rotation key: the previous master key, which opens
@@ -1537,6 +1547,24 @@ func secondaryKey(cfg config.Config, log *slog.Logger) ([]byte, error) {
 	log.Info("a secondary credential encryption key is configured: it opens payloads it sealed and seals nothing",
 		"variable", name)
 	return key, nil
+}
+
+// unopenableHint says what to do about payloads no configured key opens. It
+// names the variable the secondary key is read from, or the setting to point
+// at one when the operator has cleared it, and the legacy-seals switch when
+// that is what refused them.
+func unopenableHint(cfg config.Config) string {
+	hint := "configure the key that sealed them as the secondary encryption key"
+	if variable := strings.TrimSpace(cfg.Security.SecondaryEncryptionKeyEnv); variable != "" {
+		hint += " (" + variable + ")"
+	} else {
+		hint += " (set security.secondary_encryption_key_env, which is empty, to the variable holding it)"
+	}
+	hint += " and run -reseal-credentials again before removing it"
+	if cfg.Security.LegacySeals == config.LegacySealsRefuse {
+		hint += "; security.legacy_seals is refuse, so a payload sealed before v1 does not open under any key: set it to open for the reseal"
+	}
+	return hint
 }
 
 // resealCredentials is the -reseal-credentials pass: every credential and
@@ -1572,9 +1600,8 @@ func resealCredentials(ctx context.Context, cfg config.Config, db *database.DB, 
 		log.Error("webhook lifecycle state could not be opened with the configured keys", "row", route)
 	}
 	if len(unopenable) > 0 {
-		return fmt.Errorf("%d sealed payloads could not be opened with the configured keys: "+
-			"configure the key that sealed them as %s and run -reseal-credentials again before removing it",
-			len(unopenable), cfg.Security.SecondaryEncryptionKeyEnv)
+		return fmt.Errorf("%d sealed payloads could not be opened with the configured keys: %s",
+			len(unopenable), unopenableHint(cfg))
 	}
 	return nil
 }

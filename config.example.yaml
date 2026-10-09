@@ -124,6 +124,15 @@ security:
   # `kilasflow -reseal-credentials` reports no row left to reseal, unset it.
   # Env: KILASFLOW_SECURITY_SECONDARY_ENCRYPTION_KEY_ENV
   secondary_encryption_key_env: 'KILASFLOW_ENCRYPTION_KEY_SECONDARY'
+  # LegacySeals decides whether credential payloads sealed before payloads
+  # were versioned still open: "open" or "refuse". Such a payload is not
+  # bound to its row, so while it opens, a copy of it taken before
+  # `kilasflow -reseal-credentials` upgraded the stored rows — a dump, a
+  # backup, a replica — could be placed in another row and open there.
+  # Keep "open" until a reseal reports nothing left to reseal, then set
+  # "refuse" so no legacy payload opens again under any key.
+  # Env: KILASFLOW_SECURITY_LEGACY_SEALS
+  legacy_seals: 'open'
 
 secrets:
   # ManagerAddr is the secrets manager address, e.g. Vault's

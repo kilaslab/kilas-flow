@@ -77,9 +77,12 @@ The master key is exactly 32 bytes, and it never seals anything itself:
 - The Google Connect state is signed with a separate key derived from the
   master key.
 
-Payloads stored before this format still open. Running
-`kilasflow -reseal-credentials` once after upgrading binds them to their rows
-too; see [Key rotation](/operate/key-rotation/#after-upgrading-to-this-release).
+Payloads stored before this format still open, and carry no binding.
+Running `kilasflow -reseal-credentials` once after upgrading binds the stored
+rows. A copy of an old payload taken before that, from a dump or a backup,
+still opens in any row until `security.legacy_seals` is set to `refuse` or the
+key is rotated; see
+[Key rotation](/operate/key-rotation/#after-upgrading-to-this-release).
 
 The key is read from an environment variable whose **name** is configured by
 `security.encryption_key_env`, defaulting to `KILASFLOW_ENCRYPTION_KEY`. Base64,

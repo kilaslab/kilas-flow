@@ -27,10 +27,20 @@ anything the old key sealed.
   derived from the master key, never with the master key itself.
 
 Payloads written before this format existed have no header and no binding.
-They still open: the server reads both formats. Until they are resealed,
-though, someone who can write to the database could copy one of them into
-another row and it would open there. Run the reseal once after upgrading (see
-below) to close that.
+They still open: the server reads both formats. Because they carry no binding,
+someone who can write to the database could copy one of them into another row
+and it would open there. The reseal after upgrading (see below) upgrades every
+payload the database holds. It does not reach a copy of an old payload taken
+before it ran — a dump, a backup, a replica that lagged — and such a copy still
+opens in any row for as long as its key opens legacy payloads. Two things close
+that for good, and the second is the stronger:
+
+- Set `security.legacy_seals: refuse` once a reseal reports nothing left to
+  reseal. No legacy payload opens again, under any key.
+- Rotate to a new key after the upgrade reseal. Old copies were sealed under
+  the old key, so once it leaves the keyring they open nowhere. Do this where
+  dumps or backups of the database have been handed to anyone who should not
+  be able to move a credential between rows.
 
 ## The two settings
 
@@ -38,6 +48,7 @@ below) to close that.
 | --- | --- | --- |
 | `security.encryption_key_env` | `KILASFLOW_ENCRYPTION_KEY` | The **primary** key. Every new seal uses it, and it opens what it sealed. |
 | `security.secondary_encryption_key_env` | `KILASFLOW_ENCRYPTION_KEY_SECONDARY` | The **secondary** key, set only during a rotation. It opens what it sealed and never seals anything. |
+| `security.legacy_seals` | — (`open` or `refuse`; default `open`) | Whether a payload from before this format opens at all. `refuse` turns them away under every key; v1 payloads are not affected. |
 
 The secondary key is always read from the environment, even when the primary
 comes from a secrets manager (`secrets.manager_addr`). A secondary variable
@@ -74,6 +85,20 @@ kilasflow -config config.yaml -reseal-credentials
 Run it with the same configuration and environment as the server. In a
 container, that is the server image with the flag appended. A second run
 reports `resealed=0`.
+
+Then refuse legacy payloads, so a pre-upgrade copy of one can never be moved
+into a row and opened:
+
+1. Run the reseal again and check both lines report `resealed=0` and
+   `unopenable=0`.
+2. Set `security.legacy_seals: refuse` (`KILASFLOW_SECURITY_LEGACY_SEALS=refuse`)
+   on every replica and restart them.
+
+With `refuse` set, a later reseal reports any legacy payload it meets — one
+restored from an old backup, say — as `unopenable`, and says to set it back to
+`open` for that reseal. Where old dumps or backups have left your control,
+also [rotate the key](#rotating-the-key-one-process) after this, so that
+nothing sealed under the pre-upgrade key opens anywhere.
 
 A binary from before this release cannot open the new format. Upgrade every
 replica together, and treat the backup as the rollback plan

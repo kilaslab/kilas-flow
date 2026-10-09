@@ -135,7 +135,9 @@ format, bound to the row they belong to. Two things follow when you upgrade:
   anything the new release saved is unreadable to the old one.
 - **Existing payloads still open, but are not yet bound to their rows.** Run
   `kilasflow -reseal-credentials` once with the server's configuration after
-  every replica is upgraded. It reseals them in place and exits; see
+  every replica is upgraded. It reseals the stored rows in place and exits.
+  A copy of an old payload taken before that (a dump, a backup) still opens in
+  any row until you set `security.legacy_seals: refuse` or rotate the key; see
   [Key rotation](/operate/key-rotation/#after-upgrading-to-this-release).
 
 A Google Connect popup that is open during the upgrade fails when it returns,

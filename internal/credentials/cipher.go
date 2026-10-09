@@ -115,6 +115,27 @@ func DeriveKey(master []byte, info string) ([]byte, error) {
 // OpenForReseal, and docs/operate/key-rotation.
 type Cipher struct {
 	keys []sealKey
+	// refuseLegacy stops v0 payloads opening at all. See RefusingLegacySeals.
+	refuseLegacy bool
+}
+
+// RefusingLegacySeals returns a copy of the keyring that never opens a legacy
+// v0 payload, under any key; v1 payloads open exactly as before.
+//
+// A v0 payload carries no additional data, so while it opens it opens in any
+// row. Resealing upgrades the rows the database holds, but not a copy taken
+// before the reseal — a dump, a backup, a lagging replica — and such a copy
+// stays transplantable for as long as the key that sealed it can open legacy
+// payloads. Refusing them closes that for good, once a reseal reports nothing
+// left to upgrade; rotating to a new key closes it too.
+func (c *Cipher) RefusingLegacySeals() *Cipher {
+	if c == nil {
+		return nil
+	}
+	refusing := *c
+	refusing.keys = append([]sealKey(nil), c.keys...)
+	refusing.refuseLegacy = true
+	return &refusing
 }
 
 // sealKey is one master key, held as the two AEADs it is used through: the
@@ -219,8 +240,11 @@ func (c *Cipher) Seal(fields map[string]string, aad AAD) ([]byte, error) {
 
 // Open decrypts a sealed payload, v1 or legacy v0, under any key in the
 // keyring. A v1 payload opens only under the AAD it was sealed with. A v0
-// payload carries no additional data and opens under any AAD: that is the
-// residual exposure OpenForReseal and the -reseal-credentials pass remove.
+// payload carries no additional data and opens under any AAD, in any row,
+// for as long as the key that sealed it is in the keyring and legacy seals
+// are not refused. Resealing upgrades the stored rows but not a copy of a v0
+// payload taken before it; RefusingLegacySeals, or rotating to a new key,
+// is what retires those.
 func (c *Cipher) Open(sealed []byte, aad AAD) (map[string]string, error) {
 	fields, _, err := c.open(sealed, aad)
 	return fields, err
@@ -258,6 +282,9 @@ func (c *Cipher) open(sealed []byte, aad AAD) (map[string]string, bool, error) {
 	// magic once in 2^32 payloads, so this fallback is what keeps every legacy
 	// payload readable. It cannot weaken v1: a v1 payload is sealed under a
 	// derived key and never authenticates under the raw key.
+	if c.refuseLegacy {
+		return nil, false, errUndecryptable
+	}
 	for _, key := range c.keys {
 		if plaintext, ok := key.openLegacy(sealed); ok {
 			fields, err := decodeSealedFields(plaintext)

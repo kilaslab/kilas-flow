@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"encoding/base64"
 	"log/slog"
 	"path/filepath"
@@ -152,5 +154,66 @@ func TestResealCredentialsReportsAndFailsOnAnUnopenableRow(t *testing.T) {
 	t.Setenv("KILASFLOW_TEST_RESEAL_KEY", "")
 	if err := resealCredentials(ctx, cfg, db, quietLogger()); err == nil {
 		t.Fatal("resealCredentials() with no key succeeded")
+	}
+}
+
+// security.legacy_seals reaches the keyring the server and the reseal pass
+// build: open keeps reading payloads from before v1, refuse never does.
+func TestLegacySealsSettingReachesTheBootKeyring(t *testing.T) {
+	key := bytes.Repeat([]byte{0x21}, credentials.KeySize)
+	aad := credentials.CredentialAAD("default", "cred_1", "httpBearerAuth")
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatalf("aes.NewCipher() error = %v", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatalf("cipher.NewGCM() error = %v", err)
+	}
+	nonce := make([]byte, aead.NonceSize())
+	legacy := aead.Seal(nonce, nonce, []byte(`{"token":"t"}`), nil)
+
+	cfg := rotationConfig(t)
+	t.Setenv("KILASFLOW_TEST_RESEAL_KEY", encodedKey(0x21))
+	t.Setenv("KILASFLOW_TEST_RESEAL_KEY_SECONDARY", "")
+
+	cfg.Security.LegacySeals = config.LegacySealsOpen
+	open, _, err := loadCredentialKeys(context.Background(), cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("loadCredentialKeys(open) error = %v", err)
+	}
+	if fields, err := open.Open(legacy, aad); err != nil || fields["token"] != "t" {
+		t.Fatalf("legacy_seals: open did not open a v0 payload: %#v, %v", fields, err)
+	}
+
+	cfg.Security.LegacySeals = config.LegacySealsRefuse
+	refusing, _, err := loadCredentialKeys(context.Background(), cfg, quietLogger())
+	if err != nil {
+		t.Fatalf("loadCredentialKeys(refuse) error = %v", err)
+	}
+	if _, err := refusing.Open(legacy, aad); err == nil {
+		t.Fatal("legacy_seals: refuse opened a v0 payload")
+	}
+}
+
+// With the rotation setting cleared there is no variable to name, so the
+// failure says which setting to use rather than naming an empty one.
+func TestResealFailureNamesWhereTheOldKeyGoesWhenNoSecondaryIsConfigured(t *testing.T) {
+	cfg := rotationConfig(t)
+	cfg.Security.SecondaryEncryptionKeyEnv = ""
+	db := openMigrated(t)
+	lostCipher, _ := credentials.NewCipher(bytes.Repeat([]byte{0x31}, credentials.KeySize))
+	if _, err := repository.NewCredentialStore(db.DB, lostCipher).Create(context.Background(), repository.TenantScope{ID: "default"}, credentials.Record{
+		Name: "lost", Type: "httpBearerAuth", Fields: map[string]string{"token": "t"},
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	t.Setenv("KILASFLOW_TEST_RESEAL_KEY", encodedKey(0x32))
+	err := resealCredentials(context.Background(), cfg, db, quietLogger())
+	if err == nil {
+		t.Fatal("resealCredentials() with an unopenable row succeeded")
+	}
+	if strings.Contains(err.Error(), "as  and") || !strings.Contains(err.Error(), "security.secondary_encryption_key_env") {
+		t.Fatalf("error = %q, want it to name security.secondary_encryption_key_env", err)
 	}
 }

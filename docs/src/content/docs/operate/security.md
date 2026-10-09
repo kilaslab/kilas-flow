@@ -84,8 +84,10 @@ configuration file; without it, credential storage is disabled rather than
 silently falling back to something weaker. Each payload is sealed under an
 HKDF-derived key and bound to its tenant, credential id and type, so a payload
 copied into another row by someone with database access does not open there.
-Payloads stored by an earlier release lack that binding until
-`kilasflow -reseal-credentials` runs once. The Google Connect state is signed
+Payloads stored by an earlier release lack that binding:
+`kilasflow -reseal-credentials` upgrades the stored rows, and
+`security.legacy_seals: refuse` (or rotating the key) stops a pre-upgrade copy
+of one, from a dump or a backup, opening in any row. The Google Connect state is signed
 with its own derived key, and a raw 32-character key is accepted with a
 warning at boot. The key is rotated with a secondary key and the same reseal
 pass; see [Key rotation](/operate/key-rotation/). Workflow `$env` expressions can

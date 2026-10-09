@@ -340,3 +340,49 @@ func TestAADRefusesAPartHoldingNUL(t *testing.T) {
 		t.Error("Seal() accepted empty additional data")
 	}
 }
+
+// A legacy payload carries no AAD, so as long as it opens it opens in any
+// row: resealing the stored rows does not retire a copy taken before the
+// reseal (a dump, a backup, a replica). Refusing legacy seals does, for every
+// key in the keyring, while v1 payloads keep opening.
+func TestRefusingLegacySealsNeverOpensAV0Payload(t *testing.T) {
+	t.Parallel()
+
+	key := otherKey(0x44)
+	aad := credentials.CredentialAAD("default", "cred_1", "httpBasicAuth")
+	legacy := legacySeal(t, key, map[string]string{"password": "old"})
+	golden, _ := hex.DecodeString(goldenLegacyPayload)
+
+	open, err := credentials.NewCipher(key)
+	if err != nil {
+		t.Fatalf("NewCipher() error = %v", err)
+	}
+	if fields, err := open.Open(legacy, aad); err != nil || fields["password"] != "old" {
+		t.Fatalf("the default keyring did not open a legacy payload: %#v, %v", fields, err)
+	}
+	current, err := open.Seal(map[string]string{"password": "new"}, aad)
+	if err != nil {
+		t.Fatalf("Seal() error = %v", err)
+	}
+
+	refusing := open.RefusingLegacySeals()
+	if _, err := refusing.Open(legacy, aad); err == nil {
+		t.Fatal("a keyring refusing legacy seals opened a v0 payload")
+	}
+	if _, _, err := refusing.OpenForReseal(legacy, aad); err == nil {
+		t.Fatal("OpenForReseal() opened a v0 payload while legacy seals are refused")
+	}
+	if fields, err := refusing.Open(current, aad); err != nil || fields["password"] != "new" {
+		t.Fatalf("refusing legacy seals stopped a v1 payload opening: %#v, %v", fields, err)
+	}
+	// Under a secondary key too, and for the golden vector of the old format.
+	goldenRefusing, _ := credentials.NewCipher(key, []byte(goldenLegacyKey))
+	goldenRefusing = goldenRefusing.RefusingLegacySeals()
+	if _, err := goldenRefusing.Open(golden, aad); err == nil {
+		t.Fatal("a v0 payload under the secondary key opened while legacy seals are refused")
+	}
+	// The original keyring is unchanged: refusing is a copy, not a mutation.
+	if _, err := open.Open(legacy, aad); err != nil {
+		t.Fatalf("RefusingLegacySeals() changed the keyring it was called on: %v", err)
+	}
+}

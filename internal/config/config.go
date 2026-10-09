@@ -283,7 +283,23 @@ type Security struct {
 	// Env: KILASFLOW_SECURITY_SECONDARY_ENCRYPTION_KEY_ENV.
 	// Default: "KILASFLOW_ENCRYPTION_KEY_SECONDARY".
 	SecondaryEncryptionKeyEnv string `koanf:"secondary_encryption_key_env"`
+	// LegacySeals decides whether credential payloads sealed before payloads
+	// were versioned still open: "open" or "refuse". Such a payload is not
+	// bound to its row, so while it opens, a copy of it taken before
+	// `kilasflow -reseal-credentials` upgraded the stored rows — a dump, a
+	// backup, a replica — could be placed in another row and open there.
+	// Keep "open" until a reseal reports nothing left to reseal, then set
+	// "refuse" so no legacy payload opens again under any key.
+	// Env: KILASFLOW_SECURITY_LEGACY_SEALS.
+	// Default: "open".
+	LegacySeals string `koanf:"legacy_seals"`
 }
+
+// The two values security.legacy_seals takes.
+const (
+	LegacySealsOpen   = "open"
+	LegacySealsRefuse = "refuse"
+)
 
 // Google holds the optional platform Google Cloud OAuth client. Tenants can
 // still paste their own client id and secret on a credential; empty fields
@@ -956,6 +972,7 @@ func Default() Config {
 		Security: Security{
 			EncryptionKeyEnv:          "KILASFLOW_ENCRYPTION_KEY",
 			SecondaryEncryptionKeyEnv: "KILASFLOW_ENCRYPTION_KEY_SECONDARY",
+			LegacySeals:               LegacySealsOpen,
 		},
 		Google: Google{
 			ClientSecretEnv: "KILASFLOW_GOOGLE_CLIENT_SECRET",
@@ -1589,6 +1606,14 @@ func (c Config) Validate() error {
 	case "text", "json":
 	default:
 		return fmt.Errorf("log.format %q must be text or json", c.Log.Format)
+	}
+
+	// Refused rather than read as either value: a typo that kept legacy seals
+	// open would leave the exposure "refuse" was set to close.
+	switch c.Security.LegacySeals {
+	case LegacySealsOpen, LegacySealsRefuse:
+	default:
+		return fmt.Errorf("security.legacy_seals %q must be %s or %s", c.Security.LegacySeals, LegacySealsOpen, LegacySealsRefuse)
 	}
 
 	// Checked here so a typo names the key at boot rather than surfacing as

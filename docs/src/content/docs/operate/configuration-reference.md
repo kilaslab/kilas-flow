@@ -250,6 +250,21 @@ It is read from the environment even when the primary key comes from a
 secrets manager. Leave the variable unset outside a rotation; once
 `kilasflow -reseal-credentials` reports no row left to reseal, unset it.
 
+### security.legacy_seals
+
+- Type: `string`
+- Default: `'open'`
+- Environment: `KILASFLOW_SECURITY_LEGACY_SEALS`
+- Required: no
+
+LegacySeals decides whether credential payloads sealed before payloads
+were versioned still open: "open" or "refuse". Such a payload is not
+bound to its row, so while it opens, a copy of it taken before
+`kilasflow -reseal-credentials` upgraded the stored rows — a dump, a
+backup, a replica — could be placed in another row and open there.
+Keep "open" until a reseal reports nothing left to reseal, then set
+"refuse" so no legacy payload opens again under any key.
+
 ## secrets
 
 Secrets sources the credential master key from an external secrets manager

@@ -34,8 +34,11 @@ type ResealReport struct {
 //
 // It is the second half of a key rotation (the first is configuring the new
 // key as primary and the old one as secondary) and the one-time upgrade that
-// binds legacy payloads to their row: until a legacy payload is resealed it
-// carries no AAD, so it would still open if it were copied into another row.
+// binds the stored legacy payloads to their rows. It upgrades what the
+// database holds, not a copy taken before it ran: a legacy payload carries no
+// AAD, so a copy of one from a dump, a backup or a replica still opens in any
+// row while its key can open legacy payloads. security.legacy_seals: refuse,
+// or rotating to a new key, retires those copies.
 //
 // Each write is a compare-and-swap on the payload that was read, so a row an
 // ordinary request updates in the meantime keeps the request's value. It does

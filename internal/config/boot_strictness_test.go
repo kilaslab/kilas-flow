@@ -586,3 +586,30 @@ func TestTheSecondaryEncryptionKeySettingNamesItsVariable(t *testing.T) {
 		t.Errorf("Security.SecondaryEncryptionKeyEnv = %q, want the environment override", got)
 	}
 }
+
+func TestLegacySealsDefaultToOpenAndAcceptOnlyOpenOrRefuse(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	// Open by default: an upgraded installation still holds legacy rows until
+	// it has resealed them, and refusing them would lock it out.
+	if cfg.Security.LegacySeals != LegacySealsOpen {
+		t.Fatalf("Security.LegacySeals = %q, want %q by default", cfg.Security.LegacySeals, LegacySealsOpen)
+	}
+
+	t.Setenv("KILASFLOW_SECURITY_LEGACY_SEALS", "refuse")
+	cfg, err = Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() with refuse error = %v", err)
+	}
+	if cfg.Security.LegacySeals != LegacySealsRefuse {
+		t.Fatalf("Security.LegacySeals = %q, want %q", cfg.Security.LegacySeals, LegacySealsRefuse)
+	}
+
+	// A typo must not silently keep legacy seals open.
+	t.Setenv("KILASFLOW_SECURITY_LEGACY_SEALS", "refused")
+	if _, err := Load(filepath.Join(t.TempDir(), "absent.yaml")); err == nil || !strings.Contains(err.Error(), "security.legacy_seals") {
+		t.Fatalf("Load() with an unknown value error = %v, want a refusal naming the key", err)
+	}
+}
