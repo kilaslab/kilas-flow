@@ -129,3 +129,131 @@ describe('a code property', () => {
 		expect(markup).not.toContain('data-code-editor');
 	});
 });
+
+/**
+ * A mapper that opts into the model switch — the Workflow Tool's inputs. Each
+ * column is either the model's (a `$fromAI` value, or nothing written) or
+ * fixed, and the form says which. The columns come from the stored schema copy
+ * because `$effect` never runs on the server, which is how a saved node renders
+ * before its loader answers.
+ */
+describe('a resource mapper that lets the model fill a column', () => {
+	const columns = [
+		{ id: 'tempC', displayName: 'tempC', type: 'number' },
+		{ id: 'roundTo', displayName: 'roundTo', type: 'number' },
+		{ id: 'unit', displayName: 'unit', type: 'string' },
+		{ id: 'verbose', displayName: 'verbose', type: 'boolean' },
+		{ id: 'note', displayName: 'note', type: 'string' }
+	];
+	const mapperProperty = (modelDefinable: boolean): PropertyDefinition => ({
+		key: 'workflowInputs',
+		label: 'Workflow inputs',
+		kind: 'resourceMapper',
+		required: false,
+		mapper: {
+			schema: { source: 'internal', name: 'workflows.inputs', dependsOn: ['workflowId'] },
+			valuesLabel: 'Workflow inputs',
+			...(modelDefinable ? { modelDefinable: true } : {})
+		}
+	});
+	const stored = {
+		mappingMode: 'defineBelow',
+		value: {
+			tempC: { mode: 'expression', value: "{{ $fromAI('tempC', '', 'number') }}" },
+			unit: 'F',
+			note: { mode: 'expression', value: '{{ $json.note }}' }
+		},
+		matchingColumns: [],
+		schema: columns
+	};
+
+	/** The opening tag of a column's model switch. */
+	function switchOf(markup: string, column: string): string {
+		return markup.match(new RegExp(`<button[^>]*aria-label="${column}: defined by the model"[^>]*>`))?.[0] ?? '';
+	}
+	const hasControl = (markup: string, column: string) => markup.includes(`aria-label="${column}"`);
+
+	it('renders one switch per column, on for the model’s and off for a fixed one', () => {
+		const markup = html(mapperProperty(true), stored);
+
+		expect(switchOf(markup, 'tempC')).toContain('role="switch"');
+		expect(switchOf(markup, 'tempC')).toContain('aria-checked="true"');
+		// Nothing written for a column leaves it to the model.
+		expect(switchOf(markup, 'roundTo')).toContain('aria-checked="true"');
+		expect(switchOf(markup, 'unit')).toContain('aria-checked="false"');
+		expect(switchOf(markup, 'note')).toContain('aria-checked="false"');
+		expect(switchOf(markup, 'verbose')).toContain('aria-checked="true"');
+	});
+
+	it('shows no value control for a column the model fills, and the typed control for a fixed one', () => {
+		const markup = html(mapperProperty(true), stored);
+
+		expect(hasControl(markup, 'tempC')).toBe(false);
+		expect(hasControl(markup, 'roundTo')).toBe(false);
+		expect(markup).toContain('The model fills this in when it calls the tool.');
+		expect(hasControl(markup, 'unit')).toBe(true);
+		expect(markup).toMatch(/<input[^>]*aria-label="unit"[^>]*value="F"/);
+	});
+
+	// The marker's JSON in a text box, and typing over it, destroyed the
+	// expression with the first keystroke.
+	it('shows a fixed expression column as its template, not as the marker’s JSON', () => {
+		const markup = html(mapperProperty(true), stored);
+
+		expect(markup).toMatch(/<input[^>]*aria-label="note"[^>]*value="\{\{ \$json\.note \}\}"/);
+		expect(markup).not.toContain('&quot;mode&quot;');
+	});
+
+	it('renders the model switch as the editor’s pill, with no colour of its own', () => {
+		const markup = html(mapperProperty(true), stored);
+		const pill = switchOf(markup, 'tempC');
+
+		expect(pill).toContain('border-border');
+		expect(pill).toContain('aria-checked:text-primary');
+		expect(pill).not.toMatch(/outline-none|outline-hidden|focus-visible:/);
+		expect(pill).not.toMatch(/#[0-9a-f]{3,6}|rgb\(|(?:red|green|blue|amber|emerald|sky)-\d/);
+	});
+
+	it('does not wrap the switch and the control in one label, so a click on the name cannot flip the switch', () => {
+		const markup = html(mapperProperty(true), stored);
+
+		expect(markup).not.toMatch(/<label[^>]*>(?:(?!<\/label>)[\s\S])*role="switch"/);
+	});
+
+	// Track-neutral guard: a mapper that never asked for the switch (a table's
+	// columns) has no business offering a column to a model.
+	it('renders no switch at all for a mapper that did not opt in', () => {
+		const markup = html(mapperProperty(false), stored);
+
+		expect(markup).not.toContain('role="switch"');
+		expect(markup).not.toContain('defined by the model');
+		expect(hasControl(markup, 'tempC')).toBe(true);
+		expect(hasControl(markup, 'roundTo')).toBe(true);
+	});
+
+	it('reads a plain object stored before the property was a mapper as fixed columns', () => {
+		const markup = html(mapperProperty(true), { unit: 'F' });
+
+		// No schema copy yet, so there is no column to switch; the stored key
+		// must not have been wiped from view, and nothing claims the model has it.
+		expect(markup).not.toContain('role="switch"');
+	});
+
+	it('lists a stored key the workflow does not declare, so a legacy static input stays visible', () => {
+		const markup = html(mapperProperty(true), { ...stored, value: { ...stored.value, extra: 'x' } });
+
+		expect(markup).toContain('Also sent, though the workflow does not declare them:');
+		expect(markup).toContain('>extra');
+		expect(markup).toContain('Remove extra');
+		// The declared columns are not in that list.
+		expect(markup).not.toContain('aria-label="Remove unit"');
+	});
+
+	it('says so, with a way out, when the inputs are one expression', () => {
+		const markup = html(mapperProperty(true), { mode: 'expression', value: '{{ { unit: "F" } }}' });
+
+		expect(markup).toContain('These inputs are written as one expression');
+		expect(markup).toContain('Use per-field inputs');
+		expect(markup).not.toContain('role="switch"');
+	});
+});

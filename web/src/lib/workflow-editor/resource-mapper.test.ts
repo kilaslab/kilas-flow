@@ -8,6 +8,7 @@ import {
 	columnText,
 	defaultMatchingColumns,
 	editColumn,
+	flipColumnSource,
 	fromAIType,
 	isModelDefined,
 	isWholeExpression,
@@ -263,6 +264,14 @@ describe('setColumnSource', () => {
 	it('writes only the column it was asked about', () => {
 		const next = setColumnSource(manual({}), inputs[1], 'fixed');
 		expect(Object.keys(next.value)).toEqual(['unit']);
+	});
+
+	it('flips a column to the other source, whichever it is on', () => {
+		const fixed = flipColumnSource(manual({ unit: 'F' }), inputs[1]);
+		expect(isModelDefined(fixed, 'unit')).toBe(true);
+		expect(isModelDefined(flipColumnSource(fixed, inputs[1]), 'unit')).toBe(false);
+		// A column nothing was written for is the model's, so its first flip fixes it.
+		expect(isModelDefined(flipColumnSource(manual({}), inputs[0]), 'tempC')).toBe(false);
 	});
 
 	it('does not mutate the mapping it was given', () => {

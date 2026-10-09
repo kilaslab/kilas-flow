@@ -58,7 +58,7 @@ export function isWholeExpression(value: unknown): boolean {
 export function readMapping(property: PropertyDefinition, value: unknown): Mapping {
 	const fallback = property.mapper?.supportsAutoMap ? MAPPING_AUTO : MAPPING_MANUAL;
 	if (!isObject(value)) return { mappingMode: fallback, value: {}, matchingColumns: [] };
-	if (property.mapper?.modelDefinable && !isExpression(value) && MAPPER_KEYS.every((key) => !(key in value))) {
+	if (property.mapper?.modelDefinable && !isWholeExpression(value) && MAPPER_KEYS.every((key) => !(key in value))) {
 		return { mappingMode: MAPPING_MANUAL, value: { ...value }, matchingColumns: [] };
 	}
 	return {
@@ -213,6 +213,11 @@ export function isModelDefined(mapping: Mapping, id: string): boolean {
 export function setColumnSource(mapping: Mapping, column: MapperColumn, source: ColumnSource): Mapping {
 	const next = source === 'model' ? modelDefinedValue(column) : column.type === 'boolean' ? false : '';
 	return { ...mapping, value: { ...mapping.value, [column.id]: next } };
+}
+
+/** Switches a column to the other source, which is what clicking its switch does. */
+export function flipColumnSource(mapping: Mapping, column: MapperColumn): Mapping {
+	return setColumnSource(mapping, column, isModelDefined(mapping, column.id) ? 'fixed' : 'model');
 }
 
 /** What a column's text box shows: an expression as its template. */
