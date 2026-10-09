@@ -89,7 +89,7 @@ func TestValidateDraftRefusesBadTags(t *testing.T) {
 		{"a comma", []string{"a,b"}, "comma"},
 		{"a tab inside", []string{"a\tb"}, "control"},
 		{"a newline inside", []string{"a\nb"}, "control"},
-		{"a line separator", []string{"a b"}, "control"},
+		{"a line separator", []string{"a\u2028b"}, "control"},
 		{"a NUL byte", []string{"a\x00b"}, "control"},
 		{"invalid UTF-8", []string{"a\xffb"}, "UTF-8"},
 		{"a case-insensitive duplicate", []string{"Prod", "billing", "prod"}, "duplicate"},

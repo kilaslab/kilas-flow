@@ -59,7 +59,7 @@ func CheckTag(tag string) error {
 		switch {
 		case r == ',':
 			return fmt.Errorf("tag %q must not contain a comma", tag)
-		case unicode.IsControl(r) || r == ' ' || r == ' ':
+		case unicode.IsControl(r) || r == '\u2028' || r == '\u2029':
 			return fmt.Errorf("tag %q must not contain a control character", tag)
 		}
 	}
