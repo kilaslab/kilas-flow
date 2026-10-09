@@ -333,6 +333,45 @@ func TestAFilledPlainStringThatGainsBracesIsRefused(t *testing.T) {
 	}
 }
 
+// The same holds one level down: a whole-string json $fromAI is filled with
+// an object, and a `{{` anywhere inside it would be a template the Google
+// node reads.
+func TestAFilledJSONValueHoldingBracesIsRefused(t *testing.T) {
+	var calls int
+	gmail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		_, _ = io.WriteString(w, `{"messages":[]}`)
+	}))
+	t.Cleanup(gmail.Close)
+	t.Cleanup(nodes.SetGoogleAPIRootsForTest("", gmail.URL+"/gmail/v1"))
+
+	model := newRecordingModel(t,
+		toolCall("Find_Mail", map[string]any{"filters": map[string]any{"sender": modelTemplate}}),
+		assistantAnswer("gave up"),
+	)
+	harness := newFormHarness(t, allowing(model.server, gmail))
+	tool := harness.descriptor(t, nodes.GmailToolNodeType, workflow.V(1), "Find Mail", map[string]any{
+		"toolDescription": "Finds mail.", "operation": "getAll",
+		"filters": "$fromAI('filters', 'the Gmail filters', 'json')",
+	}, map[string]string{nodes.GmailCredentialType: "cred-gmail"})
+
+	if _, err := runFormAgent(t, harness.agent, model, []workflow.Item{tool}, credentialMap{
+		"cred-key": modelCredential(),
+		"cred-gmail": {
+			ID: "cred-gmail", Type: nodes.GmailCredentialType,
+			Fields: map[string]string{"access_token": "token"}, AllowedDomains: []string{httptestHost(gmail.URL)},
+		},
+	}); err != nil {
+		t.Fatalf("agent Execute() error = %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("Gmail was called %d times, want the call refused before it was made", calls)
+	}
+	if turns := model.toolTurns(t); len(turns) != 1 || !strings.Contains(turns[0], "tool failed") {
+		t.Errorf("tool turns = %v, want the refusal", turns)
+	}
+}
+
 // --- Telegram ---------------------------------------------------------------
 
 func TestTheTelegramToolRunsThePacksOperationWithTheModelsText(t *testing.T) {

@@ -415,8 +415,10 @@ func checkNoModelTemplates(template, filled any, path string) error {
 	}
 	switch typed := template.(type) {
 	case string:
-		text, _ := filled.(string)
-		if text != typed && strings.Contains(text, "{{") {
+		// A whole-string json call is filled with an object or a list, so
+		// the model's value is searched at any depth.
+		text, isText := filled.(string)
+		if (isText && text != typed && strings.Contains(text, "{{")) || (!isText && holdsTemplateText(filled)) {
 			return fmt.Errorf("%s holds {{ once the model's values were filled in, and a tool never lets the model write a template", path)
 		}
 	case map[string]any:
@@ -438,4 +440,26 @@ func checkNoModelTemplates(template, filled any, path string) error {
 		}
 	}
 	return nil
+}
+
+// holdsTemplateText reports whether a value holds a string with `{{` at any
+// depth, keys included.
+func holdsTemplateText(value any) bool {
+	switch typed := value.(type) {
+	case string:
+		return strings.Contains(typed, "{{")
+	case map[string]any:
+		for key, nested := range typed {
+			if strings.Contains(key, "{{") || holdsTemplateText(nested) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if holdsTemplateText(nested) {
+				return true
+			}
+		}
+	}
+	return false
 }
