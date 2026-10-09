@@ -27,6 +27,23 @@
 	--font-sans: 'Geist Variable', sans-serif;
 	--font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
+	--radius-sm: calc(var(--radius) * 0.6);
+	--radius-md: calc(var(--radius) * 0.8);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) * 1.4);
+	--radius-2xl: calc(var(--radius) * 1.8);
+	--radius-3xl: calc(var(--radius) * 2.2);
+	--radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* Colour utilities are `inline`: `bg-primary` emits `var(--primary)` itself
+   rather than `var(--color-primary)`. Without it the --color-* variable is
+   resolved once at :root, so every colour utility kept the DARK value inside a
+   light or brand subtree, and the embed's accent override never reached a
+   button. With it, a utility follows whatever --primary the element inherits.
+   Do not reference --color-* from markup or inline styles: Tailwind emits only
+   the ones a utility uses. Use the alias (--popover) or the --kf-* token. */
+@theme inline {
 	--color-background: var(--background);
 	--color-foreground: var(--foreground);
 	--color-card: var(--card);
@@ -47,7 +64,9 @@
 	--color-success-foreground: var(--success-foreground);
 	--color-warning: var(--warning);
 	--color-warning-foreground: var(--warning-foreground);
+	--color-info: var(--info);
 	--color-border: var(--border);
+	--color-border-subtle: var(--kf-border-subtle);
 	--color-input: var(--input);
 	--color-ring: var(--ring);
 	--color-sidebar: var(--sidebar);
@@ -64,91 +83,234 @@
 	--color-chart-4: var(--chart-4);
 	--color-chart-5: var(--chart-5);
 
-	/* Backwards-compatible aliases for the health scaffold. */
-	--color-surface: var(--background);
-	--color-surface-raised: var(--card);
-	--color-border-subtle: var(--border);
-	--color-ink: var(--foreground);
-	--color-ink-muted: var(--muted-foreground);
-
-	--radius-sm: calc(var(--radius) * 0.6);
-	--radius-md: calc(var(--radius) * 0.8);
-	--radius-lg: var(--radius);
-	--radius-xl: calc(var(--radius) * 1.4);
-	--radius-2xl: calc(var(--radius) * 1.8);
-	--radius-3xl: calc(var(--radius) * 2.2);
-	--radius-4xl: calc(var(--radius) * 2.6);
+	/* Kunyit surfaces and roles with no shadcn name. */
+	--color-canvas: var(--kf-canvas);
+	--color-panel: var(--kf-panel);
+	--color-raised: var(--kf-raised);
+	--color-overlay: var(--kf-overlay);
+	--color-fg-subtle: var(--kf-fg-subtle);
+	--color-cat-trigger: var(--kf-cat-trigger);
+	--color-cat-ai: var(--kf-cat-ai);
+	--color-cat-flow: var(--kf-cat-flow);
+	--color-cat-data: var(--kf-cat-data);
+	--color-cat-app: var(--kf-cat-app);
+	--color-cat-utility: var(--kf-cat-utility);
 }
 
-/* KilasFlow: jade actions on quiet graphite surfaces.
-   Dark-first: the bare :root palette is the dark theme, so a
-   document with no explicit choice renders dark regardless of the OS mode.
-   Light is an opt-in, selected by [data-theme='light'] or the .theme-light class.
+/* ---------- focus: one ring (BUG-ywbvfa) ----------
+   Every control gets the same ring from the global :focus-visible rule in
+   @layer base below: 2px solid --kf-focus, 2px off the edge, drawn instantly.
+   Markup almost never needs a focus class. These four cover the exceptions,
+   and web/src/lib/design-system/focus-lint.ts fails a build that removes an
+   outline any other way. */
 
-   The class hooks are namespaced. Bare `.light` and `.dark` are common enough in
-   third-party components to collide: Svelte Flow stamps its colour mode onto the
-   canvas container as exactly those names, which silently repainted the whole
-   editor in the light palette while every computed style still read as dark. */
+/* A dense list or grid row: the ring is drawn just inside the row instead of
+   2px out, so neighbours and an overflow-hidden list card cannot clip it
+   (at -1px the card clipped the outer pixel and left a 1px ring). */
+@utility focus-inset {
+	outline-offset: calc(var(--kf-focus-width) * -1);
+}
+
+/* A programmatic focus target (tabindex="-1": canvas region, inspector,
+   dialog and menu content): ring only on :focus-visible, drawn inset. */
+@utility focus-region {
+	outline: none;
+
+	&:focus-visible {
+		outline: var(--kf-focus-width) solid var(--kf-focus);
+		outline-offset: calc(var(--kf-focus-width) * -1);
+	}
+}
+
+/* A composite field (search box with an icon, chat composer, code editor):
+   the container draws the ring while the control inside has focus... */
+@utility focus-within-ring {
+	&:has(:focus-visible) {
+		outline: var(--kf-focus-width) solid var(--kf-focus);
+		outline-offset: var(--kf-focus-offset);
+	}
+}
+
+/* The same, drawn just inside the container: for a field that fills the edge
+   of an overflow-hidden surface (the node picker's search row), where a ring
+   outside the box would be clipped on three sides. */
+@utility focus-within-ring-inset {
+	&:has(:focus-visible) {
+		outline: var(--kf-focus-width) solid var(--kf-focus);
+		outline-offset: calc(var(--kf-focus-width) * -1);
+	}
+}
+
+/* ...and that inner control draws none of its own. Only valid inside a
+   focus-within-ring(-inset) container (the lint checks the ancestor). */
+@utility focus-delegate {
+	outline: none;
+}
+
+/* ================================================================
+   KilasFlow tokens v2: "Kunyit", turmeric on cool slate.
+   Dark-first: the bare :root palette is the dark theme, so a document with no
+   explicit choice renders dark regardless of the OS mode. Light is an opt-in,
+   selected by [data-theme='light'] or the .theme-light class.
+
+   An embed host re-accents everything by setting only --kf-accent-src on its
+   shell ([data-kf-brand]); every accent step derives from it.
+
+   The class hooks are namespaced. Bare `.light` and `.dark` are common enough
+   in third-party components to collide: Svelte Flow stamps its colour mode
+   onto the canvas container as exactly those names, which silently repainted
+   the whole editor in the light palette while every computed style still read
+   as dark.
+
+   Checked by web/src/lib/design-system/tokens.*.test.ts: contrast pairs in
+   both themes, hue separation, neutral chroma and group completeness.
+   ================================================================ */
+
+/* ---------- theme-independent scales ---------- */
+:root {
+	/* type: one family, six sizes, three weights. The family stays Geist until
+	   Atkinson Hyperlegible ships (FEAT-pqnxx4); Tailwind's --text-* are not
+	   remapped here. */
+	--kf-font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+	--kf-font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+	--kf-text-2xs: 0.6875rem; /* 11/16  canvas micro, port & edge labels, badges */
+	--kf-text-xs: 0.75rem; /* 12/16  meta, table secondary, inspector labels */
+	--kf-text-sm: 0.8125rem; /* 13/20  BASE: body, rows, inputs, buttons */
+	--kf-text-md: 0.875rem; /* 14/20  panel titles, dialog titles */
+	--kf-text-lg: 1rem; /* 16/24  page titles */
+	--kf-text-xl: 1.25rem; /* 20/28  empty-state headline only */
+	--kf-weight-regular: 400;
+	--kf-weight-medium: 500;
+	--kf-weight-strong: 600;
+
+	/* radii: three steps + pill. Tailwind's --radius-* still derive from
+	   --radius until FEAT-npc3ge moves them onto these. */
+	--radius: 0.625rem;
+	--kf-radius-xs: 4px; /* badges, chips, edge labels, sticky */
+	--kf-radius-sm: 6px; /* controls: buttons, inputs, menu items, node glyph chip */
+	--kf-radius-md: 10px; /* surfaces: cards, nodes, menus, popovers, dialogs, panels */
+	--kf-radius-full: 9999px;
+
+	/* density: 4px grid */
+	--kf-space: 4px;
+	--kf-control-h-compact: 24px; /* canvas controls, inline icon buttons, table row actions */
+	--kf-control-h: 28px; /* default everywhere: buttons, inputs, selects, tabs */
+	--kf-control-h-lg: 32px; /* touch / coarse pointer only */
+	--kf-row-h: 40px; /* list rows, single line */
+	--kf-row-h-2line: 52px;
+	--kf-row-h-table: 36px; /* dense tables: executions, datastore grid */
+	--kf-header-h: 44px;
+	--kf-toolbar-h: 40px;
+	--kf-sidebar-w: 208px;
+	--kf-sidebar-w-collapsed: 48px;
+	--kf-inspector-w: 360px; /* resizable 320–560 */
+	--kf-inspector-w-min: 320px;
+	--kf-inspector-w-max: 560px;
+	--kf-page-max: 70rem; /* 1120px, every dashboard list */
+	--kf-page-pad: 20px;
+	--kf-node-size: 64px;
+	--kf-node-sub-size: 44px;
+
+	/* motion (the reduced-motion block below is FEAT-zhdxc4's) */
+	--kf-dur-instant: 80ms; /* press feedback */
+	--kf-dur-fast: 120ms; /* hover, colour */
+	--kf-dur-base: 180ms; /* toggles, tabs, popover/menu enter, small reveals */
+	--kf-dur-panel: 220ms; /* inspector, sheets, picker, dialog enter */
+	--kf-dur-exit: 140ms; /* every exit: faster than its entrance */
+	--kf-dur-canvas: 280ms; /* fit view, zoom-to-node, keyboard zoom */
+	--kf-dur-emphasis: 400ms; /* one-shot run-state change (success/error settle) */
+	--kf-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+	--kf-ease-out: cubic-bezier(0.16, 1, 0.3, 1); /* arrivals */
+	--kf-ease-in: cubic-bezier(0.4, 0, 1, 1); /* departures */
+	--kf-march: 1.2s; /* running-edge dash loop */
+	--kf-shimmer: 1.4s; /* skeleton */
+
+	/* focus geometry: the ring itself is never animated */
+	--kf-focus-width: 2px;
+	--kf-focus-offset: 2px;
+}
+
+/* ---------- colour: dark (default) ---------- */
 :root,
 [data-theme='dark'],
 .theme-dark {
 	color-scheme: dark;
-	--background: oklch(0.17 0.016 170);
-	--foreground: oklch(0.95 0.012 170);
-	--card: oklch(0.215 0.02 170);
-	--card-foreground: oklch(0.95 0.012 170);
-	--popover: oklch(0.215 0.02 170);
-	--popover-foreground: oklch(0.95 0.012 170);
-	--primary: oklch(0.74 0.13 170);
-	--primary-foreground: oklch(0.2 0.025 170);
-	--secondary: oklch(0.285 0.026 170);
-	--secondary-foreground: oklch(0.95 0.012 170);
-	--muted: oklch(0.285 0.02 170);
-	--muted-foreground: oklch(0.74 0.02 170);
-	--accent: oklch(0.31 0.055 170);
-	--accent-foreground: oklch(0.95 0.012 170);
-	--destructive: oklch(0.66 0.18 27);
-	--destructive-foreground: oklch(0.985 0.003 170);
-	--success: oklch(0.74 0.13 170);
-	--success-foreground: oklch(0.2 0.025 170);
-	--warning: oklch(0.78 0.145 80);
-	--warning-foreground: oklch(0.25 0.04 80);
-	--border: oklch(1 0.005 170 / 13%);
-	--input: oklch(1 0.005 170 / 17%);
-	--ring: oklch(0.74 0.13 170);
-	--chart-1: oklch(0.74 0.13 170);
-	--chart-2: oklch(0.72 0.11 225);
-	--chart-3: oklch(0.78 0.145 80);
-	--chart-4: oklch(0.7 0.15 35);
-	--chart-5: oklch(0.7 0.1 140);
-	--radius: 0.625rem;
-	--sidebar: oklch(0.195 0.018 170);
-	--sidebar-foreground: oklch(0.95 0.012 170);
-	--sidebar-primary: oklch(0.74 0.13 170);
-	--sidebar-primary-foreground: oklch(0.2 0.025 170);
-	--sidebar-accent: oklch(0.31 0.055 170);
-	--sidebar-accent-foreground: oklch(0.95 0.012 170);
-	--sidebar-border: oklch(1 0.005 170 / 13%);
-	--sidebar-ring: oklch(0.74 0.13 170);
-	--node-trigger: oklch(0.8 0.15 78);
-	--node-core: oklch(0.78 0.125 170);
-	--node-ai: oklch(0.74 0.15 305);
-	--node-data: oklch(0.74 0.12 240);
-	--node-imported: oklch(0.7 0.17 27);
-	/* Syntax colours for the code editor. Hues are kept apart from the jade
-	   brand so a keyword never reads as a button. */
-	--code-keyword: oklch(0.76 0.13 305);
-	--code-string: oklch(0.8 0.12 140);
-	--code-number: oklch(0.8 0.13 60);
-	--code-comment: oklch(0.62 0.02 170);
-	--code-function: oklch(0.78 0.11 230);
-	--code-type: oklch(0.8 0.1 190);
-	--code-property: oklch(0.86 0.04 170);
+	--kf-neutral-h: 235; /* cool slate, never purple (qonflo h294, n8n.io h298) */
+	--kf-accent-src: oklch(0.82 0.14 95); /* kunyit #e1c34b */
 
+	/* accent derivation parameters (per theme) */
+	--kf-accent-hover-dl: 0.04; /* dark: hover brightens */
+	--kf-accent-press-dl: -0.05;
+	--kf-accent-text-l: 0.85;
+	--kf-accent-text-c: 0.12;
+	--kf-accent-text-dh: 0;
+	--kf-focus-l: 0.82;
+	--kf-focus-c: 0.13;
+	--kf-focus-dh: 0;
+	--kf-selection-l: 0.82;
+	--kf-selection-c: 0.14;
+	--kf-selection-dh: 0;
+	--kf-accent-subtle-mix: 16%;
+	--kf-selection-halo-mix: 24%;
+
+	--kf-canvas: oklch(0.155 0.006 var(--kf-neutral-h));
+	--kf-bg: oklch(0.172 0.007 var(--kf-neutral-h));
+	--kf-panel: oklch(0.195 0.008 var(--kf-neutral-h));
+	--kf-raised: oklch(0.228 0.009 var(--kf-neutral-h));
+	--kf-overlay: oklch(0.262 0.01 var(--kf-neutral-h));
+	--kf-hover: oklch(0.3 0.011 var(--kf-neutral-h));
+	--kf-pressed: oklch(0.335 0.012 var(--kf-neutral-h));
+	--kf-scrim: oklch(0.08 0.01 var(--kf-neutral-h) / 0.55);
+	--kf-skeleton: oklch(0.285 0.01 var(--kf-neutral-h));
+
+	--kf-border-subtle: oklch(0.255 0.008 var(--kf-neutral-h));
+	--kf-border: oklch(0.315 0.01 var(--kf-neutral-h));
+	--kf-border-strong: oklch(0.42 0.012 var(--kf-neutral-h));
+
+	--kf-fg: oklch(0.955 0.003 var(--kf-neutral-h));
+	--kf-fg-muted: oklch(0.775 0.01 var(--kf-neutral-h));
+	--kf-fg-subtle: oklch(0.655 0.012 var(--kf-neutral-h));
+	--kf-fg-disabled: oklch(0.5 0.008 var(--kf-neutral-h)); /* non-essential only */
+
+	--kf-success: oklch(0.76 0.15 150);
+	--kf-success-fill: oklch(0.66 0.15 150);
+	--kf-success-fill-fg: oklch(0.18 0.03 150);
+	--kf-warning: oklch(0.76 0.13 60); /* jingga: moved off amber so it never shares turmeric's hue */
+	--kf-warning-fill: oklch(0.72 0.14 60); /* badges only, never a button, always with a triangle */
+	--kf-warning-fill-fg: oklch(0.2 0.04 60);
+	--kf-danger: oklch(0.7 0.18 25);
+	--kf-danger-fill: oklch(0.575 0.2 25);
+	--kf-danger-fill-fg: oklch(0.99 0 0);
+	--kf-info: oklch(0.78 0.1 245);
+	--kf-info-fill: oklch(0.66 0.12 245);
+	--kf-info-fill-fg: oklch(0.17 0.03 245);
+
+	/* node categories: glyph + chip only, never borders or rings (FEAT-xj5tv6) */
+	--kf-cat-trigger: oklch(0.8 0.1 172); /* jade */
+	--kf-cat-ai: oklch(0.8 0.09 222); /* sky */
+	--kf-cat-flow: oklch(0.8 0.11 128); /* leaf */
+	--kf-cat-data: oklch(0.76 0.06 255); /* steel */
+	--kf-cat-app: oklch(0.78 0.012 var(--kf-neutral-h));
+	--kf-cat-utility: oklch(0.7 0.012 var(--kf-neutral-h));
+	--kf-glyph-l: 0.76; /* brand-glyph harmoniser: oklch(from <hex> var(--kf-glyph-l) min(c, .12) h) */
+
+	/* canvas */
+	--kf-grid-dot: oklch(0.3 0.008 var(--kf-neutral-h));
+	--kf-edge: oklch(0.52 0.01 var(--kf-neutral-h));
+	--kf-edge-hover: oklch(0.68 0.012 var(--kf-neutral-h));
+	--kf-edge-attachment: oklch(0.5 0.01 var(--kf-neutral-h));
+	--kf-node-shadow: 0 1px 2px oklch(0 0 0 / 0.5), 0 0 0 1px oklch(0 0 0 / 0.25);
+
+	/* stickies: the formula BUG-rbask0's successor will use, fill
+	   oklch(l c h), border oklch(border-l border-c h), text --kf-fg. The
+	   seven --kf-sticky-N-* below are what sticky.ts consumes today. */
+	--kf-sticky-l: 0.27;
+	--kf-sticky-c: 0.04;
+	--kf-sticky-border-l: 0.45;
+	--kf-sticky-border-c: 0.08;
 	/* Sticky notes, dark: the same seven choices n8n offers, tinted dark so
 	   the near-white node labels that sit on a note keep their contrast. The
 	   pastel light fills under white labels read at ~1.2:1 — unreadable. */
-	--kf-sticky-text: oklch(0.93 0.01 170);
 	--kf-sticky-1-fill: #3b2c10;
 	--kf-sticky-1-border: #b45309;
 	--kf-sticky-2-fill: #3c2410;
@@ -163,62 +325,110 @@
 	--kf-sticky-6-border: #9333ea;
 	--kf-sticky-7-fill: #26303f;
 	--kf-sticky-7-border: #64748b;
+
+	/* data-viz, categorical (status charts use the status tokens) */
+	--kf-viz-1: oklch(0.82 0.14 95);
+	--kf-viz-2: oklch(0.72 0.12 245);
+	--kf-viz-3: oklch(0.78 0.11 172);
+	--kf-viz-4: oklch(0.78 0.12 128);
+	--kf-viz-5: oklch(0.74 0.09 215);
+	--kf-viz-6: oklch(0.7 0.012 235);
+
+	/* elevation: in dark each level also steps its surface (raised → overlay) */
+	--kf-shadow-1: 0 1px 2px oklch(0 0 0 / 0.45);
+	--kf-shadow-2: 0 0 0 1px var(--kf-border), 0 8px 24px -4px oklch(0 0 0 / 0.55);
+	--kf-shadow-3: 0 0 0 1px var(--kf-border), 0 24px 48px -8px oklch(0 0 0 / 0.6);
+
+	/* Syntax colours for the code editor. Hues are kept apart from the accent
+	   so a keyword never reads as a button; the neutral ones sit on slate. */
+	--code-keyword: oklch(0.76 0.13 305);
+	--code-string: oklch(0.8 0.12 140);
+	--code-number: oklch(0.8 0.13 60);
+	--code-comment: oklch(0.62 0.012 var(--kf-neutral-h));
+	--code-function: oklch(0.78 0.11 230);
+	--code-type: oklch(0.8 0.1 190);
+	--code-property: oklch(0.86 0.012 var(--kf-neutral-h));
+
+	/* Theme-specific alias foregrounds (the rest of the aliases are below). */
+	--destructive-foreground: oklch(0.2 0.04 25); /* ink on --kf-danger */
+	--warning-foreground: var(--kf-warning-fill-fg);
 }
 
+/* ---------- colour: light (opt-in) ---------- */
 [data-theme='light'],
 .theme-light {
 	color-scheme: light;
-	--background: oklch(0.985 0.006 170);
-	--foreground: oklch(0.215 0.018 170);
-	--card: oklch(1 0.003 170);
-	--card-foreground: oklch(0.215 0.018 170);
-	--popover: oklch(1 0.003 170);
-	--popover-foreground: oklch(0.215 0.018 170);
-	--primary: oklch(0.44 0.105 170);
-	--primary-foreground: oklch(0.985 0.003 170);
-	--secondary: oklch(0.942 0.018 170);
-	--secondary-foreground: oklch(0.255 0.025 170);
-	--muted: oklch(0.958 0.012 170);
-	--muted-foreground: oklch(0.48 0.024 170);
-	--accent: oklch(0.914 0.038 170);
-	--accent-foreground: oklch(0.255 0.04 170);
-	--destructive: oklch(0.53 0.19 27);
-	--destructive-foreground: oklch(0.985 0.003 170);
-	--success: oklch(0.44 0.105 170);
-	--success-foreground: oklch(0.985 0.003 170);
-	--warning: oklch(0.52 0.12 80);
-	--warning-foreground: oklch(0.985 0.003 170);
-	--border: oklch(0.89 0.014 170);
-	--input: oklch(0.89 0.014 170);
-	--ring: oklch(0.44 0.105 170);
-	--chart-1: oklch(0.52 0.12 170);
-	--chart-2: oklch(0.58 0.11 225);
-	--chart-3: oklch(0.68 0.145 80);
-	--chart-4: oklch(0.57 0.15 35);
-	--chart-5: oklch(0.47 0.09 140);
-	--sidebar: oklch(0.968 0.01 170);
-	--sidebar-foreground: oklch(0.215 0.018 170);
-	--sidebar-primary: oklch(0.44 0.105 170);
-	--sidebar-primary-foreground: oklch(0.985 0.003 170);
-	--sidebar-accent: oklch(0.914 0.038 170);
-	--sidebar-accent-foreground: oklch(0.255 0.04 170);
-	--sidebar-border: oklch(0.89 0.014 170);
-	--sidebar-ring: oklch(0.44 0.105 170);
-	--node-trigger: oklch(0.58 0.14 78);
-	--node-core: oklch(0.5 0.11 170);
-	--node-ai: oklch(0.53 0.16 305);
-	--node-data: oklch(0.52 0.13 240);
-	--node-imported: oklch(0.55 0.19 27);
-	--code-keyword: oklch(0.48 0.17 305);
-	--code-string: oklch(0.47 0.13 145);
-	--code-number: oklch(0.52 0.14 55);
-	--code-comment: oklch(0.55 0.02 170);
-	--code-function: oklch(0.47 0.14 250);
-	--code-type: oklch(0.47 0.1 200);
-	--code-property: oklch(0.36 0.03 170);
+	--kf-neutral-h: 235;
+	--kf-accent-src: oklch(0.82 0.15 95); /* kunyit #e3c23b: stays the FILL, with ink text */
+
+	--kf-accent-hover-dl: -0.04; /* light: hover deepens */
+	--kf-accent-press-dl: -0.08;
+	--kf-accent-text-l: 0.48; /* deep ochre */
+	--kf-accent-text-c: 0.1;
+	--kf-accent-text-dh: -15;
+	--kf-focus-l: 0.56;
+	--kf-focus-c: 0.11;
+	--kf-focus-dh: -20;
+	--kf-selection-l: 0.62;
+	--kf-selection-c: 0.12;
+	--kf-selection-dh: -10;
+	--kf-accent-subtle-mix: 22%;
+	--kf-selection-halo-mix: 35%;
+
+	--kf-canvas: oklch(0.972 0.003 var(--kf-neutral-h));
+	--kf-bg: oklch(0.985 0.002 var(--kf-neutral-h));
+	--kf-panel: oklch(0.962 0.004 var(--kf-neutral-h)); /* sidebar, toolbar, table header */
+	--kf-raised: oklch(1 0 0);
+	--kf-overlay: oklch(1 0 0);
+	/* .935/.91 rather than the draft's .955/.93: on the .962 panel the draft
+	   hover was 1.02:1 and the sidebar's hover vanished (STATE_PAIRS). */
+	--kf-hover: oklch(0.935 0.005 var(--kf-neutral-h));
+	--kf-pressed: oklch(0.91 0.006 var(--kf-neutral-h));
+	--kf-scrim: oklch(0.2 0.012 var(--kf-neutral-h) / 0.28);
+	--kf-skeleton: oklch(0.93 0.005 var(--kf-neutral-h));
+
+	--kf-border-subtle: oklch(0.93 0.004 var(--kf-neutral-h));
+	--kf-border: oklch(0.895 0.006 var(--kf-neutral-h));
+	--kf-border-strong: oklch(0.8 0.008 var(--kf-neutral-h));
+
+	--kf-fg: oklch(0.205 0.012 var(--kf-neutral-h));
+	--kf-fg-muted: oklch(0.44 0.012 var(--kf-neutral-h));
+	--kf-fg-subtle: oklch(0.52 0.012 var(--kf-neutral-h));
+	--kf-fg-disabled: oklch(0.66 0.008 var(--kf-neutral-h));
+
+	--kf-success: oklch(0.5 0.13 150);
+	--kf-success-fill: oklch(0.52 0.13 150);
+	--kf-success-fill-fg: oklch(0.99 0 0);
+	--kf-warning: oklch(0.52 0.12 60);
+	--kf-warning-fill: oklch(0.74 0.15 62);
+	--kf-warning-fill-fg: oklch(0.2 0.04 60);
+	--kf-danger: oklch(0.53 0.2 25);
+	--kf-danger-fill: oklch(0.55 0.21 25);
+	--kf-danger-fill-fg: oklch(0.99 0 0);
+	--kf-info: oklch(0.5 0.12 245);
+	--kf-info-fill: oklch(0.5 0.12 245);
+	--kf-info-fill-fg: oklch(0.99 0 0);
+
+	--kf-cat-trigger: oklch(0.52 0.09 172);
+	--kf-cat-ai: oklch(0.52 0.1 228);
+	--kf-cat-flow: oklch(0.52 0.11 130);
+	--kf-cat-data: oklch(0.5 0.07 255);
+	--kf-cat-app: oklch(0.45 0.012 var(--kf-neutral-h));
+	--kf-cat-utility: oklch(0.52 0.012 var(--kf-neutral-h));
+	--kf-glyph-l: 0.52;
+
+	--kf-grid-dot: oklch(0.84 0.006 var(--kf-neutral-h));
+	--kf-edge: oklch(0.62 0.008 var(--kf-neutral-h));
+	--kf-edge-hover: oklch(0.5 0.01 var(--kf-neutral-h));
+	--kf-edge-attachment: oklch(0.63 0.008 var(--kf-neutral-h));
+	--kf-node-shadow: 0 1px 2px oklch(0.2 0.012 235 / 0.08), 0 0 0 1px oklch(0.2 0.012 235 / 0.04);
+
+	--kf-sticky-l: 0.955;
+	--kf-sticky-c: 0.03;
+	--kf-sticky-border-l: 0.8;
+	--kf-sticky-border-c: 0.1;
 	/* Sticky notes, light: n8n's pastels, with the dark note text the pastels
 	   were designed for. */
-	--kf-sticky-text: oklch(0.27 0.02 170);
 	--kf-sticky-1-fill: #fef3c7;
 	--kf-sticky-1-border: #eab308;
 	--kf-sticky-2-fill: #ffedd5;
@@ -233,30 +443,219 @@
 	--kf-sticky-6-border: #a855f7;
 	--kf-sticky-7-fill: #f1f5f9;
 	--kf-sticky-7-border: #64748b;
+
+	--kf-viz-1: oklch(0.66 0.13 88);
+	--kf-viz-2: oklch(0.52 0.12 245);
+	--kf-viz-3: oklch(0.55 0.1 172);
+	--kf-viz-4: oklch(0.55 0.12 128);
+	--kf-viz-5: oklch(0.58 0.09 215);
+	--kf-viz-6: oklch(0.55 0.012 235);
+
+	--kf-shadow-1: 0 1px 2px oklch(0.2 0.012 235 / 0.08);
+	--kf-shadow-2: 0 0 0 1px var(--kf-border), 0 8px 24px -6px oklch(0.2 0.012 235 / 0.16);
+	--kf-shadow-3: 0 0 0 1px var(--kf-border), 0 24px 48px -12px oklch(0.2 0.012 235 / 0.24);
+
+	--code-keyword: oklch(0.48 0.17 305);
+	--code-string: oklch(0.47 0.13 145);
+	--code-number: oklch(0.52 0.14 55);
+	--code-comment: oklch(0.55 0.012 var(--kf-neutral-h));
+	--code-function: oklch(0.47 0.14 250);
+	--code-type: oklch(0.47 0.1 200);
+	--code-property: oklch(0.36 0.012 var(--kf-neutral-h));
+
+	--destructive-foreground: oklch(0.99 0 0); /* white on --kf-danger */
+	--warning-foreground: oklch(0.99 0 0); /* white on the .52 warning */
+}
+
+/* ---------- derived + role tokens: re-resolved at every theme/brand boundary ----------
+   An alias that references another custom property is resolved WHERE IT IS
+   DECLARED. Declared only on :root, a light or brand subtree would inherit the
+   dark computed value; on this list it re-resolves at each boundary. */
+:root,
+[data-theme],
+.theme-dark,
+.theme-light,
+[data-kf-brand] {
+	--kf-accent: var(--kf-accent-src);
+	--kf-accent-hover: oklch(from var(--kf-accent-src) calc(l + var(--kf-accent-hover-dl)) c h);
+	--kf-accent-press: oklch(from var(--kf-accent-src) calc(l + var(--kf-accent-press-dl)) c h);
+	/* Ink on light accents, neutral white on dark ones, flipping at L 0.60, so
+	   any host accent keeps ≥4.5:1 (the white branch carries no chroma: a
+	   tinted white falls to 4.49:1 on #dc2626). */
+	--kf-accent-fg: oklch(
+		from var(--kf-accent-src) clamp(0.22, (0.6 - l) * 1000, 0.99) clamp(0, (l - 0.6) * 1000, 0.03) h
+	);
+	--kf-accent-text: oklch(
+		from var(--kf-accent-src) var(--kf-accent-text-l) min(c, var(--kf-accent-text-c)) calc(h + var(--kf-accent-text-dh))
+	);
+	--kf-accent-subtle: color-mix(in oklch, var(--kf-accent-src) var(--kf-accent-subtle-mix), transparent);
+	--kf-accent-border: color-mix(in oklch, var(--kf-accent-src) 55%, transparent);
+	--kf-focus: oklch(from var(--kf-accent-src) var(--kf-focus-l) min(c, var(--kf-focus-c)) calc(h + var(--kf-focus-dh)));
+
+	--kf-success-subtle: color-mix(in oklch, var(--kf-success) 14%, transparent);
+	--kf-warning-subtle: color-mix(in oklch, var(--kf-warning) 14%, transparent);
+	--kf-danger-subtle: color-mix(in oklch, var(--kf-danger) 14%, transparent);
+	--kf-info-subtle: color-mix(in oklch, var(--kf-info) 14%, transparent);
+
+	/* selection is a line-weight use: turmeric on dark, ochre on light */
+	--kf-selection: oklch(
+		from var(--kf-accent-src) var(--kf-selection-l) min(c, var(--kf-selection-c)) calc(h + var(--kf-selection-dh))
+	);
+	--kf-selection-halo: color-mix(in oklch, var(--kf-accent-src) var(--kf-selection-halo-mix), transparent);
+	--kf-selection-row: var(--kf-accent-subtle);
+	--kf-marquee-fill: color-mix(in oklch, var(--kf-accent-src) 10%, transparent);
+	--kf-marquee-border: var(--kf-selection);
+	--kf-text-selection: color-mix(in oklch, var(--kf-accent-src) 38%, transparent);
+
+	--kf-edge-selected: var(--kf-selection);
+	--kf-edge-running: var(--kf-info);
+	--kf-edge-error: var(--kf-danger);
+	/* A control's border under the pointer: a quarter of the way from the
+	   resting control border toward the text colour, so it reads in both
+	   themes (darker in light, lighter in dark). */
+	--kf-border-hover: color-mix(in oklch, var(--kf-border-strong), var(--kf-fg) 25%);
+	--kf-port: var(--kf-border-strong);
+	--kf-port-fill: var(--kf-raised);
+	--kf-port-hover: var(--kf-selection);
+
+	--kf-run-running: var(--kf-info);
+	--kf-run-success: var(--kf-success);
+	--kf-run-warning: var(--kf-warning);
+	--kf-run-error: var(--kf-danger);
+	--kf-run-waiting: var(--kf-info);
+	--kf-run-disabled: var(--kf-fg-disabled);
+	--kf-run-pinned: var(--kf-accent-text);
+
+	--kf-cat-chip: 16%; /* chip bg = color-mix(in oklch, var(--kf-cat-*) var(--kf-cat-chip), transparent) */
+	--kf-sticky-text: var(--kf-fg);
+
+	/* shadcn / Tailwind compatibility: existing utilities keep working */
+	--background: var(--kf-bg);
+	--foreground: var(--kf-fg);
+	--card: var(--kf-raised);
+	--card-foreground: var(--kf-fg);
+	--popover: var(--kf-overlay);
+	--popover-foreground: var(--kf-fg);
+	--primary: var(--kf-accent);
+	--primary-foreground: var(--kf-accent-fg);
+	--secondary: var(--kf-raised);
+	--secondary-foreground: var(--kf-fg);
+	/* --muted is a hover surface in today's markup (55 hover:bg-muted sites):
+	   on --kf-panel it would sit darker than the cards and menus it hovers. */
+	--muted: var(--kf-hover);
+	--muted-foreground: var(--kf-fg-muted);
+	--accent: var(--kf-hover); /* shadcn's "accent" is a HOVER SURFACE, never text (BUG-namghh) */
+	--accent-foreground: var(--kf-fg);
+	/* text-destructive is common, so --destructive is the text-weight danger;
+	   its foreground (theme blocks above) is ink in dark and white in light. */
+	--destructive: var(--kf-danger);
+	--success: var(--kf-success);
+	--success-foreground: var(--kf-success-fill-fg);
+	--warning: var(--kf-warning);
+	--info: var(--kf-info);
+	--border: var(--kf-border);
+	--input: var(--kf-border-strong);
+	--ring: var(--kf-focus);
+	--sidebar: var(--kf-panel);
+	--sidebar-foreground: var(--kf-fg-muted);
+	--sidebar-primary: var(--kf-accent);
+	--sidebar-primary-foreground: var(--kf-accent-fg);
+	/* The sidebar's current page is the pressed step, so it stays distinct from
+	   a hovered row (--accent, the hover step). */
+	--sidebar-accent: var(--kf-pressed);
+	--sidebar-accent-foreground: var(--kf-fg);
+	--sidebar-border: var(--kf-border-subtle);
+	--sidebar-ring: var(--kf-focus);
+	--chart-1: var(--kf-viz-1);
+	--chart-2: var(--kf-viz-2);
+	--chart-3: var(--kf-viz-3);
+	--chart-4: var(--kf-viz-4);
+	--chart-5: var(--kf-viz-5);
+}
+
+/* Browsers without relative colour syntax (Chrome < 119, Safari < 18,
+   Firefox < 128) keep the declarations above but compute them to an invalid
+   colour, which unsets every background that uses them. They get the default
+   kunyit steps as static values instead; a host accent then recolours only
+   --kf-accent. tokens.contrast.test.ts holds these within ΔE(OK) 0.01 of the
+   derived values. */
+@supports not (color: oklch(from red l c h)) {
+	:root,
+	[data-theme='dark'],
+	.theme-dark,
+	[data-kf-brand] {
+		--kf-accent-hover: oklch(0.86 0.14 95);
+		--kf-accent-press: oklch(0.77 0.14 95);
+		--kf-accent-fg: oklch(0.22 0.03 95);
+		--kf-accent-text: oklch(0.85 0.12 95);
+		--kf-focus: oklch(0.82 0.13 95);
+		--kf-selection: oklch(0.82 0.14 95);
+	}
+
+	[data-theme='light'],
+	.theme-light,
+	[data-theme='light'] [data-kf-brand],
+	.theme-light [data-kf-brand] {
+		--kf-accent-hover: oklch(0.78 0.15 95);
+		--kf-accent-press: oklch(0.74 0.15 95);
+		--kf-accent-fg: oklch(0.22 0.03 95);
+		--kf-accent-text: oklch(0.48 0.1 80);
+		--kf-focus: oklch(0.56 0.11 75);
+		--kf-selection: oklch(0.62 0.12 85);
+	}
 }
 
 /* Svelte Flow ships light-only defaults for its chrome. Bind them to the
-   KilasFlow palette so the canvas follows the active theme instead of staying
-   white in the dark-first default. */
+   tokens so the canvas follows the active theme, including inside a light
+   subtree of a dark page. */
 .svelte-flow {
-	--xy-background-color: var(--background);
-	--xy-edge-stroke: var(--muted-foreground);
-	--xy-edge-stroke-selected: var(--primary);
-	--xy-connectionline-stroke: var(--primary);
-	--xy-handle-background-color: var(--card);
-	--xy-handle-border-color: var(--primary);
+	--xy-background-color: var(--kf-canvas);
+	--xy-background-pattern-color: var(--kf-grid-dot);
+	--xy-edge-stroke: var(--kf-edge);
+	--xy-edge-stroke-selected: var(--kf-edge-selected);
+	--xy-connectionline-stroke: var(--kf-selection);
+	--xy-handle-background-color: var(--kf-port-fill);
+	--xy-handle-border-color: var(--kf-port);
+	--xy-minimap-background-color: var(--kf-panel);
+	--xy-minimap-mask-background-color: color-mix(in oklch, var(--kf-canvas) 70%, transparent);
+	--xy-controls-button-background-color: var(--kf-raised);
+	--xy-controls-button-background-color-hover: var(--kf-hover);
+	--xy-controls-button-color: var(--kf-fg-muted);
+	--xy-controls-button-color-hover: var(--kf-fg);
+	--xy-controls-button-border-color: var(--kf-border-subtle);
+	--xy-controls-box-shadow: var(--kf-shadow-2);
+	--xy-edge-label-background-color: var(--kf-raised);
+	--xy-edge-label-color: var(--kf-fg-muted);
+	--xy-selection-background-color: var(--kf-marquee-fill);
+	--xy-selection-border: 1px solid var(--kf-marquee-border);
 	--xy-attribution-background-color: transparent;
-	--xy-controls-button-background-color: var(--card);
-	--xy-controls-button-background-color-hover: var(--muted);
-	--xy-controls-button-color: var(--card-foreground);
-	--xy-controls-button-color-hover: var(--foreground);
-	--xy-controls-button-border-color: var(--border);
-	--xy-controls-box-shadow: 0 1px 2px oklch(0 0 0 / 25%);
-	--xy-edge-label-background-color: var(--card);
-	--xy-edge-label-color: var(--card-foreground);
-	--xy-minimap-background-color: var(--card);
-	--xy-selection-background-color: oklch(from var(--primary) l c h / 12%);
-	--xy-selection-border: 1px dashed var(--primary);
+}
+
+::selection {
+	background: var(--kf-text-selection);
+}
+
+/* Canvas node states, drawn on the tile rather than on Svelte Flow's wrapper
+   (which also holds the label under the tile). Unlayered on purpose: they
+   must beat the tile's utility classes, and Svelte Flow's own unlayered
+   `.svelte-flow__node.selectable:focus-visible { outline: none }`, restated
+   here so the wrapper stays ringless if the library ever drops it. Edges
+   show focus by stroke (Svelte Flow's selected-stroke rule), not outline. */
+.svelte-flow__node.selectable:focus-visible {
+	outline: none;
+}
+
+.svelte-flow__node:focus-visible .kf-node-tile {
+	outline: var(--kf-focus-width) solid var(--kf-focus);
+	outline-offset: var(--kf-focus-offset);
+}
+
+.svelte-flow__node:hover .kf-node-tile {
+	background-color: var(--kf-hover);
+}
+
+.svelte-flow__node:active .kf-node-tile {
+	background-color: var(--kf-pressed);
 }
 
 /* The canvas draws its own ports: the library's 6px dot is stripped back to an
@@ -371,6 +770,13 @@
 @layer base {
 	* {
 		@apply border-border outline-ring;
+	}
+
+	/* The one focus ring (BUG-ywbvfa). Author styles beat the browser's
+	   `outline: auto`, so hand-rolled fields get it too. Never transitioned. */
+	:focus-visible {
+		outline: var(--kf-focus-width) solid var(--kf-focus);
+		outline-offset: var(--kf-focus-offset);
 	}
 
 	html {

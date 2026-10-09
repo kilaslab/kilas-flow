@@ -3957,10 +3957,13 @@ func TestImportMapsTheWholeLangChainCluster(t *testing.T) {
 	if lookup.Parameters["workflowId"] != "order-workflow" {
 		t.Errorf("workflowId = %#v, want the referenced workflow carried", lookup.Parameters["workflowId"])
 	}
+	// The inputs arrive as the resource mapper the editor reads, the column
+	// under its value.
 	inputs, _ := lookup.Parameters["workflowInputs"].(map[string]any)
-	entry, _ := inputs["orderId"].(map[string]any)
+	columns, _ := inputs["value"].(map[string]any)
+	entry, _ := columns["orderId"].(map[string]any)
 	if entry["mode"] != "expression" || entry["value"] != "{{ $json.orderId }}" {
-		t.Errorf("workflowInputs.orderId = %#v, want the n8n expression translated", inputs["orderId"])
+		t.Errorf("workflowInputs.value.orderId = %#v, want the n8n expression translated", columns["orderId"])
 	}
 
 	// The parser translates its mode and turns auto-fix into a retry count,

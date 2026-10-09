@@ -17,6 +17,7 @@
 	import { sectionForPath, sectionLabel } from '$lib/dashboard/nav-sections';
 	import { EDITOR_SIDEBAR_BREAKPOINT, isEditorRoute, sidebarCollapsed as collapsedFor } from '$lib/dashboard/sidebar';
 	import * as m from '$lib/paraglide/messages.js';
+	import { DEFAULT_THEME_COLOR, watchThemeColor } from '$lib/design-system/theme-color';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
 	let { children } = $props();
 	let principal = $state<PrincipalResource | null>(null);
@@ -43,6 +44,10 @@
 	const sidebarCollapsed = $derived(collapsedFor({ stored: storedCollapsed, editorRoute, compact: compact.current, editorChoice }));
 
 	const STORAGE_KEY = 'kilasflow.sidebar.collapsed';
+
+	// The browser chrome follows --kf-bg for whichever theme <html> carries.
+	let themeColor = $state(DEFAULT_THEME_COLOR);
+	onMount(() => watchThemeColor((hex) => (themeColor = hex)));
 
 	onMount(() => {
 		// Auth-off deployments never reach /auth/me: the health probe says the
@@ -76,7 +81,7 @@
 </script>
 
 <svelte:head>
-	<meta name="theme-color" content="#111a18" />
+	<meta name="theme-color" content={themeColor} />
 </svelte:head>
 
 <div
@@ -107,7 +112,7 @@
 				aria-expanded={!sidebarCollapsed}
 				aria-label={sidebarCollapsed ? m.common_expand_sidebar() : m.common_collapse_sidebar()}
 				title={sidebarCollapsed ? m.common_expand_sidebar() : m.common_collapse_sidebar()}
-				class="grid size-7 place-items-center rounded-md text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring"
+				class="grid size-7 place-items-center rounded-md text-sidebar-foreground/70 transition-colors hover:bg-accent hover:text-sidebar-accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring"
 			>
 				{#if sidebarCollapsed}
 					<PanelLeftOpen aria-hidden="true" class="size-4" />
@@ -162,7 +167,7 @@
 			{/if}
 		</header>
 
-		<main id="dashboard-content" tabindex="-1" class:min-h-0={editorRoute} class={editorRoute ? 'h-[calc(100dvh-2.75rem)] overflow-hidden lg:h-dvh' : 'min-w-0 px-4 py-5 sm:px-5'}>
+		<main id="dashboard-content" tabindex="-1" class:min-h-0={editorRoute} class={editorRoute ? 'focus-region h-[calc(100dvh-2.75rem)] overflow-hidden lg:h-dvh' : 'focus-region min-w-0 px-4 py-5 sm:px-5'}>
 			{@render children()}
 		</main>
 	</section>

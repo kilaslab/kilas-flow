@@ -401,7 +401,7 @@
 			void send();
 		}}
 	>
-		<div class="flex items-end gap-1.5 rounded-lg border border-border bg-background px-2 py-1.5 transition-colors focus-within:border-ring">
+		<div class="focus-within-ring flex items-end gap-1.5 rounded-lg border border-border bg-background px-2 py-1.5 transition-colors">
 			<label class="sr-only" for="workflow-chat-input">{m.editor_chat_placeholder()}</label>
 			<textarea
 				id="workflow-chat-input"
@@ -409,7 +409,7 @@
 				bind:this={input}
 				bind:value={draft}
 				rows="1"
-				class="field-sizing-content max-h-32 min-h-5 min-w-0 flex-1 resize-none bg-transparent text-xs leading-5 outline-none placeholder:text-muted-foreground"
+				class="field-sizing-content max-h-32 min-h-5 min-w-0 flex-1 resize-none bg-transparent text-xs leading-5 focus-delegate placeholder:text-muted-foreground"
 				placeholder={m.editor_chat_placeholder()}
 				onkeydown={onKeydown}
 			></textarea>

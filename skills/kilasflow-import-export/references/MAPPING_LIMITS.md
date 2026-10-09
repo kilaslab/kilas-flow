@@ -2,8 +2,8 @@
 
 The n8n boundary is a translation with a report, in both directions. This file
 is what the reports mean, what maps, and what a report costs you. The mapping
-table itself is the `mappings` list in internal/interop/n8n/n8n.go, and the
-advertised subset is what `supportedMappings[]` returns.
+table is not copied here: the advertised subset is what `supportedMappings[]`
+returns from an export.
 
 ## The two report shapes
 
@@ -13,8 +13,7 @@ answers with `format`, `workflow`, `lossy[]` and `supportedMappings[]`. The two
 lists are the same vocabulary in opposite directions: `ImportIssue` and
 `ExportIssue` mirror each other field for field, and an issue names the node
 (`nodeName`, `nodeId`), the original n8n `type` and `typeVersion`, the specific
-`field` where there is one, and a `reason` written as a sentence
-(internal/api/handlers/interop.go, internal/interop/n8n/n8n.go).
+`field` where there is one, and a `reason` written as a sentence.
 
 ## The three severities
 
@@ -25,14 +24,12 @@ lists are the same vocabulary in opposite directions: `ImportIssue` and
 | `dropped` | the element was not carried at all | decide whether you needed it — nothing about it survived |
 
 `dropped` is deliberately not a soft `lossy`: saying a setting was carried in
-some reduced form when it was ignored entirely would imply it was applied
-(`IssueSeverity` and `ExportIssue` in internal/interop/n8n/n8n.go).
+some reduced form when it was ignored entirely would imply it was applied.
 
 ## What has no equivalent: node types
 
 A node type outside the mapping list imports as `kilasflow.unsupported`. It is
-designed behaviour, not a failure (internal/interop/n8n/n8n.go,
-nodes/unsupported.go):
+designed behaviour, not a failure:
 
 - the placeholder keeps the original `type`, the original `typeVersion` and a
   capsule holding the whole source node — its parameters, its credential
@@ -44,15 +41,14 @@ nodes/unsupported.go):
 - it is registered at four arities — one, two, four and eight ports — and the
   import picks the smallest that covers the edges the source workflow drew,
   because the registry is keyed by type and version and one definition cannot
-  have a variable port count (`unsupportedArities`, `placeholderFor`).
+  have a variable port count.
 
 The honest answer for most of these is an HTTP Request node against the same
 API, since that is what the missing node was doing.
 
 ## The Code node: JavaScript runs, Python does not
 
-The n8n Code node maps by its `language` parameter (`codeKilasType` in
-internal/interop/n8n/parameters.go). Neither language is translated — a one-line
+The n8n Code node maps by its `language` parameter. Neither language is translated — a one-line
 `items.map(…)` translates cleanly and the next body translates into something
 that compiles and computes something else.
 
@@ -69,10 +65,9 @@ constructs: async generators, `for await`, `import`/`export`, the regex flags
 `v` and `d`, `\p{…}` property escapes under `u`, `this.helpers` and
 `this.getCredentials`, `$getWorkflowStaticData`, and `require()` of a module
 outside lodash, luxon, crypto, util, buffer and url; `$jmespath`, `$prevNode`,
-`$secrets` and `$evaluateExpression` fail by name when reached
-(internal/jsrun/analyze.go, internal/jsrun/js/runtime.js). Binary crosses as
+`$secrets` and `$evaluateExpression` fail by name when reached. Binary crosses as
 metadata only, and the time limit counts the code's own running time
-(docs/src/content/docs/guides/n8n-migration.md).
+(docs: guides/n8n-migration).
 
 **Python** becomes `kilasflow.foreignCode`, a distinct type from the generic
 placeholder: it keeps your source verbatim in `pythonCode`, refuses to compile —
@@ -82,7 +77,7 @@ Aggregate or Summarize, a `.sort(` at Sort, a `fetch(` at HTTP Request. Your way
 forward are the native nodes (Filter, Switch, Set, Sort, Aggregate, Split Out,
 Summarize, Remove Duplicates), the body rewritten in `kilasflow.jsCode`, or in
 `kilasflow.code`, the Go Code node that compiles to WebAssembly and runs under a
-time and memory limit (nodes/jscode.go).
+time and memory limit.
 
 A workflow imported before JavaScript ran kept its JavaScript Code nodes as
 `kilasflow.foreignCode`; those run now as `kilasflow.jsCode` does, without
@@ -91,7 +86,7 @@ importing again.
 ## Document-level elements
 
 Four things on the n8n document are read and then not carried, or carried only
-in part (`documentIssues` and `importSettings` in internal/interop/n8n/n8n.go):
+in part:
 
 | Field | What happens |
 | --- | --- |
@@ -108,8 +103,7 @@ that workflow was imported too.
 
 ## Node-level elements
 
-On a **mapped** node, exactly two fields are reported **dropped**
-(`nodeIssues` in internal/interop/n8n/n8n.go):
+On a **mapped** node, exactly two fields are reported **dropped**:
 
 - `notes` — the node's note has no equivalent;
 - `webhookId` — n8n's per-node webhook identity is meaningless here; this
@@ -121,14 +115,14 @@ Everything else on a mapped node crosses and is honoured: `disabled`, `onError`
 are **clamped rather than refused** — `maxTries` to `workflow.MaxRetryAttempts`
 (8), `waitBetweenTries` to `workflow.MaxRetryWaitMilliseconds` (300000) — so a
 workflow with a larger budget still imports and one typo cannot become thousands
-of calls (`errorHandlingSettings`, internal/workflow/compiler.go). An
+of calls . An
 unsupported node keeps all of this in its capsule instead, and gets it back on
 export.
 
 ## Going back out
 
 `kilasflow workflow export <workflowId> --format n8n` (`export-workflow`)
-reports what the return trip could not carry (internal/interop/n8n/n8n.go):
+reports what the return trip could not carry:
 
 - **an unsupported placeholder** returns as the node it came from, whole, with
   a `lossy` note saying so — it came from n8n and belongs there;
@@ -147,12 +141,12 @@ reports what the return trip could not carry (internal/interop/n8n/n8n.go):
 n8n marks an expression by prefixing a string with `=`. KilasFlow marks one with
 `{"mode":"expression","value":"…"}`, and the `{{ … }}` interpolation inside is
 the same, so `{{ $json.email.trim() }}` and `$node["Fetch user"].json.name`
-survive (internal/expression/expression.go). Two differences decide what
+survive. Two differences decide what
 imports: an n8n expression that assigns, declares a variable or spans several
 statements does not parse here — a parameter is an expression, not a program —
 so it must become a node or a Code node, and `$('Name').item` fails loudly
 rather than guessing when the paired-item lineage cannot be established
-(docs/src/content/docs/guides/n8n-migration.md).
+(docs: guides/n8n-migration).
 
 ## Limits worth planning around
 

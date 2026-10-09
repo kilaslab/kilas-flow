@@ -3,9 +3,8 @@
 A host backend mints a session for one workflow (or one datastore) and one exact
 origin, hands the token to its own page, and the page passes it to the editor in
 an iframe. This file is the mint, the token and the messages; what the session may
-call afterwards is in SESSION_AUTHORITY.md. Sources: internal/embed/embed.go,
-internal/api/handlers/embed.go, internal/api/middleware/embed.go,
-sdk/src/browser.ts.
+call afterwards is in SESSION_AUTHORITY.md. The browser half is the
+`@kilasflow/sdk` package (docs: guides/embedding).
 
 ## Two credentials, two shapes
 
@@ -16,8 +15,7 @@ sdk/src/browser.ts.
 
 The session token is `kfe1.<base64url payload>.<base64url hmac-sha256>`. Its
 signature is checked **before** the payload is parsed, so a forged token is
-rejected without its contents being interpreted, and expiry is checked last
-(`Verify`). The signing key comes from the variable named by
+rejected without its contents being interpreted, and expiry is checked last. The signing key comes from the variable named by
 `embed.signing_key_env`, defaults to `KILASFLOW_EMBED_SIGNING_KEY`, and must be
 exactly 32 bytes — base64, hex or raw — or the process refuses to boot.
 
@@ -70,7 +68,7 @@ Implication stays inside one family on purpose: a workflow write that could read
 across families would hand a datastore session the workflow. A scope set that
 cannot be used against the session's subject is refused at mint, because a token
 that passes every check and reaches nothing reads as success to the host that
-asked for it (`scopesMatchSubject`). The same vocabulary is what an agent token
+asked for it. The same vocabulary is what an agent token
 carries (`create-api-key` with `scopes`, optionally bound to one `workflowId` and
 an `expiresAt`), and one normalisation accepts both.
 
@@ -93,7 +91,7 @@ an `expiresAt`), and one normalisation accepts both.
   working there. A request that sends **no** `Origin` header skips that check.
 - Pass the host page's origin — the page that frames the editor — and list every
   domain that frames it. That same allowlist is the `frame-ancestors` of the
-  served editor pages (internal/api/routes.go).
+  served editor pages.
 
 ## The handshake
 
@@ -124,8 +122,7 @@ an `expiresAt`), and one normalisation accepts both.
 - The host waits for the editor to announce itself, and only then posts the
   token — always to an explicit target origin, never `'*'`, which would hand the
   token to whatever document occupies the frame. Every inbound message is checked
-  against the editor's origin and its frame before the payload is read
-  (sdk/src/browser.ts, `mountWorkflowEditor`).
+  against the editor's origin and its frame before the payload is read.
 - The handshake has a deadline (15 seconds by default, `handshakeTimeoutMs`),
   after which the host's `onError` is called and the iframe is left in place;
   tearing it down is the host's decision.

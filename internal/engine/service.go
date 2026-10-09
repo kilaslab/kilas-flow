@@ -1032,11 +1032,30 @@ type tenantCredentials struct {
 	tenant repository.TenantScope
 }
 
+// missingCredentialError is a node naming a credential this tenant no longer
+// has — almost always one deleted after the workflow was activated. The
+// caller wraps it with the node's name, so the run error says which node and
+// which credential, and what to do. It still unwraps to the store's
+// ErrNotFound for anything that classifies by it.
+type missingCredentialError struct {
+	id    string
+	cause error
+}
+
+func (err *missingCredentialError) Error() string {
+	return fmt.Sprintf("credential %q no longer exists in this workspace: attach another credential to this node", err.id)
+}
+
+func (err *missingCredentialError) Unwrap() error { return err.cause }
+
 func (resolver *tenantCredentials) ResolveCredential(ctx context.Context, credentialID string) (Credential, error) {
 	if resolver == nil || resolver.store == nil {
 		return Credential{}, fmt.Errorf("credential storage is not configured")
 	}
 	record, fields, err := resolver.store.Resolve(ctx, resolver.tenant, credentialID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return Credential{}, &missingCredentialError{id: credentialID, cause: err}
+	}
 	if err != nil {
 		return Credential{}, fmt.Errorf("resolve credential: %w", err)
 	}

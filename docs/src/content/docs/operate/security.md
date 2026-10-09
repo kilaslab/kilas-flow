@@ -81,7 +81,16 @@ isolation story below is about the other direction.
 **Credentials are sealed.** Stored credentials are encrypted at rest with
 AES-256-GCM. The key is read from the environment and never from the
 configuration file; without it, credential storage is disabled rather than
-silently falling back to something weaker. Workflow `$env` expressions can
+silently falling back to something weaker. Each payload is sealed under an
+HKDF-derived key and bound to its tenant, credential id and type, so a payload
+copied into another row by someone with database access does not open there.
+Payloads stored by an earlier release lack that binding:
+`kilasflow -reseal-credentials` upgrades the stored rows, and
+`security.legacy_seals: refuse` (or rotating the key) stops a pre-upgrade copy
+of one, from a dump or a backup, opening in any row. The Google Connect state is signed
+with its own derived key, and a raw 32-character key is accepted with a
+warning at boot. The key is rotated with a secondary key and the same reseal
+pass; see [Key rotation](/operate/key-rotation/). Workflow `$env` expressions can
 never reach it either: only `KILASFLOW_WORKFLOW_ENV_*` is exposed to
 workflows, so a workflow can never read the DSN or the master key. An update
 that leaves a credential's `allowedDomains` out keeps the stored scope, so a
@@ -110,7 +119,13 @@ like any secret and resolved on the Resolve path at the moment the runtime
 needs it, against a manager binding that belongs to the calling tenant — a
 reference authored under one tenant cannot read another tenant's binding.
 Resolved values are cached in process memory with a bounded TTL, never
-written to disk, and dropped when the credential or the binding changes. The
+written to disk, and dropped when the credential or the binding changes. A
+Google token refresh or Connect writes back only the tokens Google returned,
+so a client secret held as a reference stays a reference. A binding names the
+environment variable holding its manager token, and only a variable named
+`KILASFLOW_EXTERNAL_SECRET_TOKEN_<NAME>` is accepted, both when the binding is
+saved and again when it is used, so a binding can never send the database DSN
+or the master key to the manager address it names. The
 manager leg (Vault KV v2 today) travels through the same egress policy as
 every workflow HTTP request: a manager on loopback or a private network needs
 an `allowed_private_endpoints` entry, never `allow_private_networks: true`.

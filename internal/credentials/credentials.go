@@ -1,10 +1,6 @@
 package credentials
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -340,65 +336,6 @@ func Apply(request *http.Request, typeID string, fields map[string]string) error
 	return ApplyAuthentication(request, credentialType, fields)
 }
 
-// Cipher seals credential payloads with AES-256-GCM.
-type Cipher struct {
-	aead cipher.AEAD
-}
-
-// NewCipher builds a cipher from a 32-byte master key.
-func NewCipher(key []byte) (*Cipher, error) {
-	if len(key) != KeySize {
-		return nil, fmt.Errorf("credential encryption key must be %d bytes, got %d", KeySize, len(key))
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("credential cipher: %w", err)
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("credential cipher: %w", err)
-	}
-	return &Cipher{aead: aead}, nil
-}
-
-// Encrypt seals a field payload. Each call uses a fresh random nonce, so two
-// identical payloads never produce identical ciphertext in storage.
-func (c *Cipher) Encrypt(fields map[string]string) ([]byte, error) {
-	if c == nil {
-		return nil, fmt.Errorf("credential cipher is not configured")
-	}
-	plaintext, err := json.Marshal(fields)
-	if err != nil {
-		return nil, fmt.Errorf("encode credential payload: %w", err)
-	}
-	nonce := make([]byte, c.aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("credential nonce: %w", err)
-	}
-	return c.aead.Seal(nonce, nonce, plaintext, nil), nil
-}
-
-// Decrypt opens a sealed payload. Authentication failure is reported without
-// distinguishing a tampered ciphertext from a wrong key.
-func (c *Cipher) Decrypt(sealed []byte) (map[string]string, error) {
-	if c == nil {
-		return nil, fmt.Errorf("credential cipher is not configured")
-	}
-	nonceSize := c.aead.NonceSize()
-	if len(sealed) < nonceSize+1 {
-		return nil, fmt.Errorf("credential payload is malformed")
-	}
-	plaintext, err := c.aead.Open(nil, sealed[:nonceSize], sealed[nonceSize:], nil)
-	if err != nil {
-		return nil, fmt.Errorf("credential payload could not be decrypted")
-	}
-	fields := map[string]string{}
-	if err := json.Unmarshal(plaintext, &fields); err != nil {
-		return nil, fmt.Errorf("decode credential payload: %w", err)
-	}
-	return fields, nil
-}
-
 // KeyFromEnvironment reads the master key from an environment variable.
 //
 // The key never comes from the config file: a config file is routinely
@@ -406,13 +343,20 @@ func (c *Cipher) Decrypt(sealed []byte) (map[string]string, error) {
 // Base64 and hex are both accepted so operators can paste whichever their
 // secret manager emits.
 func KeyFromEnvironment(name string) ([]byte, error) {
+	decoded, _, err := KeyFromEnvironmentFormat(name)
+	return decoded, err
+}
+
+// KeyFromEnvironmentFormat is KeyFromEnvironment that also reports how the
+// value was encoded, so boot can warn about a raw string.
+func KeyFromEnvironmentFormat(name string) ([]byte, KeyFormat, error) {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
-		return nil, fmt.Errorf("%w: set %s", ErrNoKey, name)
+		return nil, 0, fmt.Errorf("%w: set %s", ErrNoKey, name)
 	}
-	decoded, err := decodeKey(raw)
+	decoded, format, err := ParseKey(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%s %w", name, err)
+		return nil, 0, fmt.Errorf("%s %w", name, err)
 	}
-	return decoded, nil
+	return decoded, format, nil
 }

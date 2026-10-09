@@ -31,8 +31,9 @@ Two rules keep it honest:
 
 The examples on this page run as written. The ids a server issues are shell
 variables — `$WORKFLOW_ID`, `$VERSION_ID`, `$EXECUTION_ID`, `$CREDENTIAL_ID`,
-`$DATASTORE_ID` and `$CURSOR` — which you fill from the command that made them
-(`--quiet` prints just the id); `$TOKEN` is an API token you hold. A trailing
+`$IN_USE_CREDENTIAL_ID` (a credential a workflow attaches), `$DATASTORE_ID` and
+`$CURSOR` — which you fill from the command that made them (`--quiet` prints
+just the id); `$TOKEN` is an API token you hold. A trailing
 `# exit N` says the example ends with that exit code, and every example without
 one exits 0. `make smoke-cli-examples` runs each of them against a booted
 server in CI, so an example that stops being true fails the build.
@@ -500,6 +501,8 @@ kilasflow credential create --file credential.json --yes --quiet   # the new id
 kilasflow credential update "$CREDENTIAL_ID" --file credential.json --yes
 kilasflow credential delete "$CREDENTIAL_ID" --yes
 kilasflow credential create --file credential.json        # exit 3: a guarded verb without --yes
+kilasflow credential delete "$IN_USE_CREDENTIAL_ID" --yes   # exit 5: a workflow still attaches it
+kilasflow credential delete "$IN_USE_CREDENTIAL_ID" --force --yes
 ```
 
 - No secret value is ever returned: the API's read projections leave it out, and
@@ -518,6 +521,12 @@ kilasflow credential create --file credential.json        # exit 3: a guarded ve
   workflow in the tenant can reach, so storing, replacing and removing one needs
   `--yes` and a tenant-wide key — see [Guardrails](#guardrails). `delete`
   answers 204, so its `data` is `{id, status}`.
+- **`delete` refuses a credential in use.** When a workflow's draft or
+  published version still attaches it, the server answers `409` and the verb
+  exits 5 (`conflict`), with one entry per workflow in the error's detail
+  (`location` `workflows/<id>`). `kilasflow credential get` lists the same
+  workflows under `usedBy`. `--force` deletes it anyway; it does not replace
+  `--yes`, which the guard still asks for.
 - Deliberately absent: `types` (the catalogue is reachable through
   `kilasflow api list-credential-types`, and `kilasflow api
   test-credential-payload` tests an unsaved one).

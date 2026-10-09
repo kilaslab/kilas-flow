@@ -32,6 +32,8 @@ Reuse the existing browser e2e harness (FEAT-cx3hq1). Seed a deterministic works
 
 Source: the 2026-09-23 frontend visual audit. The owner chose direction A, "Kunyit", after rejecting "Nila" for resembling qonflo.ai. The full audit and draft tokens are attached to the parent epic.
 
+2026-10-09 (Track I, BUG-ywbvfa) landed the first slice of VR-03: `e2e/playwright.visual.config.ts` (projects `dark-1440`, `light-1440`), `e2e/visual/fixtures.ts` (theme forced before hydration, fonts checked, motion frozen), `e2e/visual/force-state.ts` (DevTools-protocol pseudo states from `data-force`), the `/design/states` harness route (dev and `KILASFLOW_DESIGN_HARNESS=1` builds only; release bundles drop it), `make test-visual` and a CI step. This ticket adds the `*-1280` projects and the 12 product surfaces. linux baselines: commit them from the first CI run's `visual-regression` artefact; the CI step is `continue-on-error` until `e2e/visual/__screenshots__/linux/` exists.
+
 # Related Files
 
 # Attachments

@@ -2831,9 +2831,21 @@ func workflowToolNode() node.Definition {
 				},
 			},
 			{
-				Key: "workflowInputs", Label: "Workflow inputs", Kind: node.PropertyJSON,
-				Description: "Extra static inputs merged over the model's arguments into the sub-workflow's input item. Supports expressions. " +
-					"The model is offered each field the workflow's trigger declares, by name and type; a field written here is fixed to what you wrote and is not offered.",
+				Key: "workflowInputs", Label: "Workflow inputs", Kind: node.PropertyResourceMapper,
+				Mapper: &node.ResourceMapperDeclaration{
+					// One column per field the picked workflow's trigger declares.
+					Schema: &node.OptionsLoader{
+						Source: property.LoaderInternal, Name: WorkflowInputsLoader,
+						DependsOn: []string{workflowInputsDependency},
+					},
+					ValuesLabel:    "Workflow inputs",
+					ModelDefinable: true,
+				},
+				Description: "What the sub-workflow receives, one column per field its trigger declares. " +
+					"A column set to the model is filled in by the model when it calls the tool, typed as the field is declared. " +
+					"A column you fix is sent exactly as you wrote it (expressions are allowed) and is not offered to the model. " +
+					"A field you leave out stays the model's. Plain JSON written in this property by an earlier version still works: " +
+					"each key in it is fixed.",
 			},
 		},
 		SharedSettings: sharedSettings(),
@@ -2882,7 +2894,7 @@ type workflowTool struct {
 	parameters  map[string]any
 	// declared is what the target's trigger says it expects, read when the
 	// agent run built its tools.
-	declared  []workflowInput
+	declared  []WorkflowInput
 	nodeName  string
 	agentNode string
 	request   engine.Request
@@ -2891,11 +2903,12 @@ type workflowTool struct {
 // Definition offers the model the target's declared inputs and any $fromAI
 // calls in the node, and an open input object when there is neither.
 //
-// A declared input is the model's to define unless the author fixed it: a key
-// written in Workflow inputs is sent as written and not offered, the way n8n's
-// per-field "let the model define this" leaves the others fixed. Inputs written
-// as one expression fix them all, because which keys it produces is only
-// known when it runs.
+// A declared input is the model's to define unless the author fixed it: a
+// column written in Workflow inputs is sent as written and not offered, the way
+// n8n's per-field "let the model define this" leaves the others fixed. A column
+// set to the model is a $fromAI value, which the node's own calls already offer
+// under the name they were written with. Inputs written as one expression fix
+// them all, because which keys it produces is only known when it runs.
 func (tool *workflowTool) Definition() ai.ToolDefinition {
 	calls, err := ai.ExtractFromAI(tool.parameters)
 	if err != nil {
@@ -2906,6 +2919,19 @@ func (tool *workflowTool) Definition() ai.ToolDefinition {
 		schema := ai.FromAISchema(calls)
 		properties, _ := schema["properties"].(map[string]any)
 		required, _ := schema["required"].([]string)
+		for _, input := range tool.declared {
+			// A $fromAI call of the field's own name describes it, but a json
+			// call cannot say object or array, so it takes the declared shape.
+			described, isCall := properties[input.Name].(map[string]any)
+			if !isCall || described["type"] != nil || (input.Type != "object" && input.Type != "array") {
+				continue
+			}
+			declaredShape := workflowInputSchema(input)
+			described["type"] = declaredShape["type"]
+			if items, ok := declaredShape["items"]; ok {
+				described["items"] = items
+			}
+		}
 		for _, input := range modelDefined {
 			if _, taken := properties[input.Name]; taken {
 				// A $fromAI call of the same key already describes it.
@@ -2915,7 +2941,7 @@ func (tool *workflowTool) Definition() ai.ToolDefinition {
 			required = append(required, input.Name)
 		}
 		if len(required) > 0 {
-			schema["required"] = required
+			schema["required"] = tool.inDeclaredOrder(required)
 		}
 		return ai.ToolDefinition{Name: tool.name, Description: tool.description, Parameters: schema}
 	}
@@ -2934,19 +2960,76 @@ func (tool *workflowTool) Definition() ai.ToolDefinition {
 	}
 }
 
-// modelDefinedInputs is the declared inputs the author left for the model.
-func (tool *workflowTool) modelDefinedInputs() []workflowInput {
-	raw, present := tool.parameters["workflowInputs"]
-	if !present || raw == nil {
-		return tool.declared
+// inDeclaredOrder sorts the required names the way the target declares its
+// fields, then the rest alphabetically. The $fromAI calls arrive in the order a
+// parameter map happened to be walked, which Go randomises, and the model
+// should be offered one schema from one run to the next.
+func (tool *workflowTool) inDeclaredOrder(names []string) []string {
+	position := make(map[string]int, len(tool.declared))
+	for index, input := range tool.declared {
+		position[input.Name] = index
 	}
-	fixed, literal := raw.(map[string]any)
-	if !literal || expression.IsExpression(raw) {
+	ordered := append([]string(nil), names...)
+	sort.SliceStable(ordered, func(left, right int) bool {
+		leftAt, leftDeclared := position[ordered[left]]
+		rightAt, rightDeclared := position[ordered[right]]
+		switch {
+		case leftDeclared && rightDeclared:
+			return leftAt < rightAt
+		case leftDeclared != rightDeclared:
+			return leftDeclared
+		default:
+			return ordered[left] < ordered[right]
+		}
+	})
+	return ordered
+}
+
+// WorkflowToolInputs reads a Workflow Tool's stored Workflow inputs, whatever
+// shape it was written in.
+//
+// There are three. A resource mapper, {mappingMode, value, matchingColumns,
+// schema}, which is what the editor writes and what an n8n Workflow Tool v2
+// export carries: its columns are the entries of value. The plain object an
+// earlier version took, whose own keys are the entries. And one expression,
+// whose keys are only known once it runs; that is the whole result, not entries.
+//
+// entries are the fields the author wrote, by name. A field not in it is the
+// model's: that is how a freshly picked workflow works before anything is set.
+// present is false when nothing was written at all.
+func WorkflowToolInputs(raw any) (entries map[string]any, whole bool, present bool) {
+	if raw == nil {
+		return nil, false, false
+	}
+	if expression.IsExpression(raw) {
+		return nil, true, true
+	}
+	if mapping, ok := property.ReadMapping(raw); ok {
+		if expression.IsExpression(mapping.Values) {
+			// A mapper whose own value is one expression: no columns to read
+			// until it runs, so it is the whole-expression case, not a column
+			// map with columns named `mode` and `value`.
+			return nil, true, true
+		}
+		return mapping.Values, false, true
+	}
+	if plain, ok := raw.(map[string]any); ok {
+		return plain, false, true
+	}
+	// Neither an object nor an expression: it cannot name fields, and the call
+	// reports it as the unusable value it is.
+	return nil, true, true
+}
+
+// modelDefinedInputs is the declared inputs the author left for the model.
+func (tool *workflowTool) modelDefinedInputs() []WorkflowInput {
+	entries, whole, _ := WorkflowToolInputs(tool.parameters["workflowInputs"])
+	if whole {
 		return nil
 	}
-	inputs := make([]workflowInput, 0, len(tool.declared))
+	inputs := make([]WorkflowInput, 0, len(tool.declared))
 	for _, input := range tool.declared {
-		if _, isFixed := fixed[input.Name]; !isFixed {
+		if _, isWritten := entries[input.Name]; !isWritten {
 			inputs = append(inputs, input)
 		}
 	}
@@ -2956,7 +3039,7 @@ func (tool *workflowTool) modelDefinedInputs() []workflowInput {
 // workflowInputSchema is the JSON Schema property for one declared input. An
 // input declared as any accepts anything, so it carries no type; an array
 // names its items, which OpenAI refuses a function schema without.
-func workflowInputSchema(input workflowInput) map[string]any {
+func workflowInputSchema(input WorkflowInput) map[string]any {
 	switch input.Type {
 	case "array":
 		return map[string]any{"type": "array", "items": map[string]any{}}
@@ -3081,9 +3164,21 @@ func workflowToolInput(agentNode string, parameters map[string]any, item workflo
 	for key, value := range item.JSON {
 		merged[key] = value
 	}
-	raw, present := parameters["workflowInputs"]
-	if !present || raw == nil {
+	raw := parameters["workflowInputs"]
+	entries, whole, present := WorkflowToolInputs(raw)
+	if !present {
 		return workflow.Item{JSON: merged}, nil
+	}
+	if whole {
+		// One expression stands for the input; inside a mapper it is the
+		// mapper's value, and the mapper's own keys still do not cross.
+		if mapping, isMapper := property.ReadMapping(raw); isMapper {
+			raw = mapping.Values
+		}
+	} else {
+		// Only the fields the author wrote cross: a mapper's own keys
+		// (mappingMode, schema, ...) describe the form, not the call.
+		raw = entries
 	}
 	resolved, err := expression.Resolve(map[string]any{"workflowInputs": raw}, scope)
 	if err != nil {
@@ -3328,12 +3423,6 @@ func (executor *AgentExecutor) workflowToolFrom(ctx context.Context, ir workflow
 	}, nil
 }
 
-// workflowInput is one field a called workflow's trigger declares it expects.
-type workflowInput struct {
-	Name string
-	Type string
-}
-
 // declaredWorkflowInputs reads the fields a Workflow Tool's target declares,
 // once per agent run, so the model is offered them by name and type.
 //
@@ -3342,7 +3431,7 @@ type workflowInput struct {
 // target that cannot be read — not active, deleted, a runtime that cannot
 // describe one — declares nothing here, and the call itself reports why it
 // could not be run.
-func declaredWorkflowInputs(ctx context.Context, request engine.Request, raw any) []workflowInput {
+func declaredWorkflowInputs(ctx context.Context, request engine.Request, raw any) []WorkflowInput {
 	describer, ok := request.Workflows.(engine.WorkflowDescriber)
 	if !ok || expression.IsExpression(raw) {
 		return nil
@@ -3353,20 +3442,10 @@ func declaredWorkflowInputs(ctx context.Context, request engine.Request, raw any
 		return nil
 	}
 	trigger, found, err := describer.SubworkflowTrigger(ctx, request.Execution, target)
-	if err != nil || !found || textParameter(trigger.Parameters, "inputSource") != "fields" {
+	if err != nil || !found {
 		return nil
 	}
-	declaration, _ := trigger.Parameters["workflowInputs"].(map[string]any)
-	values, _ := declaration["values"].([]any)
-	inputs := make([]workflowInput, 0, len(values))
-	for _, value := range values {
-		field, _ := value.(map[string]any)
-		name := strings.TrimSpace(textValue(field["name"], ""))
-		if name == "" {
-			continue
-		}
-		inputs = append(inputs, workflowInput{Name: name, Type: textValue(field["type"], "string")})
-	}
+	inputs, _ := DeclaredWorkflowInputs(trigger)
 	return inputs
 }
 

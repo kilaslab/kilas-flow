@@ -28,21 +28,22 @@ func TestCipherRoundTripsAPayload(t *testing.T) {
 		t.Fatalf("NewCipher() error = %v", err)
 	}
 	payload := map[string]string{"user": "ada", "password": "hunter2"}
+	aad := credentials.CredentialAAD("default", "cred_1", "httpBasicAuth")
 
-	sealed, err := cipher.Encrypt(payload)
+	sealed, err := cipher.Seal(payload, aad)
 	if err != nil {
-		t.Fatalf("Encrypt() error = %v", err)
+		t.Fatalf("Seal() error = %v", err)
 	}
 	if bytes.Contains(sealed, []byte("hunter2")) {
 		t.Fatalf("ciphertext contains the plaintext secret: %q", sealed)
 	}
 
-	opened, err := cipher.Decrypt(sealed)
+	opened, err := cipher.Open(sealed, aad)
 	if err != nil {
-		t.Fatalf("Decrypt() error = %v", err)
+		t.Fatalf("Open() error = %v", err)
 	}
 	if opened["password"] != "hunter2" || opened["user"] != "ada" {
-		t.Fatalf("Decrypt() = %#v, want the original payload", opened)
+		t.Fatalf("Open() = %#v, want the original payload", opened)
 	}
 }
 
@@ -51,9 +52,10 @@ func TestCipherProducesADifferentCiphertextEachTime(t *testing.T) {
 
 	cipher, _ := credentials.NewCipher(testKey())
 	payload := map[string]string{"token": "same"}
+	aad := credentials.CredentialAAD("default", "cred_1", "httpBearerAuth")
 
-	first, _ := cipher.Encrypt(payload)
-	second, _ := cipher.Encrypt(payload)
+	first, _ := cipher.Seal(payload, aad)
+	second, _ := cipher.Seal(payload, aad)
 
 	// A fresh nonce per seal keeps equal secrets from being visibly equal in
 	// the database.
@@ -66,22 +68,23 @@ func TestCipherRejectsATamperedOrForeignCiphertext(t *testing.T) {
 	t.Parallel()
 
 	cipher, _ := credentials.NewCipher(testKey())
-	sealed, _ := cipher.Encrypt(map[string]string{"token": "value"})
+	aad := credentials.CredentialAAD("default", "cred_1", "httpBearerAuth")
+	sealed, _ := cipher.Seal(map[string]string{"token": "value"}, aad)
 
 	tampered := append([]byte(nil), sealed...)
 	tampered[len(tampered)-1] ^= 0xff
-	if _, err := cipher.Decrypt(tampered); err == nil {
+	if _, err := cipher.Open(tampered, aad); err == nil {
 		t.Error("a tampered ciphertext decrypted successfully")
 	}
 
 	otherKey := testKey()
 	otherKey[0] ^= 0xff
 	other, _ := credentials.NewCipher(otherKey)
-	if _, err := other.Decrypt(sealed); err == nil {
+	if _, err := other.Open(sealed, aad); err == nil {
 		t.Error("a ciphertext decrypted under the wrong key")
 	}
 
-	if _, err := cipher.Decrypt([]byte("too short")); err == nil {
+	if _, err := cipher.Open([]byte("too short"), aad); err == nil {
 		t.Error("a truncated ciphertext decrypted successfully")
 	}
 }

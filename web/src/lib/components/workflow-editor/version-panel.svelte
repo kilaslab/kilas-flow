@@ -540,7 +540,7 @@
 				tabindex="-1"
 				aria-modal="true"
 				aria-label={pending.action === 'restore' ? m.versions_confirm_restore_aria() : m.versions_confirm_publish_aria()}
-				class="shrink-0 border-t border-border bg-card px-4 py-3"
+				class="focus-region shrink-0 border-t border-border bg-card px-4 py-3"
 				onkeydown={(event) => {
 					if (event.key === 'Escape') {
 						event.stopPropagation();

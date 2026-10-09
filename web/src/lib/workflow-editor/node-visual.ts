@@ -206,7 +206,9 @@ export function nodeChromeBorder(state: NodeChromeState): string {
 	if (state.invalid || state.runStatus === 'failed') return 'var(--destructive)';
 	if (state.runStatus === 'running' || state.runStatus === 'cancelling') return 'var(--primary)';
 	if (state.runStatus === 'succeeded') return 'var(--success)';
-	if (state.selected) return 'var(--node-accent)';
+	// One selection colour on every tile, whatever its category or brand colour
+	// (BUG-ywbvfa); it follows an embed host's accent through --kf-accent-src.
+	if (state.selected) return 'var(--kf-selection)';
 	// Muted accent hue — readable at low zoom without competing with selection.
 	return 'oklch(from var(--node-accent) 0.42 0.045 h)';
 }
@@ -219,9 +221,7 @@ export function nodeChromeShadow(state: NodeChromeState): string {
 	if (state.runStatus === 'running' || state.runStatus === 'cancelling') {
 		return '0 0 0 2px color-mix(in oklch, var(--primary) 45%, transparent), 0 2px 10px oklch(0 0 0 / 42%)';
 	}
-	if (state.selected) {
-		return '0 0 0 2px color-mix(in oklch, var(--node-accent) 42%, transparent), 0 2px 10px oklch(0 0 0 / 42%)';
-	}
+	if (state.selected) return '0 0 0 2px var(--kf-selection-halo), var(--kf-shadow-1)';
 	// Soft card lift so nodes read as tiles rather than flat glyphs when zoomed out.
 	return '0 1px 3px oklch(0 0 0 / 38%), 0 0 0 1px oklch(0 0 0 / 14%)';
 }

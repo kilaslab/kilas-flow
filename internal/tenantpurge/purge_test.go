@@ -70,7 +70,7 @@ func (stubRows) PurgeTriggers(context.Context, repository.TenantScope) (map[stri
 
 func (stubRows) PurgeDefinitions(context.Context, repository.TenantScope) (map[string]int64, error) {
 	return map[string]int64{
-		"secret_bindings": 1, "credentials": 1, "workflow_versions": 2,
+		"secret_bindings": 1, "credentials": 1, "credential_events": 1, "workflow_versions": 2,
 		"workflow_publish_events": 1, "workflow_static_data": 1, "workflow_tags": 1, "workflows": 2,
 	}, nil
 }

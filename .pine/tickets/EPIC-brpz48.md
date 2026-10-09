@@ -1,13 +1,13 @@
 ---
 id: EPIC-brpz48
 title: 'Credential security hardening: the 2026-09-25 audit and live test of the common credential types'
-status: doing
+status: done
 priority: high
 labels:
     - security
     - credentials
 created: "2026-09-25T12:47:14Z"
-updated: "2026-10-09T11:03:29Z"
+updated: "2026-10-09T12:51:52Z"
 ---
 
 # Description
@@ -75,3 +75,6 @@ H2 → H1 → M1 → M2/M3 → M4 → SQLite (M5 plus the hang) → L1 → L2 �
 
 **Open (low):** FEAT-r87gtj (crypto hygiene), BUG-5dn8hr (database TLS defaults), BUG-argnka (nondeterministic credential resolution), FEAT-qae4sh (audit trail and delete-in-use), BUG-n4e97f (misleading boot warning about the key environment variables).
 
+## Closed (2026-10-09)
+
+All 14 children are done. The last two, FEAT-r87gtj (versioned seals bound to tenant/id/type, HKDF-derived OAuth key, raw-key warning, rotation with a secondary key, `-reseal-credentials` and `security.legacy_seals`) and FEAT-qae4sh (credential audit trail, delete-in-use refusal with `--force`, external-binding guard rails, ext:// write-back fix), landed in the 2026-10-09 parallel wave. FEAT-8752vx stays open for its NDV "credential deleted" flag only.

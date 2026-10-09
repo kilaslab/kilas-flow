@@ -8,6 +8,7 @@
 		createCredential,
 		createListCredentialTypes,
 		deleteCredential,
+		getCredential,
 		listCredentials,
 		testCredentialPayload,
 		updateCredential,
@@ -20,6 +21,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { defaultScope } from '$lib/dashboard/credential-scope';
 	import { canTest, testVerdict, type TestVerdict } from '$lib/dashboard/credential-test';
+	import { deleteParams, isInUseConflict, usageOf, type CredentialUsage } from '$lib/dashboard/credential-usage';
 	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
 	import { RequestGuard } from '$lib/dashboard/request-guard';
 	import * as m from '$lib/paraglide/messages.js';
@@ -79,6 +81,10 @@
 	let pendingDelete = $state<CredentialResource | null>(null);
 	let deleting = $state(false);
 	let deleteError = $state<string | null>(null);
+	// The workflows the delete dialog warns about, read from the credential
+	// when the dialog opens. What was shown decides whether the delete forces.
+	let deleteUsage = $state<CredentialUsage[]>([]);
+	let checkingUsage = $state(false);
 	let testResult = $state<TestVerdict | null>(null);
 	let testing = $state(false);
 	let connecting = $state(false);
@@ -276,20 +282,40 @@
 	function askDelete(credential: CredentialResource) {
 		pendingDelete = credential;
 		deleteError = null;
+		deleteUsage = [];
 		deleteOpen = true;
+		void loadUsage(credential.id);
+	}
+
+	// A failed read leaves the list empty and the dialog's generic warning in
+	// place; the server still refuses a delete that would break a workflow.
+	async function loadUsage(id: string) {
+		checkingUsage = true;
+		try {
+			const response = await getCredential(id);
+			if (response.status === 200 && pendingDelete?.id === id) deleteUsage = usageOf(response.data);
+		} catch {
+			// The refusal on delete is the backstop.
+		} finally {
+			if (pendingDelete?.id === id) checkingUsage = false;
+		}
 	}
 
 	async function confirmDelete() {
 		if (!pendingDelete || deleting) return;
+		const id = pendingDelete.id;
 		deleting = true;
 		deleteError = null;
 		try {
-			await deleteCredential(pendingDelete.id);
+			await deleteCredential(id, deleteParams(deleteUsage));
 			await loadCredentials();
 			deleteOpen = false;
 			pendingDelete = null;
 		} catch (error) {
 			deleteError = message(error);
+			// A workflow attached it after the dialog opened: show which one,
+			// and the next confirm deletes knowing about it.
+			if (isInUseConflict(error)) await loadUsage(id);
 		} finally {
 			deleting = false;
 		}
@@ -463,10 +489,28 @@
 					{m.credentials_delete_body()}
 				</Dialog.Description>
 			</Dialog.Header>
+			{#if checkingUsage}
+				<p class="text-sm text-muted-foreground">{m.credentials_delete_checking()}</p>
+			{:else if deleteUsage.length > 0}
+				<div class="space-y-2 text-sm">
+					<p>{m.credentials_delete_in_use()}</p>
+					<ul class="list-disc space-y-1 pl-5">
+						{#each deleteUsage as user (user.workflowId)}
+							<li>
+								<a class="font-medium underline" href={`/app/workflows/${encodeURIComponent(user.workflowId)}`}>{user.name}</a>
+								{#if user.active}<span class="text-muted-foreground"> ({m.credentials_delete_usage_active()})</span>{/if}
+								{#if user.nodes.length > 0}<span class="block text-muted-foreground">{m.credentials_delete_usage_nodes({ nodes: user.nodes.join(', ') })}</span>{/if}
+							</li>
+						{/each}
+					</ul>
+				</div>
+			{/if}
 			{#if deleteError}<p role="alert" class="text-sm text-destructive">{deleteError}</p>{/if}
 			<Dialog.Footer>
 				<Button type="button" variant="outline" onclick={() => (deleteOpen = false)} disabled={deleting}>{m.credentials_cancel()}</Button>
-				<Button type="button" variant="destructive" onclick={() => void confirmDelete()} disabled={deleting}>{deleting ? m.credentials_deleting() : m.credentials_delete()}</Button>
+				<Button type="button" variant="destructive" onclick={() => void confirmDelete()} disabled={deleting || checkingUsage}>
+					{deleting ? m.credentials_deleting() : deleteUsage.length > 0 ? m.credentials_delete_anyway() : m.credentials_delete()}
+				</Button>
 			</Dialog.Footer>
 		</Dialog.Content>
 	</Dialog.Root>

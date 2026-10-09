@@ -550,6 +550,18 @@ export interface CredentialRequirement {
 
 export type CredentialResourceFields = {[key: string]: string};
 
+export interface CredentialUsageResource {
+  /** Whether the workflow is active now */
+  active: boolean;
+  name: string;
+  /**
+     * Names of the nodes that attach the credential, in the draft or the published version
+     * @nullable
+     */
+  nodes: string[] | null;
+  workflowId: string;
+}
+
 export interface CredentialResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -564,6 +576,11 @@ export interface CredentialResource {
   name: string;
   type: string;
   updatedAt: string;
+  /**
+     * Workflows whose draft or published version attaches this credential. Returned by a single read only, and left out when nothing uses it or the caller's API key is scoped.
+     * @nullable
+     */
+  usedBy?: CredentialUsageResource[] | null;
 }
 
 export interface Field {
@@ -670,6 +687,7 @@ export interface OptionsLoader {
 
 export interface ResourceMapperDeclaration {
   matchingColumnsRequired?: boolean;
+  modelDefinable?: boolean;
   schema: OptionsLoader;
   supportsAutoMap?: boolean;
   valuesLabel?: string;
@@ -1919,6 +1937,13 @@ limit?: number;
 cursor?: string;
 };
 
+export type DeleteCredentialParams = {
+/**
+ * Delete the credential even though workflows attach it. Without it, deleting a credential in use is refused with 409 and the workflows named.
+ */
+force?: boolean;
+};
+
 export type ListDatastoresParams = {
 /**
  * Maximum datastores to return (default 100)
@@ -2829,21 +2854,30 @@ export type deleteCredentialResponseError = (deleteCredentialResponseDefault) & 
 
 export type deleteCredentialResponse = (deleteCredentialResponseSuccess | deleteCredentialResponseError)
 
-export const getDeleteCredentialUrl = (id: string,) => {
+export const getDeleteCredentialUrl = (id: string,
+    params?: DeleteCredentialParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/credentials/${id}`
+  return stringifiedParams.length > 0 ? `/api/v1/credentials/${id}?${stringifiedParams}` : `/api/v1/credentials/${id}`
 }
 
 /**
- * Permanently removes a stored credential.
+ * Permanently removes a stored credential. A credential that a workflow's draft or published version attaches is not deleted: the request is refused with 409, one error per workflow, unless force=true is sent.
  * @summary Delete a credential
  */
-export const deleteCredential = async (id: string, options?: RequestInit): Promise<deleteCredentialResponse> => {
+export const deleteCredential = async (id: string,
+    params?: DeleteCredentialParams, options?: RequestInit): Promise<deleteCredentialResponse> => {
 
-  const res = await fetch(getDeleteCredentialUrl(id),
+  const res = await fetch(getDeleteCredentialUrl(id,params),
   {
     ...options,
     method: 'DELETE'

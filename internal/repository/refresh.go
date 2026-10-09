@@ -80,8 +80,12 @@ func (store *RefreshingCredentialStore) Resolve(ctx context.Context, tenant Tena
 		return credentials.Record{}, nil, fmt.Errorf("refresh google token: %w", err)
 	}
 	merged := credentials.MergeGoogleToken(fields, token)
+	// Only what Google returned is written. Update merges it over the stored
+	// payload, so a field that holds an ext:// reference keeps the reference;
+	// writing back the resolved map would seal the manager's plaintext into
+	// the row in its place.
 	updated, err := store.CredentialRepository.Update(ctx, tenant, credentialID, credentials.Record{
-		Name: record.Name, Type: record.Type, Fields: merged, AllowedDomains: record.AllowedDomains,
+		Name: record.Name, Type: record.Type, Fields: token, AllowedDomains: record.AllowedDomains,
 	})
 	if err != nil {
 		return credentials.Record{}, nil, fmt.Errorf("store refreshed google token: %w", err)
