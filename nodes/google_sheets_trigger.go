@@ -15,6 +15,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/poller"
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/sheetsa1"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
@@ -116,14 +117,14 @@ func (handler *GoogleSheetsPoller) poll(ctx context.Context, claim poller.Claim)
 
 	options := sheetsMap(parameters["options"])
 	location := sheetsMap(sheetsMap(options["dataLocationOnSheet"])["values"])
-	rangeA1 := a1Quote(tab.title)
+	rangeA1 := sheetsa1.Quote(tab.title)
 	headerRow, firstDataRow := 1, 2
 	ranged := false
 	switch textValue(location["rangeDefinition"], "") {
 	case "specifyRangeA1":
-		if requested := a1Region(textValue(location["range"], "")); requested != "" {
+		if requested := sheetsa1.Region(textValue(location["range"], "")); requested != "" {
 			rangeA1 += "!" + requested
-			headerRow = rangeStartRow(requested)
+			headerRow = sheetsa1.StartRow(requested)
 			firstDataRow = headerRow + 1
 			ranged = true
 		}

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -292,12 +293,36 @@ func (handler *NodeTypes) declaredProperty(ctx context.Context, input *loadOptio
 	if !found {
 		return nil, huma.Error404NotFound("that node type is not registered")
 	}
-	for index, candidate := range definition.Parameters {
-		if candidate.Key == input.Body.Property {
-			return &definition.Parameters[index], nil
-		}
+	if found := findProperty(definition.Parameters, input.Body.Property); found != nil {
+		return found, nil
 	}
 	return nil, huma.Error404NotFound("that node type has no such property")
+}
+
+// findProperty finds a property by key: among the node's own parameters first,
+// then inside its collections and the groups of its fixed collections.
+//
+// A setting n8n stores under an Options collection — Columns to Watch is one —
+// is a property of its own with a loader of its own, and the editor asks for it
+// by its own key. A top-level parameter of the same key wins, so naming a nested
+// property can never reach for a loader a top-level one already owns.
+func findProperty(properties []node.PropertyDefinition, key string) *node.PropertyDefinition {
+	for index := range properties {
+		if properties[index].Key == key {
+			return &properties[index]
+		}
+	}
+	for index := range properties {
+		if found := findProperty(properties[index].Fields, key); found != nil {
+			return found
+		}
+		for group := range properties[index].Groups {
+			if found := findProperty(properties[index].Groups[group].Fields, key); found != nil {
+				return found
+			}
+		}
+	}
+	return nil
 }
 
 // scopeFor builds the tenancy and dependency scope both loaders run under.
@@ -378,6 +403,15 @@ func dependencyIsExpression(value any) bool {
 func locatorDependency(value any) string {
 	if locator, ok := property.ReadLocator(value); ok {
 		return fmt.Sprint(locator.Value)
+	}
+	switch value.(type) {
+	case map[string]any, []any:
+		// A structure — an Options collection a loader reads one setting of — is
+		// sent as JSON. Printed with Sprint it would be `map[a:1]`, which nothing
+		// can read back.
+		if encoded, err := json.Marshal(value); err == nil {
+			return string(encoded)
+		}
 	}
 	return fmt.Sprint(value)
 }

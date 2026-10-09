@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/kilaslab/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/sheetsa1"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
@@ -49,7 +50,7 @@ func (run *sheetsRun) writeContext(parameters map[string]any, tab sheetsTab) (*w
 	default:
 		return nil, run.errorf("handling extra fields %q is not supported: use insertInNewColumn, ignoreIt or error", context.extraData)
 	}
-	existing, err := run.values(a1Quote(tab.title), "FORMATTED_VALUE", "")
+	existing, err := run.values(sheetsa1.Quote(tab.title), "FORMATTED_VALUE", "")
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +221,7 @@ func (run *sheetsRun) growHeader(context *writeContext, extra []string) error {
 	for index, name := range names {
 		cells[index] = name
 	}
-	rangeA1 := a1Quote(context.tab.title) + "!" + strconv.Itoa(context.headerRow) + ":" + strconv.Itoa(context.headerRow)
+	rangeA1 := sheetsa1.Quote(context.tab.title) + "!" + strconv.Itoa(context.headerRow) + ":" + strconv.Itoa(context.headerRow)
 	if err := run.putValues(rangeA1, [][]any{cells}, "RAW"); err != nil {
 		return err
 	}
@@ -279,7 +280,7 @@ func (run *sheetsRun) appendValues(context *writeContext, rows [][]any) error {
 	}
 	if context.useAppend {
 		query := url.Values{"valueInputOption": []string{context.valueInput}, "insertDataOption": []string{"INSERT_ROWS"}}
-		err := run.call(http.MethodPost, run.valuesURL(a1Quote(context.tab.title))+":append", query, map[string]any{"values": rows}, nil)
+		err := run.call(http.MethodPost, run.valuesURL(sheetsa1.Quote(context.tab.title))+":append", query, map[string]any{"values": rows}, nil)
 		run.wrote()
 		return err
 	}
@@ -295,7 +296,7 @@ func (run *sheetsRun) appendValues(context *writeContext, rows [][]any) error {
 	if err := run.ensureGrid(&context.tab, first+len(rows)-1, width); err != nil {
 		return err
 	}
-	rangeA1 := a1Quote(context.tab.title) + "!" + strconv.Itoa(first) + ":" + strconv.Itoa(first+len(rows)-1)
+	rangeA1 := sheetsa1.Quote(context.tab.title) + "!" + strconv.Itoa(first) + ":" + strconv.Itoa(first+len(rows)-1)
 	err := run.putValues(rangeA1, rows, context.valueInput)
 	for _, cells := range rows {
 		context.existing = append(context.existing, cells)
@@ -455,7 +456,7 @@ func (run *sheetsRun) updateRows(items []workflow.Item, resolved []workflow.IRNo
 				continue
 			}
 			writes = append(writes, cellWrite{
-				rangeA1: a1Quote(tab.title) + "!" + colLetters(column) + strconv.Itoa(rowNumber),
+				rangeA1: sheetsa1.Quote(tab.title) + "!" + colLetters(column) + strconv.Itoa(rowNumber),
 				value:   cellOf(value),
 			})
 			updated = true
@@ -552,7 +553,7 @@ func (run *sheetsRun) clearSpans(items []workflow.Item, resolved []workflow.IRNo
 	for index := range items {
 		parameters := resolved[index].Parameters
 		kind := textValue(parameters["clear"], "wholeSheet")
-		title := a1Quote(tab.title)
+		title := sheetsa1.Quote(tab.title)
 		var rangeA1 string
 		switch kind {
 		case "wholeSheet":
@@ -579,7 +580,7 @@ func (run *sheetsRun) clearSpans(items []workflow.Item, resolved []workflow.IRNo
 			rangeA1 = title + "!" + colLetters(start-1) + ":" + colLetters(start+count-2)
 		case "specificRange":
 			region := strings.TrimSpace(textValue(parameters["range"], "A:F"))
-			region = a1Region(region)
+			region = sheetsa1.Region(region)
 			if region == "" {
 				return nil, run.errorf("item %d: the range to clear is empty", index)
 			}

@@ -13,6 +13,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/sheetsa1"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
@@ -227,34 +228,6 @@ func sheetsSheetRef(raw any) (sheetRef, error) {
 	return sheetRef{name: text}, nil
 }
 
-// a1Region is the cell part of an A1 range: what follows the "!" that ends a
-// sheet name. That "!" is the last one outside single quotes, because a tab can
-// be called "a!b". A range with no sheet name comes back as it is.
-func a1Region(text string) string {
-	text = strings.TrimSpace(text)
-	quoted, cut := false, -1
-	for index := 0; index < len(text); index++ {
-		switch text[index] {
-		case '\'':
-			quoted = !quoted
-		case '!':
-			if !quoted {
-				cut = index
-			}
-		}
-	}
-	if cut < 0 {
-		return text
-	}
-	return text[cut+1:]
-}
-
-// a1Quote is a tab title as the sheet part of an A1 range: single-quoted, with
-// a quote inside the title doubled.
-func a1Quote(title string) string {
-	return "'" + strings.ReplaceAll(title, "'", "''") + "'"
-}
-
 // colLetters is the column letter of a zero-based column index.
 func colLetters(index int) string {
 	letters := ""
@@ -434,12 +407,12 @@ func (run *sheetsRun) readFor(parameters map[string]any, tab sheetsTab) ([]map[s
 	render := textValue(formatting["general"], "UNFORMATTED_VALUE")
 	dateRender := textValue(formatting["date"], "FORMATTED_STRING")
 
-	rangeA1 := a1Quote(tab.title)
+	rangeA1 := sheetsa1.Quote(tab.title)
 	firstRow := 1
 	if definition == "specifyRangeA1" {
-		if requested := a1Region(textValue(location["range"], "")); requested != "" {
+		if requested := sheetsa1.Region(textValue(location["range"], "")); requested != "" {
 			rangeA1 += "!" + requested
-			firstRow = rangeStartRow(requested)
+			firstRow = sheetsa1.StartRow(requested)
 		}
 	}
 	data, err := run.values(rangeA1, render, dateRender)
@@ -521,25 +494,6 @@ func (run *sheetsRun) readFor(parameters map[string]any, tab sheetsTab) ([]map[s
 type numberedRow struct {
 	number int
 	cells  []any
-}
-
-// rangeStartRow is the row an A1 range starts on: 4 for C4:E7, 1 for A:F.
-func rangeStartRow(a1 string) int {
-	trimmed := strings.TrimLeft(strings.TrimSpace(a1), "$")
-	trimmed = strings.TrimLeft(trimmed, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
-	trimmed = strings.TrimLeft(trimmed, "$")
-	digits := ""
-	for _, character := range trimmed {
-		if character < '0' || character > '9' {
-			break
-		}
-		digits += string(character)
-	}
-	row, err := strconv.Atoi(digits)
-	if err != nil || row < 1 {
-		return 1
-	}
-	return row
 }
 
 func intOr(value any, fallback int) int {
