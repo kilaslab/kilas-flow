@@ -2,6 +2,7 @@ package repository_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -77,6 +78,22 @@ func TestActivationRefusesASubWorkflowCallToAnInactiveWorkflow(t *testing.T) {
 	if !strings.Contains(err.Error(), "not active") || !strings.Contains(err.Error(), "Run target") {
 		t.Errorf("Activate(caller) error = %v, want it to name the node and the reason", err)
 	}
+	// A typed error, so the API can answer a 4xx that names the node and the
+	// child instead of the generic 500 an untyped string became.
+	var refusal *repository.SubworkflowRefusalError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("Activate(caller) error = %T %v, want a *SubworkflowRefusalError", err, err)
+	}
+	if refusal.NodeID != "call" || refusal.NodeName != "Run target" ||
+		refusal.WorkflowID != "wf_target" || refusal.WorkflowName != "Target" || refusal.Missing {
+		t.Errorf("refusal = %+v, want node call/Run target, child wf_target/Target, not missing", refusal)
+	}
+	if want := "/nodes/1/parameters/workflowId"; refusal.Path != want {
+		t.Errorf("refusal path = %q, want %q", refusal.Path, want)
+	}
+	if !strings.Contains(err.Error(), `"Target"`) || !strings.Contains(err.Error(), "wf_target") {
+		t.Errorf("Activate(caller) error = %v, want it to name the child by name and id", err)
+	}
 	// A refused activation changes nothing: the workflow is not live, so the
 	// refusal cannot leave a half-published caller behind.
 	refused, err := workflows.Get(ctx, tenant, caller.ID)
@@ -124,6 +141,11 @@ func TestActivationRefusesASubWorkflowCallToAnInactiveWorkflow(t *testing.T) {
 		t.Error("Activate(orphan) succeeded with a target that does not exist, want a refusal")
 	} else if !strings.Contains(err.Error(), "does not exist") {
 		t.Errorf("Activate(orphan) error = %v, want it to say the target does not exist", err)
+	} else {
+		var refusal *repository.SubworkflowRefusalError
+		if !errors.As(err, &refusal) || !refusal.Missing || refusal.WorkflowID != "wf_gone" || refusal.WorkflowName != "" {
+			t.Errorf("Activate(orphan) refusal = %+v, want a typed missing-target refusal for wf_gone", refusal)
+		}
 	}
 
 	// Without the extractor the check is off, which is what an installation

@@ -554,10 +554,11 @@ func (store *GORMWorkflowStore) publish(ctx context.Context, tenant TenantScope,
 // compiler's cycle check, which is the right error for it, and a self-reference
 // is not a target that has to be active.
 //
-// The two failures are one error each and both name the node: a target that
-// does not exist in this tenant (deleted, or never imported) and one that
-// exists but is not active (still a draft, or deactivated). "Not active" is
-// deliberately not reported as "not found": they need different fixes.
+// The two failures are one *SubworkflowRefusalError each and both name the
+// node: a target that does not exist in this tenant (deleted, or never
+// imported) and one that exists but is not active (still a draft, or
+// deactivated). "Not active" is deliberately not reported as "not found": they
+// need different fixes.
 func refuseInactiveSubworkflows(tx *gorm.DB, tenant TenantScope, workflowID string, document workflow.Document, extract SubworkflowExtractor) error {
 	if extract == nil {
 		return nil
@@ -567,20 +568,71 @@ func refuseInactiveSubworkflows(tx *gorm.DB, tenant TenantScope, workflowID stri
 		if target == "" || target == workflowID {
 			continue
 		}
+		refusal := &SubworkflowRefusalError{
+			NodeID: call.NodeID, NodeName: call.NodeName, Path: subworkflowCallPath(document, call.NodeID), WorkflowID: target,
+		}
 		var model workflowModel
 		if err := tx.Where("tenant_id = ? AND id = ?", tenant.ID, target).First(&model).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("node %q (%s) calls workflow %q, which does not exist in this workspace: point it at a workflow that is active, or remove the node",
-					call.NodeName, call.NodeID, target)
+				refusal.Missing = true
+				return refusal
 			}
 			return fmt.Errorf("look up the workflow node %q calls: %w", call.NodeName, err)
 		}
 		if !model.Active {
-			return fmt.Errorf("node %q (%s) calls workflow %q, which is not active: activate that workflow first, then activate this one",
-				call.NodeName, call.NodeID, target)
+			refusal.WorkflowName = model.Name
+			return refusal
 		}
 	}
 	return nil
+}
+
+// SubworkflowRefusalError is the refusal of an activation whose document calls
+// a workflow that cannot run.
+//
+// It is a typed error, not a formatted string, because the caller has to turn
+// it into an answer: a bare string reached the API as an unknown failure and
+// became a 500 "workflow operation failed", with the node and the child named
+// only in the server log. The API maps this to a 422, and the editor uses the
+// node to point at the call that has to change.
+type SubworkflowRefusalError struct {
+	// NodeID and NodeName are the calling node.
+	NodeID   string
+	NodeName string
+	// Path is the JSON pointer of the node's workflowId parameter inside the
+	// document, or "" when the node is not in it.
+	Path string
+	// WorkflowID is the child the node calls and WorkflowName its name, which
+	// is empty when no such workflow exists in this workspace.
+	WorkflowID   string
+	WorkflowName string
+	// Missing separates "this workflow does not exist" from "it exists but is
+	// not active": they need different fixes, so they are never one sentence.
+	Missing bool
+}
+
+func (e *SubworkflowRefusalError) Error() string {
+	if e.Missing {
+		return fmt.Sprintf("node %q (%s) calls workflow %q, which does not exist in this workspace: point it at a workflow that is active, or remove the node",
+			e.NodeName, e.NodeID, e.WorkflowID)
+	}
+	child := fmt.Sprintf("%q", e.WorkflowID)
+	if e.WorkflowName != "" {
+		child = fmt.Sprintf("%q (%s)", e.WorkflowName, e.WorkflowID)
+	}
+	return fmt.Sprintf("node %q (%s) calls workflow %s, which is not active: activate that workflow first, then activate this one",
+		e.NodeName, e.NodeID, child)
+}
+
+// subworkflowCallPath is where the calling node keeps the workflow it calls, as
+// a JSON pointer into the document, so a client can point at the field to fix.
+func subworkflowCallPath(document workflow.Document, nodeID string) string {
+	for index, node := range document.Nodes {
+		if node.ID == nodeID {
+			return fmt.Sprintf("/nodes/%d/parameters/workflowId", index)
+		}
+	}
+	return ""
 }
 
 // lockedVersion resolves the snapshot a publish is about, inside the caller's
