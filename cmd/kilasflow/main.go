@@ -570,6 +570,29 @@ func run(args []string) error {
 		})); err != nil {
 		return fmt.Errorf("register the workflow option loader: %w", err)
 	}
+	// The Workflow Tool's inputs mapper. It reads the target's active revision,
+	// the one a tool call runs, so the form never lists a field the model would
+	// not be offered; the parsing is nodes.DeclaredWorkflowInputs, the same
+	// code the tool offers its schema from.
+	if err := optionLoader.RegisterSchema(nodes.WorkflowInputsLoader, loadoptions.WorkflowInputs(
+		func(ctx context.Context, tenant repository.TenantScope, workflowID string) ([]loadoptions.WorkflowInputField, bool, error) {
+			document, err := executions.ActiveDocument(ctx, tenant, workflowID)
+			if err != nil {
+				return nil, false, err
+			}
+			trigger, found := nodes.SubworkflowTriggerOf(document)
+			if !found {
+				return nil, false, nil
+			}
+			declared, defines := nodes.DeclaredWorkflowInputs(trigger)
+			fields := make([]loadoptions.WorkflowInputField, 0, len(declared))
+			for _, input := range declared {
+				fields = append(fields, loadoptions.WorkflowInputField{Name: input.Name, Type: input.Type})
+			}
+			return fields, defines, nil
+		})); err != nil {
+		return fmt.Errorf("register the workflow inputs schema loader: %w", err)
+	}
 	// The data-table locator's From-list mode and the column mapper's schema.
 	// Registered here because this is the only place holding the loader
 	// registry and the row store together; the node names the loaders and

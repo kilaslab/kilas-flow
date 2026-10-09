@@ -18,4 +18,6 @@ export interface Document {
   nodes: Node[] | null;
   schemaVersion: number;
   settings: DocumentSettings;
+  /** @nullable */
+  tags?: string[] | null;
 }

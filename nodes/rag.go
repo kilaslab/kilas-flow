@@ -324,6 +324,11 @@ func embeddingsDescriptorItem(ir workflow.IRNode) workflow.Item {
 
 func vectorStoreModeOf(parameters map[string]any) string {
 	mode := strings.TrimSpace(textValue(parameters["mode"], ""))
+	// Retrieve is n8n's mode only. A native graph's `operation: retrieve`
+	// keeps meaning a search, as it did before the mode existed.
+	if strings.EqualFold(mode, VectorModeRetrieve) {
+		return VectorModeRetrieve
+	}
 	if mode == "" {
 		mode = strings.TrimSpace(textValue(parameters["operation"], VectorOperationInsert))
 	}
@@ -363,6 +368,14 @@ func vectorStorePortsFor(parameters map[string]any, _ workflow.TypeVersion) ([]w
 		return []workflow.Port{
 			{Name: "embedding", Kind: workflow.ConnectionEmbedding},
 		}, []workflow.Port{{Name: "tool", Kind: workflow.ConnectionTool}}
+	case VectorModeRetrieve:
+		// No main port either way: the store is a sub-node of whatever reads
+		// the vectorStore port, so it is neither a root nor gated on items.
+		return []workflow.Port{
+			{Name: "embedding", Kind: workflow.ConnectionEmbedding, Required: true, MaxConnections: 1},
+		}, []workflow.Port{
+			{Name: "vectorStore", Kind: workflow.ConnectionVectorStore},
+		}
 	default:
 		return mainInput(), mainOutput()
 	}

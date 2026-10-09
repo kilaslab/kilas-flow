@@ -145,7 +145,7 @@ kilasflow api                       local                              call any 
 kilasflow auth login                local                              validate a token against the server and store it at 0600 in the configuration file
 kilasflow auth logout               local                              remove the stored token, keeping the server URL
 kilasflow auth whoami               get-me                             print the identity the configured credential resolves to
-kilasflow workflow list             list-workflows                     list workflows, newest first (--limit, --cursor)
+kilasflow workflow list             list-workflows                     list workflows, newest first (--limit, --cursor, --tag)
 kilasflow workflow get              get-workflow                       read one workflow by id
 kilasflow workflow create           create-workflow                    create a workflow from a canonical document (--file <path>|-)
 kilasflow workflow validate         validate-workflow-document         check a draft document the way the API would, saving nothing (--file <path>|-)

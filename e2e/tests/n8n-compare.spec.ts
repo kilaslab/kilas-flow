@@ -550,7 +550,8 @@ test('a loop iterates, notes stay inert, sub-workflows call out, datastores roun
 		[conn('c1', 'manual', 'main', 'out', 'main')]
 	);
 	const stickyRecord = await runToSuccess(server.baseURL, stickyId);
-	expect(nodeRun(stickyRecord, 'note').status).toBe('succeeded');
+	// A note is documentation, not a step: the run does not list it (BUG-c7s5ss).
+	expect((stickyRecord.nodeRuns as any[]).some((entry) => entry.nodeId === 'note')).toBe(false);
 	expect(itemJson(stickyRecord, 'out')).toMatchObject({ v: 'sticky-ok' });
 
 	const calleeId = await createWorkflow(server.baseURL, 'Compare Callee', [manual(), setter('out', 'callee-ok')], [

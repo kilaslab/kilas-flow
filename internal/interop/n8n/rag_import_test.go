@@ -22,19 +22,21 @@ func TestHandAuthoredRAGFixturesImportWithoutPlaceholders(t *testing.T) {
 		{
 			file: "n8n_rag_16706.json",
 			want: map[string]string{
-				"Manual":                            "kilasflow.manual",
-				"HTTP Request":                      "kilasflow.httpRequest",
-				"Extract from File":                 nodes.ExtractFromFileNodeType,
-				"Default Data Loader":               nodes.DocumentLoaderNodeType,
-				"Recursive Character Text Splitter": nodes.TextSplitterNodeType,
-				"Embeddings OpenAI":                 nodes.EmbeddingsNodeType,
-				"Postgres PGVector Store":           nodes.VectorStorePGVectorNodeType,
-				"Telegram Trigger":                  nodes.TelegramTriggerNodeType,
-				"Embeddings Query":                  nodes.EmbeddingsNodeType,
-				"Postgres PGVector Tool":            nodes.VectorStorePGVectorNodeType,
-				"OpenAI Chat Model":                 "kilasflow.lmChatOpenAi",
-				"AI Agent":                          "kilasflow.agent",
-				"Telegram":                          n8n.TelegramNodeType,
+				"Manual":                               "kilasflow.manual",
+				"HTTP Request":                         "kilasflow.httpRequest",
+				"Extract from File":                    nodes.ExtractFromFileNodeType,
+				"Default Data Loader":                  nodes.DocumentLoaderNodeType,
+				"Recursive Character Text Splitter":    nodes.TextSplitterNodeType,
+				"Embeddings OpenAI":                    nodes.EmbeddingsNodeType,
+				"Postgres PGVector Store":              nodes.VectorStorePGVectorNodeType,
+				"Telegram Trigger":                     nodes.TelegramTriggerNodeType,
+				"Embeddings Query":                     nodes.EmbeddingsNodeType,
+				"Policies Store":                       nodes.VectorStorePGVectorNodeType,
+				"Answer questions with a vector store": nodes.VectorStoreToolNodeType,
+				"OpenAI Chat Model1":                   "kilasflow.lmChatOpenAi",
+				"OpenAI Chat Model":                    "kilasflow.lmChatOpenAi",
+				"AI Agent":                             "kilasflow.agent",
+				"Telegram":                             n8n.TelegramNodeType,
 			},
 		},
 		{
@@ -257,8 +259,9 @@ func TestRealRAGTemplatesKeepTheirIngestPath(t *testing.T) {
 				case strings.Contains(issue.Reason, `"main" connection`) && strings.Contains(issue.Reason, "held back"):
 					t.Errorf("an ingest edge was held back: %s", issue.Reason)
 				case strings.Contains(issue.Reason, "held back"):
-					// Not the ingest path; named so a run shows what is left.
-					t.Logf("still held back: %s", issue.Reason)
+					// 16706's retrieval side (a retrieve-mode store under a
+					// Vector Store Tool) once stopped here; nothing may now.
+					t.Errorf("an edge was held back: %s", issue.Reason)
 				}
 			}
 		})

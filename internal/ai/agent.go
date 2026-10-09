@@ -220,7 +220,9 @@ func (LoopRuntime) Run(ctx context.Context, request AgentRequest, sink EventSink
 				continue
 			}
 
-			output, err := tool.Invoke(ctx, call.Arguments)
+			toolCtx, spent := withToolUsage(ctx)
+			output, err := tool.Invoke(toolCtx, call.Arguments)
+			result.Usage.Add(spent.total())
 			if err != nil {
 				message := "tool failed: " + err.Error()
 				sink.Emit(Event{Kind: EventToolFailed, Iteration: iteration, Tool: call.Name, Error: err.Error()})

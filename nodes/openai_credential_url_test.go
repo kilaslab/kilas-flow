@@ -15,14 +15,18 @@ func TestAnOpenAIChatModelFallsBackToItsCredentialsBaseURL(t *testing.T) {
 	t.Parallel()
 
 	const ollama = "http://ollama.internal.test:11434/v1"
-	withURL := &stubCredentials{credential: engine.Credential{
-		ID: "cred-key", Name: "Ollama", Type: nodes.OpenAICredentialType,
-		Fields: map[string]string{"apiKey": "ollama", "url": ollama},
-	}}
+	// Each subtest gets its own resolver: stubCredentials records its calls,
+	// so one shared across parallel subtests is a data race.
+	withURL := func() *stubCredentials {
+		return &stubCredentials{credential: engine.Credential{
+			ID: "cred-key", Name: "Ollama", Type: nodes.OpenAICredentialType,
+			Fields: map[string]string{"apiKey": "ollama", "url": ollama},
+		}}
+	}
 	for _, test := range []struct {
 		name     string
 		baseURL  any
-		resolver *stubCredentials
+		resolver func() *stubCredentials
 		want     string
 	}{
 		{"node base URL absent", nil, withURL, ollama},
@@ -31,7 +35,7 @@ func TestAnOpenAIChatModelFallsBackToItsCredentialsBaseURL(t *testing.T) {
 		// so it reads as "not set" rather than as a choice of OpenAI.
 		{"node base URL at the provider default", "https://api.openai.com/v1", withURL, ollama},
 		{"node base URL set", "https://gateway.example.test/v1", withURL, "https://gateway.example.test/v1"},
-		{"credential with no base URL", nil, openAICredential(), "https://api.openai.com/v1"},
+		{"credential with no base URL", nil, func() *stubCredentials { return openAICredential() }, "https://api.openai.com/v1"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -40,7 +44,7 @@ func TestAnOpenAIChatModelFallsBackToItsCredentialsBaseURL(t *testing.T) {
 				parameters["baseUrl"] = test.baseURL
 			}
 			item := runProviderModel(t, nodes.OpenAIChatModelNodeType, nodes.OpenAIChatModelExecutorID,
-				nodes.OpenAICredentialType, parameters, test.resolver)
+				nodes.OpenAICredentialType, parameters, test.resolver())
 			descriptor, _ := item.JSON["$ai"].(map[string]any)
 			if got := descriptor["baseUrl"]; got != test.want {
 				t.Errorf("descriptor baseUrl = %#v, want %q", got, test.want)

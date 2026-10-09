@@ -56,6 +56,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/config"
 	"github.com/kilaslab/kilas-flow/internal/expression"
 	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/shippedcatalogue"
 	"github.com/kilaslab/kilas-flow/internal/skills"
 )
 
@@ -309,7 +310,9 @@ func nodeTypes(t *testing.T) map[string]bool {
 	t.Helper()
 
 	registry := node.NewRegistry()
-	registerShipped(t, registry)
+	if err := shippedcatalogue.Register(registry); err != nil {
+		t.Fatalf("register the shipped catalogue: %v", err)
+	}
 
 	definitions := registry.List()
 	if len(definitions) == 0 {

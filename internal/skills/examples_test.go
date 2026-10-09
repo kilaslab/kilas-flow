@@ -39,6 +39,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/shippedcatalogue"
 	"github.com/kilaslab/kilas-flow/internal/skills"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
@@ -66,7 +67,9 @@ func newExampleServer(t *testing.T) exampleServer {
 	}
 
 	registry := node.NewRegistry()
-	registerShipped(t, registry)
+	if err := shippedcatalogue.Register(registry); err != nil {
+		t.Fatalf("register the shipped catalogue: %v", err)
+	}
 
 	key := make([]byte, credentials.KeySize)
 	for index := range key {
@@ -303,7 +306,9 @@ func TestTheExampleHarnessRefusesAMalformedRequest(t *testing.T) {
 // key/value or fixed collection must be an object.
 func TestNodeConfigurationExampleStoresEveryComplexKind(t *testing.T) {
 	registry := node.NewRegistry()
-	registerShipped(t, registry)
+	if err := shippedcatalogue.Register(registry); err != nil {
+		t.Fatalf("register the shipped catalogue: %v", err)
+	}
 
 	var skill skills.Skill
 	for _, candidate := range embeddedBundle(t) {
