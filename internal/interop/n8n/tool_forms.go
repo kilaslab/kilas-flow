@@ -207,6 +207,17 @@ func postgresToolToKilas(node Node) (map[string]any, []Unsupported) {
 				"delete operation, before activating.",
 		})
 	}
+	switch parameters["operation"] {
+	case "insert", "update", "upsert":
+		if columns, _ := parameters["columns"].(map[string]any); columns["mappingMode"] == "autoMapInputData" {
+			issues = append(issues, Unsupported{
+				Severity: SeverityBlocking, Field: "columns",
+				Reason: "this tool maps its columns automatically from the item it runs on, which for a tool is the " +
+					"agent's input rather than a row to write. This server's PostgreSQL tool writes only columns the " +
+					"author mapped: map each column, using $fromAI for the values the model supplies, before activating.",
+			})
+		}
+	}
 	return parameters, issues
 }
 

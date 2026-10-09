@@ -83,7 +83,7 @@ var toolForms = []toolForm{
 		description: "Lets an AI Agent select, insert, update and delete rows through the PostgreSQL node. " +
 			"The SQL is the author's; the model supplies values only.",
 		structuralKeys: []string{"query", "deleteCommand", "options"},
-		validate:       validatePostgresToolQuery,
+		validate:       validatePostgresTool,
 	},
 	{
 		toolType: TelegramToolNodeType, baseType: telegramPackNodeType, baseVersion: workflow.V(1),
@@ -255,19 +255,21 @@ func holdsFromAIText(value any) bool {
 	return false
 }
 
-// validatePostgresToolQuery keeps the SQL the author's. An expression in
-// `query` is refused by the base node already; a $fromAI call in it, in any
+// validatePostgresTool keeps the SQL and the row the author's. An expression
+// in `query` is refused by the base node already; a $fromAI call in it, in any
 // spelling and even in plain text, would have the model write the statement.
 // Plain template text is refused as well: a tool form's SQL is fixed, and a
-// literal {{ belongs in a bound value.
-func validatePostgresToolQuery(n workflow.Node) error {
+// literal {{ belongs in a bound value. And a write may not map its columns
+// automatically, because the item a tool runs on is the agent's input
+// (refuseToolAutoMapping, which the executor applies again on every call).
+func validatePostgresTool(n workflow.Node) error {
 	query := n.Parameters["query"]
 	if expression.IsExpression(query) || authorChoiceIsOpen(query) {
 		return fmt.Errorf("query is SQL the workflow author writes: the model may not write it, through $fromAI or an " +
 			"expression, and it holds no {{ }}. Put $1, $2 placeholders in the query and the values in Query " +
 			"Parameters, or use the select, insert, update or delete operations, whose values are bound")
 	}
-	return nil
+	return refuseToolAutoMapping(n.Parameters)
 }
 
 // executeToolForm emits the tool descriptor. The base node runs only when the

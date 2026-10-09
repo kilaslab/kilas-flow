@@ -204,6 +204,21 @@ func TestAPostgresToolWhoseModelWritesSQLIsBlocked(t *testing.T) {
 	}
 }
 
+// n8n's automatic mapping writes the incoming item's fields as the row. As a
+// tool that item is the agent's input, which this server's tool never writes.
+func TestAPostgresToolThatMapsColumnsAutomaticallyIsBlocked(t *testing.T) {
+	t.Parallel()
+
+	result := importFixture(t, agentWithTool(`{"id":"d","name":"Tool","type":"n8n-nodes-base.postgresTool","typeVersion":2.6,"position":[400,200],
+	  "parameters":{"descriptionType":"manual","toolDescription":"Saves a user",
+	    "operation":"upsert","table":{"__rl":true,"mode":"list","value":"users"},
+	    "columns":{"mappingMode":"autoMapInputData","value":{},"matchingColumns":["id"],"schema":[]}}}`))
+	issue, found := issueOn(result, "columns")
+	if !found || issue.Severity != n8n.SeverityBlocking || !strings.Contains(issue.Reason, "automatic") {
+		t.Fatalf("columns issue = %+v (found %v), want a blocking issue naming automatic mapping", issue, found)
+	}
+}
+
 const telegramToolNode = `{"id":"d","name":"Tool","type":"n8n-nodes-base.telegramTool","typeVersion":1.2,"position":[400,200],
   "credentials":{"telegramApi":{"id":"5","name":"Telegram account"}},
   "parameters":{"chatId":"={{ $('Manual').item.json.chatId }}",

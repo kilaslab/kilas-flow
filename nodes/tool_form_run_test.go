@@ -678,6 +678,16 @@ func TestTheAgentResolvesAToolFormsBaseItselfOrRefuses(t *testing.T) {
 			}),
 			want: "operation",
 		},
+		"automatic mapping in a forged descriptor": {
+			agent: harness.agent,
+			tool: forged(func(d map[string]any) {
+				d["parameters"] = map[string]any{
+					"operation": "insert", "table": d["parameters"].(map[string]any)["table"],
+					"columns": map[string]any{"mappingMode": "autoMapInputData", "value": map[string]any{}},
+				}
+			}),
+			want: "automatically",
+		},
 		"plain $fromAI in a forged descriptor": {
 			// The backstop for the validation rule: a tool form never fills
 			// plain text with the model's words.
@@ -800,6 +810,119 @@ func TestComputedConditionsAreRefusedWhereTheyAreReadAndOnlyThere(t *testing.T) 
 		if err == nil || strings.Contains(err.Error(), "condition") {
 			t.Errorf("%s with a stale where: Execute() error = %v, want it to reach the connection", operation, err)
 		}
+	}
+}
+
+// A row the author wrote with an expression anywhere inside it is computed,
+// and must come out as a condition with a column; a where in a shape the node
+// does not read is refused rather than run unfiltered; and the editor's own
+// condition rows (its filter shape) are read as conditions.
+func TestConditionShapesAreReadOrRefusedNeverIgnored(t *testing.T) {
+	t.Parallel()
+
+	executor := nodes.NewPostgresV2Executor(sqlGuard(), sqlnode.DefaultCeiling())
+	run := func(operation string, where any) error {
+		_, err := executor.Execute(context.Background(), workflow.IRNode{
+			ID: "db", Name: "Database", Type: nodes.PostgresNodeType, TypeVersion: workflow.V(2),
+			Parameters: map[string]any{
+				"operation": operation, "deleteCommand": "delete",
+				"table": map[string]any{"__rl": true, "mode": "name", "value": "orders"}, "where": where,
+			},
+			Credentials: map[string]string{"postgres": "cred-db"},
+		}, workflow.NodeInput{"main": {{JSON: map[string]any{"ws": "   "}}}}, engine.Request{
+			Credentials: credentialMap{"cred-db": {ID: "cred-db", Type: "postgres", Fields: map[string]string{"host": "db.invalid"}}},
+		})
+		return err
+	}
+	status := map[string]any{"field": "status", "operator": "equals", "value": "open"}
+	for _, operation := range []string{"select", "deleteTable"} {
+		for name, where := range map[string]any{
+			"a row authored as a list holding an expression": []any{status,
+				[]any{map[string]any{"field": formExpression("{{ $json.ws }}"), "operator": "equals", "value": 1}}},
+			"a field that is a map holding an expression": []any{status,
+				map[string]any{"field": map[string]any{"name": formExpression("{{ $json.ws }}")}, "operator": "equals", "value": 1}},
+			"n8n's values shape, untranslated": map[string]any{"values": []any{map[string]any{"column": "status", "value": "x"}}},
+			"a string":                         "status = 'open'",
+		} {
+			if err := run(operation, where); err == nil || !strings.Contains(err.Error(), "condition") {
+				t.Errorf("%s, %s: Execute() error = %v, want it refused before anything connects", operation, name, err)
+			}
+		}
+	}
+
+	// The editor writes a conditions property as its filter: a combinator and
+	// rows of leftValue, operator and rightValue. Those are this node's column,
+	// comparison and value.
+	statement, err := nodes.BuildSQLStatementForTest(sqlbuild.Postgres, map[string]any{
+		"operation": "select",
+		"table":     map[string]any{"__rl": true, "mode": "name", "value": "orders"},
+		"where": map[string]any{
+			"combinator": "or",
+			"conditions": []any{
+				map[string]any{"leftValue": "status", "operator": map[string]any{"type": "string", "operation": "equals"}, "rightValue": "open"},
+				map[string]any{"leftValue": "total", "operator": map[string]any{"type": "number", "operation": "gt"}, "rightValue": float64(10)},
+			},
+			"options": map[string]any{"caseSensitive": true},
+		},
+	})
+	if err != nil || statement.SQL != `SELECT * FROM "orders" WHERE "status" = $1 OR "total" > $2` ||
+		len(statement.Parameters) != 2 || statement.Parameters[0] != "open" || statement.Parameters[1] != float64(10) {
+		t.Fatalf("editor conditions built %q %v (%v), want both conditions joined by OR", statement.SQL, statement.Parameters, err)
+	}
+	// An editor filter with no rows left is no conditions, not a refusal.
+	if err := run("select", map[string]any{"combinator": "and", "conditions": []any{}, "options": map[string]any{}}); err == nil ||
+		strings.Contains(err.Error(), "condition") {
+		t.Fatalf("an empty editor filter: Execute() error = %v, want it to reach the connection", err)
+	}
+}
+
+// A PostgreSQL tool form never maps the agent's input item into a row: the
+// row it writes is the columns its author mapped, with $fromAI for what the
+// model supplies. The node's own automatic mapping still reads its item when
+// it runs as an ordinary step.
+func TestThePostgresToolRefusesAutomaticMapping(t *testing.T) {
+	t.Parallel()
+
+	columns := map[string]any{
+		"mappingMode": "autoMapInputData", "value": map[string]any{}, "matchingColumns": []any{"id"},
+		"schema": []any{
+			map[string]any{"id": "id", "displayName": "id", "type": "number"},
+			map[string]any{"id": "role", "displayName": "role", "type": "string"},
+		},
+	}
+	definitions, _, _ := toolFormCatalogue(t, safehttp.DefaultPolicy())
+	tool, _ := definitions.Get(nodes.PostgresToolNodeType, workflow.V(2))
+	for _, operation := range []string{"insert", "update", "upsert"} {
+		err := tool.Validate(workflow.Node{Parameters: map[string]any{
+			"toolDescription": "Saves.", "operation": operation,
+			"table":   map[string]any{"__rl": true, "mode": "name", "value": "users"},
+			"columns": columns,
+		}})
+		if err == nil || !strings.Contains(err.Error(), "automatic") {
+			t.Errorf("Validate(%s, automatic mapping) = %v, want a refusal naming automatic mapping", operation, err)
+		}
+	}
+
+	executor := nodes.NewPostgresV2Executor(sqlGuard(), sqlnode.DefaultCeiling())
+	run := func(fromAI map[string]any) error {
+		_, err := executor.Execute(context.Background(), workflow.IRNode{
+			ID: "db", Name: "Database", Type: nodes.PostgresNodeType, TypeVersion: workflow.V(2),
+			Parameters: map[string]any{
+				"operation": "upsert", "table": map[string]any{"__rl": true, "mode": "name", "value": "users"},
+				"columns": columns,
+			},
+			Credentials: map[string]string{"postgres": "cred-db"},
+		}, workflow.NodeInput{"main": {{JSON: map[string]any{"chatInput": "hi", "id": float64(1), "role": "admin"}}}}, engine.Request{
+			Credentials:     credentialMap{"cred-db": {ID: "cred-db", Type: "postgres", Fields: map[string]string{"host": "db.invalid"}}},
+			FromAIArguments: fromAI,
+		})
+		return err
+	}
+	if err := run(map[string]any{}); err == nil || !strings.Contains(err.Error(), "automatic") {
+		t.Fatalf("a tool call with automatic mapping: Execute() error = %v, want it refused before anything connects", err)
+	}
+	if err := run(nil); err == nil || strings.Contains(err.Error(), "automatic") {
+		t.Fatalf("an ordinary step with automatic mapping: Execute() error = %v, want it to reach the connection", err)
 	}
 }
 

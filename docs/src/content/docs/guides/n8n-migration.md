@@ -171,7 +171,10 @@ PostgreSQL its query, delete command and options — stays the author's, so a
 n8n gives a sub-node its root node's whole input, and KilasFlow's tool form
 holds only the item being answered. A field the node would otherwise fill from
 its input item (a Gmail tool's recipient, for one) is not filled from the
-agent's input: set it in the tool.
+agent's input: set it in the tool. For the same reason a PostgreSQL tool cannot
+map its columns automatically, which would write the agent's input as the row;
+a `postgresTool` that does is a **blocking** diagnostic, and the columns have to
+be mapped one by one.
 A tool whose base node is mapped but that has no tool form here yet (Google
 Drive's, for one) imports as a placeholder that says so.
 
