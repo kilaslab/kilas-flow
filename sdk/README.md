@@ -43,8 +43,9 @@ const session = await kilasflow.createEmbedSession({
 
 ## Operation surface
 
-One thin, typed method per API operation — all 80 under `/api/v1`, grouped
-here the way the [API contract](https://github.com/kilaslab/kilas-flow/blob/main/docs/src/content/docs/reference/api-contract.md)
+One thin, typed method per API operation — all 81 under `/api/v1` that a
+backend can drive (the one exception is below), grouped here the way the
+[API contract](https://github.com/kilaslab/kilas-flow/blob/main/docs/src/content/docs/reference/api-contract.md)
 groups them. Every method takes an `AbortSignal` last, resolves `Promise<void>`
 for 204 responses, and surfaces failures as `KilasFlowError` (RFC 9457) — except
 the three writes that can be retried safely, which take an
@@ -58,7 +59,7 @@ the three writes that can be retried safely, which take an
 | Auth and keys | `login`, `logout`, `getMe`, `listApiKeys`, `createApiKey`, `revokeApiKey`, `createStreamTicket` |
 | Schedules | `listSchedules`, `createSchedule`, `updateSchedule`, `deleteSchedule` |
 | Node catalogue | `listNodeTypes`, `nodeIconUrl`, `loadNodePropertyOptions`, `loadNodePropertySchema`, `getExpressionGrammar` |
-| Interop | `importWorkflow`, `exportWorkflow` |
+| Interop | `importWorkflow`, `convertWorkflowFragment`, `exportWorkflow` |
 | Datastores | `listDatastores`, `createDatastore`, `getDatastore`, `renameDatastore`, `deleteDatastore`, `clearDatastore`, `addDatastoreColumn`, `renameDatastoreColumn`, `deleteDatastoreColumn`, `listDatastoreRows`, `getDatastoreRow`, `insertDatastoreRow`, `updateDatastoreRows`, `deleteDatastoreRows`, `upsertDatastoreRow`, `incrementDatastoreRows`, `iterateDatastoreRows`, `exportDatastoreRows`, `importDatastoreRows`, `datastoreFilter`, `paginateCursor` |
 | Tenants and accounts | `listTenants`, `createTenant`, `getTenant`, `deleteTenant`, `listTenantUsers`, `createTenantUser`, `disableTenantUser`, `enableTenantUser`, `setTenantUserPassword`, `createTenantApiKey` |
 | Embed | `createEmbedSession` |
@@ -69,6 +70,19 @@ scoped to the operator tenant and reaches across customers, so a tenant's own
 key — and every embed session — is refused by the server. A host that provisions
 its customers from its own control plane uses these; a host that provisions them
 out of band, the way `examples/reference-host` does, never calls them.
+
+One operation has no method on purpose: `start-credential-oauth` (`POST
+/credentials/{id}/oauth/start`), the Google Connect popup. The sign-in is bound
+to the browser that starts it — the response sets an `HttpOnly` cookie that the
+OAuth callback requires, and a backend client would keep that cookie in the
+server process instead of the customer's browser — so only the dashboard, in its
+own session, can start one. `createCredential` still creates the credential
+record; the Connect step happens in the dashboard.
+
+`convertWorkflowFragment` is the translator `importWorkflow` uses, without the
+save: it answers the converted nodes, connections and the import report for n8n
+JSON a customer pasted, so a host can show what it would become before it calls
+`createWorkflow` or `updateWorkflow`.
 
 Two operations stream rather than answer JSON, so they are URL builders
 instead of request methods: `executionEventsUrl` for the live SSE stream

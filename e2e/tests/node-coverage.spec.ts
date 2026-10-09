@@ -682,7 +682,9 @@ test('a sticky note saves and runs without affecting the result', async ({ serve
 		[conn('c1', 'manual', 'main', 'out', 'main')]
 	);
 	const record = await runToSuccess(server.baseURL, workflowId);
-	expect(nodeRun(record, 'note').status).toBe('succeeded');
+	// A note is documentation, not a step: the run does not list it among its
+	// nodes, and the real nodes' output is the same as without it.
+	expect((record.nodeRuns as any[]).some((entry) => entry.nodeId === 'note')).toBe(false);
 	expect(itemJson(record, 'out')).toMatchObject({ v: 'sticky-ok' });
 });
 

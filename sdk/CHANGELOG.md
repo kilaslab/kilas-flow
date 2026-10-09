@@ -14,6 +14,12 @@ until the server surface it targets is considered stable; see `README.md`.
   `tags`, an array that is empty when the workflow has none. The list endpoint
   takes a `tag` filter. A client that builds a `WorkflowSummary` literal in
   TypeScript must add `tags: []`.
+- **Additive**: `convertWorkflowFragment`, covering `POST /api/v1/workflows/convert`.
+  It translates n8n JSON — nodes copied from an n8n canvas, or a whole export —
+  into KilasFlow nodes and connections with the translator `importWorkflow`
+  uses, answers them with the import report, and saves nothing. It needs only
+  read authority, so a host can preview what a customer's paste would become
+  before writing it with `createWorkflow` or `updateWorkflow`.
 - **Additive**: `deleteTenant`, covering `DELETE /api/v1/tenants/{id}`. It
   deletes a customer and everything it owns — executions and their payload
   files, workflows and versions, credentials, schedules, webhook deliveries,
