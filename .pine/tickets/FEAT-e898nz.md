@@ -92,6 +92,14 @@ Read as a behaviour reference only, from n8n's public source on GitHub (master),
 - `make generate-api-check generate-types-check generate-api-reference-check generate-skills-command-reference-check generate-skills-index-check generate-config-reference-check` all pass. `make smoke-sqlite` passes (the migration applies on a fresh database; the web build and the embedded binary build). `make corpus-check` skipped: the corpus is not materialised (`KILASFLOW_N8N_REFERENCE` unset), so BASELINE.md was not rescored.
 - By hand in a real browser (playwright-cli against `bin/kilasflow` on a scratch SQLite database): chips with the "+2" overflow, the Tag select and `?tag=` (a link written `?tag=MARKETING` selects the Marketing option), the Rename dialog saving `Marketing, Q4, q4, ,Launch` as `Marketing, Q4, Launch`, a 26-character tag refused in the dialog with its own message, and an editor save (added a node, Save) leaving the workflow's five tags intact.
 
+### Review fixes (2026-10-09)
+
+- The list's rename and duplicate now build their save body from `toWorkflowInput` with only the name (and, for a rename, the edited tags) overridden, so a field the document gains is carried by every save. `toWorkflowInput` moved to `web/src/lib/workflow-editor/workflow-input.ts` (re-exported from document.ts) so the workflows list does not load the flow library. Pure helpers `renamedWorkflowInput` and `duplicatedWorkflowInput` in workflow-list.ts carry the unit tests.
+- A rename whose Tags field was left untouched sends the tags read from the server at save time, not the list's snapshot, so it never overwrites a tag change another client made meanwhile. Checked in a real browser: retagged a workflow through the API while its Rename dialog was open, renamed it, and the new tags survived.
+- Importer: a padded name that is then refused (or repeats an earlier tag) is one dropped issue; the lossy "trimmed" line appears only for a tag that is kept. Reasons quote a tag cut to 40 characters; `workflow.CheckTag` now returns a `*TagError` that keeps the tag apart from the problem so the importer can do this.
+- The U+2028 and U+2029 checks in workflow/tags.go and its test are written as escapes; a test pins the OpenAPI `maxItems` for tags to `workflow.MaxTags`.
+- The SDK reference host (and the embedding guide's copy of it) sends the whole document back, minus its server-owned `id`, instead of listing fields. The e2e fixtures that rebuild documents field by field (e2e/fixtures/waha-migration.ts, datastore.ts) only touch untagged test workflows and were left alone.
+
 ### Left
 
 - Skill prose that should mention `tags` and `--tag` (Track H's area).
