@@ -246,7 +246,7 @@ func (handler *NodeTypes) LoadOptions(ctx context.Context, input *loadOptionsInp
 		// item to evaluate it against, because there is no execution. Refusing
 		// beats guessing — a guessed value produces a wrong list, and
 		// evaluating against an empty item produces a confidently wrong one.
-		if property.ExpressionMarker(input.Body.Parameters[key]) {
+		if dependencyIsExpression(input.Body.Parameters[key]) {
 			return &loadOptionsOutput{
 				CacheControl: "no-store",
 				Body: LoadOptionsResource{
@@ -312,7 +312,7 @@ func (handler *NodeTypes) scopeFor(ctx context.Context, input *loadOptionsInput,
 	dependencies := make(map[string]string, len(dependsOn))
 	for _, key := range dependsOn {
 		value, present := input.Body.Parameters[key]
-		if !present || value == nil || property.ExpressionMarker(value) {
+		if !present || value == nil || dependencyIsExpression(value) {
 			continue
 		}
 		dependencies[key] = locatorDependency(value)
@@ -353,6 +353,20 @@ func (handler *NodeTypes) scopeFor(ctx context.Context, input *loadOptionsInput,
 			"workflow %s does not use that credential, so this embed session may not read with it", session.WorkflowID))
 	}
 	return scope, nil
+}
+
+// dependencyIsExpression reports whether a dependency's value is only known
+// when a run evaluates it: an expression marker, or a resource locator whose
+// own value is one (how a By ID locator holds `{{ $workflow.id }}`). Either way
+// a loader asked about it would be handed the marker's JSON in place of a value.
+func dependencyIsExpression(value any) bool {
+	if property.ExpressionMarker(value) {
+		return true
+	}
+	if locator, ok := property.ReadLocator(value); ok {
+		return property.ExpressionMarker(locator.Value)
+	}
+	return false
 }
 
 // locatorDependency renders a dependency value for a loader's path.
@@ -409,6 +423,20 @@ func (handler *NodeTypes) LoadSchema(ctx context.Context, input *loadOptionsInpu
 	}
 	if declared.Kind != node.PropertyResourceMapper || declared.Mapper == nil || declared.Mapper.Schema == nil {
 		return nil, huma.Error422UnprocessableEntity("that property is not a resource mapper and has no column list")
+	}
+
+	for _, key := range declared.Mapper.Schema.DependsOn {
+		// As in LoadOptions: an expression has no item to evaluate against
+		// while editing, and a guessed value lists the wrong columns.
+		if dependencyIsExpression(input.Body.Parameters[key]) {
+			return &loadSchemaOutput{
+				CacheControl: "no-store",
+				Body: LoadSchemaResource{
+					Fields: []MapperColumn{},
+					Reason: fmt.Sprintf("%s depends on an expression, which cannot be resolved while editing", input.Body.Property),
+				},
+			}, nil
+		}
 	}
 
 	scope, err := handler.scopeFor(ctx, input, declared.Mapper.Schema.DependsOn)
