@@ -257,6 +257,43 @@ func TestTheGmailToolListsWithTheModelsSearch(t *testing.T) {
 	}
 }
 
+func TestTheGmailToolGetsTheMessageTheModelNames(t *testing.T) {
+	var path string
+	gmail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.EscapedPath()
+		_, _ = io.WriteString(w, `{"id":"m 1","threadId":"t1","snippet":"the quarterly numbers"}`)
+	}))
+	t.Cleanup(gmail.Close)
+	t.Cleanup(nodes.SetGoogleAPIRootsForTest("", gmail.URL+"/gmail/v1"))
+
+	model := newRecordingModel(t,
+		toolCall("Read_Mail", map[string]any{"id": "m 1/../profile"}),
+		assistantAnswer("read it"),
+	)
+	harness := newFormHarness(t, allowing(model.server, gmail))
+	tool := harness.descriptor(t, nodes.GmailToolNodeType, workflow.V(1), "Read Mail", map[string]any{
+		"toolDescription": "Reads one message.", "operation": "get",
+		"messageId": formExpression("{{ $fromAI('id', 'the message id') }}"),
+	}, map[string]string{nodes.GmailCredentialType: "cred-gmail"})
+
+	if _, err := runFormAgent(t, harness.agent, model, []workflow.Item{tool}, credentialMap{
+		"cred-key": modelCredential(),
+		"cred-gmail": {
+			ID: "cred-gmail", Type: nodes.GmailCredentialType,
+			Fields: map[string]string{"access_token": "token"}, AllowedDomains: []string{httptestHost(gmail.URL)},
+		},
+	}); err != nil {
+		t.Fatalf("agent Execute() error = %v", err)
+	}
+	// The model's id is one path segment, escaped, never a path of its own.
+	if path != "/gmail/v1/users/me/messages/m%201%2F..%2Fprofile" {
+		t.Errorf("Gmail path = %q, want the model's id escaped into one segment", path)
+	}
+	if turns := model.toolTurns(t); len(turns) != 1 || !strings.Contains(turns[0], "quarterly numbers") {
+		t.Errorf("tool turns = %v, want the message", turns)
+	}
+}
+
 // A plain string is filled with the model's text in place. It must not come
 // out holding `{{`: the Google nodes read such a string as the author's
 // template, so the model would be writing one.
