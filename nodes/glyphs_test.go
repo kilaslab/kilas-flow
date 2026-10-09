@@ -28,6 +28,7 @@ var glyphVariants = map[string]string{
 	"kilasflow.executeWorkflowTrigger": "kilasflow.executeWorkflow",
 	"kilasflow.workflowTool":           "kilasflow.executeWorkflow",
 	"pack.wahaTrigger":                 "pack.waha",
+	"kilasflow.vectorStoreTool":        "kilasflow.vectorStorePGVector",
 }
 
 // TestEveryNodeTypeHasAGlyphOfItsOwn refuses two catalogue types that draw
