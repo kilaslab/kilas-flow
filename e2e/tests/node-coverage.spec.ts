@@ -104,6 +104,8 @@ const VALIDATION_COVERAGE = [
 	'kilasflow.googleDriveTrigger@1',
 	'kilasflow.gmail@1',
 	'kilasflow.gmailTrigger@1',
+	'kilasflow.googleSheets@1',
+	'kilasflow.googleSheetsTrigger@1',
 	'kilasflow.datastoreTool@1',
 	'kilasflow.postgres@1',
 	'kilasflow.postgres@2',
@@ -1006,11 +1008,19 @@ test('extract from file, customer pgvector and google nodes fail closed without 
 	expect(pgAttempt.status).toBe(422);
 	expect(errorText(pgAttempt.body)).toContain('postgres');
 
-	const remotes: Array<{ type: string; credential: string }> = [
+	// The Sheets nodes also need a document and a tab before the missing
+	// credential is the only thing wrong with them.
+	const sheetsLocators = {
+		documentId: { __rl: true, mode: 'id', value: 'coverage-document' },
+		sheetName: { __rl: true, mode: 'name', value: 'Sheet1' }
+	};
+	const remotes: Array<{ type: string; credential: string; parameters?: Record<string, unknown> }> = [
 		{ type: 'kilasflow.googleDrive', credential: 'googleDriveOAuth2Api' },
 		{ type: 'kilasflow.googleDriveTrigger', credential: 'googleDriveOAuth2Api' },
 		{ type: 'kilasflow.gmail', credential: 'gmailOAuth2' },
-		{ type: 'kilasflow.gmailTrigger', credential: 'gmailOAuth2' }
+		{ type: 'kilasflow.gmailTrigger', credential: 'gmailOAuth2' },
+		{ type: 'kilasflow.googleSheets', credential: 'googleSheetsOAuth2Api', parameters: { operation: 'read', ...sheetsLocators } },
+		{ type: 'kilasflow.googleSheetsTrigger', credential: 'googleSheetsTriggerOAuth2Api', parameters: sheetsLocators }
 	];
 	for (const remote of remotes) {
 		const isTrigger = remote.type.endsWith('Trigger');
@@ -1018,8 +1028,8 @@ test('extract from file, customer pgvector and google nodes fail closed without 
 			server.baseURL,
 			`Coverage ${remote.type}`,
 			isTrigger
-				? [node('node', 'Google', remote.type, 1, {})]
-				: [manual(), node('node', 'Google', remote.type, 1, { operation: 'search' })],
+				? [node('node', 'Google', remote.type, 1, remote.parameters ?? {})]
+				: [manual(), node('node', 'Google', remote.type, 1, remote.parameters ?? { operation: 'search' })],
 			isTrigger ? [] : [conn('c1', 'manual', 'main', 'node', 'main')]
 		);
 		const attempt = await startRun(server.baseURL, workflowId);
