@@ -65,13 +65,13 @@ vLLM, a gateway) is a `kilasflow.chatModel`:
 - A slow local model needs `options.timeout` raised (milliseconds); a value
   above the deployment's ceiling is refused rather than quietly lowered.
 - List the models the server offers with the escape hatch, because the
-  `node options` verb sends no parameters and so cannot pass a base URL:
-  `kilasflow api load-node-property-options --path type=kilasflow.chatModel
+  `kilasflow node options` verb sends no parameters and so cannot pass a base
+  URL: `kilasflow api load-node-property-options --path type=kilasflow.chatModel
   --body @probe.json` with the body
   `{"property": "model", "parameters": {"baseUrl": "http://127.0.0.1:11434/v1"}, "credentialId": "<credentialId>"}`
-  answers the endpoint's own model list. The two provider nodes carry a default
-  address, so for them `kilasflow node options <type> --property model
-  --credential <credentialId>` is enough.
+  answers the endpoint's own model list. The provider nodes need the same call
+  with `"mode": "list"` and their own address in `parameters.baseUrl`
+  (`https://api.openai.com/v1` for `kilasflow.lmChatOpenAi`).
 
 ## Tuning
 
