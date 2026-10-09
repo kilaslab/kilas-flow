@@ -729,6 +729,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter ↔ kilasflow.textSplitter",
 		"@n8n/n8n-nodes-langchain.toolCalculator ↔ kilasflow.calculatorTool",
 		"@n8n/n8n-nodes-langchain.toolHttpRequest ↔ kilasflow.httpTool",
+		"@n8n/n8n-nodes-langchain.toolVectorStore ↔ kilasflow.vectorStoreTool",
 		"@n8n/n8n-nodes-langchain.toolWorkflow ↔ kilasflow.workflowTool",
 		"@n8n/n8n-nodes-langchain.vectorStorePGVector ↔ kilasflow.vectorStorePGVector",
 		"n8n-nodes-base.aggregate ↔ kilasflow.aggregate",
@@ -861,6 +862,7 @@ func TestMirroredNodeTypesMatchTheNodePack(t *testing.T) {
 		"gmail trigger":        {n8n.GmailTriggerNodeType, nodes.GmailTriggerNodeType},
 		"javascript code":      {n8n.JSCodeNodeType, nodes.JSCodeNodeType},
 		"foreign code":         {n8n.ForeignCodeNodeType, nodes.ForeignCodeNodeType},
+		"vector store tool":    {n8n.VectorStoreToolNodeType, nodes.VectorStoreToolNodeType},
 	} {
 		if pair[0] != pair[1] {
 			t.Errorf("%s node type: adapter has %q, node pack has %q", name, pair[0], pair[1])
@@ -3946,10 +3948,13 @@ func TestImportMapsTheWholeLangChainCluster(t *testing.T) {
 	if lookup.Parameters["workflowId"] != "order-workflow" {
 		t.Errorf("workflowId = %#v, want the referenced workflow carried", lookup.Parameters["workflowId"])
 	}
+	// The inputs arrive as the resource mapper the editor reads, the column
+	// under its value.
 	inputs, _ := lookup.Parameters["workflowInputs"].(map[string]any)
-	entry, _ := inputs["orderId"].(map[string]any)
+	columns, _ := inputs["value"].(map[string]any)
+	entry, _ := columns["orderId"].(map[string]any)
 	if entry["mode"] != "expression" || entry["value"] != "{{ $json.orderId }}" {
-		t.Errorf("workflowInputs.orderId = %#v, want the n8n expression translated", inputs["orderId"])
+		t.Errorf("workflowInputs.value.orderId = %#v, want the n8n expression translated", columns["orderId"])
 	}
 
 	// The parser translates its mode and turns auto-fix into a retry count,

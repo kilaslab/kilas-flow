@@ -253,6 +253,10 @@ func (store *GORMWorkflowStore) RestoreVersion(ctx context.Context, tenant Tenan
 			Updates(map[string]any{"name": restored.Document.Name, "latest_revision": version.Revision}).Error; err != nil {
 			return fmt.Errorf("update workflow: %w", err)
 		}
+		// The restored revision brings its tags back, as it brings back its name.
+		if err := replaceWorkflowTags(tx, tenant.ID, model.ID, restored.Document.Tags); err != nil {
+			return err
+		}
 		if _, err := prunePolicy(tx, tenant, model.ID, RetentionPolicy{MaxVersions: store.retention.MaxVersions}); err != nil {
 			return err
 		}

@@ -112,6 +112,30 @@
         {"name": "customizeRetryPrompt", "type": "boolean", "default": false},
         {"name": "prompt", "type": "string", "default": ""}
       ]
+    },
+    {
+      "n8nName": "vectorStorePGVector",
+      "displayName": "Postgres PGVector Store",
+      "publishedVersions": [1, 1.1, 1.2, 1.3],
+      "_read": "2026-10-09, n8n master on GitHub (VectorStorePGVector.node.ts and the shared vector-store factory), for FEAT-zm3wh2. Format facts only.",
+      "_modeNote": "The shared vector-store mode parameter. A stored node with no mode is in the default mode, retrieve, whose only output is ai_vectorStore. retrieve-as-tool outputs ai_tool; load, insert and update output main.",
+      "modeDefault": "retrieve",
+      "modeValues": ["load", "insert", "retrieve", "retrieve-as-tool"],
+      "credentialType": "postgres",
+      "tableNameDefault": "n8n_vectors",
+      "columnNamesOption": {"idColumnName": "id", "vectorColumnName": "embedding", "contentColumnName": "text", "metadataColumnName": "metadata"},
+      "distanceStrategyValues": ["cosine", "innerProduct", "euclidean"]
+    },
+    {
+      "n8nName": "toolVectorStore",
+      "displayName": "Vector Store Question Answer Tool",
+      "publishedVersions": [1, 1.1],
+      "_read": "2026-10-09, n8n master on GitHub (ToolVectorStore.node.ts), for FEAT-zm3wh2. Format facts only.",
+      "_nameNote": "`name` exists at version 1 only. From 1.1 the name the model calls is derived from the node's own canvas name.",
+      "inputs": ["ai_vectorStore", "ai_languageModel"],
+      "outputs": ["ai_tool"],
+      "parameterKeys": ["name", "description", "topK"],
+      "topKDefault": 4
     }
   ]
 }

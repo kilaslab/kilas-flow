@@ -58,6 +58,34 @@ func ExtractFromAI(parameters map[string]any) ([]FromAIArgument, error) {
 	return ordered, nil
 }
 
+// WholeFromAICall reports whether an expression template is nothing but one
+// $fromAI call: a single {{ }} segment with no text around it and no other
+// code inside it. It returns the call it found.
+//
+// This is how a column "left to the model" is stored, in the KilasFlow marker
+// and in the `={{ $fromAI(…) }}` string n8n writes for the same choice. A call
+// inside other text or arithmetic is still offered to the model, but it is an
+// expression the author wrote, not the model's value written through.
+func WholeFromAICall(template string) (FromAIArgument, bool) {
+	trimmed := strings.TrimSpace(template)
+	if len(trimmed) < 4 || !strings.HasPrefix(trimmed, "{{") || !strings.HasSuffix(trimmed, "}}") {
+		return FromAIArgument{}, false
+	}
+	bodies, err := expression.Bodies(trimmed)
+	if err != nil || len(bodies) != 1 {
+		return FromAIArgument{}, false
+	}
+	body := bodies[0]
+	if strings.TrimSpace(trimmed[2:len(trimmed)-2]) != body {
+		return FromAIArgument{}, false
+	}
+	calls, err := scanFromAICalls(body)
+	if err != nil || len(calls) != 1 || calls[0].Start != 0 || calls[0].End != len(body) {
+		return FromAIArgument{}, false
+	}
+	return calls[0].Argument, true
+}
+
 // CheckFromAIConsistent refuses a key declared more than once in different
 // ways — another type, description or default.
 //

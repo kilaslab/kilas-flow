@@ -7,6 +7,7 @@ import (
 
 	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/expression"
+	"github.com/kilaslab/kilas-flow/internal/loadoptions"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/repository"
@@ -29,6 +30,15 @@ const (
 // "this field's option source is not available", which reads as a server
 // problem rather than a missing wire.
 const WorkflowListLoader = "workflows.list"
+
+// WorkflowInputsLoader names the internal schema loader that lists the fields
+// a target workflow's trigger declares. The Workflow Tool's inputs mapper names
+// it, for the same reason WorkflowListLoader is named here.
+const WorkflowInputsLoader = "workflows.inputs"
+
+// workflowInputsDependency is the parameter the inputs loader reads: the
+// locator naming the workflow whose trigger it describes.
+const workflowInputsDependency = loadoptions.WorkflowInputsDependency
 
 // Execute Workflow modes.
 const (
@@ -156,6 +166,51 @@ func executeWorkflowTrigger() node.Definition {
 		ExecutorID:     ExecuteWorkflowTriggerExecutorID,
 		Validate:       validateExecuteWorkflowTriggerConfiguration,
 	}
+}
+
+// WorkflowInput is one field a called workflow's trigger declares it expects.
+type WorkflowInput struct {
+	Name string
+	Type string
+}
+
+// DeclaredWorkflowInputs reads the fields a sub-workflow trigger declares, in
+// declared order. The second result is false for a trigger that accepts
+// whatever its caller sends, which declares no fields at all (as opposed to a
+// trigger that defines its fields and happens to list none).
+//
+// One parser for the editor's column list and the model's tool schema, so what
+// the author sees in the form is what the model is offered at run time. A field
+// with no name is skipped; one with no type is a string, which is what the
+// trigger's own form defaults it to.
+func DeclaredWorkflowInputs(trigger workflow.Node) ([]WorkflowInput, bool) {
+	if textParameter(trigger.Parameters, "inputSource") != "fields" {
+		return nil, false
+	}
+	declaration, _ := trigger.Parameters["workflowInputs"].(map[string]any)
+	values, _ := declaration["values"].([]any)
+	inputs := make([]WorkflowInput, 0, len(values))
+	for _, value := range values {
+		field, _ := value.(map[string]any)
+		name := strings.TrimSpace(textValue(field["name"], ""))
+		if name == "" {
+			continue
+		}
+		inputs = append(inputs, WorkflowInput{Name: name, Type: textValue(field["type"], "string")})
+	}
+	return inputs, true
+}
+
+// SubworkflowTriggerOf finds the node a call to the workflow starts from: its
+// first sub-workflow trigger, the same rule the engine applies when it runs a
+// child, so a description of a target is the one a call would meet.
+func SubworkflowTriggerOf(document workflow.Document) (workflow.Node, bool) {
+	for _, candidate := range document.Nodes {
+		if candidate.Type == ExecuteWorkflowTriggerType {
+			return candidate, true
+		}
+	}
+	return workflow.Node{}, false
 }
 
 func validateExecuteWorkflowConfiguration(n workflow.Node) error {

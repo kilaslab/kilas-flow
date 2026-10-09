@@ -72,8 +72,8 @@
   "workflows_renaming": "Renaming…",
   "workflows_duplicate": "Duplicate",
   "workflows_duplicate_name": "Copy of {source}",
-  "workflows_rename_title": "Rename workflow",
-  "workflows_rename_description": "The name is the only thing that changes — nodes and revisions stay.",
+  "workflows_rename_title": "Rename and tag workflow",
+  "workflows_rename_description": "Change the name or the tags. Nodes stay as they are.",
   "workflows_delete_title": "Delete {name}?",
   "workflows_noun": "workflow",
   "workflows_noun_capitalised": "Workflow",
@@ -227,5 +227,14 @@
       }
     }
   ],
-  "workflows_page_of": "page {page} of {pages}"
+  "workflows_page_of": "page {page} of {pages}",
+  "workflows_tags_label": "Tags",
+  "workflows_tag_filter_label": "Tag",
+  "workflows_tag_filter_all": "All tags",
+  "workflows_tags_more": "+{count}",
+  "workflows_tags_input_hint": "Separate tags with commas. Up to {max} tags, each up to {length} characters.",
+  "workflows_tags_input_placeholder": "billing, nightly",
+  "workflows_error_tags_too_many": "Use at most {max} tags.",
+  "workflows_error_tag_too_long": "The tag \"{tag}\" is longer than {max} characters.",
+  "workflows_error_tag_control": "The tag \"{tag}\" contains a character that is not allowed."
 }

@@ -313,6 +313,8 @@ func seedDocument(tenantID, workflowID, name string) workflow.Document {
 		},
 		Connections: []workflow.Connection{},
 		Settings:    map[string]any{},
+		// A tag, so every tenant owns a workflow_tags row the purge must remove.
+		Tags: []string{"purge-" + tenantID},
 	}
 }
 
