@@ -144,7 +144,7 @@ func (executor *GmailExecutor) executeItem(ctx context.Context, ir workflow.IRNo
 func (executor *GmailExecutor) get(ctx context.Context, ir workflow.IRNode, item workflow.Item, request engine.Request) ([]workflow.Item, error) {
 	messageID := locatorValue(ir.Parameters["messageId"])
 	if messageID == "" {
-		messageID = locatorValue(item.JSON["id"])
+		messageID = locatorValue(gmailItemFields(item, request)["id"])
 	}
 	if messageID == "" {
 		return nil, fmt.Errorf("node %q: messageId is required", ir.Name)
@@ -186,9 +186,9 @@ func (executor *GmailExecutor) list(ctx context.Context, ir workflow.IRNode, ite
 }
 
 func (executor *GmailExecutor) send(ctx context.Context, ir workflow.IRNode, item workflow.Item, request engine.Request) ([]workflow.Item, error) {
-	to := strings.TrimSpace(textValue(ir.Parameters["to"], textValue(item.JSON["to"], "")))
-	subject := strings.TrimSpace(textValue(ir.Parameters["subject"], textValue(item.JSON["subject"], "")))
-	body := textValue(ir.Parameters["message"], textValue(item.JSON["message"], textValue(item.JSON["text"], "")))
+	to := strings.TrimSpace(textValue(ir.Parameters["to"], textValue(gmailItemFields(item, request)["to"], "")))
+	subject := strings.TrimSpace(textValue(ir.Parameters["subject"], textValue(gmailItemFields(item, request)["subject"], "")))
+	body := textValue(ir.Parameters["message"], textValue(gmailItemFields(item, request)["message"], textValue(gmailItemFields(item, request)["text"], "")))
 	if to == "" {
 		return nil, fmt.Errorf("node %q: to is required to send", ir.Name)
 	}
@@ -228,6 +228,19 @@ func fetchGmailMessage(ctx context.Context, google *GoogleClient, ir workflow.IR
 		return simplifyGmailMessage(payload), nil
 	}
 	return payload, nil
+}
+
+// gmailItemFields is what an unset recipient, subject, body or message id
+// falls back to: the item's own fields, for a Gmail step fed by a previous
+// node. Nothing when the node runs as an agent's tool form (the request
+// carries the tool call's $fromAI arguments): that item is the agent's input,
+// not mail fields addressed to this node, so a tool reads only what its author
+// configured.
+func gmailItemFields(item workflow.Item, request engine.Request) map[string]any {
+	if request.FromAIArguments != nil {
+		return nil
+	}
+	return item.JSON
 }
 
 func gmailSimple(parameters map[string]any) bool {

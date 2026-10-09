@@ -166,8 +166,12 @@ which is how n8n writes it; one in plain text, in any spelling, is refused.
 What kind of call the tool makes — its resource, its operation, and for
 PostgreSQL its query, delete command and options — stays the author's, so a
 `$fromAI`, an expression or `{{ }}` text there is refused. Inside a tool form,
-`$json` and `$input` are the item the agent is answering, as they are for an
-n8n sub-node, and `$('Node')` reads earlier nodes through that item's lineage.
+`$json` is the item the agent is answering, as it is for an n8n sub-node, and
+`$('Node')` reads earlier nodes through that item's lineage. `$input` differs:
+n8n gives a sub-node its root node's whole input, and KilasFlow's tool form
+holds only the item being answered. A field the node would otherwise fill from
+its input item (a Gmail tool's recipient, for one) is not filled from the
+agent's input: set it in the tool.
 A tool whose base node is mapped but that has no tool form here yet (Google
 Drive's, for one) imports as a placeholder that says so.
 

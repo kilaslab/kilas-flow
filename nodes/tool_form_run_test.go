@@ -359,6 +359,91 @@ func TestAToolFormReadsTheAgentsInputItem(t *testing.T) {
 	}
 }
 
+// The Gmail node fills an unset recipient, subject, body or message id from
+// the item it is given, which suits a step fed by a previous node. A tool
+// form's item is the agent's input, not mail fields addressed to it, so a
+// tool reads only what its author configured: an unset recipient is refused,
+// not taken from the conversation.
+func TestTheGmailToolDoesNotFillMailFieldsFromTheAgentsItem(t *testing.T) {
+	var sent []string
+	gmail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sent = append(sent, r.URL.Path)
+		_, _ = io.WriteString(w, `{"id":"m1"}`)
+	}))
+	t.Cleanup(gmail.Close)
+	t.Cleanup(nodes.SetGoogleAPIRootsForTest("", gmail.URL+"/gmail/v1"))
+
+	model := newRecordingModel(t,
+		toolCall("Notify", map[string]any{"body": "hello"}),
+		assistantAnswer("done"),
+		toolCall("Read", map[string]any{}),
+		assistantAnswer("done"),
+	)
+	harness := newFormHarness(t, allowing(model.server, gmail))
+	notify := harness.descriptor(t, nodes.GmailToolNodeType, workflow.V(1), "Notify", map[string]any{
+		"toolDescription": "Notifies.", "operation": "send",
+		"message": formExpression("{{ $fromAI('body') }}"),
+	}, map[string]string{nodes.GmailCredentialType: "cred-gmail"})
+	read := harness.descriptor(t, nodes.GmailToolNodeType, workflow.V(1), "Read", map[string]any{
+		"toolDescription": "Reads.", "operation": "get",
+	}, map[string]string{nodes.GmailCredentialType: "cred-gmail"})
+	credentials := credentialMap{
+		"cred-key": modelCredential(),
+		"cred-gmail": {ID: "cred-gmail", Type: nodes.GmailCredentialType,
+			Fields: map[string]string{"access_token": "token"}, AllowedDomains: []string{httptestHost(gmail.URL)}},
+	}
+	for _, tool := range []workflow.Item{notify, read} {
+		_, err := harness.agent.Execute(context.Background(), agentIR(t, map[string]any{"prompt": "Do."}), workflow.NodeInput{
+			"main":  {{JSON: map[string]any{"to": "outsider@example.com", "subject": "from the item", "id": "m-from-item"}}},
+			"model": {modelItem(model.server.URL)},
+			"tools": {tool},
+		}, engine.Request{Credentials: credentials, Execution: agentExecution()})
+		if err != nil {
+			t.Fatalf("agent Execute() error = %v", err)
+		}
+	}
+	if len(sent) != 0 {
+		t.Fatalf("Gmail was called at %v, want both calls refused for want of what the author left unset", sent)
+	}
+	turns := model.toolTurns(t)
+	if len(turns) != 1 || !strings.Contains(turns[0], "tool failed") {
+		t.Errorf("tool turns = %v, want the refusal", turns)
+	}
+}
+
+// A json $fromAI value is data however deep its braces sit: the Gmail node,
+// which reads a plain {{ string as the author's template, never sees the
+// model's value as one.
+func TestTheGmailToolKeepsAJSONArgumentsBracesAsText(t *testing.T) {
+	var queries []string
+	gmail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.Query().Get("q"))
+		_, _ = io.WriteString(w, `{"messages":[]}`)
+	}))
+	t.Cleanup(gmail.Close)
+	t.Cleanup(nodes.SetGoogleAPIRootsForTest("", gmail.URL+"/gmail/v1"))
+
+	model := newRecordingModel(t,
+		toolCall("Find", map[string]any{"filters": map[string]any{"sender": modelTemplate, "q": modelTemplate}}),
+		assistantAnswer("done"),
+	)
+	harness := newFormHarness(t, allowing(model.server, gmail))
+	tool := harness.descriptor(t, nodes.GmailToolNodeType, workflow.V(1), "Find", map[string]any{
+		"toolDescription": "Finds.", "operation": "getAll",
+		"filters": formExpression("{{ $fromAI('filters', 'the Gmail filters', 'json') }}"),
+	}, map[string]string{nodes.GmailCredentialType: "cred-gmail"})
+	if _, err := runFormAgent(t, harness.agent, model, []workflow.Item{tool}, credentialMap{
+		"cred-key": modelCredential(),
+		"cred-gmail": {ID: "cred-gmail", Type: nodes.GmailCredentialType,
+			Fields: map[string]string{"access_token": "token"}, AllowedDomains: []string{httptestHost(gmail.URL)}},
+	}); err != nil {
+		t.Fatalf("agent Execute() error = %v", err)
+	}
+	if len(queries) != 1 || queries[0] != modelTemplate+" from:"+modelTemplate {
+		t.Fatalf("q = %q, want the model's filters as text", queries)
+	}
+}
+
 // --- Telegram ---------------------------------------------------------------
 
 func TestTheTelegramToolRunsThePacksOperationWithTheModelsText(t *testing.T) {

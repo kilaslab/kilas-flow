@@ -24,10 +24,13 @@ import (
 //
 // The model's values reach that executor only as data: each `$fromAI('key')`
 // in an expression reads the model's argument through the request's
-// FromAIArguments, and a plain string holding a `$fromAI` call is filled in
-// place and may not gain `{{` from the model. What kind of call the tool makes
-// (its resource, its operation, and the keys a form names as structural) is
-// the author's choice and never the model's.
+// FromAIArguments, and nothing is ever written into the parameters. A
+// `$fromAI` in plain text, in any spelling, is refused when the node is
+// validated and again when the agent builds the tool. What kind of call the
+// tool makes (its resource, its operation, and the keys a form names as
+// structural) is the author's choice and never the model's. The node runs on
+// the item the agent is answering, so `$json` reads it as an n8n sub-node's
+// does.
 
 const (
 	// ToolFormExecutorID binds every tool form. It only emits a descriptor;

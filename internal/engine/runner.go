@@ -340,7 +340,9 @@ type Request struct {
 	// request serves, when an agent runs an ordinary node's executor as a tool.
 	// ExpressionContext hands it to every expression the node resolves, so
 	// `$fromAI('key')` reads the model's value as data. The runner never sets
-	// it: outside a tool call `$fromAI` stays an error.
+	// it: outside a tool call `$fromAI` stays an error. It is non-nil for every
+	// tool call, even one with no arguments, so an executor can tell it is
+	// running as a tool (the Gmail node then skips its item fallbacks).
 	FromAIArguments map[string]any
 }
 
