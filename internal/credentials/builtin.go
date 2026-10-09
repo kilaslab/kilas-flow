@@ -286,17 +286,20 @@ func RegisterAll(registry *Registry) error {
 		googleOAuthType("gmailOAuth2", "Gmail OAuth2",
 			"Connects to Gmail. Client ID and secret can be from your Google Cloud project or the platform app.",
 			"https://www.googleapis.com/auth/gmail.modify"),
-		// n8n's two Sheets types, under the IDs an imported workflow names.
-		// The scope lists mirror what n8n requests (space-separated), and the
-		// field stays editable: drive.metadata is a restricted Google scope, so
-		// an operator whose OAuth client is not verified for it can drop it and
-		// still use the url and id locator modes.
-		googleOAuthType(GoogleSheetsOAuthType, "Google Sheets OAuth2",
+		// n8n's two Sheets types, under the IDs an imported workflow names. Their
+		// default scopes are the least each node needs, not n8n's wider lists:
+		// an import never carries a credential, so nothing depends on those.
+		// The action node reads and writes cells (spreadsheets); the trigger
+		// only reads (spreadsheets.readonly); both list spreadsheets for the
+		// picker (drive.metadata.readonly, a restricted Google scope). The field
+		// stays editable: an operator whose OAuth client is not verified for the
+		// Drive scope can drop it and still use the url and id locator modes.
+		googleSheetsOAuthType(GoogleSheetsOAuthType, "Google Sheets OAuth2",
 			"Connects to Google Sheets. Client ID and secret can be from your Google Cloud project or the platform app.",
-			"https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata"),
-		googleOAuthType(GoogleSheetsTriggerOAuthType, "Google Sheets Trigger OAuth2",
+			"https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata.readonly"),
+		googleSheetsOAuthType(GoogleSheetsTriggerOAuthType, "Google Sheets Trigger OAuth2",
 			"Connects the Google Sheets Trigger. Client ID and secret can be from your Google Cloud project or the platform app.",
-			"https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata"),
+			"https://www.googleapis.com/auth/spreadsheets.readonly https://www.googleapis.com/auth/drive.metadata.readonly"),
 		{
 			ID: "sqlite", DisplayName: "SQLite file",
 			Description: "Opens a SQLite file in this tenant's own directory on the server. The file is created on first use if it does not exist.",

@@ -70,6 +70,16 @@ func googleOAuthType(id, display, description, scope string) Type {
 	}
 }
 
+// googleSheetsOAuthType is a Google type whose Test button asks Drive who the
+// signed-in user is. The shared probe, the OAuth userinfo endpoint, needs a
+// profile scope that a Sheets credential does not request; the Drive "about"
+// call is answered under the metadata scope every Sheets type asks for.
+func googleSheetsOAuthType(id, display, description, scope string) Type {
+	credentialType := googleOAuthType(id, display, description, scope)
+	credentialType.Test = &TestRequest{URL: "https://www.googleapis.com/drive/v3/about?fields=user"}
+	return credentialType
+}
+
 // IsGoogleOAuth reports whether a stored credential type talks to Google.
 func IsGoogleOAuth(typeID string) bool {
 	switch typeID {

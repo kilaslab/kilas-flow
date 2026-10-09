@@ -1,6 +1,9 @@
 package credentials_test
 
 import (
+	"net/url"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -46,40 +49,33 @@ func TestEveryGoogleCredentialTypeIsRecognisedAsGoogleOAuth(t *testing.T) {
 // GoogleDefaultScope is what Connect asks for when the credential saved none.
 // Falling back to the Drive scope for a Sheets credential asked the user to
 // grant the wrong access.
+//
+// The two Sheets types ask for the least that works, because an imported
+// workflow never carries a credential, so nobody is relying on n8n's broader
+// list: the action node reads and writes cells (spreadsheets); the trigger only
+// reads (spreadsheets.readonly); both list spreadsheets for the picker
+// (drive.metadata.readonly).
 func TestGoogleDefaultScopeIsThePerTypeScope(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		typeID  string
-		must    []string
-		mustNot []string
+		typeID string
+		want   []string
 	}{
-		{credentials.GoogleDriveOAuthType, []string{"https://www.googleapis.com/auth/drive"}, []string{"spreadsheets"}},
-		{credentials.GmailOAuthType, []string{"https://www.googleapis.com/auth/gmail.modify"}, []string{"spreadsheets", "auth/drive"}},
+		{credentials.GoogleDriveOAuthType, []string{"https://www.googleapis.com/auth/drive"}},
+		{credentials.GmailOAuthType, []string{"https://www.googleapis.com/auth/gmail.modify"}},
 		{credentials.GoogleSheetsOAuthType, []string{
-			"https://www.googleapis.com/auth/drive.file",
 			"https://www.googleapis.com/auth/spreadsheets",
-			"https://www.googleapis.com/auth/drive.metadata",
-		}, nil},
+			"https://www.googleapis.com/auth/drive.metadata.readonly",
+		}},
 		{credentials.GoogleSheetsTriggerOAuthType, []string{
-			"https://www.googleapis.com/auth/spreadsheets",
-			"https://www.googleapis.com/auth/drive.metadata",
-		}, nil},
+			"https://www.googleapis.com/auth/spreadsheets.readonly",
+			"https://www.googleapis.com/auth/drive.metadata.readonly",
+		}},
 	} {
-		scope := credentials.GoogleDefaultScope(test.typeID)
-		if scope == "" {
-			t.Errorf("GoogleDefaultScope(%q) is empty", test.typeID)
-			continue
-		}
-		for _, want := range test.must {
-			if !containsScope(scope, want) {
-				t.Errorf("GoogleDefaultScope(%q) = %q, want it to hold %q", test.typeID, scope, want)
-			}
-		}
-		for _, bad := range test.mustNot {
-			if strings.Contains(scope, bad) {
-				t.Errorf("GoogleDefaultScope(%q) = %q, must not hold %q", test.typeID, scope, bad)
-			}
+		got := strings.Fields(credentials.GoogleDefaultScope(test.typeID))
+		if !reflect.DeepEqual(got, test.want) {
+			t.Errorf("GoogleDefaultScope(%q) = %q, want exactly %q", test.typeID, got, test.want)
 		}
 	}
 	if got := credentials.GoogleDefaultScope("openAiApi"); got != "" {
@@ -87,13 +83,75 @@ func TestGoogleDefaultScopeIsThePerTypeScope(t *testing.T) {
 	}
 }
 
-func containsScope(scope, want string) bool {
-	for _, entry := range strings.Fields(scope) {
-		if entry == want {
-			return true
+// Every request the Sheets nodes and their pickers make has to be answered under
+// the default scope of the credential that signs it. The accepted scopes below
+// are the ones Google's reference lists for each method, read on 2026-10-09.
+func TestEveryCallTheSheetsNodesMakeIsCoveredByTheirDefaultScope(t *testing.T) {
+	t.Parallel()
+
+	const prefix = "https://www.googleapis.com/auth/"
+	accepted := func(names ...string) []string {
+		scopes := make([]string, 0, len(names))
+		for _, name := range names {
+			scopes = append(scopes, prefix+name)
+		}
+		return scopes
+	}
+	readCells := accepted("drive", "drive.readonly", "drive.file", "spreadsheets", "spreadsheets.readonly")
+	writeCells := accepted("drive", "drive.file", "spreadsheets")
+	listFiles := accepted("drive", "drive.appdata", "drive.file", "drive.metadata", "drive.metadata.readonly", "drive.photos.readonly", "drive.readonly")
+
+	// What the action node does: read the tab list and cells, write cells, grow
+	// or shrink the grid, clear.
+	node := map[string][]string{
+		"spreadsheets.get":                readCells,
+		"spreadsheets.values.get":         readCells,
+		"spreadsheets.values.update":      writeCells,
+		"spreadsheets.values.append":      writeCells,
+		"spreadsheets.values.batchUpdate": writeCells,
+		"spreadsheets.values.clear":       writeCells,
+		"spreadsheets.batchUpdate":        writeCells,
+		"drive.files.list (picker)":       listFiles,
+		"drive.about.get (Test button)":   listFiles,
+	}
+	// What the trigger does: only reads, plus the same picker and Test button.
+	trigger := map[string][]string{
+		"spreadsheets.get":              readCells,
+		"spreadsheets.values.get":       readCells,
+		"drive.files.list (picker)":     listFiles,
+		"drive.about.get (Test button)": listFiles,
+	}
+	for typeID, calls := range map[string]map[string][]string{
+		credentials.GoogleSheetsOAuthType:        node,
+		credentials.GoogleSheetsTriggerOAuthType: trigger,
+	} {
+		granted := strings.Fields(credentials.GoogleDefaultScope(typeID))
+		for call, wantOne := range calls {
+			covered := false
+			for _, scope := range granted {
+				if slices.Contains(wantOne, scope) {
+					covered = true
+				}
+			}
+			if !covered {
+				t.Errorf("%s: %s needs one of %q, and the default scope is %q", typeID, call, wantOne, granted)
+			}
 		}
 	}
-	return false
+
+	// The Test button calls the Drive "about" endpoint, which the default scope
+	// covers; the generic userinfo probe needs a profile scope these types do not
+	// ask for.
+	for _, typeID := range []string{credentials.GoogleSheetsOAuthType, credentials.GoogleSheetsTriggerOAuthType} {
+		definition, found := credentials.Default().Get(typeID)
+		if !found || definition.Test == nil {
+			t.Fatalf("%s has no test probe", typeID)
+		}
+		parsed, err := url.Parse(definition.Test.URL)
+		if err != nil || parsed.Host != "www.googleapis.com" || parsed.Path != "/drive/v3/about" {
+			t.Errorf("%s probes %q, want the Drive about endpoint", typeID, definition.Test.URL)
+		}
+	}
 }
 
 func TestASheetsCredentialDefaultsToTheGoogleHosts(t *testing.T) {

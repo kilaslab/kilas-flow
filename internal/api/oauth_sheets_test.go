@@ -1,25 +1,23 @@
 package api_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/kilaslab/kilas-flow/internal/credentials"
 )
 
 // A Sheets credential saved without a scope used to fall through the
-// Gmail-or-else-Drive branch and ask Google for Drive access. Connect now
-// asks for the scope its own type declares.
+// Gmail-or-else-Drive branch and ask Google for Drive access. Connect now asks
+// for the scope its own type declares: the least the node needs.
 func TestConnectAsksForTheSheetsScopeWhenTheCredentialSavedNone(t *testing.T) {
 	for _, test := range []struct {
 		typeID string
 		want   string
-		not    string
 	}{
-		{credentials.GoogleSheetsOAuthType, "https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive "},
-		{credentials.GoogleSheetsTriggerOAuthType, "https://www.googleapis.com/auth/spreadsheets", ""},
-		{credentials.GoogleDriveOAuthType, "https://www.googleapis.com/auth/drive", "spreadsheets"},
-		{credentials.GmailOAuthType, "https://www.googleapis.com/auth/gmail.modify", "spreadsheets"},
+		{credentials.GoogleSheetsOAuthType, "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata.readonly"},
+		{credentials.GoogleSheetsTriggerOAuthType, "https://www.googleapis.com/auth/spreadsheets.readonly https://www.googleapis.com/auth/drive.metadata.readonly"},
+		{credentials.GoogleDriveOAuthType, "https://www.googleapis.com/auth/drive"},
+		{credentials.GmailOAuthType, "https://www.googleapis.com/auth/gmail.modify"},
 	} {
 		t.Run(test.typeID, func(t *testing.T) {
 			fake := newFakeGoogle(t)
@@ -28,12 +26,8 @@ func TestConnectAsksForTheSheetsScopeWhenTheCredentialSavedNone(t *testing.T) {
 				"clientId": "tenant-cid", "clientSecret": "tenant-csec",
 			})
 			start := startConnect(t, handler, fake, created.ID)
-			scope := start.authorize.Query().Get("scope")
-			if !strings.Contains(scope, test.want) {
-				t.Errorf("scope = %q, want it to hold %q", scope, test.want)
-			}
-			if test.not != "" && strings.Contains(scope, test.not) {
-				t.Errorf("scope = %q, must not hold %q", scope, test.not)
+			if got := start.authorize.Query().Get("scope"); got != test.want {
+				t.Errorf("scope = %q, want %q", got, test.want)
 			}
 		})
 	}
