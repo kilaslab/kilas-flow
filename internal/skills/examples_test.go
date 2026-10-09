@@ -35,9 +35,12 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/credentials"
 	"github.com/kilaslab/kilas-flow/internal/database"
 	"github.com/kilaslab/kilas-flow/internal/datastore"
+	"github.com/kilaslab/kilas-flow/internal/expression"
 	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/skills"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // exampleServer is an in-process API server holding the shipped catalogue.
@@ -272,5 +275,102 @@ func TestTheExampleHarnessRefusesAMiswiredAgent(t *testing.T) {
 	}
 	if joined := strings.Join(problems, "\n"); !strings.Contains(joined, "/connections/1/kind") {
 		t.Errorf("the refusal does not name the connection that was mis-wired: %s", joined)
+	}
+}
+
+// kilasflow-node-configuration teaches the stored shape of every property kind
+// an agent has to write by hand, and the compiler does not refuse a legacy or
+// undeclared shape on its own (property.ReadLocator accepts a bare string, for
+// one). So the example is read against the live catalogue: each parameter is
+// looked up in its node's definition, the kinds the skill promises must each
+// appear in a stored (not expression) value, and a locator must carry `__rl`,
+// a mapper must decode, an assignment collection must hold its list and a
+// key/value or fixed collection must be an object.
+func TestNodeConfigurationExampleStoresEveryComplexKind(t *testing.T) {
+	registry := node.NewRegistry()
+	registerShipped(t, registry)
+
+	var skill skills.Skill
+	for _, candidate := range embeddedBundle(t) {
+		if candidate.Name == "kilasflow-node-configuration" {
+			skill = candidate
+		}
+	}
+	if skill.Name == "" {
+		t.Fatal("the bundle has no kilasflow-node-configuration skill")
+	}
+
+	examples, err := skills.Examples(skill)
+	if err != nil {
+		t.Fatalf("read the examples: %v", err)
+	}
+
+	covered := map[property.Kind]bool{}
+	for _, example := range examples {
+		if example.Kind != skills.ExampleWorkflow {
+			continue
+		}
+
+		var document struct {
+			Nodes []workflow.Node `json:"nodes"`
+		}
+		if err := json.Unmarshal([]byte(example.JSON), &document); err != nil {
+			t.Fatalf("%s:%d: decode the document: %v", example.Path, example.Line, err)
+		}
+
+		for _, instance := range document.Nodes {
+			definition, found := registry.Resolve(instance.Type, instance.TypeVersion)
+			if !found {
+				t.Errorf("%s:%d: node %q: the catalogue has no %s", example.Path, example.Line, instance.ID, instance.Type)
+
+				continue
+			}
+			kinds := map[string]property.Kind{}
+			for _, parameter := range definition.Parameters {
+				kinds[parameter.Key] = parameter.Kind
+			}
+
+			for key, value := range instance.Parameters {
+				where := fmt.Sprintf("%s:%d: node %q parameter %q", example.Path, example.Line, instance.ID, key)
+				kind := kinds[key]
+				if expression.IsExpression(value) {
+					continue
+				}
+
+				switch kind {
+				case property.KindResourceLocator:
+					if stored, ok := value.(map[string]any); !ok || stored[property.LocatorSentinel] != true {
+						t.Errorf("%s: a resource locator is stored as {\"__rl\": true, \"mode\", \"value\"}, got %v", where, value)
+						continue
+					}
+				case property.KindResourceMapper:
+					if _, ok := property.ReadMapping(value); !ok {
+						t.Errorf("%s: a resource mapper is stored as {\"mappingMode\", \"value\", \"matchingColumns\"}, got %v", where, value)
+						continue
+					}
+				case property.KindAssignmentCollection:
+					stored, ok := value.(map[string]any)
+					if _, listed := stored["assignments"].([]any); !ok || !listed {
+						t.Errorf("%s: an assignment collection is stored as {\"assignments\": [ … ]}, got %v", where, value)
+						continue
+					}
+				case property.KindKeyValue, property.KindFixedCollection:
+					if _, ok := value.(map[string]any); !ok {
+						t.Errorf("%s: a %s is stored as an object, got %T", where, kind, value)
+						continue
+					}
+				}
+				covered[kind] = true
+			}
+		}
+	}
+
+	for _, want := range []property.Kind{
+		property.KindAssignmentCollection, property.KindResourceLocator, property.KindResourceMapper,
+		property.KindKeyValue, property.KindFixedCollection,
+	} {
+		if !covered[want] {
+			t.Errorf("the kilasflow-node-configuration example stores no %s value; it promises every complex kind", want)
+		}
 	}
 }

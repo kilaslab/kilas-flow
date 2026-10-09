@@ -34,6 +34,7 @@ kilasflow_not_shipped: []
 
 ## Strong defaults
 
+- Start from the validated example: `kilasflow skills show kilasflow-node-configuration --reference EXAMPLE.md` stores an assignment collection, a resource locator, a resource mapper, a fixed collection and key/value rows exactly as the executors read them.
 - Start at the catalogue. `kilasflow node list` (`list-node-types`) prints the types this tenant can see; `kilasflow node describe <type>` reduces that to one entry, at the version the server would resolve a document to (the highest registered), so it describes the node that would actually run (internal/cli/verbs_node.go, `runNodeDescribe`). An unknown type exits 4 with the nearest catalogue names in the message (verbs_node.go, `closeTypeHint`).
 - `describe` prints `key`, `kind`, `required`, `default`, `options`, visibility and the nested carriers. Read all of them before editing a parameter: a `default` is the server's answer for an absent value, so a property that declares one is not required (internal/node/registry.go, `requiredParameters`).
 - Required-ness is computed per node, not read from a static list, because visibility is conditional: a hidden property is not required, and a required one is only required for the configuration that shows it (internal/node/registry.go, `visibleRequiredParameters`).
@@ -101,5 +102,6 @@ what are you configuring?
 
 | File | Read when |
 | --- | --- |
+| EXAMPLE.md | you are writing a node's parameters by hand and need the stored shape of an assignment collection, a locator, a mapper, a fixed collection or key/value rows |
 | PROPERTY_KINDS.md | you need what a parameter's `kind` stores, the type options, the visibility rules, the shared settings and their bounds, or a locator's and mapper's stored shape |
 | LOAD_OPTIONS.md | a property's values come from the customer's own service, a mapper's columns are needed, or a loaded list came back empty or refused |

@@ -318,6 +318,7 @@
       "expressionRoots": [],
       "notShipped": [],
       "references": [
+        "references/EXAMPLE.md",
         "references/LOAD_OPTIONS.md",
         "references/PROPERTY_KINDS.md"
       ]
