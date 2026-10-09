@@ -11,6 +11,8 @@ import { Transport, type TransportOptions } from './http.js';
 import type {
 	APIKeyResource,
 	ClearedDatastoreOutputBody,
+	ConvertedFragmentResource,
+	ConvertFragmentInputBody,
 	CreatedAPIKeyResource,
 	CreateDatastoreInputBody,
 	CreateTenantAPIKeyInputBody,
@@ -854,6 +856,21 @@ export class KilasFlowClient {
 	 */
 	importWorkflow(document: ImportWorkflowInputBody, signal?: AbortSignal): Promise<ImportedWorkflowResource> {
 		return this.#transport.request('POST', '/workflows/import', { body: document, signal });
+	}
+
+	/**
+	 * Translates n8n JSON — nodes copied from an n8n canvas, or a whole export —
+	 * into KilasFlow nodes and connections, with the same translator
+	 * `importWorkflow` uses, and saves nothing.
+	 *
+	 * It answers the converted nodes and connections plus the import report
+	 * (`unsupported`: what was blocked, carried differently or dropped), so a
+	 * host can show a customer what a paste would become before it writes
+	 * anything through `createWorkflow` or `updateWorkflow`. The foreign
+	 * document stays `unknown` — it is untrusted input.
+	 */
+	convertWorkflowFragment(input: ConvertFragmentInputBody, signal?: AbortSignal): Promise<ConvertedFragmentResource> {
+		return this.#transport.request('POST', '/workflows/convert', { body: input, signal });
 	}
 
 	/** Exports a workflow as n8n-compatible JSON plus what the format could not carry. */

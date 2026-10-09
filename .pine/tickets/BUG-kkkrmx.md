@@ -33,3 +33,12 @@ Both fail on main.
 - [ ] The error-workflow spec expects the failing node's name (as the runner reports it), not its id.
 - [ ] The sticky-note spec asserts the note has no run record and the run's result is unaffected.
 - [ ] `playwright test tests/node-coverage.spec.ts` passes on main.
+
+## Plan (2026-10-09)
+
+Both fixes are expectation-only; the runner is not touched.
+
+1. `e2e/fixtures/error-form-nodes.ts` (~line 125): the error-workflow pair expects `execute node "stop": …` (the node id); `internal/engine/runner.go` formats `execute node %q` with `node.Name`. Read the fixture's node definition to learn the failing node's name and expect that.
+2. `e2e/tests/node-coverage.spec.ts`, "a sticky note saves and runs without affecting the result": replace the `nodeRun(record, 'note').status === 'succeeded'` assertion with one that the note has no run record, keeping the assertions that the run succeeds and the other nodes' output is unchanged. Edits are confined to that one spec (other tracks add coverage entries to the same file).
+
+Proof: run `cd e2e && pnpm exec playwright test tests/node-coverage.spec.ts` before (to see both specs fail for the stated reasons) and after (all specs pass). Any other failing spec in that file is reported, not changed.

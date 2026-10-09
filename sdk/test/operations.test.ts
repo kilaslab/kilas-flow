@@ -194,6 +194,25 @@ describe('interop', () => {
 		expect(JSON.parse(String(call!.init.body))).toEqual({ workflow: n8n, name: 'Migrated' });
 	});
 
+	it('converts pasted n8n nodes without saving anything', async () => {
+		const fragment = { nodes: [{ name: 'Start', type: 'n8n-nodes-base.manualTrigger' }], connections: {} };
+		const converted = {
+			nodes: [{ id: 'start', name: 'Start', type: 'kilasflow.manual' }],
+			connections: [],
+			unsupported: []
+		};
+		const { calls, fetchImpl } = recordingFetch({ body: converted });
+		const result = await client(fetchImpl).convertWorkflowFragment({ workflow: fragment });
+
+		// A translator, not a write: one POST, no workflow id, and the foreign
+		// document reaches the server exactly as the caller built it.
+		expect(calls.map((call) => `${call.init.method} ${pathOf(call)}`)).toEqual([
+			'POST /api/v1/workflows/convert'
+		]);
+		expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ workflow: fragment });
+		expect(result).toEqual(converted);
+	});
+
 	it('exports as n8n JSON', async () => {
 		const { calls, fetchImpl } = recordingFetch({ body: {} });
 		await client(fetchImpl).exportWorkflow('wf-1');
