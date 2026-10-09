@@ -32,6 +32,11 @@ import (
 // Register adds every node a default install serves to reg, in the order run()
 // registers them.
 //
+// It repeats run()'s registration calls, so a call added to run() has to be added
+// here too. cmd/kilasflow's TestShippedCatalogueRegistersWhatRunRegisters reads
+// both functions and fails, naming the call, when they disagree; a call that
+// adds no node to a default install is listed there with the reason instead.
+//
 // Only the definitions are wanted, so the executors, routes and option loaders
 // the packs insist on are built here and thrown away: a pack refuses to
 // register against an executor the server has not installed, and that
