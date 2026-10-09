@@ -3,10 +3,9 @@
 This is the depth behind the operations skill: what a boot actually does, in
 which order, what "ready" is really reporting, how each driver is backed up and
 restored, how to upgrade without guessing, and the order the tenant deletion
-runs in. Source of truth is the code — `internal/database/**` (the migration
-runner), `internal/datastore/**` (the per-datastore pass and fleet status),
-`internal/api/handlers/system.go` (the probes), `internal/tenantpurge/**` (the
-deletion), `migrations/{sqlite,postgres}/**`.
+runs in. It describes what the server does at boot, in its migration runner, its
+per-datastore pass and fleet status, its readiness probes and its tenant
+deletion, and the SQL migrations it ships for each driver.
 
 ## What a boot does, in order
 
@@ -22,7 +21,7 @@ deletion), `migrations/{sqlite,postgres}/**`.
 3. **The per-datastore pass.** This is separate from the SQL migrations and is
    the part that surprises people: it versions the tables KilasFlow creates *for
    a tenant*. Each datastore's catalogue row carries a `schema_version`, and
-   `internal/datastore` ships the steps that move a datastore from one version to
+   the server ships the steps that move a datastore from one version to
    the next.
    - One **transaction per step per datastore**, with the version stamp in the
      same transaction. A kill therefore leaves each datastore fully at its old
@@ -170,7 +169,7 @@ customer's own valid key, gets `403` and cannot learn from the answer whether th
 tenant exists. A deletion that fails still leaves the tenant locked out; that is
 the safe direction.
 
-The order in `internal/tenantpurge` is forced by foreign keys, by in-flight
+The order of the deletion is forced by foreign keys, by in-flight
 triggers and by the fact that a filesystem has no transaction to join:
 
 | Step | Empties | Why there |
