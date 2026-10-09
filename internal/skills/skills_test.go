@@ -23,8 +23,10 @@
 //	G2 operations        the OpenAPI document of an in-process server built the
 //	                     way the binary builds it, where every operation id a
 //	                     handler registers through huma appears
-//	G3 nodes             nodes.RegisterAll into a fresh node.Registry, the call
-//	                     the server makes at startup
+//	G3 nodes             every node a default install serves (the compiled
+//	                     nodes, the vector nodes and the embedded packs) in a
+//	                     fresh node.Registry, the calls the server makes at
+//	                     startup
 //	G4 expression roots  expression.Roots(), the allowlist the API serves to the
 //	                     editor
 //
@@ -52,7 +54,6 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/expression"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/skills"
-	"github.com/kilaslab/kilas-flow/nodes"
 )
 
 // binaryName is the word a fenced command starts with.
@@ -136,7 +137,7 @@ func TestG2OperationsExist(t *testing.T) {
 	report(t, operationDrift(embeddedBundle(t), loadProduct(t)))
 }
 
-// Every declared node type is one nodes.RegisterAll registers.
+// Every declared node type is one the shipped catalogue registers.
 func TestG3NodeTypesExist(t *testing.T) {
 	report(t, nodeDrift(embeddedBundle(t), loadProduct(t)))
 }
@@ -299,15 +300,13 @@ func operationIDs(t *testing.T) map[string]bool {
 	return ids
 }
 
-// nodeTypes registers the built-ins the way the server does at startup and
-// reads the catalogue back.
+// nodeTypes registers the shipped catalogue the way the server does at startup
+// and reads it back.
 func nodeTypes(t *testing.T) map[string]bool {
 	t.Helper()
 
 	registry := node.NewRegistry()
-	if err := nodes.RegisterAll(registry); err != nil {
-		t.Fatalf("register the built-in nodes: %v", err)
-	}
+	registerShipped(t, registry)
 
 	definitions := registry.List()
 	if len(definitions) == 0 {

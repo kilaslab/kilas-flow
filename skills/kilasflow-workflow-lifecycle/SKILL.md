@@ -56,6 +56,7 @@ kilasflow_not_shipped:
 - Find a workflow with `kilasflow workflow list` (`list-workflows`, `--limit` and `--cursor`); the listing is summaries, so the document still comes from `get-workflow`.
 - Author the canonical document the server stores: `schemaVersion: 1` with `name`, `nodes`, `connections` and `settings`. Every node carries `id`, `name`, `type`, `typeVersion` and `position`; every connection carries `id`, `kind`, `source` and `target`, each endpoint naming `nodeId` and `port` (internal/workflow/document.go).
 - Spell a connection kind the way the document does: thirteen channels, `ai_` prefixed, lowerCamel after the prefix — `ai_languageModel`, never `ai_language_model` (internal/workflow/document.go).
+- Start from the validated example: `kilasflow skills show kilasflow-workflow-lifecycle --reference EXAMPLE.md` is a webhook, a Set node and a Respond node that `workflow validate` accepts.
 - Check a draft with `kilasflow workflow validate --file <path>|-` (`validate-workflow-document`): it answers `valid` and a list of `diagnostics`, each with a `code` and a `path`, and writes nothing. Create with `kilasflow workflow create --file <path>|-` (`create-workflow`). The body must not choose the workflow id: the server assigns it on create, and update takes it from the path (internal/api/handlers/workflows.go).
 - Copy a workflow with `kilasflow workflow duplicate <workflowId> --name <name>` (`duplicate-workflow`), and run a pinned revision rather than the active one with `kilasflow run <workflowId> --revision <versionId>`.
 - Anything without a verb is one call away. `kilasflow api <operation-id>` (`api`) reaches every operation the running server serves, with `--path name=value` for placeholders, `--body @file.json` for a body, `--list` to enumerate the surface and `--schema` to print an operation's request schema without calling it.
@@ -115,5 +116,6 @@ what are you doing?
 
 | File | Read when |
 | --- | --- |
+| EXAMPLE.md | you are writing a first document and want one the compiler already accepts, with the field shapes spelled out |
 | VALIDATION_CHECKLIST.md | a create, update, activation or run was refused and you need to know what the refusal means and how to fix it |
 | NAMING_AND_DESCRIPTIONS.md | you are naming node instances, node types or descriptions, or renaming a node another node's expression references |

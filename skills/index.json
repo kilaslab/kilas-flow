@@ -482,6 +482,7 @@
         "No update, import or restore verb: `update-workflow`, `import-workflow` and `restore-workflow-version` are served and reached with kilasflow api"
       ],
       "references": [
+        "references/EXAMPLE.md",
         "references/NAMING_AND_DESCRIPTIONS.md",
         "references/VALIDATION_CHECKLIST.md"
       ]
