@@ -480,14 +480,10 @@ func TestImportExportExampleRoundTripsThroughN8n(t *testing.T) {
 			} `json:"data"`
 		}
 		server.decode(t, &imported, "api", "import-workflow", "--body", "@"+importBody)
-		// The exporter writes n8n's workflow-level `settings.executionOrder`, which
-		// KilasFlow has no equivalent for, so the way back reports it once as a
-		// dropped `settings` field. Anything else the import reports is a node or
-		// a value that did not survive.
+		// The exporter's `settings.executionOrder: "v1"` is the order this server
+		// runs, so the way back reports nothing for it: any issue is a node or a
+		// value that did not survive.
 		for _, issue := range imported.Data.Unsupported {
-			if issue.Severity == "dropped" && issue.Field == "settings" && issue.NodeID == "" {
-				continue
-			}
 			t.Errorf("%s:%d: the import reports %s at %q (node %q): %s",
 				example.Path, example.Line, issue.Severity, issue.Field, issue.NodeID, issue.Reason)
 		}

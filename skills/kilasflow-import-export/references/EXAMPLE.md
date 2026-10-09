@@ -84,10 +84,11 @@ table leaves the export as itself and shows up in `lossy`.
 - **Connections change shape.** The canonical list of edges with ids becomes
   n8n's map keyed by node *name*, so two nodes sharing a name cannot cross the
   border.
-- **One field is dropped on the way back.** The exporter writes n8n's
-  workflow-level `settings.executionOrder`, which KilasFlow has no equivalent
-  for, so the import reports it as `dropped` at `settings`. It is a severity
-  that costs nothing; a `lossy` or `blocking` entry is the one to act on.
+- **The execution order survives silently.** The exporter writes n8n's
+  workflow-level `settings.executionOrder: "v1"`, the order KilasFlow always
+  runs, so the way back reports nothing for it. A `lossy` entry at
+  `settings.executionOrder` means a file asked for another order (`v0`), and is
+  one to act on.
 - **Credentials are not exported.** A node's `credentials` map is dropped from
   the file, and the receiving side attaches its own.
 

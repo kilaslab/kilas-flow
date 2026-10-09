@@ -138,11 +138,15 @@ returns. Both are accepted by `kilasflow workflow validate`. Replace
 - **The child must be active.** A sub-workflow run is pinned to the called
   workflow's active revision. A child that was only saved fails the calling node
   at run time ("repository record not found: active workflow"), and activating
-  the parent while the child is inactive is refused too; the server log names the
-  child, but the API answers only a generic error, so when an activation of a
-  caller fails, check its callees first. Activating is a guarded verb the user
-  must ask for: `kilasflow workflow activate <childWorkflowId> --yes`, then the
-  parent. A test run of the parent needs the child active as well.
+  the parent while the child is inactive is refused up front with a 422
+  (`config.invalid`) that names the calling node and the child by name and id,
+  for example `node "Run billing" (call) calls workflow "Billing" (wf_…), which is
+  not active: activate that workflow first, then activate this one`. A child that
+  does not exist is refused with its own sentence ("does not exist in this
+  workspace"), because that needs a different fix: point the node at a real
+  workflow. Activating is a guarded verb the user must ask for:
+  `kilasflow workflow activate <childWorkflowId> --yes`, then the parent. A test
+  run of the parent needs the child active as well.
 - **`mode` chooses what comes back.** `each` is "wait for the sub-workflow to
   finish" and its items replace this node's output; `fireAndForget` runs it and
   lets the incoming items pass through unchanged. `itemsPerCall` is
