@@ -1,6 +1,6 @@
 import { MarkerType, type Edge as FlowEdge, type Node as FlowNode } from '@xyflow/svelte';
 
-import type { Connection, Definition, Document, Node as WorkflowNode, WorkflowDocumentInput } from '$lib/api/generated/models';
+import type { Connection, Definition, Document, Node as WorkflowNode } from '$lib/api/generated/models';
 import * as m from '$lib/paraglide/messages.js';
 import { isAnnotation } from './node-visual';
 import type { CanvasValidationIssue } from './validation';
@@ -271,15 +271,9 @@ export function documentFromFlow(base: Document, nodes: EditorFlowNode[], edges:
 	};
 }
 
-export function toWorkflowInput(document: Document): WorkflowDocumentInput {
-	return {
-		schemaVersion: document.schemaVersion,
-		name: document.name,
-		nodes: clone(document.nodes ?? []),
-		connections: clone(document.connections ?? []),
-		settings: clone(document.settings ?? {})
-	};
-}
+// The save body lives in its own module, so the workflows list can build one
+// without loading the flow library this file imports.
+export { toWorkflowInput } from './workflow-input';
 
 export function updateNodeProperty(
 	document: Document,

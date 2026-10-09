@@ -42,6 +42,11 @@ type ResourceMapperDeclaration struct {
 	MatchingColumnsRequired bool `json:"matchingColumnsRequired,omitempty"`
 	// ValuesLabel names the mapped-values section in the editor.
 	ValuesLabel string `json:"valuesLabel,omitempty"`
+	// ModelDefinable lets the author leave a column to the model: the editor
+	// offers a per-column switch, and a column set to the model is stored as a
+	// $fromAI value. Opt-in, and only meaningful for a node an AI Agent calls
+	// as a tool; a mapper without it renders and stores exactly as before.
+	ModelDefinable bool `json:"modelDefinable,omitempty"`
 }
 
 // MapperField is one column a mapper may write.

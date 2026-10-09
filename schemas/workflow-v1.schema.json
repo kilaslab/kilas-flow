@@ -17,7 +17,13 @@
       "type": "array",
       "items": { "$ref": "#/$defs/connection" }
     },
-    "settings": { "type": "object" }
+    "settings": { "type": "object" },
+    "tags": {
+      "type": "array",
+      "maxItems": 20,
+      "description": "Optional, ordered labels that group workflows. A tag has no leading or trailing whitespace, no comma and no control character, and tags are unique ignoring case. The engine measures length in UTF-16 code units (the way n8n does), so a tag of astral characters such as emoji counts two per character; maxLength here counts code points, so it is a bound every valid tag meets.",
+      "items": { "type": "string", "minLength": 1, "maxLength": 24 }
+    }
   },
   "$defs": {
     "position": {

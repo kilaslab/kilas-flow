@@ -78,3 +78,43 @@ func TestPrefixedStoreReadsAndWritesPrefixedTables(t *testing.T) {
 		t.Errorf("ListSummaries() returned %d workflows, want 1", len(page.Workflows))
 	}
 }
+
+// Tags live in a table of their own, so a prefixed install must write, filter
+// and read them through the prefixed name: a hardcoded workflow_tags would fail
+// here with no such table.
+func TestPrefixedStoreKeepsWorkflowTagsInThePrefixedTable(t *testing.T) {
+	t.Parallel()
+
+	db := openPrefixedSQLite(t, "kflow_")
+	if db.Migrator().HasTable("workflow_tags") || !db.Migrator().HasTable("kflow_workflow_tags") {
+		t.Fatalf("workflow_tags: unprefixed exists = %v, prefixed exists = %v", db.Migrator().HasTable("workflow_tags"), db.Migrator().HasTable("kflow_workflow_tags"))
+	}
+
+	tenant := repository.TenantScope{ID: "tenant-prefix-tags"}
+	store := repository.NewWorkflowStore(db.DB)
+	if _, err := store.SaveDraft(context.Background(), tenant, workflow.Document{
+		SchemaVersion: workflow.CurrentSchemaVersion,
+		ID:            "wf_prefix_tags",
+		Name:          "Prefixed tags",
+		Nodes:         []workflow.Node{},
+		Connections:   []workflow.Connection{},
+		Settings:      map[string]any{},
+		Tags:          []string{"Prod"},
+	}); err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+	page, err := store.ListSummaries(context.Background(), tenant, repository.WorkflowFilter{Tag: "prod"})
+	if err != nil {
+		t.Fatalf("ListSummaries() error = %v", err)
+	}
+	if len(page.Workflows) != 1 || len(page.Workflows[0].Tags) != 1 || page.Workflows[0].Tags[0] != "Prod" {
+		t.Errorf("ListSummaries(tag) = %+v, want the one tagged workflow with its tag", page.Workflows)
+	}
+	if err := store.Delete(context.Background(), tenant, "wf_prefix_tags"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	var rows int64
+	if err := db.Raw("SELECT COUNT(*) FROM kflow_workflow_tags").Scan(&rows).Error; err != nil || rows != 0 {
+		t.Errorf("kflow_workflow_tags rows after the delete = %d, %v; want 0", rows, err)
+	}
+}

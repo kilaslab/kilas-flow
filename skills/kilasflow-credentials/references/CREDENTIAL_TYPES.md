@@ -1,6 +1,6 @@
 # Credential types
 
-The catalogue is server-defined data (`internal/credentials/builtin.go`), served
+The catalogue is server-defined data, served
 by `list-credential-types`, and it is the authority on a type's id and fields.
 This file is the reading of it: what each type holds, which fields are secret,
 where the type places its authentication in a request, and whether it can be
@@ -10,7 +10,7 @@ probed.
 
 A credential type is one `credentials.Type` value:
 `ID`, `DisplayName`, `Description`, `Properties`, `Secrets`, an optional
-`Authenticate` descriptor and an optional `Test` (`internal/credentials/registry.go`).
+`Authenticate` descriptor and an optional `Test`.
 
 - **Properties** are described in the same language a node's parameters use, so
   a credential gets conditional visibility and masking for free. A required
@@ -51,11 +51,13 @@ A credential type is one `credentials.Type` value:
 | `openAiApi` | OpenAI, or an OpenAI-compatible endpoint | `apiKey` (secret), `url` (optional, default `https://api.openai.com/v1`) | bearer placement |
 | `openRouterApi` | OpenRouter | `apiKey` (secret) | bearer placement |
 
-Thirteen types ship, and every id and field key is byte-identical to what the
-catalogue has always held: a stored row is keyed by the type id and its sealed
+The table lists the types that were current when it was written; the types an
+installation serves are what `kilasflow api list-credential-types` prints, and
+that list grows, so read it rather than counting rows here. Every id and field
+key is fixed once shipped: a stored row is keyed by the type id and its sealed
 payload by the field keys, so renaming either makes an existing credential stop
 resolving with no way to recover it. A node pack cannot add a credential type
-today; the registry is a package-level singleton built at init.
+today; the registry is built when the server starts.
 
 ## The three that are load-bearing
 
@@ -78,9 +80,7 @@ today; the registry is a package-level singleton built at init.
 A probe exists where a harmless authenticated call proves the credential:
 `openAiApi` (`{url}/models`), `openRouterApi`, `telegramApi`
 (`{baseUrl}/bot<token>/getMe`) and the two Google types declare one, and the
-three database types are tested by connecting
-(`internal/api/handlers/credentials.go`, `probe`, which routes a database type
-to the SQL driver's own handshake under the same guard the executors receive).
+three database types are tested by connecting.
 An optional field left empty is probed at its declared default.
 
 Everything else answers `untestable`, which is a different answer from a probe
@@ -110,16 +110,14 @@ The compiler resolves each credential the node type declares — `httpBasicAuth`
 `/nodes/N/credentials/<type>` when the entry is missing or empty. A credential
 attached under a type the node does not declare — `openAiApi` on an HTTP
 Request node — is refused as `config.invalid` at the same path, naming the types
-the node accepts (`internal/workflow/compiler.go`, `undeclaredCredentials`); a
+the node accepts; a
 draft still saves. Nothing in the document is the value: the runtime resolves the payload at the moment it
 authenticates, after the host scope check and before the secret touches the
-request (`internal/repository/credentials.go`, `Resolve`;
-`internal/engine/authenticate.go`).
+request.
 
 ## Adding a type
 
-Not this bundle's job, and not a pack's today: a type is a Go value in
-`internal/credentials/builtin.go`, and a new one needs an id, its fields, which
-of them are secret, a placement if it signs HTTP requests, and optionally a
-probe. A type that marks a field secret without declaring it, duplicates an id,
+Not this bundle's job, and not a pack's today: a type is part of the server's
+own code, and a new one needs an id, its fields, which of them are secret, a
+placement if it signs HTTP requests, and optionally a probe. A type that marks a field secret without declaring it, duplicates an id,
 or uses an unknown property kind is refused when the registry is built.

@@ -105,13 +105,11 @@ const document = (await tenant.client.getWorkflow(workflowId)).latestVersion.doc
 const webhook = (document.nodes ?? []).find((node) => node.type === 'kilasflow.webhook');
 webhook.parameters = { ...webhook.parameters, authentication: 'headerAuth' };
 webhook.credentials = { httpHeaderAuth: credential.id };
-await tenant.client.updateWorkflow(workflowId, {
-  schemaVersion: document.schemaVersion,
-  name: document.name,
-  nodes: document.nodes,
-  connections: document.connections,
-  settings: document.settings
-});
+// The whole document goes back minus its server-owned id, which the write
+// schema refuses; listing fields one by one would drop the ones added later,
+// such as tags.
+const { id: _serverOwnedId, ...editable } = document;
+await tenant.client.updateWorkflow(workflowId, editable);
 await tenant.client.activateWorkflow(workflowId);
 ```
 

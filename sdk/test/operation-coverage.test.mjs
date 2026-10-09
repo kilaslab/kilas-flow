@@ -77,6 +77,7 @@ const OPERATION_COVERAGE = {
 	'load-node-property-schema': 'loadNodePropertySchema',
 	'get-expression-grammar': 'getExpressionGrammar',
 	'import-workflow': 'importWorkflow',
+	'convert-workflow-fragment': 'convertWorkflowFragment',
 	'export-workflow': 'exportWorkflow',
 	'create-embed-session': 'createEmbedSession',
 	// The embed-scoped datastore subset (FEAT-1c70nt): the definition and row
@@ -123,11 +124,23 @@ const OPERATION_COVERAGE = {
 };
 
 /**
- * Operations with no client method, and why. Empty today: every declared
- * operation is reachable. An entry here must justify itself — "not yet" is
- * not a reason — and the gate below fails on an exclusion without one.
+ * Operations with no client method, and why. An entry here must justify itself
+ * with a real constraint — "not yet" is not a reason — and the gate below fails
+ * on an exclusion without one.
  */
-const EXCLUSIONS = {};
+const EXCLUSIONS = {
+	// handlers/oauth.go: the sign-in is bound to the browser that starts it.
+	'start-credential-oauth':
+		'The Google sign-in is bound to the browser that starts it, and a backend client cannot be that browser. ' +
+		'The response sets an HttpOnly nonce cookie scoped to the OAuth callback and the callback completes only ' +
+		'when that cookie comes back with the state ("this sign-in was not started in this browser"); the state ' +
+		'also records the starting request\'s Origin as the postMessage target and, unless server.public_url is ' +
+		'set, the redirect URI comes from its Host. A KilasFlowClient runs on a host\'s server with a bearer key and its transport reads only the ' +
+		'JSON body, so the cookie would stay in the server process while the end user\'s browser opened the ' +
+		'returned authorizeUrl without it and was refused at the callback. An embed session is refused the ' +
+		'whole /credentials mutation prefix and the browser entry carries no API client by design, so the ' +
+		'only caller is the first-party dashboard in its own session.'
+};
 
 const execFileAsync = promisify(execFile);
 

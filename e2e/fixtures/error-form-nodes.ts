@@ -120,9 +120,10 @@ export async function exerciseErrorWorkflow(baseURL: string, label: string): Pro
 	);
 	const failed = await runToTerminal(baseURL, failing.id);
 	expect(failed.status).toBe('failed');
-	// The runner names the node that failed and the cause it carried, which is
-	// the sentence an operator reads in the execution list.
-	expect(failed.error?.message).toBe(`execute node "stop": ${message}`);
+	// The runner names the node that failed by the name its author gave it ("Stop",
+	// not its id "stop") and the cause it carried, which is the sentence an
+	// operator reads in the execution list.
+	expect(failed.error?.message).toBe(`execute node "Stop": ${message}`);
 
 	// The error run is a consequence of the failed one and starts after it is
 	// terminal, so it is awaited by its own execution row rather than by a

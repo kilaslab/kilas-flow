@@ -26,11 +26,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 
 	"github.com/kilaslab/kilas-flow/internal/skills"
+	splicepkg "github.com/kilaslab/kilas-flow/scripts/internal/splice"
 )
 
 const (
@@ -43,9 +43,6 @@ const (
 	// what to run.
 	beginMarker = "<!-- generated:command-reference -->"
 	endMarker   = "<!-- /generated:command-reference -->"
-	// generator names the command in the generated header, so a reader who finds
-	// the section stale knows what to run without looking it up.
-	generator = "scripts/skills-command-reference"
 )
 
 func main() {
@@ -59,7 +56,7 @@ func main() {
 }
 
 func run(check bool) error {
-	root, err := repoRoot()
+	root, err := splicepkg.RepoRoot()
 	if err != nil {
 		return err
 	}
@@ -94,7 +91,7 @@ func run(check bool) error {
 		return nil
 	case check:
 		return fmt.Errorf("%s is stale: %s\nrun: make generate-skills-command-reference",
-			skillPath, staleSummary(string(committed), updated))
+			skillPath, splicepkg.StaleSummary(string(committed), updated))
 	}
 	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", skillPath, err)
@@ -181,8 +178,7 @@ func render(tree []verb) string {
 		beginMarker,
 		"```text",
 		"# every verb this binary implements, and the operation it drives.",
-		"# generated from `kilasflow help --json` by "+generator+";",
-		"# run `make generate-skills-command-reference` after the command tree changes.",
+		"# generated from `kilasflow help --json`, and regenerated whenever the command tree changes.",
 	)
 	for index := range tree {
 		lines = append(lines, fmt.Sprintf("%-*s  %-*s  %s",
@@ -197,57 +193,18 @@ func render(tree []verb) string {
 //
 // A missing marker is an error rather than an append: a document whose section
 // silently moved to the end is a document nobody re-reads, and the second copy
-// of a marker makes "which section" ambiguous.
+// of a marker makes "which section" ambiguous. The replacement is the shared
+// scripts/internal/splice; the blank-line collapse stays here because this
+// generator owns the whole skill.
 func splice(document, section string) (string, error) {
-	lines := strings.Split(document, "\n")
-	begin, end := -1, -1
-	for index, line := range lines {
-		switch strings.TrimSpace(line) {
-		case beginMarker:
-			if begin >= 0 {
-				return "", fmt.Errorf("the document carries %s twice", beginMarker)
-			}
-			begin = index
-		case endMarker:
-			if end >= 0 {
-				return "", fmt.Errorf("the document carries %s twice", endMarker)
-			}
-			end = index
-		}
+	spliced, err := splicepkg.Replace(document, beginMarker, endMarker, section)
+	if err != nil {
+		return "", err
 	}
-	switch {
-	case begin < 0:
-		return "", fmt.Errorf("the document carries no %s marker", beginMarker)
-	case end < 0:
-		return "", fmt.Errorf("the document carries no %s marker", endMarker)
-	case end < begin:
-		return "", fmt.Errorf("%s precedes %s", endMarker, beginMarker)
-	}
-
-	spliced := make([]string, 0, len(lines))
-	spliced = append(spliced, lines[:begin]...)
-	spliced = append(spliced, strings.Split(section, "\n")...)
-	spliced = append(spliced, lines[end+1:]...)
 
 	// A blank line separates the markers from the surrounding prose, so the
 	// fenced block is not read as part of the paragraph above it.
-	spliced = collapseBlankLines(spliced)
-
-	return strings.Join(spliced, "\n"), nil
-}
-
-// collapseBlankLines collapses runs of blank lines into one, which is what the
-// splice introduces when the section it replaces already ended in one.
-func collapseBlankLines(lines []string) []string {
-	expanded := make([]string, 0, len(lines))
-	for index, line := range lines {
-		if index > 0 && strings.TrimSpace(line) == "" && strings.TrimSpace(lines[index-1]) == "" {
-			continue
-		}
-		expanded = append(expanded, line)
-	}
-
-	return expanded
+	return strings.Join(splicepkg.CollapseBlankLines(strings.Split(spliced, "\n")), "\n"), nil
 }
 
 // validate refuses a rendered document the bundle's own rules would refuse, and
@@ -265,6 +222,18 @@ func validate(document string, tree []verb) error {
 	parsed, err := skills.Parse(skillName, []byte(document))
 	if err != nil {
 		return fmt.Errorf("the rendered %s does not load: %w", skillName, err)
+	}
+
+	// The document is parsed alone, so the reference files beside it are read
+	// from the checkout: the router carries an example in references/, and the
+	// bundle's rules compare its reference table with what is there.
+	root, err := splicepkg.RepoRoot()
+	if err != nil {
+		return err
+	}
+	parsed.References, parsed.ReferenceText, err = skills.LoadReferences(os.DirFS(filepath.Join(root, "skills", skillName)))
+	if err != nil {
+		return fmt.Errorf("read the references of %s: %w", skillName, err)
 	}
 
 	findings := skills.Check([]skills.Skill{parsed})
@@ -319,57 +288,4 @@ func resolves(tree []verb, path string) bool {
 	}
 
 	return false
-}
-
-// staleSummary is the short diff a stale section deserves: where it first
-// diverges and how many lines do, rather than the whole tree twice.
-func staleSummary(committed, rendered string) string {
-	committedLines := strings.Split(committed, "\n")
-	renderedLines := strings.Split(rendered, "\n")
-
-	first, differing := -1, 0
-	for index := 0; index < len(committedLines) || index < len(renderedLines); index++ {
-		var have, want string
-		if index < len(committedLines) {
-			have = committedLines[index]
-		}
-		if index < len(renderedLines) {
-			want = renderedLines[index]
-		}
-		if have == want {
-			continue
-		}
-		differing++
-		if first < 0 {
-			first = index + 1
-		}
-	}
-
-	return fmt.Sprintf("%d line(s) differ, first at line %d: committed %q, rendered %q",
-		differing, first, lineAt(committedLines, first), lineAt(renderedLines, first))
-}
-
-// lineAt reads a 1-based line, or "" past the end.
-func lineAt(lines []string, number int) string {
-	if number < 1 || number > len(lines) {
-		return ""
-	}
-
-	return lines[number-1]
-}
-
-// repoRoot is the repository root, from this file's own location: the command
-// runs from anywhere, including a Makefile target invoked from a subdirectory.
-func repoRoot() (string, error) {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		return "", fmt.Errorf("locate %s", generator)
-	}
-
-	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		return "", fmt.Errorf("locate the repository root above %s: %w", generator, err)
-	}
-
-	return root, nil
 }

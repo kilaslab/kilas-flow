@@ -54,6 +54,15 @@ func TestVectorNodesRefuseWithoutTheTier(t *testing.T) {
 	if got := nodes.VectorUnavailableReason("postgres"); got != "" {
 		t.Fatalf("postgres reason = %q, want empty", got)
 	}
+	// Only the vector store needs the extension: the embeddings node calls an
+	// OpenAI-compatible HTTP API and runs on any driver, so a message that said
+	// it was unavailable would send an operator to install pgvector for a node
+	// that never needed it.
+	for _, driver := range []string{"sqlite", ""} {
+		if got := nodes.VectorUnavailableReason(driver); strings.Contains(got, "embeddings") || !strings.Contains(got, "vector store node") {
+			t.Fatalf("reason for driver %q = %q, want a message about the vector store node alone", driver, got)
+		}
+	}
 
 	// The definitions are built the way the server builds them: with the
 	// tier's answer for this install. Validate is pure, so it is asked

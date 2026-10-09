@@ -10,7 +10,7 @@
 </script>
 
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ChevronUp from '@lucide/svelte/icons/chevron-up';
@@ -47,10 +47,17 @@ import { assistKey, completionInsertion, expressionCompletions, previewStep, typ
 	} from '$lib/workflow-editor/conditions';
 	import { currentMode, readLocator, switchMode, writeLocator } from '$lib/workflow-editor/resource-locator';
 	import {
+		MAPPING_MANUAL,
 		columnControl,
+		columnText,
+		editColumn,
+		flipColumnSource,
+		isModelDefined,
+		isWholeExpression,
 		knownColumnType,
 		matchableColumns,
 		readMapping,
+		wholeExpressionTemplate,
 		writableColumns,
 		writeMapping
 	} from '$lib/workflow-editor/resource-mapper';
@@ -206,6 +213,8 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 	});
 	/** A resource mapper's columns, and the mapping over them. */
 	let schemaState = $state<{ fields: MapperColumn[]; reason: string }>({ fields: [], reason: '' });
+	/** Whether the loader has answered yet (with columns, with none, or with a failure). */
+	let schemaSettled = $state(false);
 	const mapping = $derived(readMapping(property, value));
 	// The live columns when they have loaded, the stored copy until then, so
 	// the form is not empty on the first render of a saved node.
@@ -217,17 +226,97 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 	$effect(() => {
 		const key = schemaKey;
 		if (key === '' || !loadSchema) return;
+		// A new key is a new question (another workflow, another node): the
+		// answer given to the last one says nothing about this one's columns.
+		schemaSettled = false;
 		return loadSoon({
 			key: `schema:${key}`,
 			load: () => untrack(() => loadSchema(property)),
-			apply: (result) => (schemaState = result),
+			apply: (result) => {
+				schemaState = result;
+				schemaSettled = true;
+			},
 			fail: (reason) => ({ fields: [], reason }),
-			cache: schemaCache
+			// A workflow's declared inputs change whenever its author edits
+			// and activates it, in this same page session; the server answers
+			// no-store for that reason, so the column list is not remembered.
+			cache: modelDefinable ? undefined : schemaCache
 		});
 	});
 
 	function setColumn(id: string, next: unknown) {
 		onChange(writeMapping({ ...mapping, value: { ...mapping.value, [id]: next } }, schemaColumns));
+	}
+
+	/**
+	 * Whether the mapper lets the model fill a column. Opt-in, declared by the
+	 * node: a table's columns have no business being offered to a model, so a
+	 * mapper without the flag renders no switch.
+	 */
+	const modelDefinable = $derived(property.kind === 'resourceMapper' && property.mapper?.modelDefinable === true);
+	/** The inputs are one expression, which no per-column form can show. */
+	const mapperIsExpression = $derived(modelDefinable && isWholeExpression(value));
+	/**
+	 * Keys the stored value carries that the loaded columns do not list — the
+	 * extra static inputs a plain-JSON tool kept — so they stay visible and
+	 * removable instead of being sent unseen. A workflow that declares no
+	 * columns (one that takes anything, one that is inactive or unreadable, or
+	 * one named by an expression) lists every key it has: those are exactly the
+	 * inputs the form could not otherwise show. Not while a loader is still on
+	 * its way, when every key would look undeclared for a moment.
+	 */
+	const columnsKnown = $derived(!loadSchema || schemaSettled);
+	const undeclaredKeys = $derived(
+		modelDefinable && (schemaColumns.length > 0 || columnsKnown)
+			? Object.keys(mapping.value).filter((key) => !schemaColumns.some((column) => column.id === key))
+			: []
+	);
+
+	function flipSource(column: MapperColumn) {
+		onChange(writeMapping(flipColumnSource(mapping, column), schemaColumns));
+	}
+
+	function removeUndeclared(key: string) {
+		const { [key]: _removed, ...rest } = mapping.value;
+		onChange(writeMapping({ ...mapping, value: rest }, schemaColumns));
+	}
+
+	/**
+	 * Replacing a whole expression with the per-field form deletes the
+	 * expression, which is the author's code, so it is asked for first.
+	 */
+	let confirmingFieldInputs = $state(false);
+	let cancelFieldInputsButton = $state<HTMLButtonElement>();
+	let fieldInputsTrigger = $state<HTMLButtonElement>();
+	// A plain variable, not state: the effect below both reads and writes it.
+	let wasConfirmingFieldInputs = false;
+
+	$effect(() => {
+		// The trigger is gone once the question is open, which leaves focus on
+		// the page and Escape with nothing to act on: take focus into the
+		// question, on its safe answer.
+		if (confirmingFieldInputs && !wasConfirmingFieldInputs) void tick().then(() => cancelFieldInputsButton?.focus());
+		wasConfirmingFieldInputs = confirmingFieldInputs;
+	});
+
+	// This field is reused when another node is selected, so a question left
+	// open for one node must not greet the next, nor outlive its expression.
+	let confirmOwner = '';
+	$effect(() => {
+		const owner = ownerKey;
+		const isExpressionNow = mapperIsExpression;
+		if (!isExpressionNow || owner !== confirmOwner) confirmingFieldInputs = false;
+		confirmOwner = owner;
+	});
+
+	function cancelFieldInputs() {
+		confirmingFieldInputs = false;
+		void tick().then(() => fieldInputsTrigger?.focus());
+	}
+
+	function useFieldInputs() {
+		confirmingFieldInputs = false;
+		onChange(writeMapping({ mappingMode: MAPPING_MANUAL, value: {}, matchingColumns: [] }, schemaColumns));
 	}
 
 	function toggleMatch(id: string, on: boolean): string[] {
@@ -555,6 +644,53 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 	}
 </script>
 
+<!-- The control for one fixed mapper column, whatever kind of row holds it. A
+     column that holds an expression is edited as its template and stays an
+     expression; the marker's own JSON in a text box was destroyed by the first
+     keystroke. -->
+{#snippet columnInput(column: MapperColumn)}
+	{#if columnControl(column.type) === 'boolean'}
+		<select aria-label={column.displayName} value={String(mapping.value[column.id] ?? 'false')} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => setColumn(column.id, event.currentTarget.value === 'true')}>
+			<option value="true">true</option>
+			<option value="false">false</option>
+		</select>
+	{:else if column.options && column.options.length > 0}
+		<select aria-label={column.displayName} value={displayValue(mapping.value[column.id])} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => setColumn(column.id, event.currentTarget.value)}>
+			<option value="">{m.properties_choose()}</option>
+			{#each column.options as option (option.value)}
+				<option value={option.value}>{option.label}</option>
+			{/each}
+		</select>
+	{:else}
+		<!-- A number column of a mapper the model can fill is a text box: a
+		     number input refuses the braces a fixed expression needs. -->
+		<input aria-label={column.displayName} type={columnControl(column.type) === 'number' && !modelDefinable && !isExpression(mapping.value[column.id]) ? 'number' : 'text'} inputmode={columnControl(column.type) === 'number' && modelDefinable ? 'decimal' : undefined} value={columnText(mapping.value[column.id])} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" oninput={(event) => setColumn(column.id, editColumn(mapping.value[column.id], event.currentTarget.value, columnControl(column.type), modelDefinable))} />
+	{/if}
+{/snippet}
+
+<!-- What a mapper of the model switch shows when its inputs are one expression:
+     the notice, and the way out, which deletes the author's expression and so
+     is asked first, inline, as the version panel asks before it restores. -->
+{#snippet wholeExpressionNotice()}
+	<p class="rounded border border-dashed border-input px-2 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">{m.properties_mapper_expression_notice()}</p>
+	{#if confirmingFieldInputs}
+		<div role="alertdialog" aria-label={m.properties_mapper_use_fields()} tabindex="-1" class="grid gap-1.5 rounded border border-border bg-muted/40 p-2" onkeydown={(event) => {
+			if (event.key === 'Escape') {
+				event.stopPropagation();
+				cancelFieldInputs();
+			}
+		}}>
+			<p class="text-[0.6875rem] leading-4 text-muted-foreground">{m.properties_mapper_use_fields_confirm()}</p>
+			<div class="flex justify-end gap-1.5">
+				<button type="button" bind:this={cancelFieldInputsButton} class="rounded px-2 py-1 text-[0.6875rem] text-muted-foreground hover:bg-muted" onclick={cancelFieldInputs}>{m.workflows_cancel()}</button>
+				<button type="button" class="rounded bg-primary px-2 py-1 text-[0.6875rem] font-medium text-primary-foreground transition-opacity hover:opacity-90" onclick={useFieldInputs}>{m.properties_mapper_use_fields_confirm_action()}</button>
+			</div>
+		</div>
+	{:else}
+		<button type="button" bind:this={fieldInputsTrigger} class="justify-self-start rounded border border-border px-2 py-1 text-[0.6875rem] text-muted-foreground transition-colors hover:bg-muted" onclick={() => (confirmingFieldInputs = true)}>{m.properties_mapper_use_fields()}</button>
+	{/if}
+{/snippet}
+
 <div class="grid gap-1" role={labelTarget ? undefined : 'group'} aria-labelledby={labelTarget ? undefined : `property-label-${fieldID}`}>
 	<div class="flex items-baseline justify-between gap-2">
 		{#if labelTarget}
@@ -618,6 +754,13 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		<p id={`property-${fieldID}-hint`} class="text-[0.6875rem] leading-4 {expressionHint(template) ? 'text-destructive' : 'text-muted-foreground'}">
 			{expressionHint(template) ?? m.properties_expression_hint_default({ example: expressionExample })}
 		</p>
+		{#if mapperIsExpression}
+			<!-- Which columns one expression produces is only known when it
+			     runs, so there is nothing to switch per column. The expression
+			     stays editable above; the way out replaces it with the
+			     per-field form, every column left to the model. -->
+			{@render wholeExpressionNotice()}
+		{/if}
 	{:else if property.kind === 'boolean'}
 		<label class="flex h-7 items-center gap-2 rounded-md border border-input px-2 text-xs">
 			<input id={`property-${fieldID}`} type="checkbox" class="size-3.5" checked={Boolean(value)} onchange={(event) => onChange(event.currentTarget.checked)} />
@@ -915,6 +1058,13 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		</div>
 	{:else if property.kind === 'resourceMapper'}
 		<div class="grid gap-1.5 rounded-md border border-input p-1.5">
+			{#if mapperIsExpression}
+				<!-- The mapper's own value is the expression (the bare expression
+				     takes the textarea above). Shown, not editable here: this shape
+				     arrives from an import or the API, and the way out is the same. -->
+				<code class="block break-words rounded border border-border bg-muted/40 px-2 py-1 font-mono text-[0.6875rem]">{wholeExpressionTemplate(value)}</code>
+				{@render wholeExpressionNotice()}
+			{:else}
 			{#if property.mapper?.supportsAutoMap}
 				<label class="grid gap-1 text-[0.6875rem]">
 					<span class="text-muted-foreground">{m.properties_mapping_column_mode()}</span>
@@ -956,31 +1106,57 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 				</p>
 			{:else}
 				{#each writableColumns(schemaColumns, mapping) as column (column.id)}
-					<label class="grid gap-1 text-[0.6875rem]">
-						<span class="text-muted-foreground">{column.displayName}{column.required ? ' *' : ''}</span>
-						{#if columnControl(column.type) === 'boolean'}
-							<select aria-label={column.displayName} value={String(mapping.value[column.id] ?? 'false')} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => setColumn(column.id, event.currentTarget.value === 'true')}>
-								<option value="true">true</option>
-								<option value="false">false</option>
-							</select>
-						{:else if column.options && column.options.length > 0}
-							<select aria-label={column.displayName} value={displayValue(mapping.value[column.id])} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => setColumn(column.id, event.currentTarget.value)}>
-								<option value="">{m.properties_choose()}</option>
-								{#each column.options as option (option.value)}
-									<option value={option.value}>{option.label}</option>
-								{/each}
-							</select>
-						{:else}
-							<input aria-label={column.displayName} type={columnControl(column.type) === 'number' ? 'number' : 'text'} value={displayValue(mapping.value[column.id])} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" oninput={(event) => setColumn(column.id, columnControl(column.type) === 'number' ? Number(event.currentTarget.value) : event.currentTarget.value)} />
-						{/if}
-						{#if !knownColumnType(column.type)}
-							<!-- Named rather than dropped: a column missing from
-							     the form reads as "this table has no such
-							     column", which is a worse lie. -->
-							<span class="text-destructive">{m.properties_unknown_column_type({ type: column.type ?? '' })}</span>
-						{/if}
-					</label>
+					{#if modelDefinable}
+						{@const modelFills = isModelDefined(mapping, column.id)}
+						<!-- A div, not a label: a label wrapping both the switch and
+						     the input would make a click on the column's name flip
+						     the switch. The inputs carry their own aria-label. -->
+						<div class="grid gap-1 text-[0.6875rem]">
+							<div class="flex items-baseline justify-between gap-2">
+								<span class="text-muted-foreground">{column.displayName}{column.required ? ' *' : ''}</span>
+								<button type="button" role="switch" aria-checked={modelFills} aria-label={m.properties_column_model_aria({ column: column.displayName })} class="shrink-0 rounded border border-border px-1 py-0.5 font-mono text-[0.625rem] leading-4 text-muted-foreground transition-colors hover:bg-muted aria-checked:border-primary/40 aria-checked:bg-primary/10 aria-checked:text-primary" onclick={() => flipSource(column)}>
+									{modelFills ? m.properties_mode_model() : m.properties_mode_fixed()}
+								</button>
+							</div>
+							{#if modelFills}
+								<p class="rounded border border-dashed border-input px-2 py-1 leading-4 text-muted-foreground">{m.properties_column_model_hint()}</p>
+							{:else}
+								{@render columnInput(column)}
+							{/if}
+							{#if !knownColumnType(column.type)}
+								<span class="text-destructive">{m.properties_unknown_column_type({ type: column.type ?? '' })}</span>
+							{/if}
+						</div>
+					{:else}
+						<label class="grid gap-1 text-[0.6875rem]">
+							<span class="text-muted-foreground">{column.displayName}{column.required ? ' *' : ''}</span>
+							{@render columnInput(column)}
+							{#if !knownColumnType(column.type)}
+								<!-- Named rather than dropped: a column missing from
+								     the form reads as "this table has no such
+								     column", which is a worse lie. -->
+								<span class="text-destructive">{m.properties_unknown_column_type({ type: column.type ?? '' })}</span>
+							{/if}
+						</label>
+					{/if}
 				{/each}
+			{/if}
+			{#if undeclaredKeys.length > 0}
+				<!-- After the columns, and also when there are none: a workflow
+				     that declares nothing is where the static inputs a plain-JSON
+				     tool kept would otherwise be sent unseen. -->
+				<div class="grid gap-1 text-[0.6875rem]">
+					<p class="text-muted-foreground">{m.properties_mapper_undeclared()}</p>
+					<div class="flex flex-wrap gap-1">
+						{#each undeclaredKeys as key (key)}
+							<span class="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-muted-foreground">
+								{key}
+								<button type="button" aria-label={m.properties_remove_property({ label: key })} class="grid size-4 place-items-center rounded transition-colors hover:bg-muted" onclick={() => removeUndeclared(key)}><X class="size-3" aria-hidden="true" /></button>
+							</span>
+						{/each}
+					</div>
+				</div>
+			{/if}
 			{/if}
 		</div>
 	{:else if property.kind === 'conditions'}

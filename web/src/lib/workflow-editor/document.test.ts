@@ -160,8 +160,24 @@ describe('workflow editor document helpers', () => {
 			name: 'Welcome customer',
 			nodes: original.nodes,
 			connections: original.connections,
-			settings: {}
+			settings: {},
+			tags: []
 		});
+	});
+
+	// A save is the whole truth about a workflow: the server replaces its tags
+	// with the ones in the body, so an editor save that left them out would
+	// silently untag every workflow it touched.
+	it('carries the workflow tags into a save input, through the canvas round trip', () => {
+		const original = { ...savedDocument(), tags: ['Prod', 'billing'] };
+		const canvas = documentFromCanvas(original, [manual, set]);
+		const restored = canvas.toDocument(original);
+
+		expect(restored.tags).toEqual(['Prod', 'billing']);
+		expect(toWorkflowInput(restored).tags).toEqual(['Prod', 'billing']);
+		// A copy, so editing the input never edits the open document.
+		expect(toWorkflowInput(restored).tags).not.toBe(restored.tags);
+		expect(toWorkflowInput(savedDocument()).tags).toEqual([]);
 	});
 
 	it('accepts a reactive proxy returned by the server-state client', () => {

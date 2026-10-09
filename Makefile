@@ -341,6 +341,22 @@ generate-skills-command-reference: ## Regenerate the router skill's command refe
 generate-skills-command-reference-check: ## Fail if the router skill's command reference is stale
 	$(GO) run ./scripts/skills-command-reference --check
 
+# The docs state facts about the product that a person cannot keep right by hand:
+# how many node types a default install serves (concepts/node-registry.md and
+# start/what-kilasflow-is.md), what each exit code means (reference/cli.md) and
+# how many credential types ship (concepts/credentials.md). Each is written
+# between <!-- generated:... --> markers by scripts/docs-facts from the package
+# that owns it (internal/shippedcatalogue, internal/cli, internal/credentials),
+# so a node added or an exit code changed moves the pages in the same change.
+# Needs the Go toolchain and nothing else.
+.PHONY: generate-docs-facts
+generate-docs-facts: ## Regenerate the docs' exit-code tables, catalogue size and credential-type count
+	$(GO) run ./scripts/docs-facts
+
+.PHONY: generate-docs-facts-check
+generate-docs-facts-check: ## Fail if the docs' exit-code tables, catalogue size or credential-type count are stale
+	$(GO) run ./scripts/docs-facts --check
+
 # The bundle's own gate, and the design's G5. Two halves, because the drift it
 # guards has two shapes.
 #
@@ -616,3 +632,17 @@ clean: ## Remove build artifacts
 .PHONY: smoke-cli
 smoke-cli: ## Prove the agent CLI against a booted server
 	sh scripts/smoke-cli.sh
+
+# The CLI reference is what an agent copies from, so its examples are run, not
+# read: scripts/cli-examples boots the binary this target just built against a
+# fresh SQLite database, seeds the ids the page names as shell variables by
+# driving the same binary, and runs every shell example in reference/cli.md with
+# `sh -c`, comparing each exit code with the page's `# exit N` annotation (0 when
+# there is none). It also checks the catalogue the server really serves against
+# the size node-registry.md states. The server's egress guard stays on: the one
+# address the examples call is admitted by exact host and port. The flag and
+# argument shape of every example is checked without a server by `go test
+# ./internal/cli`; this is the half that needs one.
+.PHONY: smoke-cli-examples
+smoke-cli-examples: build ## Run every cli.md example against a booted server
+	$(GO) run ./scripts/cli-examples -binary $(BIN_DIR)/$(APP_NAME)

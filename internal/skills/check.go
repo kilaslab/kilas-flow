@@ -30,6 +30,12 @@ const (
 	// yet': that section names capabilities that do not exist, so a command
 	// there is a claim no drift gate can verify.
 	RuleNotShippedCommands = "not-shipped-commands"
+	// RuleSourceCitations refuses a citation of the product's own source tree.
+	// A skill is installed from the binary into somebody else's project, where
+	// internal/engine/runner.go is a path that does not exist, so a reader
+	// cannot open it and a reviewer cannot tell whether it is still true. A
+	// claim is cited to a docs page or to a reference file the skill ships.
+	RuleSourceCitations = "source-citations"
 )
 
 // credentialsSkill is the skill that owns the secret rule, and
@@ -90,6 +96,7 @@ func Check(skills []Skill) []Finding {
 		findings = append(findings, checkDeclarations(skill)...)
 		findings = append(findings, checkSecretHygiene(skill)...)
 		findings = append(findings, checkNotShippedCommands(skill)...)
+		findings = append(findings, checkSourceCitations(skill)...)
 	}
 
 	sort.SliceStable(findings, func(left, right int) bool {
@@ -383,6 +390,145 @@ func checkNotShippedCommands(skill Skill) []Finding {
 	}
 
 	return findings
+}
+
+// The source-citation patterns. A directory of the product's own tree followed
+// by a path, and a bare source file name.
+//
+// Some roots only the product's tree uses: internal/, cmd/, web/src/, sdk/src/
+// and docs/src/, so anything below them is a citation. The others are ordinary
+// words in a skill ("the nodes/connections of a document", "the packs
+// directory"), so a path under nodes/, sdk/, scripts/, e2e/, packs/ or
+// migrations/ is a citation only when it names a file (an extension) or a glob.
+//
+// What a user's project has is spared by construction: a path that follows "./"
+// or "/" is the user's own (./packs/acme, ./nodes/mine, /nodes/N/parameters),
+// and the guest import path github.com/kilaslab/kilas-flow/pkg/sdk and the
+// files a pack author writes (main.go, go.mod) name things the author creates.
+// A bare file name that is the first label of a hostname (pkg.go.dev) is not a
+// file.
+var (
+	sourceTreePath = regexp.MustCompile(`(?:internal|nodes|cmd|web/src|sdk|scripts|e2e|docs/src|packs|migrations)/[A-Za-z0-9_.*{},-]+(?:/[A-Za-z0-9_.*{},-]+)*`)
+	sourceFileName = regexp.MustCompile(`[A-Za-z0-9_]+\.(?:go|ts|svelte)\b`)
+	sourceFileExt  = regexp.MustCompile(`\.(?:go|ts|svelte|md|mdx|json|sql|sh|mjs|js|yaml|yml|toml)$`)
+)
+
+// productOnlyRoots are the directories nothing but the product's own tree is
+// called, so any path below one is a citation.
+var productOnlyRoots = []string{"internal/", "cmd/", "web/src/", "sdk/src/", "docs/src/"}
+
+// allowedSourceFiles are file names a pack author writes in their own project.
+var allowedSourceFiles = map[string]bool{"main.go": true}
+
+// citesSource reports whether a matched tree path points into the product's
+// source rather than using a directory name as a word.
+func citesSource(cited string) bool {
+	for _, root := range productOnlyRoots {
+		if strings.HasPrefix(cited, root) {
+			return true
+		}
+	}
+
+	return sourceFileExt.MatchString(cited) || strings.ContainsAny(cited, "*{")
+}
+
+// checkSourceCitations scans the body and every reference file.
+//
+// A tree path is refused wherever it appears, fenced or not; a bare file name
+// is refused outside fences, because a fenced block is a listing the reader
+// copies and "main.go" in a pack author's example is theirs.
+func checkSourceCitations(skill Skill) []Finding {
+	documents := make([]proseDocument, 0, len(skill.ReferenceText)+1)
+	documents = append(documents, proseDocument{name: skill.Path, text: skill.Body})
+	for _, reference := range skill.References {
+		if text, found := skill.ReferenceText[reference]; found {
+			documents = append(documents, proseDocument{name: reference, text: text})
+		}
+	}
+
+	findings := make([]Finding, 0)
+	for _, document := range documents {
+		seen := map[string]bool{}
+		report := func(cited string) {
+			if seen[cited] {
+				return
+			}
+			seen[cited] = true
+			findings = append(findings, Finding{
+				Skill: skill.Name, Rule: RuleSourceCitations,
+				Message: fmt.Sprintf("%s cites the repository source %q, which an installed bundle cannot open; cite a docs page as \"(docs: concepts/execution-model)\" or a file of this bundle as `kilasflow skills show <skill> --reference <FILE>.md`", document.name, cited),
+			})
+		}
+
+		remaining := document.text
+		for _, span := range sourceTreePath.FindAllStringIndex(document.text, -1) {
+			if span[0] > 0 && isPathContinuation(document.text[span[0]-1]) {
+				continue
+			}
+			cited := strings.TrimRight(document.text[span[0]:span[1]], ".,;:")
+			if !citesSource(cited) {
+				continue
+			}
+			report(cited)
+			remaining = remaining[:span[0]] + strings.Repeat(" ", span[1]-span[0]) + remaining[span[1]:]
+		}
+
+		prose := unfenced(remaining)
+		for _, span := range sourceFileName.FindAllStringIndex(prose, -1) {
+			name := prose[span[0]:span[1]]
+			if allowedSourceFiles[name] {
+				continue
+			}
+			// "pkg.go.dev" and "host.ts.net" are hostnames: the extension is
+			// followed by another label.
+			if span[1]+1 < len(prose) && prose[span[1]] == '.' && isLetter(prose[span[1]+1]) {
+				continue
+			}
+			report(name)
+		}
+	}
+
+	return findings
+}
+
+// isPathContinuation reports a byte that makes a tree path somebody else's:
+// "./nodes/x" and "/srv/internal/x" are not the product's tree, and
+// "pkg-internal/x" is a different word.
+func isPathContinuation(before byte) bool {
+	return before == '.' || before == '/' || before == '-' || before == '_' ||
+		(before >= '0' && before <= '9') ||
+		(before >= 'a' && before <= 'z') ||
+		(before >= 'A' && before <= 'Z')
+}
+
+// isLetter reports an ASCII letter.
+func isLetter(value byte) bool {
+	return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z')
+}
+
+// unfenced is a document with every fenced block replaced by blank lines, so a
+// match keeps its position relative to the lines around it.
+func unfenced(document string) string {
+	var (
+		kept   []string
+		fenced bool
+	)
+	for _, line := range strings.Split(document, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+			kept = append(kept, "")
+
+			continue
+		}
+		if fenced {
+			kept = append(kept, "")
+
+			continue
+		}
+		kept = append(kept, line)
+	}
+
+	return strings.Join(kept, "\n")
 }
 
 // proseDocument is one document the secret-hygiene rule reads: a skill body or

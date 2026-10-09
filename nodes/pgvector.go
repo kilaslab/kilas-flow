@@ -163,9 +163,9 @@ func VectorUnavailableReason(driver string) string {
 		return ""
 	}
 	if strings.TrimSpace(driver) == "" {
-		return "the embeddings and vector store nodes need PostgreSQL with the pgvector extension installed"
+		return "the vector store node needs PostgreSQL with the pgvector extension installed"
 	}
-	return fmt.Sprintf("the embeddings and vector store nodes need PostgreSQL with the pgvector extension installed; this install runs on %s, where they are unavailable", driver)
+	return fmt.Sprintf("the vector store node needs PostgreSQL with the pgvector extension installed; this install runs on %s, where it is unavailable", driver)
 }
 
 // ProbeVectorExtension reports whether a PostgreSQL carries the vector
@@ -175,7 +175,7 @@ func ProbeVectorExtension(ctx context.Context, db *sql.DB) error {
 	var present int
 	err := db.QueryRowContext(ctx, `SELECT 1 FROM pg_extension WHERE extname = 'vector'`).Scan(&present)
 	if err == sql.ErrNoRows {
-		return fmt.Errorf("the embeddings and vector store nodes need the PostgreSQL pgvector extension: run CREATE EXTENSION vector as a superuser, or install the pgvector package for your server, and restart")
+		return fmt.Errorf("the vector store node needs the PostgreSQL pgvector extension: run CREATE EXTENSION vector as a superuser, or install the pgvector package for your server, and restart")
 	}
 	return err
 }
@@ -704,6 +704,7 @@ func VectorStoreNode(unavailable string) node.Definition {
 					{Label: "Insert Documents", Value: VectorModeInsert},
 					{Label: "Get Many", Value: VectorModeGetMany},
 					{Label: "Retrieve as Tool", Value: VectorModeRetrieveAsTool},
+					{Label: "Retrieve (for Vector Store Tool)", Value: VectorModeRetrieve},
 				},
 			},
 			{
@@ -775,11 +776,11 @@ func validateVectorStore(unavailable string) workflow.ConfigValidator {
 		}
 		mode := vectorStoreModeOf(n.Parameters)
 		switch mode {
-		case VectorModeInsert, VectorModeGetMany, VectorModeRetrieveAsTool, VectorOperationDelete:
+		case VectorModeInsert, VectorModeGetMany, VectorModeRetrieveAsTool, VectorModeRetrieve, VectorOperationDelete:
 		default:
-			return fmt.Errorf("operation must be %q, %q or %q, or mode %q, %q or %q",
+			return fmt.Errorf("operation must be %q, %q or %q, or mode %q, %q, %q or %q",
 				VectorOperationInsert, VectorOperationSearch, VectorOperationDelete,
-				VectorModeInsert, VectorModeGetMany, VectorModeRetrieveAsTool)
+				VectorModeInsert, VectorModeGetMany, VectorModeRetrieveAsTool, VectorModeRetrieve)
 		}
 		if strings.TrimSpace(textValue(n.Parameters["collection"], "")) == "" {
 			return fmt.Errorf("collection is required")
@@ -1091,6 +1092,8 @@ func (executor *VectorStoreExecutor) Execute(ctx context.Context, ir workflow.IR
 		return executor.executeSearch(ctx, ir, tenant, collection, input, request)
 	case VectorModeRetrieveAsTool:
 		return executor.executeRetrieveAsTool(ir, collection, input)
+	case VectorModeRetrieve:
+		return executor.executeRetrieve(ir, collection, input)
 	case VectorOperationDelete:
 		return executor.executeDelete(ctx, ir, tenant, collection)
 	default:
@@ -1218,22 +1221,11 @@ func (executor *VectorStoreExecutor) executeRetrieveAsTool(ir workflow.IRNode, c
 	if topK <= 0 {
 		topK = DefaultVectorTopK
 	}
-	descriptor := map[string]any{
-		"kind":        toolKindVectorStore,
-		"name":        name,
-		"description": description,
-		"nodeName":    ir.Name,
-		"backend":     "internal",
-		"collection":  collection,
-		"topK":        topK,
-		"distance":    textValue(ir.Parameters["distance"], VectorDistanceCosine),
-	}
-	if embeddings := embeddingsDescriptorOf(input["embedding"]); embeddings != nil {
-		descriptor["embeddings"] = embeddings
-	}
-	if filter, err := vectorObject(ir.Parameters["metadataFilter"]); err == nil && filter != nil {
-		descriptor["metadataFilter"] = filter
-	}
+	descriptor := executor.sourceFields(ir, collection, input)
+	descriptor["kind"] = toolKindVectorStore
+	descriptor["name"] = name
+	descriptor["description"] = description
+	descriptor["topK"] = topK
 	return workflow.NodeOutput{[]workflow.Item{{JSON: map[string]any{descriptorKey: descriptor}}}}, nil
 }
 

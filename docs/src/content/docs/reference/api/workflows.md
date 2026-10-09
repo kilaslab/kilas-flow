@@ -63,6 +63,7 @@ Parameters:
 | --- | --- | --- | --- | --- |
 | `limit` | query | no | integer | Maximum workflows to return (default 100) |
 | `cursor` | query | no | string | Opaque cursor from the previous page's X-Next-Cursor header |
+| `tag` | query | no | string | Keep only workflows whose latest revision carries this tag; case is ignored |
 
 Responses:
 
