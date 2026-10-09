@@ -2,14 +2,13 @@
 
 One inbound request walks a fixed path from the route to a queued execution and
 then to an answer. This file is that path, in order, with the answer each step
-can produce — and what a caller's 200 does and does not prove. Source:
-internal/webhook/webhook.go unless a step names its own file.
+can produce — and what a caller's 200 does and does not prove.
 
 ## 1. Route, method, admission
 
 `/webhook/{route}` is served outside `/api/v1` and outside the authentication
 middleware, because the senders that call it cannot present a KilasFlow
-credential (internal/webhook/webhook.go, `ServeHTTP`).
+credential.
 
 - A request is matched by upper-cased **method** and **route**, and by nothing
   else. A method the node does not declare finds no binding, and so does a
@@ -20,7 +19,7 @@ credential (internal/webhook/webhook.go, `ServeHTTP`).
   an oracle for enumerating a tenant's workflows.
 - `OPTIONS` is answered from the methods actually bound on the route plus
   `OPTIONS`, so a browser learns a GET-only endpoint will refuse its POST rather
-  than reading it as an opaque CORS failure (`servePreflight`, `applyCORS`).
+  than reading it as an opaque CORS failure.
 - `admit` runs the address allow-list (`options.ipWhitelist`, from the
   connection's own peer address, deliberately not trusting `X-Forwarded-For`)
   and then the credential, in that order, so a refused caller cannot use the
@@ -31,7 +30,7 @@ credential (internal/webhook/webhook.go, `ServeHTTP`).
 ## 2. The trigger's own checks
 
 The node type decides what a delivery means, and both checks run before an
-execution exists (internal/webhook/webhook.go):
+execution exists:
 
 - **Verify.** A trigger that declares one (a pack trigger's HMAC over the raw
   body, Telegram's secret header) refuses a delivery that fails it with **401**,
@@ -41,26 +40,24 @@ execution exists (internal/webhook/webhook.go):
   `200 {"filtered": true, "reason": …}` for one it was restricted away from, and
   **Ignore Bots** answers `200 {"filtered": true, …}` for a delivery whose
   User-Agent names a crawler, so a chat client's link preview does not trigger
-  the workflow's side effects (`ignoreBots`). Filtering is not verification: the
+  the workflow's side effects. Filtering is not verification: the
   delivery arrived correctly and was deliberately not acted on, so the sender is
   told 200 and stops retrying.
 
-The rendered item comes from the trigger's shape, not from the request
-(internal/webhook/shape.go):
+The rendered item comes from the trigger's shape, not from the request:
 
 | Shape | What the item is |
 | --- | --- |
 | `envelope` (default) | `method`, `path`, `headers`, `query`, `body`, `contentType` |
 | `n8nCore` | `body`, `headers`, `params` (always an empty object here), `query`, `webhookUrl`, `executionMode`; `jwtPayload` only when a JWT was verified |
 | `bodyAsItem` | the parsed body at the top level, which is what readers of `$json.event` expect |
-| `formSubmission` | the form's own field labels, plus `submittedAt` and `formMode` stamped by the boundary (internal/webhook/form.go, `SubmissionFields`) |
+| `formSubmission` | the form's own field labels, plus `submittedAt` and `formMode` stamped by the boundary |
 
 ## 3. Duplicate deliveries
 
 A sender that retries must not run the workflow twice. The node names the header
 carrying the sender's own identifier in its `deliveryIdHeader` parameter, and a
-claim on that identifier is taken **before** the execution is queued
-(internal/webhook/webhook.go; internal/repository/webhooks.go, `ClaimDelivery`).
+claim on that identifier is taken **before** the execution is queued.
 
 - With no header configured, or the sender omitting it, the request is never
   deduplicated: hashing the body instead would collapse two genuinely identical
@@ -70,14 +67,14 @@ claim on that identifier is taken **before** the execution is queued
   times at two-second intervals.
 - A duplicate is answered from the original: **200** with
   `{executionId, status, duplicate: true}` once the original execution reads
-  back, otherwise **202** with the id and the same marker (`answerDuplicate`). A
+  back, otherwise **202** with the id and the same marker. A
   claim that cannot be stored fails open: the delivery runs rather than being
   mistaken for somebody else's duplicate.
 
 ## 4. The four answers
 
-`responseMode` decides what the caller receives. These modes are declared in
-nodes/webhook.go and answered in internal/webhook/webhook.go.
+`responseMode` decides what the caller receives. These modes are declared
+on the Webhook node and answered by the webhook boundary.
 
 **Immediate** (the default) acknowledges without waiting, with n8n's own body
 `{"message":"Workflow was started"}`. `options.responseCode` sets the status
@@ -102,7 +99,7 @@ status, headers and body are published as an event and the caller is answered at
 that moment while **the rest of the graph keeps going** — which is how a chat
 webhook acknowledges inside its three-second budget and still does slow work.
 The event is also written with the node's trace row, so a boundary in another
-process answers from the record (`findResponse`). A `Content-Type` the node did
+process answers from the record. A `Content-Type` the node did
 not set is chosen from the body: `application/json` when it parses,
 `text/html; charset=utf-8` otherwise. A run that finished successfully without
 reaching the node is **200 with an empty body**; a failed one is the generic 500
@@ -115,8 +112,7 @@ queued at all is **500**, with the cause logged rather than returned.
 The `authentication` parameter takes `none`, `basicAuth`, `headerAuth` or
 `jwtAuth`, and each mode except `none` needs a credential of the matching type
 attached to the node (`httpBasicAuth`, `httpHeaderAuth`, `jwtAuth`) — the
-activation validator refuses the workflow otherwise (nodes/webhook.go,
-`credentialTypesForAuth`, `validateWebhookConfiguration`).
+activation validator refuses the workflow otherwise.
 
 - Comparison is constant time, and a refusal is **401**. `WWW-Authenticate` is
   sent only for basic auth, because a browser prompt is not how a header or JWT
@@ -134,8 +130,7 @@ activation validator refuses the workflow otherwise (nodes/webhook.go,
   unable refuses the request rather than publishing an unprotected endpoint.
 - `webhook.require_auth` (`KILASFLOW_WEBHOOK_REQUIRE_AUTH`) is the deployment's
   own posture. With it on, a delivery to a trigger whose mode is `none` is
-  **403** whose body names the workflow and the fix (internal/webhook/
-  require_auth.go, `refuseUnauthenticated`). A trigger that verifies its own
+  **403** whose body names the workflow and the fix. A trigger that verifies its own
   senders counts as authenticated; an IP allow-list does **not**. A form's page
   faces the same gate as its submission, and a CORS preflight is not gated
   because it cannot carry a credential.
