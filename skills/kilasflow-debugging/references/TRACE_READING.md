@@ -8,7 +8,7 @@ broke", and how a run failure differs from a refusal that stopped nothing.
 
 | Field | What it tells you |
 | --- | --- |
-| `status` | where the run is: `queued`, `running`, `cancelling`, `waiting`, `succeeded`, `failed`, `cancelled` (internal/execution/records.go) |
+| `status` | where the run is: `queued`, `running`, `cancelling`, `waiting`, `succeeded`, `failed`, `cancelled` |
 | `trigger` | how it started: `manual`, `webhook`, `schedule`, `subworkflow` |
 | `triggerNodeID` | which root it started from, when the document declares several |
 | `parentExecutionID` | the execution that called this one, for a sub-workflow run |
@@ -21,38 +21,37 @@ broke", and how a run failure differs from a refusal that stopped nothing.
 
 Redaction runs on the way out (and on the way into storage for node runs), so a
 credential-shaped value appears as `[redacted]`: a visible marker rather than an
-omission, so a reader can tell "withheld" from "never present"
-(internal/execution/redact.go).
+omission, so a reader can tell "withheld" from "never present".
 
 A `waiting` run holds no worker and no lease until a resume re-queues it, so it
-is neither stuck nor failed (docs/src/content/docs/concepts/execution-model.md).
+is neither stuck nor failed (docs: concepts/execution-model).
 
 ## The run's error code
 
 The execution's `error.code` names the class of failure:
 
-| Code | Meaning | Where it is set |
-| --- | --- | --- |
-| `execution.failed` | a node failed without tolerating it | internal/engine/service.go |
-| `execution.timeout` | a node run reported hitting the execution deadline | internal/engine/runner.go, `invoke` |
-| `execution.cancelled` | the context was cancelled | internal/engine/service.go |
-| `execution.crashed` | an expired worker lease was handed on twice, so the run was settled instead of given to a third worker | internal/repository/executions.go |
-| `wait.expired` | a call-resumed wait nobody resumed passed its deadline | internal/repository/waits.go, `WaitExpiredCode` |
+| Code | Meaning |
+| --- | --- |
+| `execution.failed` | a node failed without tolerating it |
+| `execution.timeout` | a node run reported hitting the execution deadline |
+| `execution.cancelled` | the context was cancelled |
+| `execution.crashed` | an expired worker lease was handed on twice, so the run was settled instead of given to a third worker |
+| `wait.expired` | a call-resumed wait nobody resumed passed its deadline |
 
 A recovered execution re-runs from the beginning rather than resuming, because
 the checkpoint belongs to a suspension and not to a crash — so side effects of
 the abandoned attempt may happen twice, and the abandoned trace is deleted when
-the lease is reclaimed (docs/src/content/docs/concepts/execution-model.md).
+the lease is reclaimed (docs: concepts/execution-model).
 
 ## One node run
 
 | Field | What it tells you |
 | --- | --- |
 | `nodeId` | which node; resolve it against the revision's document |
-| `attempt` | which try this row is, counting from 1. Every failed attempt is its own row, so a node that succeeded on the third try has three rows (internal/engine/runner.go, `invoke`) |
+| `attempt` | which try this row is, counting from 1. Every failed attempt is its own row, so a node that succeeded on the third try has three rows |
 | `runIndex` | the Nth time this node ran in the execution, from zero — a loop body or a fan-out produces several, and this is deliberately separate from `attempt` |
 | `sequence` | monotonic position in the run; on a failed execution the failed row with the lowest sequence is the cause |
-| `status` | `succeeded`, `failed` or `skipped` — a node no incoming channel delivered to is `skipped`, which is not a failure (internal/engine/runner.go, `skip`). A row with an error is `failed` even when the node tolerated it, so check the execution's own status before calling a row the cause |
+| `status` | `succeeded`, `failed` or `skipped` — a node no incoming channel delivered to is `skipped`, which is not a failure. A row with an error is `failed` even when the node tolerated it, so check the execution's own status before calling a row the cause |
 | `input` | the item stream the node was invoked with; this is what `$json` resolved against |
 | `output` | what it emitted, per port |
 | `error` | the node's own error, with an `errorCode` |
@@ -62,19 +61,18 @@ Node error codes worth recognising: `node.failed` (the executor returned an
 error), `node.timeout` (the node's own timeout), `execution.timeout` (the run's
 budget), `config.invalid` (the node's configuration could not be resolved before
 it ran), `execution.cancelled`, and `node.partial` / `node.failed` from the
-per-item path where `continueOnFail` turned failures into error items
-(internal/engine/runner.go).
+per-item path where `continueOnFail` turned failures into error items.
 
 Two settings explain most surprising rows: `retryOnFail` with `maxTries` and
 `waitBetweenTries` produce the extra attempt rows, and `continueOnFail` is why a
 failed node did not fail the run — its error items are the input the next node
-saw (docs/src/content/docs/concepts/execution-model.md).
+saw (docs: concepts/execution-model).
 
 ## The live feed
 
 `GET /api/v1/executions/{id}/events` is a server-sent event stream fed by an
 in-process broker; `kilasflow exec trace` collects it and `kilasflow exec tail`
-streams it (internal/events/events.go; internal/cli/verbs_exec.go).
+streams it.
 
 | Event | Emitted? |
 | --- | --- |
@@ -97,8 +95,7 @@ Three consequences for a debugger:
   `Last-Event-ID` header) resumes rather than restarting. Delivery is best
   effort: a subscriber that cannot keep up has events dropped rather than
   stalling the run, and a finished execution whose events have aged out has its
-  terminal frame reconstructed from the record instead (internal/api/handlers/
-  executions.go, `syntheticTerminal`).
+  terminal frame reconstructed from the record instead.
 - The stream closes at a terminal event, which is what lets a client stop
   reconnecting.
 
@@ -110,8 +107,7 @@ Two different answers, at two different moments:
   invalid` is a structural fault found on save; `workflow validation failed`
   carries the compiler's issues, each with a stable code (`node.unknown_type`,
   `config.required`, `port.full`, `workflow.invalid_topology`, …), a path and
-  the node or connection it is about (internal/api/handlers/workflows.go,
-  `draftProblem` and `compileProblem`; internal/workflow/compiler.go). No
+  the node or connection it is about. No
   execution row exists, so there is no trace to read: the fix is the document.
 - **Failed while running** — an execution row with `status: failed` and a
   `nodeRuns[]` entry that errored. The graph executed and stopped; the fix is
@@ -119,8 +115,7 @@ Two different answers, at two different moments:
 
 A run request refused with 422 because of `triggerNodeId` is the middle case
 worth knowing: the node cannot start a run — it is disabled, it is not this
-workflow's, or something feeds into it — and nothing was queued
-(internal/repository/executions.go, `manualStartProblem`).
+workflow's, or something feeds into it — and nothing was queued.
 
 ## A reading order that answers "why"
 

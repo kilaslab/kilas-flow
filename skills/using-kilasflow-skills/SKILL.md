@@ -30,10 +30,7 @@ kilasflow_operations:
   - upsert-datastore-row
 kilasflow_nodes: []
 kilasflow_expression_roots: []
-kilasflow_not_shipped:
-  - 'No skills verbs: list, show, install, check and export do not exist yet, so this bundle is read from the checkout under skills/'
-  - 'No guarded verbs: activation, deletion, import and the other writes without a verb are reached as kilasflow api with an operation id, and there is no --yes guard to lean on'
-  - 'No --skills-used flag: no mutating verb records which skills a session used, so adoption is not measurable from a command'
+kilasflow_not_shipped: []
 ---
 
 ## Non-negotiables
@@ -42,13 +39,16 @@ kilasflow_not_shipped:
 2. Read the surface from the instance; never recall it. Node types, parameter names, credential types and expression roots change between versions, and they are served: `kilasflow node list` (`list-node-types`) and `kilasflow node describe <type>` (`list-node-types`) for a node, `kilasflow node options <type> --property <key>` (`load-node-property-options`) for what a field may hold, and `kilasflow api <operation-id>` (`api`) for anything else the running server serves. A remembered parameter name is a silent failure: the server ignores configuration a node does not declare.
 3. Validate, then verify. A 2xx is not verification and draft validation is structural — it says nothing about a graph that runs. Save, re-read with `kilasflow workflow get <workflowId>` (`get-workflow`) and check the document that came back; run, then read the trace with `kilasflow exec get <executionId>` (`get-execution`) and `kilasflow exec trace <executionId>` (`stream-execution-events`).
 4. Secrets never appear in a workflow document, a CLI argument or chat. A credential is referenced by id, its value is supplied once by whoever owns it, and it is never echoed into a transcript — the kilasflow-credentials skill carries the rule in full.
-5. Guardrails, in order of how much they cost to get wrong. Activation publishes a public endpoint. Deletion destroys a resource and import writes one the instance then serves (`delete-workflow`, `import-workflow`, reached through `kilasflow api` today). An embed session can never activate, delete, import or manage datastores — that is the design, not a bug to work around (the kilasflow-embedding skill). Ask the user before any of them, and pass `--yes` only on an explicit instruction from the user, never because `--json`, `--quiet` or a non-TTY made it convenient.
+5. Guardrails, in order of how much they cost to get wrong. Activation publishes a public endpoint and deletion destroys a resource, and both are guarded verbs: `kilasflow workflow activate <workflowId>` (`activate-workflow`), `workflow deactivate`, `workflow delete`, the `credential` and `datastore` writes and `tenant delete` all refuse without `--yes`, exiting 3 with `confirmation_required`, and `kilasflow api <operation-id>` asks for the same confirmation when the operation is one of theirs. An import writes a workflow the instance then serves and has no verb, so `kilasflow api import-workflow` carries no guard of its own. An embed session can activate only when it carries `workflow:activate`, and can never delete, import or manage datastores at any scope — that is the design, not a bug to work around (the kilasflow-embedding skill). Ask the user before any of them, and pass `--yes` only on an explicit instruction from the user, never because `--json`, `--quiet` or a non-TTY made it convenient.
 
 ## Strong defaults
 
-- Open every session with `kilasflow context`. It is one read-only call carrying the server, the identity, the workflows, the datastores and the node-type count, and it is local, so it works before you know anything else (internal/cli/context.go).
+- Start from the validated example: `kilasflow skills show using-kilasflow-skills --reference EXAMPLE.md` is a connected two-node document and the five commands that save, run and read it back; every other skill's example is a larger version of it.
+- Open every session with `kilasflow context`. It is one read-only call carrying the server, the identity, the workflows, the datastores and the node-type count, and it is local, so it works before you know anything else.
 - Reach the whole API through `kilasflow api <operation-id>` (`api`) whenever a verb does not exist: `--path name=value` fills a placeholder, `--body @file.json` sends a body, `--header name=value` sends a header, and `--list` prints the ids the running server actually serves. It refuses what a scoped token refuses — a naming bypass, not an authority bypass.
 - Expression before Code node. A value read or transformed with `{{ }}` is visible in the document and in every trace; a Code node hides it. Invoke the kilasflow-expressions skill before writing one.
+- Validate before you save. `kilasflow workflow validate --file wf.json` (`validate-workflow-document`) checks a draft the way the API would, compiles it, and saves nothing; fix every diagnostic it prints, then `kilasflow workflow create --file wf.json`.
+- Say which skills informed a write. `--skills-used kilasflow-workflow-lifecycle,kilasflow-expressions` on a mutating verb records the names on the revision it writes, so adoption is measurable from the history; name the skills you loaded in your report as well.
 - Describe before configuring. `kilasflow node describe <type>` gives the definition the server will run, and `kilasflow node options <type> --property <key>` loads a field's values from the service that owns them; neither is guessable.
 - A step you would build twice is a sub-workflow, and a workflow you would run by hand twice wants a trigger. Invoke the kilasflow-triggers skill.
 - Make a retry safe before you retry. The server honours `Idempotency-Key` on `run-workflow` and on a datastore row write: the same key with the same request is answered with the first outcome, marked `Idempotent-Replayed: true`, and repeats no side effect; the same key with a different request is refused `409`. No verb carries the key today, so a retry-safe run is `kilasflow api run-workflow --path id=<workflowId> --header Idempotency-Key=<key> --body @input.json`, and a retry-safe write is the same header on `upsert-datastore-row` or `insert-datastore-row`. Without a key, a retry is a second execution.
@@ -82,6 +82,12 @@ what is in front of you?
 +-- a failure must be caught, retried, alerting or answered to a caller
 |     -> kilasflow-error-handling
 |
++-- an AI agent, a chat, an LLM chain or answers from documents (RAG)
+|     -> kilasflow-ai-agents
+|
++-- items to batch or loop, a file or binary payload, one workflow calling another
+|     -> kilasflow-flow-patterns
+|
 +-- a secret, a token, an API key or a database connection
 |     -> kilasflow-credentials
 |
@@ -114,6 +120,8 @@ what is in front of you?
 | `kilasflow-triggers` | the workflow must be started by something else: "webhook", "trigger", "schedule", "form", "activation" |
 | `kilasflow-debugging` | a run failed, produced the wrong output or never started: "failed", "error", "wrong output", "trace" |
 | `kilasflow-error-handling` | a failure must be caught, retried, alerted on or answered to an HTTP caller: "retry", "timeout", "error workflow", "respond" |
+| `kilasflow-ai-agents` | building an agent, chat, LLM chain or RAG workflow: "agent", "AI", "LLM", "chat model", "tool", "memory", "RAG", "embeddings", "vector store" |
+| `kilasflow-flow-patterns` | items must be batched or looped, a file is read or produced, or one workflow calls another: "loop", "batch", "binary", "file", "PDF", "sub-workflow", "execute workflow" |
 | `kilasflow-credentials` | a secret, token or key is involved: "credential", "secret", "token", "auth", "api key" |
 | `kilasflow-datastore` | reading or writing a table: "datastore", "table", "columns", "rows", "filter", "CSV" |
 | `kilasflow-import-export` | migrating from n8n or exporting back: "n8n", "migration", "import", "export", "lossy" |
@@ -126,8 +134,7 @@ what is in front of you?
 <!-- generated:command-reference -->
 ```text
 # every verb this binary implements, and the operation it drives.
-# generated from `kilasflow help --json` by scripts/skills-command-reference;
-# run `make generate-skills-command-reference` after the command tree changes.
+# generated from `kilasflow help --json`, and regenerated whenever the command tree changes.
 kilasflow serve                     local                              run the API, worker and scheduler (the default when no verb is given)
 kilasflow version                   local                              print this binary's version and, when a server is reachable, its version
 kilasflow health                    get-health                         report that the process is up (does not check dependencies)
@@ -207,12 +214,6 @@ kilasflow mcp serve                 local                              serve the
 8. report it                             what changed, what it cost, what you could not verify
 ```
 
-## Not shipped yet
-
-- No skills verbs: list, show, install, check and export do not exist yet, so this bundle is read from the checkout under skills/ — nothing lists, prints or installs a skill today, and nothing compares an installed copy against the binary's stamp. The index `skills/index.json` is the machine-readable form of the same twelve skills, and it is generated from this directory.
-- No guarded verbs: activation, deletion, import and the other writes without a verb are reached as kilasflow api with an operation id, and there is no --yes guard to lean on — `activate-workflow`, `delete-workflow`, `import-workflow`, `create-credential`, `delete-credential`, `create-datastore` and `delete-datastore` are all served and all reached as `kilasflow api <operation-id>` with `--path` and `--body`. Nothing refuses an unconfirmed call, so the confirmation step is yours: ask the user before a write that publishes an endpoint or destroys a resource, and read the resource back afterwards.
-- No --skills-used flag: no mutating verb records which skills a session used, so adoption is not measurable from a command — until the flag lands, name the skills you loaded in your own report to the user.
-
 ## Anti-patterns
 
 - "The workflow is simple, I will just build it" → the document shape, the connection kinds and the save path are a surface you have not read → invoke kilasflow-workflow-lifecycle and start from `kilasflow workflow get <workflowId>` or a canonical document.
@@ -224,5 +225,11 @@ kilasflow mcp serve                 local                              serve the
 - "A Code node is faster here" → it hides the transformation from the document and from the trace → invoke kilasflow-expressions first.
 - "I will retry the run, it is a read" → no verb carries an idempotency key, so the retry is a second execution with the same effects as the first → make the step repeatable or key the call through `kilasflow api run-workflow --header Idempotency-Key=<key>`.
 - "There is no verb for it, so it cannot be done" → the verbs are a convenience over the API, not the API → `kilasflow api --list` prints the operations the running server serves.
-- "An embed session is broken because it cannot activate" → a session can never activate, delete, import or manage datastores, by design, at any scope → do those from the operator's own credential, and read references/SESSION_AUTHORITY.md in kilasflow-embedding.
+- "An embed session is broken because it cannot delete or import" → a session can never delete, import or manage datastores, at any scope, and activates only with `workflow:activate` → do those from the operator's own credential, and read references/SESSION_AUTHORITY.md in kilasflow-embedding.
 - "The agent token has the scope, so the call will work" → an embed session is confined to the workflow and the resources of the revision it was minted from, and a scoped key is bounded by its own `scopes` → read the refusal: exit code 3 with `scope_denied` means drop the step, not retry it.
+
+## Reference files
+
+| File | Read when |
+| --- | --- |
+| EXAMPLE.md | you have not yet picked a skill and want a small document to save, run and read back |
