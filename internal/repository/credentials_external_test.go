@@ -69,7 +69,7 @@ func wiredStore(store *repository.GORMCredentialStore, fetches *atomic.Int64) {
 func mustBinding(t *testing.T, store *repository.GORMCredentialStore, tenant repository.TenantScope, name string) {
 	t.Helper()
 	if _, err := store.CreateSecretBinding(context.Background(), tenant, credentials.Binding{
-		Name: name, Provider: "test", Address: "https://vault.example", TokenEnv: "KILASFLOW_TEST_VAULT_TOKEN",
+		Name: name, Provider: "test", Address: "https://vault.example", TokenEnv: "KILASFLOW_EXTERNAL_SECRET_TOKEN_TEST_VAULT",
 	}); err != nil {
 		t.Fatalf("CreateSecretBinding() error = %v", err)
 	}
@@ -119,9 +119,9 @@ func TestExternalReferenceResolvesOnTheResolvePathOnly(t *testing.T) {
 		t.Fatalf("read raw payload: %v", err)
 	}
 	payload := row.Payload
-	sealed, err := cipher.Decrypt(payload)
+	sealed, err := cipher.Open(payload, credentials.CredentialAAD(tenant.ID, created.ID, created.Type))
 	if err != nil {
-		t.Fatalf("Decrypt() error = %v", err)
+		t.Fatalf("Open() error = %v", err)
 	}
 	if sealed["apiKey"] != "ext://prod-vault/prod/openai" {
 		t.Fatalf("stored payload = %q, want the sealed reference", sealed["apiKey"])
@@ -194,7 +194,7 @@ func TestBindingChangeDropsCachedValues(t *testing.T) {
 		t.Fatalf("two resolves caused %d fetches, want 1 cached", got)
 	}
 	if _, err := store.UpdateSecretBinding(ctx, tenant, "prod-vault", credentials.Binding{
-		Provider: "test", Address: "https://vault-two.example", TokenEnv: "KILASFLOW_TEST_VAULT_TOKEN",
+		Provider: "test", Address: "https://vault-two.example", TokenEnv: "KILASFLOW_EXTERNAL_SECRET_TOKEN_TEST_VAULT",
 	}); err != nil {
 		t.Fatalf("UpdateSecretBinding() error = %v", err)
 	}

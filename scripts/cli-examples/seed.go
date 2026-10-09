@@ -52,8 +52,11 @@ type needs struct {
 	version    bool
 	execution  bool
 	credential bool
-	datastore  bool
-	tenant     bool
+	// inUseCredential is a credential a workflow of its own attaches, so a
+	// delete of it is refused unless forced.
+	inUseCredential bool
+	datastore       bool
+	tenant          bool
 }
 
 // provided are the variables every example already has: the environment the
@@ -81,6 +84,8 @@ func needsOf(texts []string) (needed needs, unknown []string) {
 				needed.workflow, needed.execution = true, true
 			case "CREDENTIAL_ID":
 				needed.credential = true
+			case "IN_USE_CREDENTIAL_ID":
+				needed.inUseCredential = true
 			case "DATASTORE_ID":
 				needed.datastore = true
 			default:
@@ -159,6 +164,33 @@ func (r *runner) seed(needed needs) (map[string]string, error) {
 		}
 		vars["CREDENTIAL_ID"] = id
 	}
+	if needed.inUseCredential {
+		file := filepath.Join(r.scratch, fmt.Sprintf("seed-in-use-credential-%d.json", r.counter))
+		document := fmt.Sprintf(`{"name":"In use %d","type":"httpHeaderAuth","fields":{"name":"X-Api-Key","value":"<api-key>"}}`, r.counter)
+		if err := os.WriteFile(file, []byte(document), 0o600); err != nil {
+			return nil, err
+		}
+		id, err := r.cli("credential", "create", "--file", file, "--yes", "--quiet")
+		if err != nil {
+			return nil, err
+		}
+		template, err := os.ReadFile(filepath.Join(r.scratch, "workflow.json"))
+		if err != nil {
+			return nil, err
+		}
+		attached, err := inUseWorkflowDocument(template, id)
+		if err != nil {
+			return nil, err
+		}
+		workflowFile := filepath.Join(r.scratch, fmt.Sprintf("seed-in-use-workflow-%d.json", r.counter))
+		if err := os.WriteFile(workflowFile, attached, 0o600); err != nil {
+			return nil, err
+		}
+		if _, err := r.cli("workflow", "create", "--file", workflowFile, "--quiet"); err != nil {
+			return nil, err
+		}
+		vars["IN_USE_CREDENTIAL_ID"] = id
+	}
 	if needed.datastore {
 		id, err := r.cli("datastore", "create", fmt.Sprintf("seeded-%d", r.counter), "--yes", "--quiet")
 		if err != nil {
@@ -177,6 +209,29 @@ func (r *runner) seed(needed needs) (map[string]string, error) {
 	}
 
 	return vars, nil
+}
+
+// inUseWorkflowDocument is the examples' workflow with its HTTP Request node
+// attaching a header credential, so that credential is in use.
+func inUseWorkflowDocument(template []byte, credentialID string) ([]byte, error) {
+	var document map[string]any
+	if err := json.Unmarshal(template, &document); err != nil {
+		return nil, fmt.Errorf("read the workflow fixture: %w", err)
+	}
+	nodes, _ := document["nodes"].([]any)
+	attached := false
+	for _, entry := range nodes {
+		node, _ := entry.(map[string]any)
+		if node["type"] == "kilasflow.httpRequest" {
+			node["credentials"] = map[string]any{"httpHeaderAuth": credentialID}
+			attached = true
+		}
+	}
+	if !attached {
+		return nil, fmt.Errorf("the workflow fixture has no HTTP Request node to attach a credential to")
+	}
+
+	return json.Marshal(document)
 }
 
 // firstItemID reads data.items[0].id from a CLI envelope.

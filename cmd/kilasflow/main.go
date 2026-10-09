@@ -113,6 +113,8 @@ func run(args []string) error {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	workerIDOverride := flag.String("worker-id", "", "worker identity recorded in lease_owner (default: host-qualified and unique per process)")
 	roleOverride := flag.String("role", "", "process role: api, worker, or both (default both)")
+	reseal := flag.Bool("reseal-credentials", false,
+		"seal every stored credential and webhook lifecycle state again under the primary encryption key, then exit (see the key rotation guide)")
 	_ = flag.CommandLine.Parse(args)
 
 	// A leftover argument is a mistake, and answering it by starting a server is
@@ -188,6 +190,11 @@ func run(args []string) error {
 	}()
 	if err := database.Migrate(db, log); err != nil {
 		return err
+	}
+	// A maintenance pass, not a server: it needs the schema and the keys and
+	// nothing else, so it runs before anything starts listening or polling.
+	if *reseal {
+		return resealCredentials(ctx, cfg, db, log)
 	}
 	// The row store behind data tables and the datastore node. Built here
 	// because this is the only place holding the database handle and the
@@ -446,7 +453,7 @@ func run(args []string) error {
 	var oauthSigningKey []byte
 	var credentialStore *repository.GORMCredentialStore
 	var credentialCipher *credentials.Cipher
-	key, keyErr := masterKey(ctx, cfg)
+	cipher, oauthKey, keyErr := loadCredentialKeys(ctx, cfg, log)
 	switch {
 	case errors.Is(keyErr, credentials.ErrNoKey):
 		log.Warn("credential encryption key is not set; credential storage is disabled",
@@ -455,11 +462,7 @@ func run(args []string) error {
 	case keyErr != nil:
 		return fmt.Errorf("credential encryption key: %w", keyErr)
 	default:
-		oauthSigningKey = append([]byte(nil), key...)
-		cipher, err := credentials.NewCipher(key)
-		if err != nil {
-			return err
-		}
+		oauthSigningKey = oauthKey
 		credentialStore = repository.NewCredentialStore(db.DB, cipher)
 		credentialCipher = cipher
 	}
@@ -473,7 +476,7 @@ func run(args []string) error {
 	// clearly and the middleware refuses every token, rather than the editor
 	// silently being frameable.
 	var embedIssuer *embed.Issuer
-	if embedKey, err := credentials.KeyFromEnvironment(cfg.Embed.SigningKeyEnv); err == nil {
+	if embedKey, err := signingKeyFromEnvironment(cfg.Embed.SigningKeyEnv, log); err == nil {
 		issuer, issuerErr := newEmbedIssuer(embedKey, cfg)
 		if issuerErr != nil {
 			return fmt.Errorf("configure embed sessions: %w", issuerErr)
@@ -492,7 +495,7 @@ func run(args []string) error {
 	// producing a server nobody can reach.
 	authStore := repository.NewAuthStore(db.DB)
 	var authIssuer *auth.Issuer
-	signingKey, signingErr := credentials.KeyFromEnvironment(cfg.Auth.SigningKeyEnv)
+	signingKey, signingErr := signingKeyFromEnvironment(cfg.Auth.SigningKeyEnv, log)
 	switch {
 	case signingErr == nil:
 		issuer, issuerErr := auth.NewIssuer(signingKey, cfg.Auth.SessionTTL, nil)
@@ -569,6 +572,29 @@ func run(args []string) error {
 			return listed, nil
 		})); err != nil {
 		return fmt.Errorf("register the workflow option loader: %w", err)
+	}
+	// The Workflow Tool's inputs mapper. It reads the target's active revision,
+	// the one a tool call runs, so the form never lists a field the model would
+	// not be offered; the parsing is nodes.DeclaredWorkflowInputs, the same
+	// code the tool offers its schema from.
+	if err := optionLoader.RegisterSchema(nodes.WorkflowInputsLoader, loadoptions.WorkflowInputs(
+		func(ctx context.Context, tenant repository.TenantScope, workflowID string) ([]loadoptions.WorkflowInputField, bool, error) {
+			document, err := executions.ActiveDocument(ctx, tenant, workflowID)
+			if err != nil {
+				return nil, false, err
+			}
+			trigger, found := nodes.SubworkflowTriggerOf(document)
+			if !found {
+				return nil, false, nil
+			}
+			declared, defines := nodes.DeclaredWorkflowInputs(trigger)
+			fields := make([]loadoptions.WorkflowInputField, 0, len(declared))
+			for _, input := range declared {
+				fields = append(fields, loadoptions.WorkflowInputField{Name: input.Name, Type: input.Type})
+			}
+			return fields, defines, nil
+		})); err != nil {
+		return fmt.Errorf("register the workflow inputs schema loader: %w", err)
 	}
 	// The data-table locator's From-list mode and the column mapper's schema.
 	// Registered here because this is the only place holding the loader
@@ -1463,30 +1489,195 @@ func outboundPolicy(cfg config.OutboundHTTP) safehttp.Policy {
 // transient network error at boot silently disabling every credential would
 // be worse than not starting, so the manager path never degrades into the
 // no-key one.
-func masterKey(ctx context.Context, cfg config.Config) ([]byte, error) {
+func masterKey(ctx context.Context, cfg config.Config) ([]byte, credentials.KeyFormat, error) {
 	if strings.TrimSpace(cfg.Secrets.ManagerAddr) == "" {
-		return credentials.KeyFromEnvironment(cfg.Security.EncryptionKeyEnv)
+		return credentials.KeyFromEnvironmentFormat(cfg.Security.EncryptionKeyEnv)
 	}
 	policy := outboundPolicy(cfg.Outbound)
 	provider, err := credentials.NewVaultProvider(
 		cfg.Secrets.ManagerAddr, os.Getenv(cfg.Secrets.ManagerTokenEnv), policy)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", credentials.ErrManagerUnreachable, err)
+		return nil, 0, fmt.Errorf("%w: %v", credentials.ErrManagerUnreachable, err)
 	}
 	if err := provider.Health(ctx); err != nil {
-		return nil, fmt.Errorf("%w: %v", credentials.ErrManagerUnreachable, err)
+		return nil, 0, fmt.Errorf("%w: %v", credentials.ErrManagerUnreachable, err)
 	}
-	key, err := credentials.KeyFromManager(ctx, provider, cfg.Secrets.MasterKey)
+	key, format, err := credentials.KeyFromManagerFormat(ctx, provider, cfg.Secrets.MasterKey)
 	if err != nil {
 		// Partial configuration is rejected by config.Validate, so a NoKey
 		// here means the reference itself is empty: refusing beats running
 		// an install whose operator believes the manager is in charge.
 		if errors.Is(err, credentials.ErrNoKey) {
-			return nil, fmt.Errorf("secrets.master_key is required when secrets.manager_addr is set: %w", err)
+			return nil, 0, fmt.Errorf("secrets.master_key is required when secrets.manager_addr is set: %w", err)
 		}
+		return nil, 0, err
+	}
+	return key, format, nil
+}
+
+// loadCredentialKeys reads the credential master key and returns everything
+// this process uses it for: the cipher that seals credentials and webhook
+// lifecycle state, and the key that signs the OAuth Connect state.
+//
+// ErrNoKey passes through unchanged so the caller can start with credential
+// storage disabled; any other error refuses the boot.
+func loadCredentialKeys(ctx context.Context, cfg config.Config, log *slog.Logger) (*credentials.Cipher, []byte, error) {
+	key, format, err := masterKey(ctx, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	if strings.TrimSpace(cfg.Secrets.ManagerAddr) == "" {
+		warnRawKey(log, format, "variable", cfg.Security.EncryptionKeyEnv)
+	} else {
+		warnRawKey(log, format, "secret", cfg.Secrets.MasterKey)
+	}
+	secondary, err := secondaryKey(cfg, log)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyring, oauthKey, err := credentialKeys(key, secondary)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Legacy payloads carry no AAD, so while they open, a copy taken before
+	// the reseal could open in another row. An operator who has resealed
+	// everything refuses them for good.
+	if cfg.Security.LegacySeals == config.LegacySealsRefuse {
+		keyring = keyring.RefusingLegacySeals()
+	}
+	return keyring, oauthKey, nil
+}
+
+// secondaryKey reads the rotation key: the previous master key, which opens
+// what it sealed and seals nothing. It is read from the environment even when
+// the primary comes from a secrets manager, because it is a temporary setting
+// an operator adds for one rotation. Unset is the normal state and is not an
+// error; a value that is not a key refuses the boot, since silently ignoring
+// it would leave every row the old key sealed unreadable.
+func secondaryKey(cfg config.Config, log *slog.Logger) ([]byte, error) {
+	name := strings.TrimSpace(cfg.Security.SecondaryEncryptionKeyEnv)
+	if name == "" {
+		return nil, nil
+	}
+	key, format, err := credentials.KeyFromEnvironmentFormat(name)
+	switch {
+	case errors.Is(err, credentials.ErrNoKey):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("secondary credential encryption key: %w", err)
+	}
+	warnRawKey(log, format, "variable", name)
+	log.Info("a secondary credential encryption key is configured: it opens payloads it sealed and seals nothing",
+		"variable", name)
+	return key, nil
+}
+
+// unopenableHint says what to do about payloads no configured key opens. It
+// names the variable the secondary key is read from, or the setting to point
+// at one when the operator has cleared it, and the legacy-seals switch when
+// that is what refused them.
+func unopenableHint(cfg config.Config) string {
+	hint := "configure the key that sealed them as the secondary encryption key"
+	if variable := strings.TrimSpace(cfg.Security.SecondaryEncryptionKeyEnv); variable != "" {
+		hint += " (" + variable + ")"
+	} else {
+		hint += " (set security.secondary_encryption_key_env, which is empty, to the variable holding it)"
+	}
+	hint += " and run -reseal-credentials again before removing it"
+	if cfg.Security.LegacySeals == config.LegacySealsRefuse {
+		hint += "; security.legacy_seals is refuse, so a payload sealed before v1 does not open under any key: set it to open for the reseal"
+	}
+	return hint
+}
+
+// resealCredentials is the -reseal-credentials pass: every credential and
+// every captured webhook lifecycle value that is not sealed as v1 under the
+// primary key is sealed again. It is safe to run while servers are serving —
+// each write is a compare-and-swap — and safe to run twice.
+//
+// It fails when any payload could not be opened, because that means a key
+// that sealed it is missing from the keyring, and removing the secondary key
+// now would make that row unreadable for good.
+func resealCredentials(ctx context.Context, cfg config.Config, db *database.DB, log *slog.Logger) error {
+	cipher, _, err := loadCredentialKeys(ctx, cfg, log)
+	if err != nil {
+		return fmt.Errorf("-reseal-credentials needs the credential encryption key: %w", err)
+	}
+	stored, err := repository.NewCredentialStore(db.DB, cipher).Reseal(ctx)
+	if err != nil {
+		return err
+	}
+	log.Info("credentials resealed", "resealed", stored.Resealed, "current", stored.Current,
+		"skipped", stored.Skipped, "unopenable", len(stored.Unopenable))
+	captured, err := repository.NewWorkflowStore(db.DB).WithLifecycleState(cipher).ResealLifecycleState(ctx)
+	if err != nil {
+		return err
+	}
+	log.Info("webhook lifecycle state resealed", "resealed", captured.Resealed, "current", captured.Current,
+		"skipped", captured.Skipped, "unopenable", len(captured.Unopenable))
+	unopenable := append(append([]string{}, stored.Unopenable...), captured.Unopenable...)
+	for _, credentialID := range stored.Unopenable {
+		log.Error("credential payload could not be opened with the configured keys", "credential", credentialID)
+	}
+	for _, route := range captured.Unopenable {
+		log.Error("webhook lifecycle state could not be opened with the configured keys", "row", route)
+	}
+	if len(unopenable) > 0 {
+		return fmt.Errorf("%d sealed payloads could not be opened with the configured keys: %s",
+			len(unopenable), unopenableHint(cfg))
+	}
+	return nil
+}
+
+// credentialKeys derives the credential cipher and the OAuth signing key from
+// the master key, with the rotation key, when there is one, as the cipher's
+// secondary.
+//
+// The signing key is an HKDF output of the master key rather than the master
+// key itself: the state and PKCE verifier it makes travel through URLs and
+// cookies, and nothing computed from them should have touched the key that
+// seals every stored secret. A Connect popup that is open while this key
+// changes — at the upgrade that introduced the derivation, or at a rotation —
+// fails once and the user presses Connect again.
+func credentialKeys(master, secondary []byte) (*credentials.Cipher, []byte, error) {
+	var older [][]byte
+	if len(secondary) > 0 {
+		older = append(older, secondary)
+	}
+	cipher, err := credentials.NewCipher(master, older...)
+	if err != nil {
+		return nil, nil, err
+	}
+	oauthKey, err := credentials.DeriveKey(master, credentials.OAuthStateKeyInfo)
+	if err != nil {
+		return nil, nil, fmt.Errorf("derive the oauth signing key: %w", err)
+	}
+	return cipher, oauthKey, nil
+}
+
+// signingKeyFromEnvironment reads a 32-byte key the way the master key is read
+// and warns when it is a raw string. The embed and auth signing keys go
+// through it.
+func signingKeyFromEnvironment(name string, log *slog.Logger) ([]byte, error) {
+	key, format, err := credentials.KeyFromEnvironmentFormat(name)
+	if err != nil {
 		return nil, err
 	}
+	warnRawKey(log, format, "variable", name)
 	return key, nil
+}
+
+// warnRawKey says, once per key at boot, that a key is a 32-character string
+// used as its own bytes. It is accepted — refusing it would lock the
+// installation out of everything sealed under it — but a typed passphrase is
+// not 256 bits of randomness, and the fix is a generated key and a rotation.
+// The key itself is never logged.
+func warnRawKey(log *slog.Logger, format credentials.KeyFormat, attrs ...any) {
+	if format != credentials.KeyFormatRaw {
+		return
+	}
+	log.Warn("key holds a 32-character string used as raw key bytes, not a generated key: "+
+		"generate one with openssl rand -base64 32 and rotate to it", attrs...)
 }
 
 // workflowEnvironment is the allowlist behind the `$env` expression root.

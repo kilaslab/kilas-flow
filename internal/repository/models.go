@@ -30,6 +30,7 @@ func Models() []any {
 		&executionNodeRunModel{},
 		&executionWaitModel{},
 		&credentialModel{},
+		&credentialEventModel{},
 		&secretBindingModel{},
 		&webhookBindingModel{},
 		&webhookRouteModel{},
@@ -186,6 +187,32 @@ type credentialModel struct {
 
 func (credentialModel) TableName(namer schema.Namer) string {
 	return namer.TableName("credentials")
+}
+
+// credentialEventModel is one entry in a credential's audit trail: a write, a
+// test or a Google connect, and who did it.
+//
+// The credential's name and type are copied onto the row and there is no
+// foreign key, because the event most worth finding later is a deletion, and
+// by then the credential row is gone. The actor columns use the
+// workflow_publish_events vocabulary and are empty rather than null when
+// nobody was identified.
+type credentialEventModel struct {
+	ID             uint      `gorm:"primaryKey;autoIncrement"`
+	TenantID       string    `gorm:"not null;size:64;index:idx_credential_events_credential,priority:1"`
+	CredentialID   string    `gorm:"not null;size:64;index:idx_credential_events_credential,priority:2"`
+	CredentialName string    `gorm:"not null;size:255;default:''"`
+	CredentialType string    `gorm:"not null;size:64;default:''"`
+	Action         string    `gorm:"not null;size:32"`
+	ActorKind      string    `gorm:"not null;size:16;default:''"`
+	ActorLabel     string    `gorm:"not null;size:255;default:''"`
+	ActorKeyID     string    `gorm:"not null;size:64;default:''"`
+	Detail         string    `gorm:"not null;size:255;default:''"`
+	CreatedAt      time.Time `gorm:"not null;index:idx_credential_events_credential,priority:3"`
+}
+
+func (credentialEventModel) TableName(namer schema.Namer) string {
+	return namer.TableName("credential_events")
 }
 
 // secretBindingModel names one tenant's external secret source: which manager

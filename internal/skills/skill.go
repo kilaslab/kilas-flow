@@ -293,6 +293,17 @@ func loadSkills(fsys fs.FS, entries []fs.DirEntry) ([]Skill, error) {
 	return loaded, nil
 }
 
+// LoadReferences reads the references/*.md beside one SKILL.md, the same way the
+// bundle loader does, for a tool that parses a single SKILL.md with Parse and
+// still has to check the whole skill: Check compares a skill's reference table
+// with what is on disk, and a skill parsed alone has no references to compare.
+//
+// fsys is rooted at the skill's directory, so the files are found under
+// references/. A skill with none yields no references and no error.
+func LoadReferences(fsys fs.FS) ([]string, map[string]string, error) {
+	return loadReferences(fsys, "references")
+}
+
 // SplitFrontmatter separates the leading YAML block from the body.
 //
 // The block is delimited by a leading "---\n" and a closing "\n---\n", so a

@@ -163,6 +163,10 @@ func (handler *Credentials) StartOAuth(ctx context.Context, input *oauthStartInp
 		return nil, huma.Error503ServiceUnavailable(err.Error())
 	}
 	challenge := credentials.PKCEChallenge(credentials.PKCEVerifier(handler.oauthSigningKey, nonce))
+	// The callback has no principal, so who pressed Connect is recorded now,
+	// under the nonce hash the state already carries, and the callback copies
+	// it from here rather than from anything in the URL.
+	handler.audit(ctx, tenant, record, repository.CredentialEventConnectStarted, nonceHash, requestActor(ctx))
 	return &oauthStartOutput{
 		SetCookie: oauthNonceCookie(redirect, nonceHash, nonce, int(credentials.OAuthStateTTL.Seconds())),
 		Body: oauthStartResource{
@@ -312,15 +316,36 @@ func (handler *Credentials) OAuthCallback() http.Handler {
 			writeOAuthResult(w, false, err.Error(), state.Origin)
 			return
 		}
-		merged := credentials.MergeGoogleToken(fields, token)
+		// Only what Google returned is written: Update merges it over the
+		// stored payload, so a client secret held as an ext:// reference stays
+		// a reference instead of being sealed as the value it resolved to.
 		if _, err := handler.store.Update(r.Context(), tenant, state.CredentialID, credentials.Record{
-			Name: record.Name, Type: record.Type, Fields: merged, AllowedDomains: record.AllowedDomains,
+			Name: record.Name, Type: record.Type, Fields: token, AllowedDomains: record.AllowedDomains,
 		}); err != nil {
 			writeOAuthResult(w, false, "could not store the google token", state.Origin)
 			return
 		}
+		handler.audit(r.Context(), tenant, record, repository.CredentialEventConnected, state.NonceHash,
+			handler.connectStartedBy(r.Context(), tenant, state))
 		writeOAuthResult(w, true, "", state.Origin)
 	})
+}
+
+// connectStartedBy is the actor who started the Connect a callback finishes:
+// the connect-started event of this credential with the state's nonce hash.
+// Nobody is the answer when that event is missing, which only happens when
+// recording it failed.
+func (handler *Credentials) connectStartedBy(ctx context.Context, tenant repository.TenantScope, state credentials.OAuthState) repository.Actor {
+	started, found, err := handler.store.FindCredentialEvent(ctx, tenant, state.CredentialID,
+		repository.CredentialEventConnectStarted, state.NonceHash)
+	if err != nil {
+		slog.ErrorContext(ctx, "reading who started a Google sign-in failed", slog.String("error", err.Error()))
+		return repository.Actor{}
+	}
+	if !found {
+		return repository.Actor{}
+	}
+	return started.Actor
 }
 
 func writeOAuthResult(w http.ResponseWriter, ok bool, detail, origin string) {

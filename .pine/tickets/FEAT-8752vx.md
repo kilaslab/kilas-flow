@@ -32,10 +32,14 @@ The delete dialog lists the workflows using the credential, the NDV flags "Crede
 The dialog says only "This destroys the encrypted secret. Workflows using it will fail until they are given another credential." It gives no count and no names, and DELETE returns 204. In the NDV the HTTP Header Auth select is blank, with the Test button still shown and no warning. Activation succeeds (200, active:true). The run then fails with `execute node "h": node "Call API": resolve credential: repository record not found: credential`, which names neither the credential nor the fix.
 
 # Acceptance Criteria
-- [ ] GET /credentials/{id} returns the workflows referencing it, and the delete dialog lists them
+- [x] GET /credentials/{id} returns the workflows referencing it, and the delete dialog lists them — `usedBy` (unscoped callers, single read only) and the dashboard dialog: `TestGetCredentialListsTheWorkflowsUsingIt`, `TestGetCredentialHidesUsageFromAScopedKey`, `credential-usage.test.ts`; live UI check listed "Partner sync — Nodes: Call partner" (Track D, FEAT-qae4sh).
 - [ ] The NDV flags "Credential deleted — pick another"
-- [ ] Activation refuses unknown credential ids with a named diagnostic
-- [ ] The runtime error names the missing credential and the node
+- [x] Activation refuses unknown credential ids with a named diagnostic — `refuseUnknownCredentials` in `publish()`: 422 `config.invalid` at `/nodes/N/credentials/<type>`, naming node, node id, type and credential id; enabled nodes only. `TestActivationRefusesAnUnknownCredential`; live: activate answered 422 `node "Call partner" (http) attaches httpHeaderAuth credential "cred_…", which does not exist in this workspace: attach another credential to this node`.
+- [x] The runtime error names the missing credential and the node — `node "<name>": credential "<id>" no longer exists in this workspace: attach another credential to this node` (still unwraps to ErrNotFound): `TestAMissingCredentialIsNamedInTheRunError`; live: a manual run of the dangling workflow failed with exactly that text for node "Call partner".
+
+## Progress (2026-10-09)
+
+Three of the four criteria were delivered by Track D with FEAT-qae4sh (commit f8253594): see that ticket's Progress. The NDV flag is deliberately deferred: Tracks C and G both edit the NDV this wave, and the embed listing is restricted to the session's confinement, so "not in the listing" would falsely flag a credential as deleted there. It needs either a per-id existence probe or the activation diagnostic surfaced in the editor; do it after C and G merge. This ticket stays open for that one criterion.
 
 # Implementation Plan
 

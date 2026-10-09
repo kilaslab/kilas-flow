@@ -163,9 +163,9 @@ func VectorUnavailableReason(driver string) string {
 		return ""
 	}
 	if strings.TrimSpace(driver) == "" {
-		return "the embeddings and vector store nodes need PostgreSQL with the pgvector extension installed"
+		return "the vector store node needs PostgreSQL with the pgvector extension installed"
 	}
-	return fmt.Sprintf("the embeddings and vector store nodes need PostgreSQL with the pgvector extension installed; this install runs on %s, where they are unavailable", driver)
+	return fmt.Sprintf("the vector store node needs PostgreSQL with the pgvector extension installed; this install runs on %s, where it is unavailable", driver)
 }
 
 // ProbeVectorExtension reports whether a PostgreSQL carries the vector
@@ -175,7 +175,7 @@ func ProbeVectorExtension(ctx context.Context, db *sql.DB) error {
 	var present int
 	err := db.QueryRowContext(ctx, `SELECT 1 FROM pg_extension WHERE extname = 'vector'`).Scan(&present)
 	if err == sql.ErrNoRows {
-		return fmt.Errorf("the embeddings and vector store nodes need the PostgreSQL pgvector extension: run CREATE EXTENSION vector as a superuser, or install the pgvector package for your server, and restart")
+		return fmt.Errorf("the vector store node needs the PostgreSQL pgvector extension: run CREATE EXTENSION vector as a superuser, or install the pgvector package for your server, and restart")
 	}
 	return err
 }

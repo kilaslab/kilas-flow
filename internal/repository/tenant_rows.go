@@ -121,8 +121,8 @@ func (purger *GORMTenantPurger) PurgeTriggers(ctx context.Context, tenant Tenant
 }
 
 // PurgeDefinitions deletes what the tenant authored: its secret bindings, its
-// credentials, every workflow version and publish event, the workflows'
-// static data and tag index, and the workflows themselves.
+// credentials and their audit trail, every workflow version and publish event,
+// the workflows' static data and tag index, and the workflows themselves.
 //
 // Workflows go last and are hard-deleted. workflowModel carries
 // gorm.DeletedAt, so an ordinary Delete stamps the row and reports one row
@@ -133,6 +133,7 @@ func (purger *GORMTenantPurger) PurgeDefinitions(ctx context.Context, tenant Ten
 	return purger.purge(ctx, tenant, []purgeStep{
 		{table: "secret_bindings", model: &secretBindingModel{}},
 		{table: "credentials", model: &credentialModel{}},
+		{table: "credential_events", model: &credentialEventModel{}},
 		{table: "workflow_versions", model: &workflowVersionModel{}},
 		{table: "workflow_publish_events", model: &workflowPublishEventModel{}},
 		{table: "workflow_static_data", model: &workflowStaticDataModel{}},

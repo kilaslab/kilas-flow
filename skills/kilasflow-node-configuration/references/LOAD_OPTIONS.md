@@ -4,8 +4,7 @@ Some parameters have no fixed values to declare: the valid ones live on the
 customer's own service. Those are resolved at edit time by two operations, and
 the loader is always taken from the registered definition — never from the
 request, because the request is an unsaved, partially configured node straight
-from a browser (internal/loadoptions/loadoptions.go, `Load`;
-internal/api/handlers/nodes.go, `LoadOptions`).
+from a browser.
 
 ## The two operations and how to reach them
 
@@ -14,11 +13,11 @@ internal/api/handlers/nodes.go, `LoadOptions`).
 | `load-node-property-options` | `POST /node-types/{type}/load-options` | an option list: `{label, value}` pairs |
 | `load-node-property-schema` | `POST /node-types/{type}/load-schema` | a resource mapper's columns |
 
-An option list is one verb away, including the parameters it depends on:
+A list that depends only on the property is one verb away:
 
 ```bash
-kilasflow node options kilasflow.postgres --property table --mode list --param schema=public --credential <credentialId>
-kilasflow node options kilasflow.lmChatOpenAi --property model --mode list --parameters '{"baseUrl":"https://api.openai.com/v1"}' --credential <credentialId>
+kilasflow node options kilasflow.postgres --property table --mode list --credential <credentialId>
+kilasflow api load-node-property-options --path type=<type> --body @node.json
 kilasflow api load-node-property-schema --path type=<type> --body @mapper.json
 ```
 
@@ -26,22 +25,12 @@ kilasflow api load-node-property-schema --path type=<type> --body @mapper.json
 `list` mode loads from the internal `sql.tables` loader with the `schema`
 parameter as its dependency and the `postgres` credential type, and its
 `columns` resource mapper loads from `sql.mappingColumns` with `schema` and
-`table` as dependencies (nodes/postgres_v2.go; internal/loadoptions/sql.go).
+`table` as dependencies.
 
 `--property` is required and the verb refuses to run without it; `--version`,
-`--mode`, `--credential`, `--param` and `--parameters` are sent only when given
-(internal/cli/verbs_node.go, `runNodeOptions`). The node as far as it is
-configured goes in as the request's `parameters`: `--param name=value` sets one
-parameter as a string and repeats, `--parameters` takes the whole object as
-JSON, `@file.json` or `-` for stdin (the way to send a number, a boolean or a
-resource locator), and a `--param` overrides the same key of `--parameters`.
-Only the loader's `dependsOn` keys are read from it, so a list that stays empty
-with a `reason` such as "need the service address to be filled in first" is
-missing one of those. `workflowId`, which bounds an embed session's lookup, is
-the one part of the operation's body the verb does not carry; that and a body
-you would rather keep in a file go through `kilasflow api
-load-node-property-options --path type=<type> --body @node.json`
-(internal/api/handlers/nodes.go, `loadOptionsInput`).
+`--mode` and `--credential` are sent only when given. A node that is already half configured is more than the verb
+exposes: `parameters` and `workflowId` are part of the operation's body and only
+the escape hatch carries them.
 
 ## The request body
 
@@ -57,7 +46,7 @@ load-node-property-options --path type=<type> --body @node.json`
 ## What a loader is
 
 `OptionsLoader` is data, never a function name: the server resolves a declared
-loader, so a request cannot choose what runs (internal/property/loader.go).
+loader, so a request cannot choose what runs.
 
 | Field | Meaning |
 | --- | --- |
@@ -73,7 +62,7 @@ loader, so a request cannot choose what runs (internal/property/loader.go).
 | `dependsOn` | the parameter keys the loader reads — also what tells the panel to refetch |
 
 An `http` loader needs an endpoint and a value field; an `internal` one needs a
-name (internal/property/loader.go, `ValidateLoader`).
+name.
 
 ## The result
 
@@ -82,12 +71,9 @@ name (internal/property/loader.go, `ValidateLoader`).
 ```
 
 `reason` explains an empty list the caller can act on, rather than leaving an
-empty dropdown that reads as "the service has nothing"
-(internal/loadoptions/loadoptions.go, `Result`). A successful load is served
+empty dropdown that reads as "the service has nothing". A successful load is served
 `Cache-Control: private, max-age=30` and cached in-process under a key that
-includes the tenant, the workflow, the loader and every dependency value
-(internal/api/handlers/nodes.go; internal/loadoptions/loadoptions.go,
-`cacheKey`).
+includes the tenant, the workflow, the loader and every dependency value.
 
 ## Refusals, and what each means
 
@@ -105,46 +91,38 @@ includes the tenant, the workflow, the loader and every dependency value
 An empty list with a reason is a **200**, not an error. The two reasons met most
 often are a dependency that holds an expression — which cannot be resolved while
 editing, because there is no item and no run, and a guessed value would produce a
-confidently wrong list — and a missing credential
-(internal/api/handlers/nodes.go, `LoadOptions`; internal/loadoptions/
-loadoptions.go, `loadHTTP`).
+confidently wrong list — and a missing credential.
 
 ## Credentials and reach
 
 - A loader that declares a credential type needs one of that type, resolved by id
   under the caller's tenant: a credential from another tenant resolves to
-  nothing, so the answer never confirms that it exists elsewhere
-  (internal/loadoptions/loadoptions.go, `withCredential`).
+  nothing, so the answer never confirms that it exists elsewhere.
 - An outbound loader is checked against the same egress policy the HTTP node
   applies, **before** the request is dialled, and the credential's own allowed
   hosts bound the target too — a host the credential cannot reach is refused
-  rather than contacted (internal/loadoptions/loadoptions.go, `loadHTTP`;
-  internal/safehttp).
+  rather than contacted.
 - The remote response body is never echoed into the error: it may carry whatever
   the credential just authenticated against.
 - An embed session may read with a credential only when the published revision it
   is confined to actually uses it, and only for its own workflow
-  (internal/api/handlers/nodes.go, `scopeFor`;
-  docs/src/content/docs/reference/api-contract.md).
+  (docs: reference/api-contract).
 
 ## A resource mapper's columns
 
 `load-node-property-schema` reuses the same body, the same registry validation
 and the same tenancy gate, and answers with a column list rather than an option
 list: each column carries an `id`, a `displayName`, a `type`, a `required` flag,
-`canBeUsedToMatch`, `defaultMatch`, `readOnly` and any fixed `options`
-(internal/api/handlers/nodes.go, `LoadSchema`, `MapperColumn`).
+`canBeUsedToMatch`, `defaultMatch`, `readOnly` and any fixed `options`.
 
 It is deliberately **uncached** (`Cache-Control: no-store`), unlike an option
 list: a mapping validated against a stale column set would refuse a column that
 exists or accept one that no longer does. Its loader is internal-only today,
 because a schema source over HTTP would need a response shape nothing yet
-describes (internal/loadoptions/schema.go).
+describes.
 
-## Source
+## Further reading
 
-`internal/api/handlers/nodes.go` (`loadOptionsInput`, `LoadOptions`,
-`LoadSchema`), `internal/loadoptions/{loadoptions,schema}.go`,
-`internal/property/loader.go`, `internal/cli/verbs_node.go`,
-`docs/src/content/docs/reference/cli.md` (`kilasflow node list`, `kilasflow node describe`, `kilasflow node options`),
-`docs/src/content/docs/concepts/node-registry.md`.
+The verbs are in the CLI reference and the catalogue in the node registry page
+(docs: reference/cli, concepts/node-registry). `kilasflow api
+load-node-property-options --schema` prints the request body the operation takes.
