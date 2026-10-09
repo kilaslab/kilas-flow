@@ -26,6 +26,7 @@
 	import {
 		buildWorkflowListSearch,
 		defaultWorkflowListQuery,
+		duplicatedWorkflowInput,
 		duplicateName,
 		filterWorkflows,
 		MAX_TAG_LENGTH,
@@ -33,6 +34,7 @@
 		pageWorkflows,
 		parseTagInput,
 		parseWorkflowListQuery,
+		renamedWorkflowInput,
 		tagProblemMessage,
 		WORKFLOWS_PER_PAGE,
 		workflowCountLabel,
@@ -111,6 +113,9 @@
 	let renameName = $state('');
 	let renameError = $state<string | null>(null);
 	let renameTags = $state('');
+	// The field as it was filled in when the dialog opened, to tell whether the
+	// user touched it: an untouched field sends the tags read at save time.
+	let renameTagsAtOpen = '';
 	let renameTagsError = $state<string | null>(null);
 	let deleteOpen = $state(false);
 	let deleting = $state<WorkflowSummary | null>(null);
@@ -219,6 +224,7 @@
 		renaming = workflow;
 		renameName = workflow.name;
 		renameTags = (workflow.tags ?? []).join(', ');
+		renameTagsAtOpen = renameTags;
 		renameError = null;
 		renameTagsError = null;
 		renameOpen = true;
@@ -235,8 +241,9 @@
 			renameError = m.workflows_error_name_too_long();
 			return;
 		}
+		const tagsEdited = renameTags !== renameTagsAtOpen;
 		const parsedTags = parseTagInput(renameTags);
-		if (parsedTags.problem) {
+		if (tagsEdited && parsedTags.problem) {
 			renameTagsError = tagProblemMessage(parsedTags.problem);
 			return;
 		}
@@ -249,14 +256,10 @@
 			const current = await getWorkflow(renaming.id);
 			if (current.status !== 200) throw new Error(m.workflows_unexpected_workflow());
 			const document = current.data.latestVersion.document;
-			const response = await updateWorkflow(renaming.id, {
-				schemaVersion: document.schemaVersion,
-				name: trimmed,
-				nodes: document.nodes,
-				connections: document.connections,
-				settings: document.settings,
-				tags: parsedTags.tags
-			});
+			const response = await updateWorkflow(
+				renaming.id,
+				renamedWorkflowInput(document, trimmed, tagsEdited ? parsedTags.tags : null)
+			);
 			if (response.status !== 200) throw new Error(m.workflows_unexpected_workflow_rename());
 			await loadWorkflows();
 			renameOpen = false;
@@ -277,14 +280,7 @@
 			if (current.status !== 200) throw new Error(m.workflows_unexpected_workflow());
 			const document = current.data.latestVersion.document;
 			const taken = new Set(allRows.map((entry) => entry.name));
-			const response = await createWorkflow({
-				schemaVersion: document.schemaVersion,
-				name: duplicateName(workflow.name, taken),
-				nodes: document.nodes ?? [],
-				connections: document.connections ?? [],
-				settings: document.settings ?? {},
-				tags: document.tags ?? []
-			});
+			const response = await createWorkflow(duplicatedWorkflowInput(document, duplicateName(workflow.name, taken)));
 			if (response.status !== 201) throw new Error(m.workflows_unexpected_workflow_duplicate());
 			await loadWorkflows();
 			await goto(`/app/workflows/${response.data.id}`);

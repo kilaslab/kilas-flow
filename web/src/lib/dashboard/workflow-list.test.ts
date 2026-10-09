@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
+import type { Document } from '$lib/api/generated/models';
+
 import {
 	buildWorkflowListSearch,
 	defaultWorkflowListQuery,
+	duplicatedWorkflowInput,
 	duplicateName,
 	filterWorkflows,
 	pageWorkflows,
 	parseTagInput,
 	parseWorkflowListQuery,
+	renamedWorkflowInput,
 	type WorkflowRow,
 	workflowCountLabel,
 	workflowTagOptions
@@ -158,6 +162,49 @@ describe('reading tags typed into a comma-separated field', () => {
 		// Thirteen emoji are 26 UTF-16 code units, which n8n and the server count.
 		expect(parseTagInput('😀'.repeat(13)).problem?.kind).toBe('too_long');
 		expect(parseTagInput('😀'.repeat(12)).problem).toBeNull();
+	});
+});
+
+describe('saving a rename or a duplicate from the list', () => {
+	const stored: Document = {
+		id: 'wf_1',
+		schemaVersion: 1,
+		name: 'Orders',
+		nodes: [{ id: 'm', name: 'Manual', type: 'kilasflow.manual', typeVersion: 1, position: { x: 1, y: 2 } }],
+		connections: [],
+		settings: { timezone: 'UTC' },
+		tags: ['Prod', 'billing']
+	};
+
+	// Both saves are built from the one function the editor saves through, so a
+	// field the document gains is carried by all three or by none.
+	it('a rename carries the freshly read tags unless the user edited them', () => {
+		const untouched = renamedWorkflowInput(stored, 'Orders v2', null);
+		expect(untouched.name).toBe('Orders v2');
+		expect(untouched.tags).toEqual(['Prod', 'billing']);
+		expect(untouched.nodes).toEqual(stored.nodes);
+		expect(untouched.settings).toEqual({ timezone: 'UTC' });
+		expect('id' in untouched).toBe(false);
+	});
+
+	it('a rename sends the edited tags, even an emptied list', () => {
+		expect(renamedWorkflowInput(stored, 'Orders', ['Q4']).tags).toEqual(['Q4']);
+		expect(renamedWorkflowInput(stored, 'Orders', []).tags).toEqual([]);
+	});
+
+	it('a rename of a workflow that has no tags sends an empty list', () => {
+		const bare = { ...stored, tags: undefined } as Document;
+		expect(renamedWorkflowInput(bare, 'Orders', null).tags).toEqual([]);
+	});
+
+	it('a duplicate keeps the source tags and takes the new name', () => {
+		const copy = duplicatedWorkflowInput(stored, 'Copy of Orders');
+		expect(copy.name).toBe('Copy of Orders');
+		expect(copy.tags).toEqual(['Prod', 'billing']);
+		expect(copy.nodes).toEqual(stored.nodes);
+		expect('id' in copy).toBe(false);
+		// A copy, so editing it never edits the source document.
+		expect(copy.tags).not.toBe(stored.tags);
 	});
 });
 

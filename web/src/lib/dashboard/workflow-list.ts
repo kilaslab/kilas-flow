@@ -8,7 +8,8 @@
  * unit-testable without a browser.
  */
 import * as m from '$lib/paraglide/messages.js';
-import type { WorkflowSummary } from '$lib/api/generated/models';
+import type { Document, WorkflowDocumentInput, WorkflowSummary } from '$lib/api/generated/models';
+import { toWorkflowInput } from '$lib/workflow-editor/workflow-input';
 
 export type WorkflowActiveFilter = 'all' | 'active' | 'draft';
 
@@ -171,6 +172,28 @@ export function pageWorkflows(filtered: readonly WorkflowRow[], page: number): W
 	const current = Math.min(Math.max(1, page), pages);
 	const start = (current - 1) * WORKFLOWS_PER_PAGE;
 	return { rows: filtered.slice(start, start + WORKFLOWS_PER_PAGE), total, pages, page: current };
+}
+
+/**
+ * The save body for renaming a workflow from the list, built from the freshly
+ * read document through the same function the editor saves with, so a field the
+ * document gains is carried here too. `editedTags` is what the user typed;
+ * null means the tags field was left alone, which keeps the tags just read from
+ * the server rather than the list's older snapshot of them, so a rename never
+ * overwrites a tag change another client made in between.
+ */
+export function renamedWorkflowInput(
+	document: Document,
+	name: string,
+	editedTags: string[] | null
+): WorkflowDocumentInput {
+	const input = toWorkflowInput(document);
+	return editedTags === null ? { ...input, name } : { ...input, name, tags: editedTags };
+}
+
+/** The create body for duplicating a workflow: the whole document under a new name. */
+export function duplicatedWorkflowInput(document: Document, name: string): WorkflowDocumentInput {
+	return { ...toWorkflowInput(document), name };
 }
 
 /**
