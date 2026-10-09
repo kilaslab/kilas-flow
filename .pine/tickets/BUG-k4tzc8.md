@@ -1,7 +1,7 @@
 ---
 id: BUG-k4tzc8
 title: A PostgreSQL/MySQL select whose conditions were edited in the editor ran without its WHERE clause
-status: todo
+status: done
 priority: medium
 parent: EPIC-8rbys7
 created: "2026-10-09T13:33:29Z"
@@ -30,3 +30,17 @@ Found and fixed by the Track C coder while hardening condition handling for the 
 # Acceptance Criteria
 - [x] The executor reads the editor's filter shape, combinator included; a test asserts the two-row "or" filter builds `WHERE "status" = $1 OR "total" > $2` (nodes/tool_form_run_test.go, `TestConditionShapesAreReadOrRefusedNeverIgnored`), merged with Track C (commit a3e5338c).
 - [x] Any other non-list `where` on select/delete is refused instead of running unfiltered.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-10-09.
+
+- Base: `ccf8eebd` (last commit at or before ticket created 2026-10-09)
+- Commits (1):
+  - `ccf8eebd` — chore(pine): BUG-k4tzc8 records the editor-filter WHERE bug Track C fixed
+- Files changed (base → working tree):
+
+```
+ .pine/tickets/BUG-f8b8gh.md | 21 +++++++++++++++++++--
+ 1 file changed, 19 insertions(+), 2 deletions(-)
+```

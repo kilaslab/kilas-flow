@@ -1,11 +1,11 @@
 ---
 id: BUG-f8b8gh
 title: 'The AI memory ceiling can evict the newest session: two sessions touched in one clock tick tie'
-status: todo
+status: done
 priority: medium
 parent: EPIC-8rbys7
 created: "2026-10-09T13:33:28Z"
-updated: "2026-10-09T13:33:28Z"
+updated: "2026-10-09T13:33:29Z"
 ---
 
 # Description
@@ -28,3 +28,20 @@ Roughly one run in ten keeps session one and evicts another.
 
 # Acceptance Criteria
 - [x] Recency is ordered by a monotonic counter, not the clock (`touch` in internal/ai/memory.go); `TestPerTenantCeilingEvictsByRecencyWhenTheClockDoesNotMove` (50 runs with a frozen clock) failed before the fix and passes after; `go test -count=200 -run TestPerTenantCeiling ./internal/ai/` passes.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-10-09.
+
+- Base: `d2d30efe` (last commit at or before ticket created 2026-10-09)
+- Commits (1):
+  - `ae8be8b8` — BUG-f8b8gh: the AI memory ceiling evicts by a recency counter, so two sessions touched in one clock tick never tie and the newest is never dropped
+- Files changed (base → working tree):
+
+```
+ .pine/tickets/BUG-f8b8gh.md | 30 ++++++++++++++++++++++++++++++
+ .pine/tickets/BUG-k4tzc8.md | 32 ++++++++++++++++++++++++++++++++
+ internal/ai/ai_test.go      | 32 ++++++++++++++++++++++++++++++++
+ internal/ai/memory.go       | 26 ++++++++++++++++++--------
+ 4 files changed, 112 insertions(+), 8 deletions(-)
+```
