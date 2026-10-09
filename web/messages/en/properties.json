@@ -72,6 +72,8 @@
 	"properties_column_model_hint": "The model fills this in when it calls the tool.",
 	"properties_mapper_expression_notice": "These inputs are written as one expression, so they cannot be set field by field. The expression decides what the workflow receives.",
 	"properties_mapper_use_fields": "Use per-field inputs",
+	"properties_mapper_use_fields_confirm": "This deletes the expression and leaves every field to the model. The expression cannot be recovered afterwards except by undoing or not saving.",
+	"properties_mapper_use_fields_confirm_action": "Delete the expression",
 	"properties_mapper_undeclared": "Also sent, though the workflow does not declare them:",
 	"properties_conditions_match": "Match",
 	"properties_all_and": "All (AND)",

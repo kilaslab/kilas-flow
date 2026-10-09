@@ -77,6 +77,8 @@
 	"properties_column_model_hint": "Model mengisi ini saat memanggil tool.",
 	"properties_mapper_expression_notice": "Input ini ditulis sebagai satu ekspresi, jadi tidak bisa diatur per bidang. Ekspresi itulah yang menentukan apa yang diterima workflow.",
 	"properties_mapper_use_fields": "Gunakan input per bidang",
+	"properties_mapper_use_fields_confirm": "Ini menghapus ekspresi dan menyerahkan setiap bidang kepada model. Ekspresi tidak bisa dipulihkan setelahnya kecuali dengan membatalkan perubahan atau tidak menyimpan.",
+	"properties_mapper_use_fields_confirm_action": "Hapus ekspresi",
 	"properties_mapper_undeclared": "Ikut dikirim, meski workflow tidak mendeklarasikannya:",
 	"properties_conditions_match": "Kecocokan",
 	"properties_all_and": "Semua (AND)",

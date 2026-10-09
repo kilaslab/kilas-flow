@@ -231,12 +231,25 @@ describe('a resource mapper that lets the model fill a column', () => {
 		expect(hasControl(markup, 'roundTo')).toBe(true);
 	});
 
-	it('reads a plain object stored before the property was a mapper as fixed columns', () => {
-		const markup = html(mapperProperty(true), { unit: 'F' });
+	// A workflow that declares no columns (it takes anything, it is inactive, it
+	// could not be read, or it is named by an expression) leaves a plain-JSON
+	// tool's static inputs with nowhere to show: they were sent unseen and could
+	// not be removed.
+	it('lists a legacy plain object’s keys, each removable, when no column is known', () => {
+		const markup = html(mapperProperty(true), { unit: 'F', note: 'x' });
 
-		// No schema copy yet, so there is no column to switch; the stored key
-		// must not have been wiped from view, and nothing claims the model has it.
 		expect(markup).not.toContain('role="switch"');
+		expect(markup).toContain('Also sent, though the workflow does not declare them:');
+		for (const key of ['unit', 'note']) {
+			expect(markup).toContain(`>${key}`);
+			expect(markup).toMatch(new RegExp(`<button[^>]*aria-label="Remove ${key}"`));
+		}
+	});
+
+	it('lists nothing as undeclared when the stored value is empty', () => {
+		const markup = html(mapperProperty(true), undefined);
+
+		expect(markup).not.toContain('Also sent');
 	});
 
 	it('lists a stored key the workflow does not declare, so a legacy static input stays visible', () => {
@@ -255,5 +268,9 @@ describe('a resource mapper that lets the model fill a column', () => {
 		expect(markup).toContain('These inputs are written as one expression');
 		expect(markup).toContain('Use per-field inputs');
 		expect(markup).not.toContain('role="switch"');
+		// Deleting the author's expression is asked for first, not done by the
+		// button that offers it.
+		expect(markup).not.toContain('role="alertdialog"');
+		expect(markup).not.toContain('Delete the expression');
 	});
 });

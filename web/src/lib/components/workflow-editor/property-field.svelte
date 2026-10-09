@@ -212,6 +212,8 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 	});
 	/** A resource mapper's columns, and the mapping over them. */
 	let schemaState = $state<{ fields: MapperColumn[]; reason: string }>({ fields: [], reason: '' });
+	/** Whether the loader has answered yet (with columns, with none, or with a failure). */
+	let schemaSettled = $state(false);
 	const mapping = $derived(readMapping(property, value));
 	// The live columns when they have loaded, the stored copy until then, so
 	// the form is not empty on the first render of a saved node.
@@ -226,7 +228,10 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		return loadSoon({
 			key: `schema:${key}`,
 			load: () => untrack(() => loadSchema(property)),
-			apply: (result) => (schemaState = result),
+			apply: (result) => {
+				schemaState = result;
+				schemaSettled = true;
+			},
 			fail: (reason) => ({ fields: [], reason }),
 			// A workflow's declared inputs change whenever its author edits
 			// and activates it, in this same page session; the server answers
@@ -250,11 +255,15 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 	/**
 	 * Keys the stored value carries that the loaded columns do not list — the
 	 * extra static inputs a plain-JSON tool kept — so they stay visible and
-	 * removable instead of being sent unseen. Only once the columns have
-	 * loaded: before that every key would look undeclared.
+	 * removable instead of being sent unseen. A workflow that declares no
+	 * columns (one that takes anything, one that is inactive or unreadable, or
+	 * one named by an expression) lists every key it has: those are exactly the
+	 * inputs the form could not otherwise show. Not while a loader is still on
+	 * its way, when every key would look undeclared for a moment.
 	 */
+	const columnsKnown = $derived(!loadSchema || schemaSettled);
 	const undeclaredKeys = $derived(
-		modelDefinable && schemaColumns.length > 0
+		modelDefinable && (schemaColumns.length > 0 || columnsKnown)
 			? Object.keys(mapping.value).filter((key) => !schemaColumns.some((column) => column.id === key))
 			: []
 	);
@@ -268,7 +277,14 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		onChange(writeMapping({ ...mapping, value: rest }, schemaColumns));
 	}
 
+	/**
+	 * Replacing a whole expression with the per-field form deletes the
+	 * expression, which is the author's code, so it is asked for first.
+	 */
+	let confirmingFieldInputs = $state(false);
+
 	function useFieldInputs() {
+		confirmingFieldInputs = false;
 		onChange(writeMapping({ mappingMode: MAPPING_MANUAL, value: {}, matchingColumns: [] }, schemaColumns));
 	}
 
@@ -617,7 +633,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 	{:else}
 		<!-- A number column of a mapper the model can fill is a text box: a
 		     number input refuses the braces a fixed expression needs. -->
-		<input aria-label={column.displayName} type={columnControl(column.type) === 'number' && !modelDefinable && !isExpression(mapping.value[column.id]) ? 'number' : 'text'} inputmode={columnControl(column.type) === 'number' && modelDefinable ? 'decimal' : undefined} value={columnText(mapping.value[column.id])} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" oninput={(event) => setColumn(column.id, editColumn(mapping.value[column.id], event.currentTarget.value, columnControl(column.type)))} />
+		<input aria-label={column.displayName} type={columnControl(column.type) === 'number' && !modelDefinable && !isExpression(mapping.value[column.id]) ? 'number' : 'text'} inputmode={columnControl(column.type) === 'number' && modelDefinable ? 'decimal' : undefined} value={columnText(mapping.value[column.id])} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" oninput={(event) => setColumn(column.id, editColumn(mapping.value[column.id], event.currentTarget.value, columnControl(column.type), modelDefinable))} />
 	{/if}
 {/snippet}
 
@@ -690,7 +706,23 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 			     stays editable above; the way out replaces it with the
 			     per-field form, every column left to the model. -->
 			<p class="rounded border border-dashed border-input px-2 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">{m.properties_mapper_expression_notice()}</p>
-			<button type="button" class="justify-self-start rounded border border-border px-2 py-1 text-[0.6875rem] text-muted-foreground transition-colors hover:bg-muted" onclick={useFieldInputs}>{m.properties_mapper_use_fields()}</button>
+			{#if confirmingFieldInputs}
+				<!-- Asked inline, as the version panel asks before it restores. -->
+				<div role="alertdialog" aria-label={m.properties_mapper_use_fields()} tabindex="-1" class="grid gap-1.5 rounded border border-border bg-muted/40 p-2" onkeydown={(event) => {
+					if (event.key === 'Escape') {
+						event.stopPropagation();
+						confirmingFieldInputs = false;
+					}
+				}}>
+					<p class="text-[0.6875rem] leading-4 text-muted-foreground">{m.properties_mapper_use_fields_confirm()}</p>
+					<div class="flex justify-end gap-1.5">
+						<button type="button" class="rounded px-2 py-1 text-[0.6875rem] text-muted-foreground hover:bg-muted" onclick={() => (confirmingFieldInputs = false)}>{m.workflows_cancel()}</button>
+						<button type="button" class="rounded bg-primary px-2 py-1 text-[0.6875rem] font-medium text-primary-foreground transition-opacity hover:opacity-90" onclick={useFieldInputs}>{m.properties_mapper_use_fields_confirm_action()}</button>
+					</div>
+				</div>
+			{:else}
+				<button type="button" class="justify-self-start rounded border border-border px-2 py-1 text-[0.6875rem] text-muted-foreground transition-colors hover:bg-muted" onclick={() => (confirmingFieldInputs = true)}>{m.properties_mapper_use_fields()}</button>
+			{/if}
 		{/if}
 	{:else if property.kind === 'boolean'}
 		<label class="flex h-7 items-center gap-2 rounded-md border border-input px-2 text-xs">
@@ -1064,19 +1096,22 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 						</label>
 					{/if}
 				{/each}
-				{#if undeclaredKeys.length > 0}
-					<div class="grid gap-1 text-[0.6875rem]">
-						<p class="text-muted-foreground">{m.properties_mapper_undeclared()}</p>
-						<div class="flex flex-wrap gap-1">
-							{#each undeclaredKeys as key (key)}
-								<span class="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-muted-foreground">
-									{key}
-									<button type="button" aria-label={m.properties_remove_property({ label: key })} class="grid size-4 place-items-center rounded transition-colors hover:bg-muted" onclick={() => removeUndeclared(key)}><X class="size-3" aria-hidden="true" /></button>
-								</span>
-							{/each}
-						</div>
+			{/if}
+			{#if undeclaredKeys.length > 0}
+				<!-- After the columns, and also when there are none: a workflow
+				     that declares nothing is where the static inputs a plain-JSON
+				     tool kept would otherwise be sent unseen. -->
+				<div class="grid gap-1 text-[0.6875rem]">
+					<p class="text-muted-foreground">{m.properties_mapper_undeclared()}</p>
+					<div class="flex flex-wrap gap-1">
+						{#each undeclaredKeys as key (key)}
+							<span class="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-muted-foreground">
+								{key}
+								<button type="button" aria-label={m.properties_remove_property({ label: key })} class="grid size-4 place-items-center rounded transition-colors hover:bg-muted" onclick={() => removeUndeclared(key)}><X class="size-3" aria-hidden="true" /></button>
+							</span>
+						{/each}
 					</div>
-				{/if}
+				</div>
 			{/if}
 		</div>
 	{:else if property.kind === 'conditions'}
