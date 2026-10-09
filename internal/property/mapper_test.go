@@ -1,6 +1,7 @@
 package property_test
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -192,5 +193,26 @@ func TestAMappingRoundTripsThroughItsStoredShape(t *testing.T) {
 		if _, ok := property.ReadMapping(value); ok {
 			t.Errorf("ReadMapping(%#v) accepted something that is not a mapping", value)
 		}
+	}
+}
+
+// Leaving a column to the model is opt-in, so a mapper that does not ask for it
+// serializes exactly as it did before the flag existed.
+func TestAMapperOffersTheModelSwitchOnlyWhenItAsksFor(t *testing.T) {
+	t.Parallel()
+
+	plain, err := json.Marshal(property.ResourceMapperDeclaration{SupportsAutoMap: true})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if strings.Contains(string(plain), "modelDefinable") {
+		t.Errorf("a mapper that did not opt in serializes as %s, want no modelDefinable key", plain)
+	}
+	opted, err := json.Marshal(property.ResourceMapperDeclaration{ModelDefinable: true})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if !strings.Contains(string(opted), `"modelDefinable":true`) {
+		t.Errorf("an opted-in mapper serializes as %s, want modelDefinable true", opted)
 	}
 }

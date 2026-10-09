@@ -23,8 +23,10 @@
 //	G2 operations        the OpenAPI document of an in-process server built the
 //	                     way the binary builds it, where every operation id a
 //	                     handler registers through huma appears
-//	G3 nodes             nodes.RegisterAll into a fresh node.Registry, the call
-//	                     the server makes at startup
+//	G3 nodes             every node a default install serves (the compiled
+//	                     nodes, the vector nodes and the embedded packs) in a
+//	                     fresh node.Registry, the calls the server makes at
+//	                     startup
 //	G4 expression roots  expression.Roots(), the allowlist the API serves to the
 //	                     editor
 //
@@ -42,7 +44,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -51,8 +56,10 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/config"
 	"github.com/kilaslab/kilas-flow/internal/expression"
 	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/shippedcatalogue"
 	"github.com/kilaslab/kilas-flow/internal/skills"
-	"github.com/kilaslab/kilas-flow/nodes"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // binaryName is the word a fenced command starts with.
@@ -136,7 +143,7 @@ func TestG2OperationsExist(t *testing.T) {
 	report(t, operationDrift(embeddedBundle(t), loadProduct(t)))
 }
 
-// Every declared node type is one nodes.RegisterAll registers.
+// Every declared node type is one the shipped catalogue registers.
 func TestG3NodeTypesExist(t *testing.T) {
 	report(t, nodeDrift(embeddedBundle(t), loadProduct(t)))
 }
@@ -299,14 +306,14 @@ func operationIDs(t *testing.T) map[string]bool {
 	return ids
 }
 
-// nodeTypes registers the built-ins the way the server does at startup and
-// reads the catalogue back.
+// nodeTypes registers the shipped catalogue the way the server does at startup
+// and reads it back.
 func nodeTypes(t *testing.T) map[string]bool {
 	t.Helper()
 
 	registry := node.NewRegistry()
-	if err := nodes.RegisterAll(registry); err != nil {
-		t.Fatalf("register the built-in nodes: %v", err)
+	if err := shippedcatalogue.Register(registry); err != nil {
+		t.Fatalf("register the shipped catalogue: %v", err)
 	}
 
 	definitions := registry.List()
@@ -790,5 +797,236 @@ func gateDocument(planted plantedDeclaration) string {
 func TestEmbeddedBundlePassesItsOwnChecker(t *testing.T) {
 	for _, finding := range skills.Check(embeddedBundle(t)) {
 		t.Errorf("%s: %s: %s", finding.Skill, finding.Rule, finding.Message)
+	}
+}
+
+// The router is how an agent finds a skill: a skill it does not name is a skill
+// nobody loads. Every other skill in the bundle must be named in the router's
+// decision tree and in its table, so a skill added to skills/ without a line in
+// using-kilasflow-skills fails here instead of shipping unreachable.
+func TestTheRouterNamesEverySkill(t *testing.T) {
+	const router = "using-kilasflow-skills"
+
+	loaded := embeddedBundle(t)
+	var body string
+	for _, skill := range loaded {
+		if skill.Name == router {
+			body = skill.Body
+		}
+	}
+	if body == "" {
+		t.Fatalf("the bundle has no %s skill", router)
+	}
+
+	tree := body
+	if from := strings.Index(body, "## Decision tree"); from >= 0 {
+		tree = body[from:]
+		if to := strings.Index(tree, "### The command surface"); to >= 0 {
+			tree = tree[:to]
+		}
+	}
+
+	for _, skill := range loaded {
+		if skill.Name == router {
+			continue
+		}
+		if !strings.Contains(tree, "-> "+skill.Name) {
+			t.Errorf("the router's decision tree never sends an agent to %s", skill.Name)
+		}
+		if !strings.Contains(tree, "| `"+skill.Name+"` |") {
+			t.Errorf("the router's skills table has no row for %s", skill.Name)
+		}
+	}
+}
+
+// The bundle cites two kinds of thing instead of source files: a docs page,
+// written "(docs: concepts/execution-model)", and a file of the bundle,
+// written `kilasflow skills show <skill> --reference <FILE>.md`. A citation
+// that does not resolve is a pointer to nothing, which is worse than no
+// pointer, so every one is resolved here: a docs slug against the docs tree of
+// the checkout, and a reference against the skill it names.
+const docsRoot = "../../docs/src/content/docs"
+
+var (
+	docsCitation      = regexp.MustCompile(`docs: ([a-z0-9][a-z0-9/_-]*(?:, [a-z0-9][a-z0-9/_-]*)*)`)
+	referenceCitation = regexp.MustCompile("`kilasflow skills show ([a-z][a-z0-9-]*) --reference ([A-Za-z0-9_.-]+\\.md)`")
+)
+
+// citationProblems lists every docs slug and every skill reference the bundle
+// cites that does not resolve.
+func citationProblems(loaded []skills.Skill, docs string) []string {
+	byName := map[string]skills.Skill{}
+	for _, skill := range loaded {
+		byName[skill.Name] = skill
+	}
+
+	var problems []string
+	for _, document := range bundleDocuments(loaded) {
+		for _, match := range docsCitation.FindAllStringSubmatch(document.text, -1) {
+			for _, slug := range strings.Split(match[1], ", ") {
+				found := false
+				for _, extension := range []string{".md", ".mdx"} {
+					if _, err := os.Stat(filepath.Join(docs, filepath.FromSlash(slug)+extension)); err == nil {
+						found = true
+					}
+				}
+				if !found {
+					problems = append(problems, fmt.Sprintf("%s cites (docs: %s), which is not a page under docs/src/content/docs", document.path, slug))
+				}
+			}
+		}
+
+		for _, match := range referenceCitation.FindAllStringSubmatch(document.text, -1) {
+			skill, known := byName[match[1]]
+			if !known {
+				problems = append(problems, fmt.Sprintf("%s cites a reference of %s, which is not a skill of the bundle", document.path, match[1]))
+
+				continue
+			}
+			if _, present := skill.ReferenceText["references/"+match[2]]; !present {
+				problems = append(problems, fmt.Sprintf("%s cites %s --reference %s, which the skill does not ship", document.path, match[1], match[2]))
+			}
+		}
+	}
+
+	return problems
+}
+
+func TestSkillCitationsResolve(t *testing.T) {
+	loaded := embeddedBundle(t)
+
+	for _, problem := range citationProblems(loaded, docsRoot) {
+		t.Error(problem)
+	}
+
+	// The gate has to be reading something: the bundle cites docs pages, and a
+	// resolver whose pattern stopped matching would pass over an empty set.
+	cited := 0
+	for _, document := range bundleDocuments(loaded) {
+		cited += len(docsCitation.FindAllString(document.text, -1))
+	}
+	if cited < 10 {
+		t.Fatalf("the bundle cites %d docs pages, want at least 10: the citation pattern has stopped matching", cited)
+	}
+}
+
+func TestSkillCitationsRefuseWhatDoesNotResolve(t *testing.T) {
+	planted, err := skills.Parse("kilasflow-fixture", []byte(`---
+name: kilasflow-fixture
+description: Use when a citation is checked. Triggers on "citation".
+kilasflow_skills_version: 1
+kilasflow_commands: []
+kilasflow_operations: []
+kilasflow_nodes: []
+kilasflow_expression_roots: []
+kilasflow_not_shipped: []
+---
+
+## Non-negotiables
+
+- A real page (docs: concepts/execution-model), a made-up page (docs: concepts/no-such-page),
+  a real reference `+"`kilasflow skills show kilasflow-fixture --reference MISSING.md`"+` and a skill that is not here
+  `+"`kilasflow skills show kilasflow-nowhere --reference X.md`"+`.
+`))
+	if err != nil {
+		t.Fatalf("parse the planted skill: %v", err)
+	}
+
+	problems := strings.Join(citationProblems([]skills.Skill{planted}, docsRoot), "\n")
+	for _, want := range []string{"concepts/no-such-page", "MISSING.md", "kilasflow-nowhere"} {
+		if !strings.Contains(problems, want) {
+			t.Errorf("the resolver did not refuse %q; it reported:\n%s", want, problems)
+		}
+	}
+	if strings.Contains(problems, "concepts/execution-model") {
+		t.Errorf("the resolver refused a docs page that exists:\n%s", problems)
+	}
+}
+
+// Two reference files enumerate a closed set of the product's: the property
+// kinds and the connection channels. A count in prose goes stale silently, so
+// the files state no count and these tests pin each list to the product's own.
+func referenceOf(t *testing.T, skillName, reference string) string {
+	t.Helper()
+
+	for _, skill := range embeddedBundle(t) {
+		if skill.Name != skillName {
+			continue
+		}
+		if text, found := skill.ReferenceText["references/"+reference]; found {
+			return text
+		}
+	}
+	t.Fatalf("%s has no %s", skillName, reference)
+
+	return ""
+}
+
+// sectionBetween returns the text from a heading to the next second-level one.
+func sectionBetween(t *testing.T, document, heading string) string {
+	t.Helper()
+
+	_, after, found := strings.Cut(document, "\n"+heading+"\n")
+	if !found {
+		t.Fatalf("the document has no %q section", heading)
+	}
+	if next := strings.Index(after, "\n## "); next >= 0 {
+		after = after[:next]
+	}
+
+	return after
+}
+
+func TestPropertyKindsReferenceListsEveryKindTheProductHas(t *testing.T) {
+	section := sectionBetween(t, referenceOf(t, "kilasflow-node-configuration", "PROPERTY_KINDS.md"), "## The kinds")
+
+	listed := map[string]bool{}
+	row := regexp.MustCompile("(?m)^\\| `([A-Za-z]+)` \\|")
+	for _, match := range row.FindAllStringSubmatch(section, -1) {
+		listed[match[1]] = true
+	}
+
+	known := map[string]bool{}
+	for _, kind := range property.KnownKinds() {
+		known[string(kind)] = true
+	}
+
+	for kind := range known {
+		if !listed[kind] {
+			t.Errorf("PROPERTY_KINDS.md does not list the kind %q the product accepts", kind)
+		}
+	}
+	for kind := range listed {
+		if !known[kind] {
+			t.Errorf("PROPERTY_KINDS.md lists %q, which is not a kind the product accepts", kind)
+		}
+	}
+}
+
+func TestConnectionChannelsReferenceListsEveryChannelTheProductHas(t *testing.T) {
+	section := sectionBetween(t, referenceOf(t, "kilasflow-workflow-lifecycle", "NAMING_AND_DESCRIPTIONS.md"), "## Connection channel names")
+	// The first paragraph lists the channels; a later one names a spelling that
+	// is not a channel.
+	paragraph, _, _ := strings.Cut(strings.TrimSpace(section), "\n\n")
+
+	listed := map[string]bool{}
+	for _, match := range regexp.MustCompile("`((?:main)|(?:ai_[A-Za-z]+))`").FindAllStringSubmatch(paragraph, -1) {
+		listed[match[1]] = true
+	}
+
+	known := map[string]bool{}
+	for _, kind := range workflow.ConnectionKinds() {
+		known[string(kind)] = true
+	}
+
+	for kind := range known {
+		if !listed[kind] {
+			t.Errorf("NAMING_AND_DESCRIPTIONS.md does not list the channel %q the product has", kind)
+		}
+	}
+	for kind := range listed {
+		if !known[kind] {
+			t.Errorf("NAMING_AND_DESCRIPTIONS.md lists %q, which is not a connection channel", kind)
+		}
 	}
 }
