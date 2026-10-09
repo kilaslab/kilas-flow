@@ -113,6 +113,8 @@ func run(args []string) error {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	workerIDOverride := flag.String("worker-id", "", "worker identity recorded in lease_owner (default: host-qualified and unique per process)")
 	roleOverride := flag.String("role", "", "process role: api, worker, or both (default both)")
+	reseal := flag.Bool("reseal-credentials", false,
+		"seal every stored credential and webhook lifecycle state again under the primary encryption key, then exit (see the key rotation guide)")
 	_ = flag.CommandLine.Parse(args)
 
 	// A leftover argument is a mistake, and answering it by starting a server is
@@ -188,6 +190,11 @@ func run(args []string) error {
 	}()
 	if err := database.Migrate(db, log); err != nil {
 		return err
+	}
+	// A maintenance pass, not a server: it needs the schema and the keys and
+	// nothing else, so it runs before anything starts listening or polling.
+	if *reseal {
+		return resealCredentials(ctx, cfg, db, log)
 	}
 	// The row store behind data tables and the datastore node. Built here
 	// because this is the only place holding the database handle and the
@@ -1501,11 +1508,80 @@ func loadCredentialKeys(ctx context.Context, cfg config.Config, log *slog.Logger
 	} else {
 		warnRawKey(log, format, "secret", cfg.Secrets.MasterKey)
 	}
-	return credentialKeys(key)
+	secondary, err := secondaryKey(cfg, log)
+	if err != nil {
+		return nil, nil, err
+	}
+	return credentialKeys(key, secondary)
+}
+
+// secondaryKey reads the rotation key: the previous master key, which opens
+// what it sealed and seals nothing. It is read from the environment even when
+// the primary comes from a secrets manager, because it is a temporary setting
+// an operator adds for one rotation. Unset is the normal state and is not an
+// error; a value that is not a key refuses the boot, since silently ignoring
+// it would leave every row the old key sealed unreadable.
+func secondaryKey(cfg config.Config, log *slog.Logger) ([]byte, error) {
+	name := strings.TrimSpace(cfg.Security.SecondaryEncryptionKeyEnv)
+	if name == "" {
+		return nil, nil
+	}
+	key, format, err := credentials.KeyFromEnvironmentFormat(name)
+	switch {
+	case errors.Is(err, credentials.ErrNoKey):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("secondary credential encryption key: %w", err)
+	}
+	warnRawKey(log, format, "variable", name)
+	log.Info("a secondary credential encryption key is configured: it opens payloads it sealed and seals nothing",
+		"variable", name)
+	return key, nil
+}
+
+// resealCredentials is the -reseal-credentials pass: every credential and
+// every captured webhook lifecycle value that is not sealed as v1 under the
+// primary key is sealed again. It is safe to run while servers are serving —
+// each write is a compare-and-swap — and safe to run twice.
+//
+// It fails when any payload could not be opened, because that means a key
+// that sealed it is missing from the keyring, and removing the secondary key
+// now would make that row unreadable for good.
+func resealCredentials(ctx context.Context, cfg config.Config, db *database.DB, log *slog.Logger) error {
+	cipher, _, err := loadCredentialKeys(ctx, cfg, log)
+	if err != nil {
+		return fmt.Errorf("-reseal-credentials needs the credential encryption key: %w", err)
+	}
+	stored, err := repository.NewCredentialStore(db.DB, cipher).Reseal(ctx)
+	if err != nil {
+		return err
+	}
+	log.Info("credentials resealed", "resealed", stored.Resealed, "current", stored.Current,
+		"skipped", stored.Skipped, "unopenable", len(stored.Unopenable))
+	captured, err := repository.NewWorkflowStore(db.DB).WithLifecycleState(cipher).ResealLifecycleState(ctx)
+	if err != nil {
+		return err
+	}
+	log.Info("webhook lifecycle state resealed", "resealed", captured.Resealed, "current", captured.Current,
+		"skipped", captured.Skipped, "unopenable", len(captured.Unopenable))
+	unopenable := append(append([]string{}, stored.Unopenable...), captured.Unopenable...)
+	for _, credentialID := range stored.Unopenable {
+		log.Error("credential payload could not be opened with the configured keys", "credential", credentialID)
+	}
+	for _, route := range captured.Unopenable {
+		log.Error("webhook lifecycle state could not be opened with the configured keys", "row", route)
+	}
+	if len(unopenable) > 0 {
+		return fmt.Errorf("%d sealed payloads could not be opened with the configured keys: "+
+			"configure the key that sealed them as %s and run -reseal-credentials again before removing it",
+			len(unopenable), cfg.Security.SecondaryEncryptionKeyEnv)
+	}
+	return nil
 }
 
 // credentialKeys derives the credential cipher and the OAuth signing key from
-// one master key.
+// the master key, with the rotation key, when there is one, as the cipher's
+// secondary.
 //
 // The signing key is an HKDF output of the master key rather than the master
 // key itself: the state and PKCE verifier it makes travel through URLs and
@@ -1513,8 +1589,12 @@ func loadCredentialKeys(ctx context.Context, cfg config.Config, log *slog.Logger
 // seals every stored secret. A Connect popup that is open while this key
 // changes — at the upgrade that introduced the derivation, or at a rotation —
 // fails once and the user presses Connect again.
-func credentialKeys(master []byte) (*credentials.Cipher, []byte, error) {
-	cipher, err := credentials.NewCipher(master)
+func credentialKeys(master, secondary []byte) (*credentials.Cipher, []byte, error) {
+	var older [][]byte
+	if len(secondary) > 0 {
+		older = append(older, secondary)
+	}
+	cipher, err := credentials.NewCipher(master, older...)
 	if err != nil {
 		return nil, nil, err
 	}

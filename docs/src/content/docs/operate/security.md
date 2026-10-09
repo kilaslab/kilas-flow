@@ -81,7 +81,14 @@ isolation story below is about the other direction.
 **Credentials are sealed.** Stored credentials are encrypted at rest with
 AES-256-GCM. The key is read from the environment and never from the
 configuration file; without it, credential storage is disabled rather than
-silently falling back to something weaker. Workflow `$env` expressions can
+silently falling back to something weaker. Each payload is sealed under an
+HKDF-derived key and bound to its tenant, credential id and type, so a payload
+copied into another row by someone with database access does not open there.
+Payloads stored by an earlier release lack that binding until
+`kilasflow -reseal-credentials` runs once. The Google Connect state is signed
+with its own derived key, and a raw 32-character key is accepted with a
+warning at boot. The key is rotated with a secondary key and the same reseal
+pass; see [Key rotation](/operate/key-rotation/). Workflow `$env` expressions can
 never reach it either: only `KILASFLOW_WORKFLOW_ENV_*` is exposed to
 workflows, so a workflow can never read the DSN or the master key. An update
 that leaves a credential's `allowedDomains` out keeps the stored scope, so a

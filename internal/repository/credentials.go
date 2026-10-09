@@ -42,6 +42,9 @@ type GORMCredentialStore struct {
 	// SetExternalResolver attaches one, and resolution without it fails
 	// closed: a reference is never returned as plaintext.
 	external *credentials.Resolver
+	// resealHook, when set by a test, runs between Reseal opening a row and
+	// writing it back.
+	resealHook func(credentialID string)
 }
 
 var _ CredentialRepository = (*GORMCredentialStore)(nil)

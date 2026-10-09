@@ -265,12 +265,24 @@ type Security struct {
 	// Optional at boot: when the named variable holds no key the server still
 	// starts and still runs workflows, but credential storage is disabled —
 	// reads and writes report unconfigured. Generate one before storing
-	// anything (openssl rand -base64 32); there is no re-encryption pass, so
-	// changing the key later makes every credential already stored
+	// anything (openssl rand -base64 32). The key is never used directly:
+	// payloads are sealed under an HKDF-derived key and bound to their tenant,
+	// id and type. To change it, follow the key rotation procedure
+	// (security.secondary_encryption_key_env and -reseal-credentials);
+	// replacing it outright makes every credential already stored
 	// undecryptable.
 	// Env: KILASFLOW_SECURITY_ENCRYPTION_KEY_ENV.
 	// Default: "KILASFLOW_ENCRYPTION_KEY".
 	EncryptionKeyEnv string `koanf:"encryption_key_env"`
+	// SecondaryEncryptionKeyEnv names the environment variable holding the
+	// previous master key during a key rotation. It opens payloads sealed
+	// under that key and never seals one: every write uses the primary key.
+	// It is read from the environment even when the primary key comes from a
+	// secrets manager. Leave the variable unset outside a rotation; once
+	// `kilasflow -reseal-credentials` reports no row left to reseal, unset it.
+	// Env: KILASFLOW_SECURITY_SECONDARY_ENCRYPTION_KEY_ENV.
+	// Default: "KILASFLOW_ENCRYPTION_KEY_SECONDARY".
+	SecondaryEncryptionKeyEnv string `koanf:"secondary_encryption_key_env"`
 }
 
 // Google holds the optional platform Google Cloud OAuth client. Tenants can
@@ -942,7 +954,8 @@ func Default() Config {
 			MaxValueBytes:          1 << 20,
 		},
 		Security: Security{
-			EncryptionKeyEnv: "KILASFLOW_ENCRYPTION_KEY",
+			EncryptionKeyEnv:          "KILASFLOW_ENCRYPTION_KEY",
+			SecondaryEncryptionKeyEnv: "KILASFLOW_ENCRYPTION_KEY_SECONDARY",
 		},
 		Google: Google{
 			ClientSecretEnv: "KILASFLOW_GOOGLE_CLIENT_SECRET",

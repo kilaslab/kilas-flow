@@ -537,3 +537,31 @@ func TestTheUnknownKeyWarningFollowsALogFormatSetOnlyInTheFile(t *testing.T) {
 		t.Errorf("key = %v, want the misspelled key", record["key"])
 	}
 }
+
+func TestTheSecondaryEncryptionKeySettingNamesItsVariable(t *testing.T) {
+	// The rotation key is read from the environment like the primary, never
+	// from the file, and the variable it names is exempt from the unknown-key
+	// warning the way every other *_env setting's variable is.
+	t.Setenv("KILASFLOW_ENCRYPTION_KEY_SECONDARY", "a-secret-value")
+	warnings := captureWarnings(t, func() {
+		cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if got := cfg.Security.SecondaryEncryptionKeyEnv; got != "KILASFLOW_ENCRYPTION_KEY_SECONDARY" {
+			t.Errorf("Security.SecondaryEncryptionKeyEnv = %q, want the documented default", got)
+		}
+	})
+	if strings.TrimSpace(warnings) != "" {
+		t.Errorf("the secondary key variable was warned about:\n%s", warnings)
+	}
+
+	t.Setenv("KILASFLOW_SECURITY_SECONDARY_ENCRYPTION_KEY_ENV", "KILASFLOW_OLD_KEY")
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Security.SecondaryEncryptionKeyEnv; got != "KILASFLOW_OLD_KEY" {
+		t.Errorf("Security.SecondaryEncryptionKeyEnv = %q, want the environment override", got)
+	}
+}

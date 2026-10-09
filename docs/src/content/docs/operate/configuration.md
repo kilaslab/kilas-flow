@@ -64,8 +64,11 @@ misreads in production:
 - **No credential encryption key** (`KILASFLOW_ENCRYPTION_KEY` unset). The
   server starts, runs workflows, and logs a warning — but credential storage
   is disabled: credential reads and writes report unconfigured. Set the key
-  before storing anything. There is no re-encryption pass, so changing the key
-  later makes every credential already stored undecryptable.
+  before storing anything. Replacing it outright later makes every credential
+  already stored undecryptable. Change it with the
+  [key rotation](/operate/key-rotation/) procedure instead: the old key goes in
+  `KILASFLOW_ENCRYPTION_KEY_SECONDARY` while `kilasflow -reseal-credentials`
+  seals every row again under the new one.
 - **No embed signing key** (`KILASFLOW_EMBED_SIGNING_KEY` unset). The server
   starts with a warning, the session endpoints report themselves
   unconfigured, and every embed token is refused. Embedding is off until both
