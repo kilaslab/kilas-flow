@@ -227,6 +227,10 @@ const CONTROL_ROLES = ['button', 'link', 'tab', 'menuitem', 'switch', 'checkbox'
  * item) moves focus on Tab; the canvas, a node (role="group") and the page do
  * not, so Tab there still opens the node picker. Without this a keyboard user
  * could not leave the first toolbar button (BUG-ywbvfa).
+ *
+ * Svelte Flow's multi-select box (.svelte-flow__selection-wrapper) is a
+ * role="button" too, so Tab moves focus off a marquee selection rather than
+ * opening the picker; shortcuts.test.ts pins that.
  */
 function isNavigableControl(target: EventTarget | null): boolean {
 	const element = target as { tagName?: unknown; closest?: (selector: string) => unknown } | null;

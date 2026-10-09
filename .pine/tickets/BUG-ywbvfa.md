@@ -67,3 +67,11 @@ Left:
 - Commit the linux baselines from the first CI run's `visual-regression` artefact into `e2e/visual/__screenshots__/linux/`; from then on the step blocks.
 - Hand-rolled inputs and lists adopting Input/ListRow: FEAT-f3hx3a. Edge focus style and the dark-in-light idle node border: FEAT-xj5tv6. 1280 projects and product surfaces in the visual suite: FEAT-egm8bf.
 
+### Review fixes (2026-10-09)
+- Focus lint, stricter: an "indicator" that draws nothing (`-0`, `-none`, `-hidden`, `-transparent`, `/0`, `ring-inset`, an offset alone) no longer counts as a replacement; `outline-0` and arbitrary `[outline:none]`/`[outline:0]`/`[outline-width:0]` count as removals; `style:outline` directives and dynamic `style="…outline: …"` values (every literal they can take) are checked; CSS `outline-width: 0` is a removal. Each case has a fixture. The stricter lint found no further violations in web/src.
+- The node picker's search row sat on the top edge of an overflow-hidden dialog, so its `focus-within-ring` was clipped on three sides. New `focus-within-ring-inset` draws it just inside. e2e/helpers/focus-ring.ts now reports a ring that an overflow-clipping ancestor cuts into, focus-tab-order.spec.ts fails on any clipped stop, and it checks the picker search as an extra stop (red before the fix, none of the 30 stops was clipped).
+- Light hover/pressed are separable on every surface (see FEAT-p75n7j); the sidebar's current page is the pressed step, its hover the hover step and its press the pressed step; `nav` is a state-matrix section.
+- Tab on Svelte Flow's multi-select box (role="button", tabindex -1) moves focus rather than opening the picker; pinned in shortcuts.test.ts and noted in shortcuts.ts.
+- Locally the e2e global setup rebuilds web/build and internal/web/dist without the harness once the harness binary is compiled, so a later Go-only `make build` embeds a release SPA (CI builds nothing after the suite). Memory note in e2e.md.
+- Verification after the fixes: `pnpm check` 0 errors; `pnpm test` 73 files / 1028 tests; embed-branding (now also the History sheet portalled to <body>) and focus-tab-order (both themes) 3 passed; `pnpm test:visual` 23 passed; `--repeat-each=3` 69 passed.
+

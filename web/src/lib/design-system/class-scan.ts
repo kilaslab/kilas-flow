@@ -22,6 +22,13 @@ export interface ClassSet {
 	element: string | null;
 	/** Static attribute values of the element (aria-hidden, tabindex, …). */
 	attrs: Record<string, string>;
+	/**
+	 * Inline style the element can get: the `style` attribute's static text and
+	 * the string literals in its expressions, plus every `style:prop`
+	 * directive as `prop: <its literals>;`. Over-approximates a dynamic value:
+	 * every literal it could take appears.
+	 */
+	style: string;
 	tokens: string[];
 	/** Class tokens of each enclosing element in the same file, innermost first. */
 	ancestors: string[][];
@@ -97,7 +104,7 @@ export function scanSvelte(file: string, source: string): ScanResult {
 		for (const lit of literalTexts(script.content)) {
 			const tokens = splitTokens(lit.text);
 			if (tokens.length === 0) continue;
-			result.classSets.push({ file, line: lineAt(source, lit.start), element: null, attrs: {}, tokens, ancestors: [] });
+			result.classSets.push({ file, line: lineAt(source, lit.start), element: null, attrs: {}, style: '', tokens, ancestors: [] });
 		}
 		const start = Number(script.start ?? 0);
 		const end = Number(script.end ?? source.length);
@@ -121,15 +128,33 @@ export function scanSvelte(file: string, source: string): ScanResult {
 		if (Array.isArray(n.attributes) && typeof n.name === 'string') {
 			const tokens: string[] = [];
 			const attrs: Record<string, string> = {};
+			let style = '';
+			const partsOf = (value: unknown) =>
+				value === true ? [] : Array.isArray(value) ? (value as AnyNode[]) : [value as AnyNode];
+			const textOf = (parts: AnyNode[]) =>
+				parts
+					.map((part) =>
+						part.type === 'Text'
+							? String(part.data ?? '')
+							: literalTexts(part.expression)
+									.map((lit) => lit.text)
+									.join(' ')
+					)
+					.join('');
 			for (const attr of n.attributes as AnyNode[]) {
 				const name = String(attr.name ?? '');
 				if (attr.type === 'ClassDirective') {
 					tokens.push(name);
 					continue;
 				}
+				if (attr.type === 'StyleDirective') {
+					style += `${name}: ${textOf(partsOf(attr.value))};`;
+					continue;
+				}
 				if (attr.type !== 'Attribute') continue;
 				const value = attr.value;
-				const parts = value === true ? [] : Array.isArray(value) ? (value as AnyNode[]) : [value as AnyNode];
+				const parts = partsOf(value);
+				if (name === 'style') style += `${textOf(parts)};`;
 				const isClass = CLASS_ATTRIBUTE.test(name);
 				let staticText = '';
 				for (const part of parts) {
@@ -146,6 +171,7 @@ export function scanSvelte(file: string, source: string): ScanResult {
 				line: lineAt(source, Number(n.start ?? 0)),
 				element: n.name,
 				attrs,
+				style,
 				tokens,
 				ancestors
 			});
@@ -167,7 +193,7 @@ export function scanTs(file: string, source: string): ScanResult {
 	for (const m of source.matchAll(TS_LITERAL)) {
 		const tokens = splitTokens(m[0].slice(1, -1));
 		if (tokens.length === 0) continue;
-		classSets.push({ file, line: lineAt(source, m.index ?? 0), element: null, attrs: {}, tokens, ancestors: [] });
+		classSets.push({ file, line: lineAt(source, m.index ?? 0), element: null, attrs: {}, style: '', tokens, ancestors: [] });
 	}
 	return { classSets, styles: [], jsOutlineRemovals: jsOutlineRemovals(file, source) };
 }

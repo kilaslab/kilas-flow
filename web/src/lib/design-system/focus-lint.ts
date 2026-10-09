@@ -10,7 +10,8 @@
 //                      drawn inset, and only on :focus-visible
 //   focus-inset        dense list or grid row: the ring is inset by 1px
 //   focus-within-ring  a composite field's container draws the ring while
-//                      the control inside it has focus
+//                      the control inside it has focus (-inset: drawn just
+//                      inside, for a field on the edge of a clipping surface)
 //   focus-delegate     that inner control, which then draws none itself
 //
 // Rule A: a class set holding `outline-none`/`outline-hidden` (any variant)
@@ -38,10 +39,20 @@ export interface Violation {
 	message: string;
 }
 
-const REMOVES = new Set(['outline-none', 'outline-hidden']);
-const REPLACEMENT_UTILITIES = new Set(['focus-region', 'focus-inset', 'focus-within-ring']);
+const REMOVES = new Set(['outline-none', 'outline-hidden', 'outline-0']);
+const ARBITRARY_REMOVAL = /^\[outline(-style)?:(none|0)\]$|^\[outline-width:0(px)?\]$/;
+const REPLACEMENT_UTILITIES = new Set(['focus-region', 'focus-inset', 'focus-within-ring', 'focus-within-ring-inset']);
 const INDICATOR_VARIANTS = new Set(['focus-visible', 'focus', 'has-focus-visible', 'data-highlighted']);
-const INDICATOR_UTILITY = /^(outline-(?!none$|hidden$)|ring-|border-|bg-)/;
+const INDICATOR_UTILITY = /^(outline-|ring-|border-|bg-)/;
+// Utilities that look like an indicator but draw nothing: an offset alone, an
+// inset flag, a zero width, `none`/`hidden`, or a transparent colour.
+const NOT_AN_INDICATOR = /^(outline-offset-|ring-offset-)|^ring-inset$|-(0|none|hidden|transparent)$|\/0$/;
+
+/** A token that removes the outline: outline-none/-hidden/-0 or an arbitrary [outline:none]. */
+export const removesOutline = (token: string) => {
+	const utility = utilityOf(token);
+	return REMOVES.has(utility) || ARBITRARY_REMOVAL.test(utility);
+};
 
 export const HOW_TO_FIX =
 	'Delete it: the global :focus-visible rule in app.css draws the one KilasFlow focus ring on every control. ' +
@@ -52,12 +63,24 @@ export const HOW_TO_FIX =
 const hasIndicator = (tokens: string[]) =>
 	tokens.some((t) => {
 		const variants = variantsOf(t);
-		return variants.some((v) => INDICATOR_VARIANTS.has(v)) && INDICATOR_UTILITY.test(utilityOf(t));
+		const utility = utilityOf(t);
+		return (
+			variants.some((v) => INDICATOR_VARIANTS.has(v)) &&
+			INDICATOR_UTILITY.test(utility) &&
+			!NOT_AN_INDICATOR.test(utility) &&
+			!removesOutline(t)
+		);
 	});
 
 const bare = (tokens: string[], utility: string) => tokens.some((t) => utilityOf(t) === utility && variantsOf(t).length === 0);
 
-const OUTLINE_NONE_STYLE = /(^|;)\s*outline(-style)?\s*:\s*(none|0)\b/;
+/** Whether inline style text sets outline, outline-style or outline-width to none/0. */
+export function styleRemovesOutline(style: string): boolean {
+	return style.split(';').some((declaration) => {
+		const match = /^\s*(outline|outline-style|outline-width)\s*:(.*)$/i.exec(declaration);
+		return Boolean(match && match[2].trim().split(/\s+/).some((value) => value === 'none' || value === '0' || value === '0px'));
+	});
+}
 
 function where(set: ClassSet): string {
 	return set.element ? `<${set.element}>` : 'string literal';
@@ -67,7 +90,7 @@ export function lintClassSets(sets: ClassSet[]): Violation[] {
 	const out: Violation[] = [];
 	for (const set of sets) {
 		const delegating = bare(set.tokens, 'focus-delegate');
-		const ancestorRing = set.ancestors.some((tokens) => bare(tokens, 'focus-within-ring'));
+		const ancestorRing = set.ancestors.some((tokens) => bare(tokens, 'focus-within-ring') || bare(tokens, 'focus-within-ring-inset'));
 		if (delegating && !ancestorRing) {
 			out.push({
 				file: set.file,
@@ -78,10 +101,10 @@ export function lintClassSets(sets: ClassSet[]): Violation[] {
 					'Add "focus-within-ring" to the field container, or drop "focus-delegate" and let the global ring draw on the control.'
 			});
 		}
-		if (set.attrs.style && OUTLINE_NONE_STYLE.test(set.attrs.style)) {
-			out.push({ file: set.file, line: set.line, rule: 'A', message: `${where(set)} sets "outline: none" inline. ${HOW_TO_FIX}` });
+		if (styleRemovesOutline(set.style)) {
+			out.push({ file: set.file, line: set.line, rule: 'A', message: `${where(set)} can set "outline: none" (or 0) inline. ${HOW_TO_FIX}` });
 		}
-		const removing = set.tokens.filter((t) => REMOVES.has(utilityOf(t)));
+		const removing = set.tokens.filter(removesOutline);
 		if (removing.length === 0) continue;
 		const replaced =
 			[...REPLACEMENT_UTILITIES].some((u) => bare(set.tokens, u)) || hasIndicator(set.tokens) || (delegating && ancestorRing);
@@ -115,9 +138,10 @@ export function lintCss(file: string, css: string, firstLine = 1): Violation[] {
 
 	const check = (decl: string) => {
 		const d = decl.trim();
-		const removesOutline = /^outline\s*:\s*(none|0)\b/.test(d) || /^outline-style\s*:\s*none\b/.test(d);
-		const applies = d.startsWith('@apply') && d.split(/\s+/).slice(1).some((t) => REMOVES.has(utilityOf(t)));
-		if ((removesOutline || applies) && !allowed()) {
+		const removal =
+			/^outline\s*:\s*(none|0)\b/.test(d) || /^outline-style\s*:\s*none\b/.test(d) || /^outline-width\s*:\s*0(px)?\s*$/.test(d);
+		const applies = d.startsWith('@apply') && d.split(/\s+/).slice(1).some(removesOutline);
+		if ((removal || applies) && !allowed()) {
 			out.push({
 				file,
 				line: statementLine,

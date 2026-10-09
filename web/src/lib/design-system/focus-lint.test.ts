@@ -26,6 +26,37 @@ describe('rule A: a class that removes the outline needs a replacement', () => {
 		expect(svelte(source)).toHaveLength(1);
 	});
 
+	// An "indicator" that itself removes or hides the ring is not a replacement,
+	// and every spelling of a removal counts (review of Track I).
+	it.each([
+		['<button class="outline-none focus-visible:ring-0">x</button>'],
+		['<button class="outline-none focus-visible:outline-0">x</button>'],
+		['<button class="outline-none focus:border-transparent">x</button>'],
+		['<button class="outline-none focus-visible:bg-transparent">x</button>'],
+		['<button class="outline-none focus-visible:outline-offset-2">x</button>'],
+		['<button class="outline-none focus-visible:ring-offset-2">x</button>'],
+		['<button class="outline-0">x</button>'],
+		['<button class="focus-visible:outline-0">x</button>'],
+		['<button class="[outline:none]">x</button>'],
+		['<button class="focus:[outline:0]">x</button>'],
+		['<button class="[outline-width:0]">x</button>'],
+		['<button style:outline="none">x</button>'],
+		["<button style:outline={on ? 'none' : '2px solid red'}>x</button>"],
+		['<button style="color: {tone}; outline: none">x</button>'],
+		["<button style=\"outline: {off ? '0' : 'auto'}\">x</button>"]
+	])('reports %s', (source) => {
+		expect(svelte(source)).toHaveLength(1);
+	});
+
+	it.each([
+		['<button class="outline-none focus-visible:outline-2">x</button>'],
+		['<button class="outline-none focus-visible:ring-2 focus-visible:ring-offset-2">x</button>'],
+		['<button style:outline-offset="2px">x</button>'],
+		['<button style="color: {tone}">x</button>']
+	])('still accepts %s', (source) => {
+		expect(svelte(source)).toEqual([]);
+	});
+
 	it('reports a tv() string in a .ts file', () => {
 		expect(ts('export const v = tv({ base: "inline-flex outline-none" });')).toHaveLength(1);
 	});
@@ -38,6 +69,7 @@ describe('rule A: a class that removes the outline needs a replacement', () => {
 		['<div class="focus-inset"></div>'],
 		['<div class="focus-within-ring"><input class="focus-delegate" /></div>'],
 		['<div class="focus-within-ring"><span><textarea class="focus-delegate"></textarea></span></div>'],
+		['<div class="focus-within-ring-inset"><input class="focus-delegate" /></div>'],
 		['<button class="rounded">x</button>']
 	])('accepts %s', (source) => {
 		expect(svelte(source)).toEqual([]);
@@ -63,7 +95,9 @@ describe('rule B: CSS that removes the outline', () => {
 		['.a:focus { outline: 0 }'],
 		['.a { outline-style: none }'],
 		['@media (hover) { .b:focus-visible { outline: none } }'],
-		['.c { @apply outline-none; }']
+		['.c { @apply outline-none; }'],
+		['.d:focus-visible { outline-width: 0; }'],
+		['.e { @apply outline-0; }']
 	])('reports %s', (css) => {
 		expect(lintCss('fixture.css', css)).toHaveLength(1);
 	});

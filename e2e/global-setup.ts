@@ -15,7 +15,7 @@ const execFileAsync = promisify(execFile);
 // KILASFLOW_DESIGN_HARNESS=1 keeps the /design/states harness route in this
 // build (the visual suite screenshots it); release and Docker builds never set
 // it, so their bundles drop the route entirely. Both suites share the one
-// build.
+// build. Locally the SPA is rebuilt without the harness afterwards (below).
 //
 // KILASFLOW_E2E_PREBUILT=1 reuses an existing bin/kilasflow instead of
 // rebuilding: the CI visual step runs right after the functional suite built
@@ -32,6 +32,19 @@ async function globalSetup(): Promise<void> {
 	});
 	if (!existsSync(binary)) {
 		throw new Error(`global-setup: ${binary} is missing after make build-all`);
+	}
+	// The binary has embedded its harness SPA; put a release SPA back in
+	// web/build and internal/web/dist so a later Go-only `make build` on this
+	// checkout does not ship /design/states. CI builds nothing after the suite.
+	if (!process.env.CI) {
+		const releaseEnv: NodeJS.ProcessEnv = { ...process.env };
+		delete releaseEnv.KILASFLOW_DESIGN_HARNESS;
+		await execFileAsync('make', ['build-web'], {
+			cwd: repoDir,
+			env: releaseEnv,
+			timeout: 20 * 60 * 1000,
+			maxBuffer: 64 * 1024 * 1024
+		});
 	}
 }
 

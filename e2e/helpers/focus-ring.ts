@@ -9,7 +9,9 @@ import { composite, contrast, parseCssColor, type Oklch, type Srgb } from '../..
 //     container draws it.
 // The surface the ring sits on is the first opaque background behind it (the
 // parent's for a ring drawn outside the box, the element's own for an inset
-// one), with any translucent layers above it composited in.
+// one), with any translucent layers above it composited in. A ring that pokes
+// out of an ancestor that clips its overflow is reported as clipped: the
+// computed style looks perfect while the user sees a broken ring.
 
 export interface RingReading {
 	/** Short description of the focused element, for failure messages. */
@@ -22,6 +24,8 @@ export interface RingReading {
 	hasRingShadow: boolean;
 	/** Contrast of the outline colour against the surface it is drawn on. */
 	surfaceContrast: number;
+	/** The ancestor that clips part of the ring, or null when it is whole. */
+	clippedBy: string | null;
 }
 
 interface RawReading {
@@ -32,6 +36,7 @@ interface RawReading {
 	outlineOffset: string;
 	boxShadow: string;
 	backgrounds: string[];
+	clippedBy: string | null;
 }
 
 export async function readFocusRing(page: Page): Promise<RingReading | null> {
@@ -40,8 +45,38 @@ export async function readFocusRing(page: Page): Promise<RingReading | null> {
 		if (!active || active === document.body) return null;
 		let drawer: HTMLElement = active;
 		if (active.matches('.svelte-flow__node')) drawer = active.querySelector<HTMLElement>('.kf-node-tile') ?? active;
-		else if (active.classList.contains('focus-delegate')) drawer = active.closest<HTMLElement>('.focus-within-ring') ?? active;
+		else if (active.classList.contains('focus-delegate'))
+			drawer = active.closest<HTMLElement>('.focus-within-ring, .focus-within-ring-inset') ?? active;
 		const style = getComputedStyle(drawer);
+		const describe = (el: Element) =>
+			`<${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''} class="${(el.getAttribute('class') ?? '').slice(0, 60)}">`;
+		// How far the ring reaches outside the border box, and whether an
+		// ancestor that clips overflow cuts into that reach.
+		const reach = Math.max(0, (Number.parseFloat(style.outlineOffset) || 0) + (Number.parseFloat(style.outlineWidth) || 0));
+		let clippedBy: string | null = null;
+		if (style.outlineStyle !== 'none' && reach > 0) {
+			const box = drawer.getBoundingClientRect();
+			const ring = { left: box.left - reach, top: box.top - reach, right: box.right + reach, bottom: box.bottom + reach };
+			for (let node = drawer.parentElement; node && node !== document.documentElement; node = node.parentElement) {
+				const cs = getComputedStyle(node);
+				const clipX = cs.overflowX !== 'visible';
+				const clipY = cs.overflowY !== 'visible';
+				if (!clipX && !clipY) continue;
+				const b = node.getBoundingClientRect();
+				const left = b.left + Number.parseFloat(cs.borderLeftWidth);
+				const right = b.right - Number.parseFloat(cs.borderRightWidth);
+				const top = b.top + Number.parseFloat(cs.borderTopWidth);
+				const bottom = b.bottom - Number.parseFloat(cs.borderBottomWidth);
+				const tolerance = 0.5;
+				if (
+					(clipX && (ring.left < left - tolerance || ring.right > right + tolerance)) ||
+					(clipY && (ring.top < top - tolerance || ring.bottom > bottom + tolerance))
+				) {
+					clippedBy = describe(node);
+					break;
+				}
+			}
+		}
 		const backgrounds: string[] = [];
 		let node: HTMLElement | null = Number.parseFloat(style.outlineOffset) > 0 ? drawer.parentElement : drawer;
 		while (node) {
@@ -56,7 +91,8 @@ export async function readFocusRing(page: Page): Promise<RingReading | null> {
 			outlineColor: style.outlineColor,
 			outlineOffset: style.outlineOffset,
 			boxShadow: style.boxShadow,
-			backgrounds
+			backgrounds,
+			clippedBy
 		};
 	});
 	if (!raw) return null;
@@ -67,7 +103,8 @@ export async function readFocusRing(page: Page): Promise<RingReading | null> {
 		outlineColor: raw.outlineColor,
 		outlineOffset: Number.parseFloat(raw.outlineOffset),
 		hasRingShadow: /\b0px 0px 0px [1-9]/.test(raw.boxShadow),
-		surfaceContrast: contrast(parseCssColor(raw.outlineColor), effectiveSurface(raw.backgrounds))
+		surfaceContrast: contrast(parseCssColor(raw.outlineColor), effectiveSurface(raw.backgrounds)),
+		clippedBy: raw.clippedBy
 	};
 }
 

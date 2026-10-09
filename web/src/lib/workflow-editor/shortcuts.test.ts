@@ -142,6 +142,21 @@ describe('controlOwnsKey', () => {
 		expect(editorShortcut(press('Tab'), { tagName: 'DIV', closest: () => null } as unknown as EventTarget)).toBe('add-step');
 	});
 
+	// Svelte Flow's multi-select box (.svelte-flow__selection-wrapper) is a
+	// role="button" with tabindex -1 that takes focus after a marquee
+	// selection. It is a control by role, so Tab leaves it rather than opening
+	// the picker; pinned so the choice is deliberate if Svelte Flow or this
+	// rule changes.
+	it('lets Tab leave the multi-select box (a role="button") instead of opening the picker', () => {
+		const selectionBox = {
+			tagName: 'DIV',
+			className: 'svelte-flow__selection-wrapper',
+			closest: (selector: string) => (selector.includes('role="button"') ? {} : null)
+		} as unknown as EventTarget;
+		expect(controlOwnsKey(selectionBox, 'Tab')).toBe(true);
+		expect(editorShortcut(press('Tab'), selectionBox)).toBeNull();
+	});
+
 	// Only Enter is contended: a button does not own Cmd+S, and the canvas
 	// shortcut for it has to keep working while one has focus.
 	it('leaves the canvas keys a focused button does not own', () => {

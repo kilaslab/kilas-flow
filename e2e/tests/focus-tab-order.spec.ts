@@ -53,6 +53,7 @@ async function walk(page: Page, segment: string, count: number, stops: Stop[], p
 			problems.push(`${segment}: Tab ${i + 1} left focus on the page body`);
 			continue;
 		}
+		if (reading.clippedBy) problems.push(`${segment}: Tab ${i + 1} ${reading.element} ring is clipped by ${reading.clippedBy}`);
 		stops.push({ segment, ...reading });
 	}
 }
@@ -126,6 +127,20 @@ for (const theme of THEMES) {
 		await expect(inspector).toBeVisible();
 		await inspector.getByRole('textbox').first().focus();
 		await walk(page, 'inspector', 7, stops, problems);
+
+		// 5. Outside the 30: the node picker's search field, a composite field on
+		// the top edge of an overflow-hidden dialog. Its ring must be whole.
+		await page.keyboard.press('Escape');
+		await page.getByRole('button', { name: 'Add step' }).click();
+		const search = page.getByRole('combobox', { name: /search/i });
+		await expect(search).toBeFocused();
+		const picker = await readFocusRing(page);
+		expect(picker, 'the picker search shows a ring').not.toBeNull();
+		if (picker) {
+			if (picker.clippedBy) problems.push(`node picker: ${picker.element} ring is clipped by ${picker.clippedBy}`);
+			if (ringSignature(picker) !== ringSignature(stops[0])) problems.push(`node picker: ${ringSignature(picker)} differs`);
+			if (picker.surfaceContrast < 3) problems.push(`node picker: ring contrast ${picker.surfaceContrast.toFixed(2)}`);
+		}
 
 		const table = stops.map((s, i) => `${i + 1}. [${s.segment}] ${s.element} → ${ringSignature(s)} offset ${s.outlineOffset}px, ${s.surfaceContrast.toFixed(2)}:1`).join('\n');
 		const combinations = new Set(stops.map(ringSignature));
