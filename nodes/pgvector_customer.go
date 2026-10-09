@@ -40,6 +40,7 @@ func vectorStorePGVectorNode() node.Definition {
 					{Label: "Insert Documents", Value: VectorModeInsert},
 					{Label: "Get Many", Value: VectorModeGetMany},
 					{Label: "Retrieve as Tool", Value: VectorModeRetrieveAsTool},
+					{Label: "Retrieve (for Vector Store Tool)", Value: VectorModeRetrieve},
 				},
 			},
 			{
@@ -133,6 +134,8 @@ func (executor *VectorStorePGVectorExecutor) Execute(ctx context.Context, ir wor
 	switch vectorStoreModeOf(ir.Parameters) {
 	case VectorModeRetrieveAsTool:
 		return executor.emitTool(ir, cfg, input)
+	case VectorModeRetrieve:
+		return executor.emitStore(ir, cfg, input)
 	case VectorModeGetMany:
 		return executor.search(ctx, ir, cfg, input, request)
 	default:
@@ -196,24 +199,11 @@ func (executor *VectorStorePGVectorExecutor) emitTool(ir workflow.IRNode, cfg pg
 	if topK <= 0 {
 		topK = DefaultVectorTopK
 	}
-	descriptor := map[string]any{
-		"kind":            toolKindVectorStore,
-		"name":            name,
-		"description":     description,
-		"nodeName":        ir.Name,
-		"backend":         "postgres",
-		"collection":      cfg.collection,
-		"tableName":       cfg.table,
-		"idColumn":        cfg.id,
-		"contentColumn":   cfg.content,
-		"metadataColumn":  cfg.metadata,
-		"embeddingColumn": cfg.embedding,
-		"credentialId":    cfg.credentialID,
-		"topK":            topK,
-	}
-	if embeddings := embeddingsDescriptorOf(input["embedding"]); embeddings != nil {
-		descriptor["embeddings"] = embeddings
-	}
+	descriptor := executor.sourceFields(ir, cfg, input)
+	descriptor["kind"] = toolKindVectorStore
+	descriptor["name"] = name
+	descriptor["description"] = description
+	descriptor["topK"] = topK
 	return workflow.NodeOutput{[]workflow.Item{{JSON: map[string]any{descriptorKey: descriptor}}}}, nil
 }
 

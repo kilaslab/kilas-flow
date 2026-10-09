@@ -379,8 +379,12 @@ every tenant can open every file the server can.
 
 ## The built-in catalogue
 
-Thirteen types ship, all declared in one place, and node packs do not add
-credential types today:
+<!-- generated:credential-types -->
+15 credential types ship.
+<!-- /generated:credential-types -->
+
+They are all declared in one place, and node packs do not add credential types
+today:
 
 | ID | For |
 | --- | --- |
@@ -397,6 +401,8 @@ credential types today:
 | `wahaApi` | WAHA |
 | `openAiApi` | OpenAI |
 | `openRouterApi` | OpenRouter |
+| `googleDriveOAuth2Api` | Google Drive, signed in with OAuth2; the client ID and secret are your own Google Cloud project's or the platform app's |
+| `gmailOAuth2` | Gmail, signed in with OAuth2; the client ID and secret are your own Google Cloud project's or the platform app's |
 
 Three details in that table are load-bearing rather than arbitrary. `wahaApi`'s
 `baseUrl` is deliberately **not** marked secret, because a declarative pack reads

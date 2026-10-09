@@ -81,6 +81,7 @@ func eachDriver(t *testing.T, run func(t *testing.T, db *database.DB)) {
 			db.Exec(`DELETE FROM execution_waits WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM execution_node_runs WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM executions WHERE tenant_id LIKE 'drv-%'`)
+			db.Exec(`DELETE FROM workflow_tags WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM workflow_publish_events WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM workflow_versions WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM workflows WHERE tenant_id LIKE 'drv-%'`)

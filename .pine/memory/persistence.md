@@ -1,6 +1,6 @@
 ---
 topic: persistence
-updated: 2026-09-21T13:40:19Z
+updated: 2026-10-09T12:00:00Z
 ---
 
 # persistence
@@ -14,3 +14,4 @@ updated: 2026-09-21T13:40:19Z
 - 2026-09-05: A driver-derived config value must be computed in config.Load after the file and environment layers merge, never in Default(): koanf cannot tell a default of 1 apart from a file that says 1, so a number in Default() can never follow another key. Database.PoolSize does this — zero on max_open_conns/max_idle_conns means 'derive', and database.Open routes through it too because SetMaxOpenConns(0) means unlimited, not unset.
 - 2026-10-09: A migration that adds a table must also add it to postBaselineTables in internal/database/migrate_test.go: openPostgres drops only the tables named there, so on a reused PostgreSQL server every later PostgreSQL migration test fails with "relation … already exists" (SQLSTATE 42P07). SQLite tests use fresh files and never show it, so it surfaces only when KILASFLOW_TEST_POSTGRES_DSN is set. (cites: internal/database/migrate_test.go)
 - 2026-09-21: prefixStatement only rewrites quoted table and index names. Unquoted CREATE TABLE poll_cursors is skipped, so table_prefix never applies and TestPurgeHonoursTheTablePrefix fails looking for kflow_poll_cursors. Quote identifiers in new migrations (backticks SQLite, double quotes Postgres). (cites: migrations/sqlite/000020_poll_cursors.up.sql, internal/database)
+- 2026-10-09: workflow_tags (migration 000025) is a derived index of the latest revision's document.tags, not a source of truth: every path that writes workflows.latest_revision must call replaceWorkflowTags in the same transaction (saveDraft and RestoreVersion do; publish and unpublish append no revision and must not), and Delete removes the rows because a workflow is soft-deleted and no foreign key fires. (cites: internal/repository/workflow_tags.go)

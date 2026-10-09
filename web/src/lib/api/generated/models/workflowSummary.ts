@@ -11,5 +11,7 @@ export interface WorkflowSummary {
   id: string;
   latestRevision: number;
   name: string;
+  /** The latest revision's tags, in the order they were written; empty when it has none */
+  tags: string[];
   updatedAt: string;
 }

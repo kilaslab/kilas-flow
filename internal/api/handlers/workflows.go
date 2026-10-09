@@ -101,6 +101,9 @@ type WorkflowSummary struct {
 	Active         bool      `json:"active"`
 	LatestRevision int       `json:"latestRevision"`
 	UpdatedAt      time.Time `json:"updatedAt"`
+	// Tags is always an array, empty when the workflow has none, so a client
+	// never has to tell an absent field from a null one.
+	Tags []string `json:"tags" nullable:"false" doc:"The latest revision's tags, in the order they were written; empty when it has none"`
 }
 
 // ExecutionRequestResource reports the durable request created by a manual
@@ -137,6 +140,7 @@ type workflowDocumentInput struct {
 	Nodes         []workflow.Node       `json:"nodes"`
 	Connections   []workflow.Connection `json:"connections"`
 	Settings      map[string]any        `json:"settings"`
+	Tags          []string              `json:"tags,omitempty" maxItems:"20" doc:"Optional labels that group workflows. At most 20; each 1 to 24 characters with no leading or trailing whitespace, no comma and no control character; unique ignoring case. Order and case are kept. The list filters by one with ?tag="`
 	BaseVersionID string                `json:"baseVersionId,omitempty" doc:"Latest version ID the editor saved from; a save from a stale revision is refused with 409"`
 }
 
@@ -148,6 +152,7 @@ func (input workflowDocumentInput) document(id string) workflow.Document {
 		Nodes:         input.Nodes,
 		Connections:   input.Connections,
 		Settings:      input.Settings,
+		Tags:          input.Tags,
 	}
 }
 
@@ -290,6 +295,7 @@ type createdWorkflowOutput struct {
 type listWorkflowsInput struct {
 	Limit  int    `query:"limit" minimum:"1" maximum:"500" doc:"Maximum workflows to return (default 100)"`
 	Cursor string `query:"cursor" doc:"Opaque cursor from the previous page's X-Next-Cursor header"`
+	Tag    string `query:"tag" maxLength:"255" doc:"Keep only workflows whose latest revision carries this tag; case is ignored"`
 }
 
 type workflowListOutput struct {
@@ -494,7 +500,7 @@ func (handler *Workflows) List(ctx context.Context, input *listWorkflowsInput) (
 		return nil, err
 	}
 	page, err := handler.workflows.ListSummaries(ctx, handler.tenant(ctx), repository.WorkflowFilter{
-		Limit: input.Limit, Cursor: input.Cursor,
+		Limit: input.Limit, Cursor: input.Cursor, Tag: input.Tag,
 	})
 	// A cursor the client did not receive from this API is a bad request, not a
 	// server fault, so it must not be reported as a 500.
@@ -508,9 +514,18 @@ func (handler *Workflows) List(ctx context.Context, input *listWorkflowsInput) (
 	for _, item := range page.Workflows {
 		items = append(items, WorkflowSummary{
 			ID: item.ID, Name: item.Name, Active: item.Active, LatestRevision: item.LatestRevision, UpdatedAt: item.UpdatedAt,
+			Tags: tagsOrEmpty(item.Tags),
 		})
 	}
 	return &workflowListOutput{Body: items, NextCursor: page.NextCursor}, nil
+}
+
+// tagsOrEmpty keeps a summary's tags a JSON array when a workflow has none.
+func tagsOrEmpty(tags []string) []string {
+	if tags == nil {
+		return []string{}
+	}
+	return tags
 }
 
 // Get returns the stored canonical document and lifecycle state.

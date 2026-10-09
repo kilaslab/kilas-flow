@@ -1,9 +1,11 @@
 ---
 topic: docs
-updated: 2026-09-21T13:40:19Z
+updated: 2026-10-09T12:00:00Z
 ---
 
 # docs
 
 - 2026-09-21: Hand-written docs pages that state a count (api-contract.md operation totals) or a claim no -check target regenerates drift silently: every landing that changes the served surface must grep the hand-written pages too.
 - 2026-09-21: A new Huma operation is not documented when generate-api-reference.mjs maps it: also add the row to api-contract.md AND bump internal/cli contractRowCount. generate-api-reference fails on unmapped operation ids; TestAPIEscapeHatchWalksTheContract fails when the page grew a row but the constant stayed behind. (cites: scripts/generate-api-reference.mjs, docs/src/content/docs/reference/api-contract.md, internal/cli/openapi_contract_test.go)
+- 2026-10-09: Registering a new node type moves three places in the same change: the generated catalogue-size sentence (run `make generate-docs-facts`; never type the numbers), a tier entry in e2e/tests/node-coverage.spec.ts (its report test fails on any uncovered catalogue entry), and a glyph: a distinct builtin icon or a nodes/glyphs_test.go glyphVariants entry. A new registration call in `run()` must also go into internal/shippedcatalogue.Register (cmd/kilasflow TestShippedCatalogueRegistersWhatRunRegisters fails until it does). (cites: cmd/kilasflow/catalogue_docs_test.go)
+- 2026-10-09: A fact a docs page states about the product (node catalogue size, CLI exit codes, credential-type count) is written between `<!-- generated:NAME -->` markers by `make generate-docs-facts` (`-check` in the CI drift job) and never typed: add a new one as a `fact` in scripts/docs-facts. Every shell example in reference/cli.md is run in CI by `make smoke-cli-examples`: ids are `$WORKFLOW_ID`-style variables the runner seeds (scripts/cli-examples/seed.go), input files come from scripts/cli-examples/testdata, and a command that ends non-zero says `# exit N` in a trailing comment. A new `ErrCode` must be named in backticks in cli.md. (cites: scripts/docs-facts/main.go, scripts/cli-examples/main.go, internal/docexamples/docexamples.go)

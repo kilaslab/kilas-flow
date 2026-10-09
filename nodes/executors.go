@@ -68,6 +68,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		TextSplitterExecutorID:           engine.ExecutorFunc(executeTextSplitter),
 		ExtractFromFileExecutorID:        engine.ExecutorFunc(executeExtractFromFile),
 		VectorStorePGVectorExecutorID:    NewVectorStorePGVectorExecutor(NewEmbeddingsExecutor(httpPolicy, settings.vectorStore), databaseGuard),
+		VectorStoreToolExecutorID:        engine.ExecutorFunc(executeVectorStoreTool),
 		GoogleDriveExecutorID:            NewGoogleDriveExecutor(httpPolicy),
 		GoogleDriveTriggerExecutorID:     GoogleDriveTriggerExecutor{},
 		GmailExecutorID:                  NewGmailExecutor(httpPolicy),

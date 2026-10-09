@@ -46,6 +46,7 @@ var baselineTables = []string{
 // against the same server, which is exactly when it is hardest to read.
 var postBaselineTables = []string{
 	"credential_events",
+	"workflow_tags",
 	"workflow_static_data",
 	"poll_cursors",
 	"idempotency_keys",
