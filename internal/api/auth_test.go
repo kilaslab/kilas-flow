@@ -41,6 +41,7 @@ type authenticatedAPI struct {
 	executions  *repository.GORMExecutionStore
 	broker      *events.Broker
 	credentials *repository.GORMCredentialStore
+	workflows   *repository.GORMWorkflowStore
 }
 
 func signingKey(seed byte) []byte {
@@ -128,11 +129,12 @@ func newAuthenticatedAPIWith(t *testing.T, adjust func(*api.Deps), tenantIDs ...
 	cfg.Auth.Enabled = true
 
 	credentialStore := repository.NewCredentialStore(db.DB, cipher)
+	workflowStore := repository.NewWorkflowStore(db.DB).WithWebhooks(webhook.Extract(registry, nodes.WebhookPath))
 	deps := api.Deps{
 		Config:              cfg,
 		DB:                  db,
 		NodeRegistry:        registry,
-		Workflows:           repository.NewWorkflowStore(db.DB).WithWebhooks(webhook.Extract(registry, nodes.WebhookPath)),
+		Workflows:           workflowStore,
 		Executions:          executions,
 		Credentials:         credentialStore,
 		Schedules:           repository.NewScheduleStore(db.DB),
@@ -151,7 +153,7 @@ func newAuthenticatedAPIWith(t *testing.T, adjust func(*api.Deps), tenantIDs ...
 	return &authenticatedAPI{
 		handler: handler, store: authStore, issuer: issuer,
 		embedIssuer: embedIssuer, executions: executions, broker: broker,
-		credentials: credentialStore,
+		credentials: credentialStore, workflows: workflowStore,
 	}, keys
 }
 

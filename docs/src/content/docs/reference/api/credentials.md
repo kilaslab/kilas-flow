@@ -136,13 +136,14 @@ Embed: Deny — listing workflows, minting sessions, schedules, credential write
 
 `DELETE /api/v1/credentials/{id}`
 
-Permanently removes a stored credential.
+Permanently removes a stored credential. A credential that a workflow's draft or published version attaches is not deleted: the request is refused with 409, one error per workflow, unless force=true is sent.
 
 Parameters:
 
 | Name | In | Required | Type | Description |
 | --- | --- | --- | --- | --- |
 | `id` | path | yes | string | Credential identifier |
+| `force` | query | no | boolean | Delete the credential even though workflows attach it. Without it, deleting a credential in use is refused with 409 and the workflows named. |
 
 Responses:
 

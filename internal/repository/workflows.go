@@ -482,6 +482,9 @@ func (store *GORMWorkflowStore) publish(ctx context.Context, tenant TenantScope,
 		if _, err := workflow.Compile(storedVersion.Document, catalog); err != nil {
 			return err
 		}
+		if err := refuseUnknownCredentials(tx, tenant, storedVersion.Document); err != nil {
+			return err
+		}
 		if err := refuseInactiveSubworkflows(tx, tenant, model.ID, storedVersion.Document, store.subworkflows); err != nil {
 			return err
 		}

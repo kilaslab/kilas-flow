@@ -7,6 +7,20 @@ until the server surface it targets is considered stable; see `README.md`.
 
 ## Unreleased
 
+- **Breaking**: `deleteCredential` now rejects with a `409` problem when a
+  workflow's draft or published version still attaches the credential,
+  instead of deleting it. The method's signature is unchanged; the server's
+  behaviour is what changed.
+  The problem's `errors` carry one entry per workflow, with `location`
+  `workflows/<id>` and a message naming the workflow and its nodes. A caller
+  that relied on the delete always succeeding must detach the credential first,
+  or send `DELETE /api/v1/credentials/{id}?force=true` through the transport
+  until the method gains a `force` option.
+- **Additive**: `CredentialResource.usedBy` — on `getCredential`, the workflows
+  whose draft or published version attaches the credential, each with its name,
+  whether it is active, and the nodes involved. It is absent when nothing uses
+  the credential, when the caller's API key is scoped, and on
+  `listCredentials`.
 - **Additive**: `deleteTenant`, covering `DELETE /api/v1/tenants/{id}`. It
   deletes a customer and everything it owns — executions and their payload
   files, workflows and versions, credentials, schedules, webhook deliveries,

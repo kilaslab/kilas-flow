@@ -14,6 +14,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/kilaslab/kilas-flow/internal/api/middleware"
+	"github.com/kilaslab/kilas-flow/internal/auth"
 	"github.com/kilaslab/kilas-flow/internal/credentials"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
@@ -58,6 +59,20 @@ type CredentialResource struct {
 	AllowedDomains []string          `json:"allowedDomains" doc:"Hosts this credential may be sent to, including its type's default when none were saved. Empty means any host."`
 	CreatedAt      time.Time         `json:"createdAt"`
 	UpdatedAt      time.Time         `json:"updatedAt"`
+	// UsedBy is filled only by a single read, and only for a caller that is
+	// not confined to some workflows: a listing would scan every workflow
+	// once per credential, and a scoped key must not learn the names of
+	// workflows outside its grant through a credential they share.
+	UsedBy []CredentialUsageResource `json:"usedBy,omitempty" doc:"Workflows whose draft or published version attaches this credential. Returned by a single read only, and left out when nothing uses it or the caller's API key is scoped."`
+}
+
+// CredentialUsageResource is one workflow that would break if the credential
+// were deleted.
+type CredentialUsageResource struct {
+	WorkflowID string   `json:"workflowId"`
+	Name       string   `json:"name"`
+	Active     bool     `json:"active" doc:"Whether the workflow is active now"`
+	Nodes      []string `json:"nodes" doc:"Names of the nodes that attach the credential, in the draft or the published version"`
 }
 
 // Credentials is the REST surface over encrypted credential storage.
@@ -177,6 +192,11 @@ type deletedCredentialOutput struct {
 	Status int `status:"204"`
 }
 
+type deleteCredentialInput struct {
+	ID    string `path:"id" minLength:"1" doc:"Credential identifier"`
+	Force bool   `query:"force" doc:"Delete the credential even though workflows attach it. Without it, deleting a credential in use is refused with 409 and the workflows named."`
+}
+
 // Register wires credential types and CRUD.
 func (handler *Credentials) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
@@ -220,7 +240,10 @@ func (handler *Credentials) Register(api huma.API) {
 	}, handler.TestPayload)
 	huma.Register(api, huma.Operation{
 		OperationID: "delete-credential", Method: http.MethodDelete, Path: "/credentials/{id}", DefaultStatus: http.StatusNoContent,
-		Summary: "Delete a credential", Description: "Permanently removes a stored credential.", Tags: []string{"Credentials"},
+		Summary: "Delete a credential",
+		Description: "Permanently removes a stored credential. A credential that a workflow's draft or published version attaches is not deleted: " +
+			"the request is refused with 409, one error per workflow, unless force=true is sent.",
+		Tags: []string{"Credentials"},
 	}, handler.Delete)
 	handler.registerOAuth(api)
 }
@@ -355,11 +378,68 @@ func (handler *Credentials) Get(ctx context.Context, input *credentialPathInput)
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("credential storage unavailable")
 	}
-	record, err := handler.store.Get(ctx, handler.tenants.Resolve(ctx), input.ID)
+	tenant := handler.tenants.Resolve(ctx)
+	record, err := handler.store.Get(ctx, tenant, input.ID)
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}
-	return &credentialOutput{Body: credentialResource(record)}, nil
+	resource := credentialResource(record)
+	if principal, _ := auth.PrincipalFrom(ctx); !principal.Scoped() {
+		users, err := handler.store.CredentialUsers(ctx, tenant, record.ID)
+		if err != nil {
+			return nil, handler.problem(ctx, err)
+		}
+		resource.UsedBy = credentialUsageResources(users)
+	}
+	return &credentialOutput{Body: resource}, nil
+}
+
+func credentialUsageResources(users []repository.CredentialUser) []CredentialUsageResource {
+	if len(users) == 0 {
+		return nil
+	}
+	resources := make([]CredentialUsageResource, 0, len(users))
+	for _, user := range users {
+		resources = append(resources, CredentialUsageResource{
+			WorkflowID: user.WorkflowID, Name: user.Name, Active: user.Active, Nodes: user.Nodes,
+		})
+	}
+	return resources
+}
+
+// inUseProblem refuses the deletion of a credential workflows still attach,
+// naming each one: a delete that only said "in use" would send the caller
+// looking for what to fix.
+func inUseProblem(users []repository.CredentialUser) error {
+	noun := "workflows"
+	if len(users) == 1 {
+		noun = "workflow"
+	}
+	problem := &huma.ErrorModel{
+		Status: http.StatusConflict,
+		Title:  "Conflict",
+		Detail: fmt.Sprintf("this credential is attached by %d %s, which would fail without it: "+
+			"attach another credential to them first, or delete with force=true", len(users), noun),
+	}
+	for _, user := range users {
+		state := "inactive"
+		if user.Active {
+			state = "active"
+		}
+		problem.Errors = append(problem.Errors, &huma.ErrorDetail{
+			Message:  fmt.Sprintf("%s workflow %q uses it in %s", state, user.Name, strings.Join(quoted(user.Nodes), ", ")),
+			Location: "workflows/" + user.WorkflowID,
+		})
+	}
+	return problem
+}
+
+func quoted(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, fmt.Sprintf("%q", value))
+	}
+	return out
 }
 
 // Update replaces a credential's name, scope, and supplied field values.
@@ -418,8 +498,15 @@ func (handler *Credentials) Update(ctx context.Context, input *updateCredentialI
 	return &credentialOutput{Body: credentialResource(record)}, nil
 }
 
-// Delete removes a credential.
-func (handler *Credentials) Delete(ctx context.Context, input *credentialPathInput) (*deletedCredentialOutput, error) {
+// Delete removes a credential, unless a workflow attaches it and the caller
+// did not ask to force it.
+//
+// The check and the delete are two statements, not one transaction: a
+// workflow saved between them can still end up attaching a deleted
+// credential. Activation refuses such a workflow, and a run names the
+// missing credential, so the window costs a clear error rather than a silent
+// one.
+func (handler *Credentials) Delete(ctx context.Context, input *deleteCredentialInput) (*deletedCredentialOutput, error) {
 	if handler.store == nil {
 		return nil, huma.Error503ServiceUnavailable("credential storage unavailable")
 	}
@@ -430,10 +517,25 @@ func (handler *Credentials) Delete(ctx context.Context, input *credentialPathInp
 	if err != nil {
 		return nil, handler.problem(ctx, err)
 	}
+	users, err := handler.store.CredentialUsers(ctx, tenant, record.ID)
+	if err != nil {
+		return nil, handler.problem(ctx, err)
+	}
+	if len(users) > 0 && !input.Force {
+		return nil, inUseProblem(users)
+	}
 	if err := handler.store.Delete(ctx, tenant, input.ID); err != nil {
 		return nil, handler.problem(ctx, err)
 	}
-	handler.audit(ctx, tenant, record, repository.CredentialEventDeleted, "", requestActor(ctx))
+	detail := ""
+	if len(users) > 0 {
+		noun := "workflows"
+		if len(users) == 1 {
+			noun = "workflow"
+		}
+		detail = fmt.Sprintf("forced; used by %d %s", len(users), noun)
+	}
+	handler.audit(ctx, tenant, record, repository.CredentialEventDeleted, detail, requestActor(ctx))
 	return &deletedCredentialOutput{Status: http.StatusNoContent}, nil
 }
 

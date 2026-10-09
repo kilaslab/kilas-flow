@@ -36,6 +36,9 @@ type CredentialRepository interface {
 	// CredentialEvents reads it back, newest first.
 	RecordCredentialEvent(context.Context, TenantScope, CredentialEvent) error
 	CredentialEvents(context.Context, TenantScope, string) ([]CredentialEvent, error)
+	// CredentialUsers lists the workflows whose draft or published version
+	// attaches the credential.
+	CredentialUsers(context.Context, TenantScope, string) ([]CredentialUser, error)
 }
 
 // GORMCredentialStore persists credentials with their payload encrypted.

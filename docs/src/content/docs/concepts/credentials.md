@@ -451,6 +451,32 @@ for the Connect popup (`window.open`, never an iframe). The browser lands on
 `/oauth/callback`, which stores the tokens and posts a message to the opener.
 See the [HTTP API reference](/reference/api/).
 
+### A credential in use
+
+`GET /api/v1/credentials/{id}` answers with `usedBy`: the workflows whose
+draft or published version attaches the credential, each with its name,
+whether it is active, and the names of the nodes involved. It is left out when
+nothing uses the credential, and always for an API key with scopes, which must
+not learn the names of workflows outside its grant. The listing never carries
+it, because it would scan every workflow once per credential.
+
+`DELETE /api/v1/credentials/{id}` refuses to delete a credential in use. It
+answers `409` with one entry per workflow in `errors` (`location`
+`workflows/<id>`), and the credential stays. Send `?force=true` to delete it
+anyway. The dashboard's delete dialog lists the workflows first and sends
+`force` only after showing them.
+
+Two more checks catch a credential that disappears anyway:
+
+- **Activation** refuses a workflow whose enabled nodes attach a credential this
+  tenant does not have. The `422` names the node, its id, the credential type
+  and the credential id (code `config.invalid`, path
+  `/nodes/N/credentials/<type>`). A disabled node is not checked, because it
+  never runs.
+- **A run** that reaches a node whose credential is gone fails with
+  `node "<name>": credential "<id>" no longer exists in this workspace: attach
+  another credential to this node`.
+
 Every create, update, delete and test of a stored credential, and every Google
 Connect, appends a row to the `credential_events` table. A row names the
 credential as it was at the time (id, name and type) and who acted: `user` with
