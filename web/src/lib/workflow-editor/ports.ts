@@ -1,4 +1,4 @@
-import type { Connection, Definition, Node, Port } from '$lib/api/generated/models';
+import type { Connection, Definition, Document, Node, Port } from '$lib/api/generated/models';
 import * as m from '$lib/paraglide/messages.js';
 import { resolveDefinition } from './document';
 
@@ -112,6 +112,93 @@ export function connectionFromCanvas(
 		source: { nodeId: connection.source!, port: connection.sourceHandle! },
 		target: { nodeId: connection.target!, port: connection.targetHandle! }
 	};
+}
+
+/**
+ * The connection a node picked from the picker gets, when the picker was opened
+ * from a port of an existing node.
+ *
+ * Two directions share this path. Opened from a main OUTPUT (`kind` null), the
+ * new node is the next step: the port feeds its main input. Opened from an
+ * empty attachment INPUT slot (`kind` is the slot's kind), the new node is the
+ * provider — a model, a memory, a tool — so its own output of that kind feeds
+ * the slot. Looking for an input of the slot's kind on the new node, as this
+ * did, finds nothing on a sub-node and added it unwired (BUG-w1jp70).
+ *
+ * Built through `connectionFromCanvas`, so a connection the canvas would refuse
+ * (a full single-slot port, a node type the port does not accept) is never made.
+ */
+export function connectionForPickedNode(
+	picked: { id: string; ports: { inputs: Port[]; outputs: Port[] } },
+	from: { nodeID: string; port: string },
+	kind: string | null,
+	nodes: Node[],
+	definitions: Definition[],
+	existing: Connection[],
+	newConnectionID?: () => string
+): Connection | null {
+	if (kind) {
+		const output = picked.ports.outputs.find((port) => port.kind === kind);
+		if (!output) return null;
+		return connectionFromCanvas(
+			{ source: picked.id, sourceHandle: output.name, target: from.nodeID, targetHandle: from.port },
+			nodes,
+			definitions,
+			existing,
+			newConnectionID
+		);
+	}
+	const input = picked.ports.inputs.find((port) => port.kind === 'main');
+	if (!input) return null;
+	return connectionFromCanvas(
+		{ source: from.nodeID, sourceHandle: from.port, target: picked.id, targetHandle: input.name },
+		nodes,
+		definitions,
+		existing,
+		newConnectionID
+	);
+}
+
+/**
+ * The connections of one node that name a port its current configuration does
+ * not have.
+ *
+ * The canvas draws an edge only when both of its handles exist, so a wire to a
+ * port a mode change, a lost Switch rule, a lower Merge input count or a
+ * switched-off error output took away is stored but never drawn: it cannot be
+ * selected or deleted, and the compiler names it only when the workflow is
+ * activated or run (BUG-qfp7rf). The editor removes these in the step that
+ * stranded them.
+ *
+ * Only the edited node's own connections are judged, on both sides of it. A
+ * node whose type has no definition here is not judged at all: its ports are
+ * unknown, which is not the same as absent.
+ */
+export function staleConnections(document: Document, nodeID: string, definitions: Definition[]): Connection[] {
+	const node = (document.nodes ?? []).find((candidate) => candidate.id === nodeID);
+	if (!node) return [];
+	const definition = resolveDefinition(node.type, node.typeVersion, definitions);
+	if (!definition) return [];
+
+	const ports = resolvedPorts(node, definition);
+	return (document.connections ?? []).filter(
+		(connection) =>
+			(connection.source.nodeId === nodeID && !ports.outputs.some((port) => port.name === connection.source.port)) ||
+			(connection.target.nodeId === nodeID && !ports.inputs.some((port) => port.name === connection.target.port))
+	);
+}
+
+/**
+ * One line naming connections the way a reader knows them — by node name and
+ * port, not by id — for the notice that says what was removed. At most `limit`
+ * are spelled out; the rest are counted.
+ */
+export function describeConnections(connections: Connection[], nodes: Node[] | null | undefined, limit = 3): string {
+	const names = new Map((nodes ?? []).map((node) => [node.id, node.name]));
+	const label = (id: string, port: string) => `${names.get(id) ?? id} ${port}`;
+	const shown = connections.slice(0, limit).map((connection) => `${label(connection.source.nodeId, connection.source.port)} → ${label(connection.target.nodeId, connection.target.port)}`);
+	const hidden = connections.length - shown.length;
+	return hidden > 0 ? `${shown.join('; ')}; +${hidden} more` : shown.join('; ');
 }
 
 function lookupPort(

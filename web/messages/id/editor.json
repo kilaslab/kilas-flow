@@ -84,6 +84,21 @@
 		}
 	],
 	"editor_renamed_taken": "Diganti nama menjadi “{name}” — nama itu sudah dipakai.",
+	"editor_connections_removed": [
+		{
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
+			"match": {
+				"countPlural=one": "1 sambungan dihapus karena {node} tidak lagi punya port untuknya: {detail}. Urungkan untuk mengembalikannya.",
+				"countPlural=other": "{count} sambungan dihapus karena {node} tidak lagi punya port untuknya: {detail}. Urungkan untuk mengembalikannya."
+			}
+		}
+	],
 	"editor_add_first_step": "Tambah langkah alur kerja pertama",
 	"editor_empty_title": "Mulai dengan pemicu",
 	"editor_empty_body": "Pilih apa yang memulai alur kerja ini, lalu tambahkan langkah yang dijalankannya.",

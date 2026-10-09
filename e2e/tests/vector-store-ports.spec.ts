@@ -72,27 +72,34 @@ test('a vector store and an embeddings node draw the ports their mode resolves, 
 	await mode.selectOption('retrieve-as-tool');
 	await expect.poll(() => handles(store)).toEqual({ inputs: ['embedding'], outputs: ['tool'] });
 	// The embeddings wire still fits and stays drawn; the vectorStore wire has
-	// no handle any more, so the canvas does not draw it.
+	// no handle any more, so the canvas cannot draw it.
 	await expect(edge(page, 'c-embeddings')).toHaveCount(1);
 	await expect(edge(page, 'c-store')).toHaveCount(0);
 
+	// The wire the mode stranded is removed once the edit has settled, and the
+	// status line says which one went (BUG-qfp7rf): an undrawn wire could be
+	// neither selected nor deleted.
+	const notice = page.getByRole('status').filter({ hasText: 'Removed 1 connection' });
+	await expect(notice).toContainText('Policies Store has no port for any more');
+	await expect(notice).toContainText('Policies Store vectorStore → Handbook Tool vectorStore');
+
+	// One Undo takes the mode and the wire back together.
+	await page.getByRole('button', { name: 'Undo', exact: true }).click();
+	await expect(mode).toHaveValue('retrieve');
+	await expect.poll(() => handles(store)).toEqual({ inputs: ['embedding'], outputs: ['vectorStore'] });
+	await expect(edge(page, 'c-store')).toHaveCount(1);
+	await expect(notice).toHaveCount(0);
+
+	// Changing the mode again removes it again, and a save keeps it removed.
 	await mode.selectOption('insert');
 	await expect.poll(() => handles(store)).toEqual({ inputs: ['document', 'embedding'], outputs: ['main'] });
+	await expect(notice).toContainText('Policies Store vectorStore → Handbook Tool vectorStore');
 
-	// The wire the mode left behind is not silently dropped from the document: it
-	// is still there, and the compiler names it when the workflow runs, as it does
-	// for a Switch that lost a rule (a save does not compile).
 	const save = page.getByRole('button', { name: 'Save', exact: true });
 	await save.click();
 	await expect(save).toBeDisabled();
 	const stored = await (await fetch(`${server.baseURL}/api/v1/workflows/${workflow.id}`)).json();
-	expect(stored.latestVersion.document.connections.map((connection: { id: string }) => connection.id)).toContain('c-store');
-	await page.getByRole('button', { name: 'Execute' }).click();
-	const issues = page.getByRole('list', { name: 'Workflow validation issues' });
-	await expect(issues).toContainText('connection must reference declared source and target ports');
-
-	// Choosing the mode back restores the handle, and the wire is drawn again.
-	await mode.selectOption('retrieve');
-	await expect.poll(() => handles(store)).toEqual({ inputs: ['embedding'], outputs: ['vectorStore'] });
-	await expect(edge(page, 'c-store')).toHaveCount(1);
+	const storedIDs = stored.latestVersion.document.connections.map((connection: { id: string }) => connection.id);
+	expect(storedIDs).not.toContain('c-store');
+	expect(storedIDs).toContain('c-embeddings');
 });

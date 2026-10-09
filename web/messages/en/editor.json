@@ -69,6 +69,16 @@
 		}
 	],
 	"editor_renamed_taken": "Renamed to “{name}” — that name was taken.",
+	"editor_connections_removed": [
+		{
+			"declarations": ["input count", "local countPlural = count: plural"],
+			"selectors": ["countPlural"],
+			"match": {
+				"countPlural=one": "Removed 1 connection that {node} has no port for any more: {detail}. Undo brings it back.",
+				"countPlural=other": "Removed {count} connections that {node} has no ports for any more: {detail}. Undo brings them back."
+			}
+		}
+	],
 	"editor_add_first_step": "Add first workflow step",
 	"editor_empty_title": "Start with a trigger",
 	"editor_empty_body": "Pick what starts this workflow, then add the steps it runs.",

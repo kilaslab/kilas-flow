@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import type { Definition, Document, Port } from '$lib/api/generated/models';
+import type { Connection, Definition, Document, Node, Port } from '$lib/api/generated/models';
 
 import { documentFromCanvas, reconcileCanvas, updateNodeProperty, type EditorFlowNode } from './document';
 import { mainPorts, attachmentPorts } from './node-visual';
@@ -16,14 +16,29 @@ import { resolvedPorts } from './ports';
 // edge names a port the *server* has for that node's mode. The canvas draws an
 // edge only when both handles exist, so this is the check that an imported RAG
 // workflow arrives with every wire attached (BUG-pc284d).
+//
+// The golden holds only what decides ports (node identity, mode / operation /
+// numberInputs, On Error, the connections), so a default the importer starts
+// filling in for some unrelated node does not touch it; the document the editor
+// would hold is rebuilt from it below.
 type ImportedGolden = {
 	definitions: Array<{ type: string; version: number; inputs: Port[] | null; outputs: Port[] | null }>;
-	workflows: Array<{ name: string; document: Document }>;
+	workflows: Array<{ name: string; document: { nodes: Omit<Node, 'position'>[]; connections: Connection[] } }>;
 };
 
 const golden = JSON.parse(
 	readFileSync(fileURLToPath(new URL('../../../../internal/interop/n8n/testdata/imported_ports.golden.json', import.meta.url)), 'utf8')
 ) as ImportedGolden;
+
+function documentOf(slim: ImportedGolden['workflows'][number]['document'], name: string): Document {
+	return {
+		schemaVersion: 1,
+		name,
+		nodes: slim.nodes.map((node, index) => ({ ...node, position: { x: index * 220, y: 0 } })),
+		connections: slim.connections,
+		settings: {}
+	} as Document;
+}
 
 const definitions: Definition[] = golden.definitions.map((declared) => ({
 	type: declared.type,
@@ -50,7 +65,7 @@ function handlesOf(node: EditorFlowNode) {
 function workflowNamed(name: string): Document {
 	const found = golden.workflows.find((workflow) => workflow.name === name);
 	if (!found) throw new Error(`the golden has no workflow ${name}`);
-	return found.document;
+	return documentOf(found.document, name);
 }
 
 const none = { nodeIDs: new Set<string>(), edgeIDs: new Set<string>() };
@@ -61,8 +76,9 @@ describe('imported n8n RAG workflows on the canvas', () => {
 		for (const workflow of golden.workflows) expect(workflow.document.connections?.length).toBeGreaterThan(5);
 	});
 
-	for (const { name, document } of golden.workflows) {
+	for (const { name, document: slim } of golden.workflows) {
 		it(`${name}: every edge lands on a handle both of its nodes draw`, () => {
+			const document = documentOf(slim, name);
 			const canvas = documentFromCanvas(document, definitions);
 			const byID = new Map(canvas.nodes.map((node) => [node.id, node]));
 

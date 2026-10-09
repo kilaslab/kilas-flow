@@ -21,11 +21,17 @@ import (
 // edge the importer attached to a port the canvas did not draw simply vanished
 // (BUG-pc284d).
 //
-// This test writes the documents the importer actually produces for the RAG
-// fixtures, with the static ports of every definition they use, into
+// This test writes what the importer produces for the RAG fixtures, with the
+// static ports of every definition they use, into
 // testdata/imported_ports.golden.json. ports.imported.test.ts projects each
 // document the way the editor does and asserts every edge lands on a handle the
-// canvas draws. Regenerate with:
+// canvas draws.
+//
+// Only the fields that decide ports are written (see importedPortsDocument): a
+// whole imported document also carries every parameter the importer fills in,
+// and a node gaining a default there (a Gmail node gained "resource") would
+// fail this test for a reason that has nothing to do with the canvas. Regenerate
+// with:
 //
 //	go test ./internal/interop/n8n -run TestImportedPortsGolden -update-imported-ports-golden
 var updateImportedPortsGolden = flag.Bool("update-imported-ports-golden", false, "rewrite testdata/imported_ports.golden.json from the importer")
@@ -46,8 +52,57 @@ type importedPortsStatic struct {
 }
 
 type importedPortsWorkflow struct {
-	Name     string            `json:"name"`
-	Document workflow.Document `json:"document"`
+	Name     string                `json:"name"`
+	Document importedPortsDocument `json:"document"`
+}
+
+// importedPortsDocument is the part of an imported document that decides which
+// handles the canvas draws and which edges land on them: the nodes' identity,
+// the configuration their ports are resolved from, and the connections.
+type importedPortsDocument struct {
+	Nodes       []importedPortsNode   `json:"nodes"`
+	Connections []workflow.Connection `json:"connections"`
+}
+
+type importedPortsNode struct {
+	ID          string               `json:"id"`
+	Name        string               `json:"name"`
+	Type        string               `json:"type"`
+	TypeVersion workflow.TypeVersion `json:"typeVersion"`
+	Parameters  map[string]any       `json:"parameters,omitempty"`
+	Settings    map[string]any       `json:"settings,omitempty"`
+}
+
+// importedPortsParameters are the parameters a PortsFor reads: a vector store's
+// or embeddings node's mode and operation, a Merge's input count.
+var importedPortsParameters = []string{"mode", "operation", "numberInputs"}
+
+// importedPortsSettings are the node settings that add a port: On Error.
+var importedPortsSettings = []string{"onError"}
+
+func portRelevant(values map[string]any, keys []string) map[string]any {
+	kept := map[string]any{}
+	for _, key := range keys {
+		if value, present := values[key]; present {
+			kept[key] = value
+		}
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
+}
+
+func importedPortsDocumentOf(document workflow.Document) importedPortsDocument {
+	nodes := make([]importedPortsNode, 0, len(document.Nodes))
+	for _, imported := range document.Nodes {
+		nodes = append(nodes, importedPortsNode{
+			ID: imported.ID, Name: imported.Name, Type: imported.Type, TypeVersion: imported.TypeVersion,
+			Parameters: portRelevant(imported.Parameters, importedPortsParameters),
+			Settings:   portRelevant(imported.Settings, importedPortsSettings),
+		})
+	}
+	return importedPortsDocument{Nodes: nodes, Connections: document.Connections}
 }
 
 func importedPortsFixtures(t *testing.T) []struct{ name, source string } {
@@ -81,9 +136,7 @@ func buildImportedPortsGolden(t *testing.T) importedPortsGolden {
 	for _, fixture := range importedPortsFixtures(t) {
 		result := importFixture(t, fixture.source)
 		document := result.Document
-		// The id is minted per import; nothing in the check reads it.
-		document.ID = ""
-		golden.Workflows = append(golden.Workflows, importedPortsWorkflow{Name: fixture.name, Document: document})
+		golden.Workflows = append(golden.Workflows, importedPortsWorkflow{Name: fixture.name, Document: importedPortsDocumentOf(document)})
 		for _, imported := range document.Nodes {
 			definition, found := catalogue.Resolve(imported.Type, imported.TypeVersion)
 			if !found {

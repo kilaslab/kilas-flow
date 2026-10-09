@@ -84,6 +84,23 @@ export function positionAfter(source: { x: number; y: number }, occupied: { x: n
 	return candidate;
 }
 
+/**
+ * Where a node added for an attachment slot belongs: directly under the node
+ * that owns the slot, where the slot's handle and its dashed "+" are, and pushed
+ * one column to the right at a time until nothing is in the way.
+ *
+ * The mirror of `positionAfter`, which continues a main wire to the right. A
+ * model, a memory or a tool is not a next step, and putting it there left the
+ * wire to its slot doubling back under the tile it came from.
+ */
+export function positionBelow(owner: { x: number; y: number }, occupied: { x: number; y: number }[]): { x: number; y: number } {
+	const candidate = { x: owner.x, y: owner.y + ROW };
+	while (occupied.some((node) => Math.abs(node.x - candidate.x) < 128 && Math.abs(node.y - candidate.y) < 120)) {
+		candidate.x += COLUMN;
+	}
+	return candidate;
+}
+
 export function resolveDefinition(
 	nodeType: string,
 	typeVersion: number | undefined | null,
