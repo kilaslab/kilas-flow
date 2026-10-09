@@ -87,6 +87,6 @@
 <div
 	bind:this={host}
 	data-code-editor={language}
-	class="min-h-24 resize-y overflow-hidden rounded-md border border-input bg-background focus-within:border-ring focus-within:ring-1 focus-within:ring-ring/40"
+	class="focus-within-ring min-h-24 resize-y overflow-hidden rounded-md border border-input bg-background"
 	style:height={`calc(${Math.max(rows, 4)} * 1.25rem + 0.75rem + 2px)`}
 ></div>

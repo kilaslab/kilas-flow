@@ -205,7 +205,7 @@
 				<label class="sr-only" for={`node-name-${node.id}`}>{m.properties_node_name()}</label>
 				<input
 					id={`node-name-${node.id}`}
-					class="w-full truncate rounded border border-transparent bg-transparent text-[0.8125rem] font-semibold leading-tight hover:border-border focus-visible:border-primary focus-visible:outline-none"
+					class="w-full truncate rounded border border-transparent bg-transparent text-[0.8125rem] font-semibold leading-tight hover:border-border"
 					value={node.name}
 					onkeydown={(event) => {
 						if (event.key === 'Enter') event.currentTarget.blur();

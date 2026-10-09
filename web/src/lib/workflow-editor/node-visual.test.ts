@@ -217,8 +217,11 @@ describe('nodeChrome', () => {
 		expect(nodeChromeBorder({ runStatus: 'cancelling' })).toBe('var(--primary)');
 	});
 
-	it('uses the node accent when selected and otherwise a muted accent hue', () => {
-		expect(nodeChromeBorder({ selected: true })).toBe('var(--node-accent)');
+	// Selection is one colour on every node (BUG-ywbvfa): the accent's
+	// line-weight step, which follows an embed host's accent. A node's own
+	// colour selected an IF node in orange, which read as a warning.
+	it('selects in --kf-selection whatever the node colour, and idles in a muted accent hue', () => {
+		expect(nodeChromeBorder({ selected: true })).toBe('var(--kf-selection)');
 		expect(nodeChromeBorder({})).toContain('var(--node-accent)');
 		expect(nodeChromeBorder({})).not.toBe('var(--node-accent)');
 	});
@@ -227,9 +230,11 @@ describe('nodeChrome', () => {
 		const idle = nodeChromeShadow({});
 		const selected = nodeChromeShadow({ selected: true });
 		const running = nodeChromeShadow({ runStatus: 'running' });
-		expect(selected.length).toBeGreaterThan(idle.length);
+		expect(selected).not.toBe(idle);
+		expect(running.length).toBeGreaterThan(idle.length);
 		expect(running).toContain('var(--primary)');
-		expect(selected).toContain('var(--node-accent)');
+		expect(selected).toBe('0 0 0 2px var(--kf-selection-halo), var(--kf-shadow-1)');
+		expect(selected).not.toContain('--node-accent');
 	});
 
 	it('sizes the icon badge per silhouette', () => {

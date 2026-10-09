@@ -52,14 +52,14 @@
 	<header class="flex items-start justify-between gap-4">
 		<div>
 			<h1 class="text-xl font-semibold tracking-tight">KilasFlow</h1>
-			<p class="mt-1 text-sm text-(--color-ink-muted)">
+			<p class="mt-1 text-sm text-muted-foreground">
 				{m.home_tagline()}
 			</p>
 		</div>
 
 		<span
 			class="mt-1 inline-flex shrink-0 items-center gap-2 rounded-full border
-			       border-(--color-border-subtle) px-3 py-1 text-xs font-medium"
+			       border-border px-3 py-1 text-xs font-medium"
 		>
 			<span
 				class="size-1.5 rounded-full"
@@ -81,38 +81,38 @@
 		route table or the backend regresses, it shows here immediately.
 	-->
 	<section
-		class="overflow-hidden rounded-xl border border-(--color-border-subtle)
-		       bg-(--color-surface-raised)"
+		class="overflow-hidden rounded-xl border border-border
+		       bg-card"
 	>
 		<div
-			class="flex items-center justify-between border-b border-(--color-border-subtle)
+			class="flex items-center justify-between border-b border-border
 			       px-4 py-2.5"
 		>
-			<h2 class="text-xs font-semibold tracking-wide uppercase text-(--color-ink-muted)">
+			<h2 class="text-xs font-semibold tracking-wide uppercase text-muted-foreground">
 				{m.home_status_heading()}
 			</h2>
 			<button
 				onclick={() => void refresh()}
-				class="rounded-md px-2 py-1 text-xs text-(--color-ink-muted) transition-colors
-				       hover:bg-(--color-surface) hover:text-(--color-ink)"
+				class="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors
+				       hover:bg-background hover:text-foreground"
 			>
 				{m.home_refresh()}
 			</button>
 		</div>
 
-		<dl class="divide-y divide-(--color-border-subtle) text-sm">
+		<dl class="divide-y divide-border text-sm">
 			<div class="flex items-baseline justify-between gap-4 px-4 py-3">
 				<dt class="font-medium">
-					GET <code class="text-(--color-ink-muted)">/api/v1/health</code>
+					GET <code class="text-muted-foreground">/api/v1/health</code>
 				</dt>
 				<dd class="text-right">
 					{#if health.isPending}
-						<span class="text-(--color-ink-muted)">{m.home_checking()}</span>
+						<span class="text-muted-foreground">{m.home_checking()}</span>
 					{:else if health.isSuccess}
 						<span class="text-emerald-600 dark:text-emerald-400">
 							{health.data.status}
 						</span>
-						<span class="ml-2 text-xs text-(--color-ink-muted)">
+						<span class="ml-2 text-xs text-muted-foreground">
 							{m.home_health_version({ version: health.data.version })}
 						</span>
 					{:else}
@@ -123,14 +123,14 @@
 
 			<div class="flex items-baseline justify-between gap-4 px-4 py-3">
 				<dt class="font-medium">
-					GET <code class="text-(--color-ink-muted)">/api/v1/ready</code>
+					GET <code class="text-muted-foreground">/api/v1/ready</code>
 				</dt>
 				<dd class="text-right">
 					{#if ready.isPending}
-						<span class="text-(--color-ink-muted)">{m.home_checking()}</span>
+						<span class="text-muted-foreground">{m.home_checking()}</span>
 					{:else if ready.isSuccess}
 						<span class="text-emerald-600 dark:text-emerald-400">{ready.data.status}</span>
-						<span class="ml-2 text-xs text-(--color-ink-muted)">
+						<span class="ml-2 text-xs text-muted-foreground">
 							{m.home_ready_database({ name: ready.data.database })}
 						</span>
 					{:else}
@@ -144,7 +144,7 @@
 	{#if health.isError}
 		<p
 			class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm
-			       text-(--color-ink-muted)"
+			       text-muted-foreground"
 		>
 			{m.home_backend_help({ api: 'make dev-api', dev: 'make dev' })}
 		</p>
@@ -156,7 +156,7 @@
 		<a class="text-primary hover:underline" href="/api/openapi.yaml">{m.home_link_openapi_yaml()}</a>
 	</nav>
 
-	<footer class="text-xs text-(--color-ink-muted)">
+	<footer class="text-xs text-muted-foreground">
 		{#if checkedAt}
 			{m.home_last_checked({ time: checkedAt.toLocaleTimeString() })}
 		{/if}

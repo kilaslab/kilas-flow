@@ -33,6 +33,11 @@ Add a category field to node-visual.ts, derived from the registry group and code
 
 Source: the 2026-09-23 frontend visual audit. The owner chose direction A, "Kunyit", after rejecting "Nila" for resembling qonflo.ai. The full audit and draft tokens are attached to the parent epic.
 
+2026-10-09 (Track I, FEAT-p75n7j / BUG-ywbvfa) left these canvas items for this ticket:
+- Svelte Flow edges are tab stops whose focus is drawn by Svelte Flow's selected-stroke rule, not by the one focus ring; the Tab-order test stops before the canvas for that reason.
+- The idle node border is still `oklch(from var(--node-accent) 0.42 0.045 h)` from node-visual.ts, which reads as a dark outline in light; the selected border is `--kf-selection` and hover/pressed are `--kf-hover`/`--kf-pressed` on the tile.
+- `<Background patternColor="var(--border)">` in workflow-editor.svelte overrides `--kf-grid-dot`; ports still take `--node-accent`.
+
 # Related Files
 
 # Attachments

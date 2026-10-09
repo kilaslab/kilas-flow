@@ -11,7 +11,9 @@
 	import * as m from '$lib/paraglide/messages.js';
 	import { dashboardSections, sectionLabel, type SectionKey } from '$lib/dashboard/nav-sections';
 
-	let { onNavigate, collapsed = false }: { onNavigate?: () => void; collapsed?: boolean } = $props();
+	// `path` decides which section is current; it defaults to the page's own
+	// path (the design-system state matrix passes one to show a current item).
+	let { onNavigate, collapsed = false, path }: { onNavigate?: () => void; collapsed?: boolean; path?: string } = $props();
 
 	// Icons are components, so they stay beside the markup that renders them.
 	// Everything a reader sees — the hrefs and the labels — comes from the
@@ -26,7 +28,8 @@
 	};
 
 	function active(href: string): boolean {
-		return page.url.pathname === href || page.url.pathname.startsWith(`${href}/`);
+		const current = path ?? page.url.pathname;
+		return current === href || current.startsWith(`${href}/`);
 	}
 </script>
 
@@ -47,7 +50,8 @@
 			class:bg-sidebar-accent={current}
 			class:text-sidebar-accent-foreground={current}
 			class:text-muted-foreground={!current}
-			class:hover:bg-sidebar-accent={!current}
+			class:hover:bg-accent={!current}
+			class:active:bg-sidebar-accent={!current}
 			class:hover:text-sidebar-accent-foreground={!current}
 		>
 			<Icon aria-hidden="true" class={collapsed ? 'size-4' : 'size-3.5'} />
