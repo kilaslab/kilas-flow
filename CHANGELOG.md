@@ -23,6 +23,23 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- Credential key rotation. `security.secondary_encryption_key_env` (default
+  `KILASFLOW_ENCRYPTION_KEY_SECONDARY`) holds the previous key during a
+  rotation: it opens what it sealed and seals nothing. `kilasflow
+  -reseal-credentials` seals every stored credential and captured trigger value
+  again under the primary key, across tenants, logs what it resealed, and exits
+  non-zero naming any row no configured key opens. `security.legacy_seals`
+  (`open` by default, or `refuse`) stops payloads stored before this release
+  opening at all, once a reseal reports none left. See [Key
+  rotation](/operate/key-rotation/).
+- A credential audit trail: every create, update, delete and test of a stored
+  credential, and every Google Connect, is recorded in `credential_events` with
+  who did it (the signed-in user, or the API key's name and id). The Google
+  callback is attributed to whoever started that Connect.
+- `GET /api/v1/credentials/{id}` lists the workflows whose draft or published
+  version attaches the credential (`usedBy`, left out for scoped API keys), and
+  the credentials page's delete dialog lists them before deleting.
+  `kilasflow credential delete` takes `--force`.
 - The CLI reference's examples run as written, and CI runs them. Every shell
   example in the [Agent CLI](/reference/cli/) page is executed against a booted
   server (`make smoke-cli-examples`), the ids a server issues are shell
@@ -146,6 +163,20 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Changed
 
+- Credentials and captured trigger values are sealed in a new, versioned
+  format (key id, HKDF-derived key, bound to their tenant, id and type). A
+  binary from before this release cannot open it: upgrade every replica
+  together, and downgrade only by restoring a backup. Run `kilasflow
+  -reseal-credentials` once after upgrading; see [Backups and
+  upgrades](/operate/upgrades/#upgrading).
+- `DELETE /api/v1/credentials/{id}` refuses a credential a workflow attaches,
+  answering `409` with one error per workflow, unless `?force=true` is sent.
+  `kilasflow credential delete` exits 5 on that refusal.
+- Activating a workflow whose enabled nodes attach a credential the workspace
+  does not have is refused with `422` (`config.invalid`), naming the node, the
+  credential type and the credential id, instead of activating and failing on
+  the first run. A run that reaches such a node fails with `credential "<id>"
+  no longer exists in this workspace: attach another credential to this node`.
 - `execution.default_timeout` defaults to 2 minutes instead of 1. An AI agent on
   a local or reasoning model routinely needs longer than a minute. Set
   `execution.default_timeout` (`KILASFLOW_EXECUTION_DEFAULT_TIMEOUT`) or a
@@ -548,6 +579,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Security
 
+- A stored credential's sealed payload opens only in the row it was written
+  for: copied into another tenant's credential, another credential, or a
+  credential of another type, it no longer opens. The credential master key no
+  longer seals anything directly or signs the Google Connect state; both use
+  keys derived from it with HKDF. A key given as a raw 32-character string is
+  accepted with a warning at boot.
+- A secret binding may only name a `KILASFLOW_EXTERNAL_SECRET_TOKEN_<NAME>`
+  variable for its manager token, checked when it is saved and when it is used,
+  and a Google token refresh or Connect no longer seals the resolved value of an
+  `ext://` client secret over its reference.
 - Database credentials verify the server certificate by default: an empty
   Postgres `sslMode` means `verify-full` and an empty MySQL `tls` means
   verified TLS. A server with a self-signed certificate now needs the opt-out
