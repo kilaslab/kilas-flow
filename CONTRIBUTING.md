@@ -63,7 +63,7 @@ checks only matter if your change reaches the API surface or the configuration.
 | `make generate-types-check` | the committed SDK types match the served OpenAPI document |
 | `make generate-api-reference-check` | the committed API reference pages match the served document |
 | `make generate-config-reference-check` | the configuration reference and `config.example.yaml` match the `Config` structs |
-| `make generate-docs-facts-check` | the docs' exit-code tables and node-catalogue size match what the binary registers; `make generate-docs-facts` rewrites them |
+| `make generate-docs-facts-check` | the docs' exit-code tables, node-catalogue size and credential-type count match what the binary registers; `make generate-docs-facts` rewrites them |
 | `make smoke-cli-examples` | every shell example in `reference/cli.md` runs against a booted server and ends with the exit code its `# exit N` comment names |
 | `make sdk-package-check` | the packed SDK installs into a scratch project and typechecks under `bundler`, `node16` and `nodenext` |
 | `make sdk-example-check` | `examples/host-page` runs against the packed SDK: installed into a scratch copy outside the repository, booted against a stub KilasFlow, with raw `..%2f` probes at its static route |

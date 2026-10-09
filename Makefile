@@ -341,19 +341,20 @@ generate-skills-command-reference: ## Regenerate the router skill's command refe
 generate-skills-command-reference-check: ## Fail if the router skill's command reference is stale
 	$(GO) run ./scripts/skills-command-reference --check
 
-# The docs state two facts about the product that a person cannot keep right by
-# hand: how many node types a default install serves (concepts/node-registry.md
-# and start/what-kilasflow-is.md) and what each exit code means
-# (reference/cli.md). Both are written between <!-- generated:... --> markers by
-# scripts/docs-facts from the packages that own them (internal/shippedcatalogue
-# and internal/cli), so a node added or an exit code changed moves the pages in
-# the same change. Needs the Go toolchain and nothing else.
+# The docs state facts about the product that a person cannot keep right by hand:
+# how many node types a default install serves (concepts/node-registry.md and
+# start/what-kilasflow-is.md), what each exit code means (reference/cli.md) and
+# how many credential types ship (concepts/credentials.md). Each is written
+# between <!-- generated:... --> markers by scripts/docs-facts from the package
+# that owns it (internal/shippedcatalogue, internal/cli, internal/credentials),
+# so a node added or an exit code changed moves the pages in the same change.
+# Needs the Go toolchain and nothing else.
 .PHONY: generate-docs-facts
-generate-docs-facts: ## Regenerate the docs' exit-code tables and catalogue size
+generate-docs-facts: ## Regenerate the docs' exit-code tables, catalogue size and credential-type count
 	$(GO) run ./scripts/docs-facts
 
 .PHONY: generate-docs-facts-check
-generate-docs-facts-check: ## Fail if the docs' exit-code tables or catalogue size are stale
+generate-docs-facts-check: ## Fail if the docs' exit-code tables, catalogue size or credential-type count are stale
 	$(GO) run ./scripts/docs-facts --check
 
 # The bundle's own gate, and the design's G5. Two halves, because the drift it

@@ -278,10 +278,11 @@ jobs:
         if: always()
         run: make generate-config-reference-check
 
-      # The docs' catalogue size and exit-code tables are written from the
-      # registrations and the exit-code table in Go by scripts/docs-facts, so a
-      # node added or an exit code changed cannot leave a page stating the old
-      # fact. Go only, like the configuration reference above.
+      # The docs' catalogue size, exit-code tables and credential-type count are
+      # written from the registrations and the exit-code table in Go by
+      # scripts/docs-facts, so a node added or an exit code changed cannot leave
+      # a page stating the old fact. Go only, like the configuration reference
+      # above.
       - name: Docs facts
         if: always()
         run: make generate-docs-facts-check

@@ -18,7 +18,8 @@
 // refuses a page whose markers are absent or ambiguous rather than guessing
 // where a section ends. The facts come from the Go packages that own them
 // (internal/shippedcatalogue for the node catalogue, internal/cli for the exit
-// codes), not from a copy of them here.
+// codes, internal/credentials for the credential types), not from a copy of
+// them here.
 //
 // This command lives in its own directory for the same reason
 // scripts/skills-index does: scripts/config-reference.go already declares
@@ -35,6 +36,7 @@ import (
 	"strings"
 
 	"github.com/kilaslab/kilas-flow/internal/cli"
+	"github.com/kilaslab/kilas-flow/internal/credentials"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/shippedcatalogue"
 	"github.com/kilaslab/kilas-flow/scripts/internal/splice"
@@ -45,6 +47,9 @@ const (
 	catalogueEnd   = "<!-- /generated:catalogue-size -->"
 	exitCodesBegin = "<!-- generated:exit-codes -->"
 	exitCodesEnd   = "<!-- /generated:exit-codes -->"
+
+	credentialsBegin = "<!-- generated:credential-types -->"
+	credentialsEnd   = "<!-- /generated:credential-types -->"
 
 	// regenerate is what a stale page is told to run.
 	regenerate = "make generate-docs-facts"
@@ -102,6 +107,12 @@ func facts() ([]fact, error) {
 			begin: catalogueBegin, end: catalogueEnd, body: size},
 		{name: "catalogue size", path: "docs/src/content/docs/start/what-kilasflow-is.md",
 			begin: catalogueBegin, end: catalogueEnd, body: size},
+		{name: "credential types", path: "docs/src/content/docs/concepts/credentials.md",
+			begin: credentialsBegin, end: credentialsEnd,
+			body: func() (string, error) {
+				return fmt.Sprintf("%d credential types ship, all declared in one place, and node packs do not add "+
+					"credential types today:", len(credentials.Default().List())), nil
+			}},
 	}, nil
 }
 

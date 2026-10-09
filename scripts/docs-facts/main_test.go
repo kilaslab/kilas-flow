@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/kilaslab/kilas-flow/internal/credentials"
 	"github.com/kilaslab/kilas-flow/scripts/internal/splice"
 )
 
@@ -131,6 +133,48 @@ func TestFactsCoverTheExitCodesAndBothCataloguePages(t *testing.T) {
 			t.Errorf("facts() has %q for %s, want %q", have[path], path, name)
 		}
 	}
+}
+
+// The credentials page said "Thirteen types ship" over a table of thirteen while
+// the registry held fifteen. The count is generated now, and the table has to
+// name every type the registry holds, so a type added in one change cannot reach
+// the page unlisted.
+func TestFactsCoverTheCredentialTypeCountOfTheCredentialsPage(t *testing.T) {
+	list, err := facts()
+	if err != nil {
+		t.Fatalf("facts() error = %v", err)
+	}
+	const path = "docs/src/content/docs/concepts/credentials.md"
+	for _, entry := range list {
+		if entry.path != path {
+			continue
+		}
+		body, err := entry.body()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := strconv.Itoa(len(credentials.Default().List()))
+		if !strings.HasPrefix(body, want+" credential types ship") {
+			t.Fatalf("the credentials page's sentence is %q, want it to open with %q", body, want+" credential types ship")
+		}
+
+		root, err := splice.RepoRoot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, credentialType := range credentials.Default().List() {
+			if !strings.Contains(string(raw), "| `"+credentialType.ID+"`") {
+				t.Errorf("%s has no table row for the credential type %s", path, credentialType.ID)
+			}
+		}
+
+		return
+	}
+	t.Fatalf("facts() has no section for %s", path)
 }
 
 // The committed pages are the real subject: this is the same comparison
