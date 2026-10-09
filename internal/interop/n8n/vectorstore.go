@@ -2,6 +2,7 @@ package n8n
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/kilaslab/kilas-flow/internal/workflow"
@@ -43,6 +44,47 @@ func vectorStorePGVectorToKilas(node Node) (map[string]any, []Unsupported) {
 	return converted, issues
 }
 
+// kilasPGVectorDefaultTable is the table this server's PGVector store uses
+// when the node names none.
+const kilasPGVectorDefaultTable = "documents"
+
+// vectorStorePGVectorToN8N is the inverse of vectorStorePGVectorToKilas. Every
+// absence n8n would fill differently is written out:
+//   - no mode is a native insert here and retrieve in n8n, so it goes out as
+//     insert;
+//   - Get Many is n8n's load, under any of the spellings the node accepts;
+//   - no table is `documents` here and `n8n_vectors` in n8n, so the table the
+//     node actually writes goes out by name.
+//
+// A native insert also takes its documents, vectors and all, on main. n8n's
+// insert mode reads them from a Default Data Loader and embeds them with an
+// Embeddings sub-node instead, which a graph authored that way does not have;
+// the note says what to attach.
+func vectorStorePGVectorToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	converted, issues := packToN8N(node)
+	if converted == nil {
+		converted = map[string]any{}
+	}
+	// packToN8N has already turned an expression back into n8n's `=` string,
+	// which matches none of the cases below and goes out as written.
+	mode, _ := converted["mode"].(string)
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "":
+		converted["mode"] = nodes.VectorModeInsert
+		issues = append(issues, Lossy{
+			Severity: SeverityLossy, Field: "mode",
+			Reason: "this store took its documents, with their vectors, on its main input; it goes out in n8n's insert mode, " +
+				"which reads documents from a Default Data Loader and embeds them with an Embeddings sub-node, so attach both in n8n",
+		})
+	case strings.ToLower(nodes.VectorModeGetMany), "get_many", "search":
+		converted["mode"] = "load"
+	}
+	if table, _ := converted["tableName"].(string); strings.TrimSpace(table) == "" {
+		converted["tableName"] = kilasPGVectorDefaultTable
+	}
+	return converted, issues
+}
+
 // toolVectorStoreToKilas maps n8n's Vector Store Question Answer Tool.
 //
 // The model-facing name is the `name` parameter at version 1 and the node's
@@ -60,22 +102,32 @@ func toolVectorStoreToKilas(node Node) (map[string]any, []Unsupported) {
 	}
 	parameters := map[string]any{"toolName": nodes.NormalizeToolName(name)}
 
+	var issues []Unsupported
 	if description := node.Parameters["description"]; description != nil && description != "" {
 		parameters["toolDescription"] = fromN8NValue(description)
 	} else {
-		parameters["toolDescription"] = "Answers questions from the " + name + " documents."
+		written := "Answers questions from the " + name + " documents."
+		parameters["toolDescription"] = written
+		issues = append(issues, Unsupported{
+			Severity: SeverityLossy, Field: "description",
+			Reason: fmt.Sprintf("the tool had no description, which the model reads to decide when to call it; %q was written in its place, so replace it with what the stored documents hold",
+				written),
+		})
 	}
 
-	var issues []Unsupported
+	// The limit is read as the node validates it: a whole number from 1 to
+	// the store's search bound. Anything else is reported and replaced by the
+	// default, never rounded or clamped into a number nobody chose.
 	parameters["topK"] = float64(nodes.DefaultVectorTopK)
 	if raw, present := node.Parameters["topK"]; present {
-		if topK, ok := numberParameter(node.Parameters, "topK"); ok {
+		topK, ok := numberParameter(node.Parameters, "topK")
+		if ok && topK == math.Trunc(topK) && topK >= 1 && topK <= nodes.MaxVectorTopK {
 			parameters["topK"] = topK
 		} else {
 			issues = append(issues, Unsupported{
 				Severity: SeverityLossy, Field: "topK",
-				Reason: fmt.Sprintf("the limit %v is not a fixed number, which this tool needs; it retrieves %d documents per question until you set one",
-					raw, nodes.DefaultVectorTopK),
+				Reason: fmt.Sprintf("the limit %v is not a whole number from 1 to %d, which this tool needs; it retrieves %d documents per question until you set one",
+					raw, nodes.MaxVectorTopK, nodes.DefaultVectorTopK),
 			})
 		}
 	}
