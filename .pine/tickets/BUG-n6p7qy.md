@@ -85,7 +85,7 @@ BUG-6jvcs5 (done) introduced this wording for the inactive-target case only.
 
 
 # Acceptance Criteria
-- [ ] The tool schema comes from the trigger's `workflowInputs` (names and types), with a per-field model/fixed choice in the UI (schema derivation done; the per-field choice exists only as "a key written in Workflow inputs is fixed", there is no NDV toggle yet, see Progress)
+- [x] The tool schema comes from the trigger's `workflowInputs` (names and types), with a per-field model/fixed choice in the UI. Evidence: `TestWorkflowToolOffersTheSubworkflowsDeclaredInputs` (schema from the trigger), `TestWorkflowInputsLoaderListsTheTargetsDeclaredFields` (the NDV's column list), `TestWorkflowToolReadsAMapperShapedWorkflowInputs` (the mapper shape), the vitest `isModelDefined` / `setColumnSource` suites and the SSR `a resource mapper that lets the model fill a column` suite (the switch), and the e2e `workflow-tool-inputs.spec.ts` (switch, save, run, n8n round trip, run headless against the built binary).
 - [x] "not active" is used only when the lookup failed; a runtime failure returns "the sub-workflow failed: <error>"
 
 # Implementation Plan
@@ -143,3 +143,43 @@ Left: the NDV toggle per field ("defined by model" / fixed) that the finding sug
 3. Accept both the old plain-JSON shape and the mapper shape in `modelDefinedInputs` / `workflowToolInput`.
 
 That is frontend and storage-shape work, outside this backend fix.
+
+## Progress (2026-10-09)
+
+Criterion 1 is done: `workflowInputs` is a resource mapper whose columns are the picked workflow's trigger fields, each column carries a model/fixed switch in the node panel, and the runtime, importer and exporter read both the legacy plain object and the mapper.
+
+**What a stored value means (Go and TypeScript agree).**
+- Absent or nil: every declared input is the model's.
+- A plain object (the shape before this change): a key that is present is fixed.
+- One whole expression: fixes every field, as before.
+- A mapper, `{mappingMode, value, matchingColumns, schema}`: `value` holds the columns.
+  - A column that is exactly one `$fromAI` call is the model's. The editor writes `{{ $fromAI('<id>', '', '<type>') }}`; an imported `={{ /*n8n-auto-generated-fromAI-override*/ $fromAI(...) }}` is the same after its marker comment is stripped.
+  - Any other present value, `null` included, is fixed and sent as written.
+  - A column with no entry is the model's, so a freshly picked workflow works at once.
+  - `schema` is a display copy.
+- The runtime never forwards the mapper's own keys to the sub-workflow.
+
+**Changes.**
+- `internal/loadoptions/workflows.go`: schema loader `WorkflowInputs`. It reads the target's *active* revision, says why when the target is inactive or takes anything, and confines an embed session to its own workflow. Registered in `cmd/kilasflow/main.go` as `workflows.inputs`. `nodes.DeclaredWorkflowInputs` is the one parser, shared with the model's tool schema; `nodes.SubworkflowTriggerOf` finds the trigger.
+- `internal/property/mapper.go`: new `ModelDefinable` flag, opt-in. Generated web client and SDK models regenerated.
+- `nodes/ai.go`: `workflowToolNode` declares the mapper. New exported `WorkflowToolInputs` reads all three shapes. `modelDefinedInputs` and `workflowToolInput` use it. `Definition` refines a `$fromAI(..., 'json')` column to the declared object or array, and orders `required` by declared order (it came out in map-walk order before).
+- `internal/ai/fromai.go`: `WholeFromAICall`, the one rule for "this column is the model's".
+- `internal/api/handlers/nodes.go`: `load-schema` answers an expression dependency with a reason, as `load-options` does. A By ID locator whose value is an expression (an imported self-referencing tool) counts as an expression in both; it used to reach the loader as the marker's JSON.
+- Importer: `workflowToolInputsToKilas` keeps the n8n mapper whole instead of flattening it. The Execute Workflow node still gets a flat field map. Exporter: `workflowInputsToN8N` writes n8n's marker in front of a whole `$fromAI` column and exports a schema column with no entry as the model's own. A whole-expression value has no n8n counterpart and is reported as dropped instead of being written as a column named "mode".
+- Web: `resource-mapper.ts` helpers (`isModelDefined`, `setColumnSource`, `flipColumnSource`, `modelDefinedValue`, `fromAIType`, `columnText`, `editColumn`, `isWholeExpression`); `property-field.svelte` mapper block (pill switch copying the Fixed/Expr pill's token classes, without its `focus-visible:outline-*` classes at the orchestrator's request); six strings in both catalogs.
+- Skill: one sentence in `PROPERTY_KINDS.md`.
+
+**Deviations from the plan.**
+- New tests live in new files (`nodes/workflow_tool_inputs_test.go`, `internal/api/node_types_schema_expression_test.go`, `internal/ai/fromai_whole_test.go`), not in `ai_tools_test.go` / `node_types_test.go`, to stay clear of Tracks C and F. The importer code lives in `internal/interop/n8n/workflow_tool_inputs.go` for the same reason (Track B edits `parameters.go`).
+- `readMapping`'s legacy-plain-object reading and the number-as-text input apply only to a mapper with `modelDefinable`, so a mapper that did not opt in (Track B's) reads and renders as before. The `editColumn` fix (an expression column edits as its template) applies to every mapper, because the old behaviour wiped the marker on the first keystroke.
+- The whole-expression notice sits under the existing expression textarea, which already renders for any kind holding an expression, so the expression stays editable. The plan's version put the notice in the mapper block, which is unreachable for that value.
+- For a mapper with `modelDefinable` the client no longer keeps its column list in the module-level `schemaCache`: the endpoint is `no-store`, and a target's fields change whenever its author edits and activates it in the same page session.
+- Added `e2e/tests/workflow-tool-inputs.spec.ts`, which the plan did not list: it drives the switch, a real agent run against a scripted model, and the n8n round trip.
+
+**Unverified: how n8n stores an untouched column.** The repo has no real Workflow Tool v2 export with a populated schema (only fixtures with an empty `value` and `schema`), so I could not confirm that n8n stores a column the author never touched as absent or null. The importer follows the plan: an untouched, non-removed schema column is stored as an explicit `null`, which keeps it out of the model's schema as it was in n8n. What it does not know is whether n8n passes such a column to the sub-workflow as `null` or leaves it out; here it arrives as `null`. Check this against a real n8n 2.x export before relying on it for sub-workflows that tell the two apart.
+
+**Left / follow-ups.**
+- A tool whose columns are all fixed (and a target that declares none) still offers the model the open `{input: object}`; it could offer an empty object instead. Not changed: it predates this ticket.
+- A fixed column for an object or array field is stored as the text the author typed. To send an object, write it as an expression.
+- Adding a new arbitrary static key to a passthrough target's tool is no longer possible in the form (existing keys stay visible and removable).
+- Embed sessions can read only their own workflow's inputs; a confinement-aware version using `Confinement.AllowsWorkflow` is a follow-up.
