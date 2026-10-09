@@ -48,6 +48,7 @@ kilasflow_not_shipped:
 
 ## Strong defaults
 
+- Start from the validated example: `kilasflow skills show kilasflow-triggers --reference EXAMPLE.md` is a Schedule trigger feeding an HTTP Request node, with the interval rows and the timezone setting spelled out.
 - Kinds that start a run all write the same queued execution row through the same durable queue (docs/src/content/docs/concepts/execution-model.md):
   - `kilasflow.manual` — the editor or a manual run; the root a bare `kilasflow run` starts from.
   - `kilasflow.chatTrigger` — a message from the editor Chat panel (`action`, `sessionId`, `chatInput`). Execute never fires it with an empty item; on a chat-only graph it opens the panel instead. Hosted chat pages are not shipped.
@@ -131,4 +132,5 @@ a workflow did not start
 
 | File | Read when |
 | --- | --- |
+| EXAMPLE.md | you are writing a document whose first node is a trigger and need the stored shape of a schedule's interval rows |
 | WEBHOOK_DELIVERY.md | a caller's request reached a webhook route and you need to know what it was answered with, why it was not answered, or whether it ran the workflow once |

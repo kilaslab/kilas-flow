@@ -34,6 +34,7 @@ kilasflow_not_shipped:
 
 ## Strong defaults
 
+- Start from the validated example: `kilasflow skills show kilasflow-error-handling --reference EXAMPLE.md` is an HTTP Request node with retries and an `error` branch into Stop and Error, with the settings in the right place.
 - Manual runs are asynchronous. `kilasflow run <workflowId>` (`run-workflow`) answers 202 with the execution id and never the result; `--wait` polls it to a terminal status, `--input`/`--input-file` supply the manual input, `--trigger` picks the root when a workflow has several (internal/cli/verbs_run.go). A run that ends `failed` makes the verb exit non-zero with the error code `execution_failed`, and the record travels in the error detail.
 - Every failure is a code, not a sentence. The record's `error` is `{code, message}`, with the code `execution.failed`, `execution.timeout` when a node reported the deadline, or `execution.cancelled` for a cancellation; each failed node run carries its own structured error, whose code names the cause — `node.failed`, `node.timeout`, `node.partial`, `config.invalid` or `execution.cancelled` (internal/engine/service.go, `structuredError` and `traceRows`; internal/engine/runner.go).
 - A trace tells a retry from a loop. Every node attempt is its own row with an incrementing `attempt`, and every distinct run of a node inside a loop carries `runIndex`; `sequence` orders the trace (internal/api/handlers/workflows.go, `ExecutionNodeRunResource`). The human rendering of `exec get` is a summary, so read the node runs with `kilasflow exec get <executionId> --json`.
@@ -95,3 +96,9 @@ what is in front of you?
 - "Return the failure to the webhook caller" → the caller gets a generic body on purpose, because the URL may be public → read the failure in the execution record, and answer the caller with a `kilasflow.respondToWebhook` node where the graph can.
 - "A cancelled run will alert" → cancellation is not a failure and starts no error workflow → treat a cancellation as an operator action, not as an incident.
 - "The retried node succeeded" → the failed attempts are still rows → read `attempt` on the node's runs before concluding the node was fine all along.
+
+## Reference files
+
+| File | Read when |
+| --- | --- |
+| EXAMPLE.md | you are adding retries, an `error` branch or a deliberate failure to a document and want the settings and the connection from the `error` port spelled out |

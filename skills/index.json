@@ -213,7 +213,9 @@
       "notShipped": [
         "No single-node retry verb. `exec retry` reruns the whole workflow with the same input and trigger, so a failed node is retried by running the workflow again"
       ],
-      "references": []
+      "references": [
+        "references/EXAMPLE.md"
+      ]
     },
     {
       "name": "kilasflow-expressions",
@@ -434,6 +436,7 @@
         "No webhook discovery verb: the list-workflow-webhooks operation is served, but no verb lists the webhook URLs of a workflow yet"
       ],
       "references": [
+        "references/EXAMPLE.md",
         "references/WEBHOOK_DELIVERY.md"
       ]
     },
