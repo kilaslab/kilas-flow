@@ -273,4 +273,23 @@ describe('a resource mapper that lets the model fill a column', () => {
 		expect(markup).not.toContain('role="alertdialog"');
 		expect(markup).not.toContain('Delete the expression');
 	});
+
+	// The server reads a mapper whose own value is one expression as the whole
+	// input (nodes.WorkflowToolInputs). Drawn as columns it listed two inputs
+	// named `mode` and `value`.
+	it('says the same when it is the mapper’s own value that is the expression', () => {
+		const markup = html(mapperProperty(true), {
+			mappingMode: 'defineBelow',
+			value: { mode: 'expression', value: '{{ { "unit": "F" } }}' },
+			matchingColumns: [],
+			schema: columns
+		});
+
+		expect(markup).toContain('These inputs are written as one expression');
+		expect(markup).toContain('{{ { "unit": "F" } }}');
+		expect(markup).toContain('Use per-field inputs');
+		expect(markup).not.toContain('role="switch"');
+		expect(markup).not.toContain('Also sent');
+		expect(markup).not.toContain('Remove mode');
+	});
 });

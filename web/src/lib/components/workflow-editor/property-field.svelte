@@ -10,7 +10,7 @@
 </script>
 
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ChevronUp from '@lucide/svelte/icons/chevron-up';
@@ -57,6 +57,7 @@ import { assistKey, completionInsertion, expressionCompletions, previewStep, typ
 		knownColumnType,
 		matchableColumns,
 		readMapping,
+		wholeExpressionTemplate,
 		writableColumns,
 		writeMapping
 	} from '$lib/workflow-editor/resource-mapper';
@@ -225,6 +226,9 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 	$effect(() => {
 		const key = schemaKey;
 		if (key === '' || !loadSchema) return;
+		// A new key is a new question (another workflow, another node): the
+		// answer given to the last one says nothing about this one's columns.
+		schemaSettled = false;
 		return loadSoon({
 			key: `schema:${key}`,
 			load: () => untrack(() => loadSchema(property)),
@@ -282,6 +286,33 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 	 * expression, which is the author's code, so it is asked for first.
 	 */
 	let confirmingFieldInputs = $state(false);
+	let cancelFieldInputsButton = $state<HTMLButtonElement>();
+	let fieldInputsTrigger = $state<HTMLButtonElement>();
+	// A plain variable, not state: the effect below both reads and writes it.
+	let wasConfirmingFieldInputs = false;
+
+	$effect(() => {
+		// The trigger is gone once the question is open, which leaves focus on
+		// the page and Escape with nothing to act on: take focus into the
+		// question, on its safe answer.
+		if (confirmingFieldInputs && !wasConfirmingFieldInputs) void tick().then(() => cancelFieldInputsButton?.focus());
+		wasConfirmingFieldInputs = confirmingFieldInputs;
+	});
+
+	// This field is reused when another node is selected, so a question left
+	// open for one node must not greet the next, nor outlive its expression.
+	let confirmOwner = '';
+	$effect(() => {
+		const owner = ownerKey;
+		const isExpressionNow = mapperIsExpression;
+		if (!isExpressionNow || owner !== confirmOwner) confirmingFieldInputs = false;
+		confirmOwner = owner;
+	});
+
+	function cancelFieldInputs() {
+		confirmingFieldInputs = false;
+		void tick().then(() => fieldInputsTrigger?.focus());
+	}
 
 	function useFieldInputs() {
 		confirmingFieldInputs = false;
@@ -637,6 +668,29 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 	{/if}
 {/snippet}
 
+<!-- What a mapper of the model switch shows when its inputs are one expression:
+     the notice, and the way out, which deletes the author's expression and so
+     is asked first, inline, as the version panel asks before it restores. -->
+{#snippet wholeExpressionNotice()}
+	<p class="rounded border border-dashed border-input px-2 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">{m.properties_mapper_expression_notice()}</p>
+	{#if confirmingFieldInputs}
+		<div role="alertdialog" aria-label={m.properties_mapper_use_fields()} tabindex="-1" class="grid gap-1.5 rounded border border-border bg-muted/40 p-2" onkeydown={(event) => {
+			if (event.key === 'Escape') {
+				event.stopPropagation();
+				cancelFieldInputs();
+			}
+		}}>
+			<p class="text-[0.6875rem] leading-4 text-muted-foreground">{m.properties_mapper_use_fields_confirm()}</p>
+			<div class="flex justify-end gap-1.5">
+				<button type="button" bind:this={cancelFieldInputsButton} class="rounded px-2 py-1 text-[0.6875rem] text-muted-foreground hover:bg-muted" onclick={cancelFieldInputs}>{m.workflows_cancel()}</button>
+				<button type="button" class="rounded bg-primary px-2 py-1 text-[0.6875rem] font-medium text-primary-foreground transition-opacity hover:opacity-90" onclick={useFieldInputs}>{m.properties_mapper_use_fields_confirm_action()}</button>
+			</div>
+		</div>
+	{:else}
+		<button type="button" bind:this={fieldInputsTrigger} class="justify-self-start rounded border border-border px-2 py-1 text-[0.6875rem] text-muted-foreground transition-colors hover:bg-muted" onclick={() => (confirmingFieldInputs = true)}>{m.properties_mapper_use_fields()}</button>
+	{/if}
+{/snippet}
+
 <div class="grid gap-1" role={labelTarget ? undefined : 'group'} aria-labelledby={labelTarget ? undefined : `property-label-${fieldID}`}>
 	<div class="flex items-baseline justify-between gap-2">
 		{#if labelTarget}
@@ -705,24 +759,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 			     runs, so there is nothing to switch per column. The expression
 			     stays editable above; the way out replaces it with the
 			     per-field form, every column left to the model. -->
-			<p class="rounded border border-dashed border-input px-2 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">{m.properties_mapper_expression_notice()}</p>
-			{#if confirmingFieldInputs}
-				<!-- Asked inline, as the version panel asks before it restores. -->
-				<div role="alertdialog" aria-label={m.properties_mapper_use_fields()} tabindex="-1" class="grid gap-1.5 rounded border border-border bg-muted/40 p-2" onkeydown={(event) => {
-					if (event.key === 'Escape') {
-						event.stopPropagation();
-						confirmingFieldInputs = false;
-					}
-				}}>
-					<p class="text-[0.6875rem] leading-4 text-muted-foreground">{m.properties_mapper_use_fields_confirm()}</p>
-					<div class="flex justify-end gap-1.5">
-						<button type="button" class="rounded px-2 py-1 text-[0.6875rem] text-muted-foreground hover:bg-muted" onclick={() => (confirmingFieldInputs = false)}>{m.workflows_cancel()}</button>
-						<button type="button" class="rounded bg-primary px-2 py-1 text-[0.6875rem] font-medium text-primary-foreground transition-opacity hover:opacity-90" onclick={useFieldInputs}>{m.properties_mapper_use_fields_confirm_action()}</button>
-					</div>
-				</div>
-			{:else}
-				<button type="button" class="justify-self-start rounded border border-border px-2 py-1 text-[0.6875rem] text-muted-foreground transition-colors hover:bg-muted" onclick={() => (confirmingFieldInputs = true)}>{m.properties_mapper_use_fields()}</button>
-			{/if}
+			{@render wholeExpressionNotice()}
 		{/if}
 	{:else if property.kind === 'boolean'}
 		<label class="flex h-7 items-center gap-2 rounded-md border border-input px-2 text-xs">
@@ -1021,6 +1058,13 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		</div>
 	{:else if property.kind === 'resourceMapper'}
 		<div class="grid gap-1.5 rounded-md border border-input p-1.5">
+			{#if mapperIsExpression}
+				<!-- The mapper's own value is the expression (the bare expression
+				     takes the textarea above). Shown, not editable here: this shape
+				     arrives from an import or the API, and the way out is the same. -->
+				<code class="block break-words rounded border border-border bg-muted/40 px-2 py-1 font-mono text-[0.6875rem]">{wholeExpressionTemplate(value)}</code>
+				{@render wholeExpressionNotice()}
+			{:else}
 			{#if property.mapper?.supportsAutoMap}
 				<label class="grid gap-1 text-[0.6875rem]">
 					<span class="text-muted-foreground">{m.properties_mapping_column_mode()}</span>
@@ -1112,6 +1156,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 						{/each}
 					</div>
 				</div>
+			{/if}
 			{/if}
 		</div>
 	{:else if property.kind === 'conditions'}
