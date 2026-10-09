@@ -928,3 +928,35 @@ func TestForgetWorkflowAndTenantDropTheirSessions(t *testing.T) {
 		t.Fatalf("Stats().Sessions = %d after ForgetTenant, want 0", stats.Sessions)
 	}
 }
+
+// The ceiling evicts by recency, not by wall-clock time: sessions touched
+// within one clock tick (here, all at the same instant) must still evict in
+// the order they were last touched.
+func TestPerTenantCeilingEvictsByRecencyWhenTheClockDoesNotMove(t *testing.T) {
+	t.Parallel()
+
+	instant := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	for run := 0; run < 50; run++ {
+		memory, err := ai.NewBufferMemory(ai.Retention{}, func() time.Time { return instant }, ai.WithPerTenantSessionLimit(2))
+		if err != nil {
+			t.Fatalf("NewBufferMemory() error = %v", err)
+		}
+		ctx := context.Background()
+		key := func(session string) ai.SessionKey {
+			return ai.SessionKey{TenantID: "tenant-a", WorkflowID: "w", SessionID: session}
+		}
+		for _, session := range []string{"one", "two", "three"} {
+			if err := memory.Append(ctx, key(session), []ai.Message{{Role: ai.RoleUser, Content: session}}); err != nil {
+				t.Fatalf("Append(%s) error = %v", session, err)
+			}
+		}
+		if evicted, _ := memory.Load(ctx, key("one")); len(evicted) != 0 {
+			t.Fatalf("run %d: the least recently touched session survived: %#v", run, evicted)
+		}
+		for _, session := range []string{"two", "three"} {
+			if kept, _ := memory.Load(ctx, key(session)); len(kept) != 1 {
+				t.Fatalf("run %d: session %q = %#v, want it retained", run, session, kept)
+			}
+		}
+	}
+}
