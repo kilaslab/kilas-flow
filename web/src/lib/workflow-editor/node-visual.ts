@@ -43,6 +43,7 @@ import Route from '@lucide/svelte/icons/route';
 import Scissors from '@lucide/svelte/icons/scissors';
 import Send from '@lucide/svelte/icons/send';
 import Server from '@lucide/svelte/icons/server';
+import Sheet from '@lucide/svelte/icons/sheet';
 import Sigma from '@lucide/svelte/icons/sigma';
 import Signpost from '@lucide/svelte/icons/signpost';
 import Sparkles from '@lucide/svelte/icons/sparkles';
@@ -143,6 +144,7 @@ const GLYPHS: Record<string, Component> = {
 	scissors: Scissors,
 	send: Send,
 	server: Server,
+	sheet: Sheet,
 	sigma: Sigma,
 	signpost: Signpost,
 	sparkles: Sparkles,

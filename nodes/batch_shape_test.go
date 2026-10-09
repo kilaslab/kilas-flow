@@ -34,7 +34,7 @@ var batchShapedNodes = map[string]string{
 var perItemNodes = map[string]bool{
 	"kilasflow.calculator": true, nodes.DatastoreNodeType: true, nodes.DateTimeNodeType: true,
 	nodes.EmbeddingsNodeType: true, nodes.ExtractFromFileNodeType: true,
-	nodes.FilterNodeType: true, nodes.GmailNodeType: true, nodes.GoogleDriveNodeType: true, "kilasflow.httpRequest": true,
+	nodes.FilterNodeType: true, nodes.GmailNodeType: true, nodes.GoogleDriveNodeType: true, nodes.GoogleSheetsNodeType: true, "kilasflow.httpRequest": true,
 	"kilasflow.if": true, nodes.MySQLNodeType: true, nodes.NoOpNodeType: true, nodes.PostgresNodeType: true,
 	"kilasflow.set": true, nodes.SplitOutNodeType: true, nodes.SQLiteNodeType: true, nodes.StopAndErrorNodeType: true,
 	nodes.SwitchNodeType: true, nodes.VectorStorePGVectorNodeType: true, nodes.WaitNodeType: true,
