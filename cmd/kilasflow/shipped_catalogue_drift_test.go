@@ -32,6 +32,7 @@ var runCallsThatAddNoShippedNode = map[string]string{
 	"setupSidecar":               "loads the opt-in JavaScript sidecar's community nodes, an operator's installation that is off by default",
 	"wasmpack.NewExecutor":       "builds the executor that runs module packs against definitions LoadDir registered; it adds none itself",
 	"webhook.Extract":            "reads the definitions to find webhook triggers",
+	"nodes.WithNodeCatalog":      "hands the agent the catalogue it reads a tool form's base node from; it registers nothing",
 	"(registry).ApplyVisibility": "narrows who may see definitions that are already registered",
 }
 

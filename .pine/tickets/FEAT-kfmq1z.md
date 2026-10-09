@@ -46,6 +46,8 @@ Related tickets: FEAT-nqpvf6, FEAT-wcmk3r
 
 Related (from the audit): FEAT-nqpvf6 (done; names RSS only as a would-be poll consumer)
 
+2026-10-09 (FEAT-cf5n4j): n8n's onboarding template 6270 ("Build your first AI agent") also needs the RSS Read node's agent-tool form, `n8n-nodes-base.rssFeedReadTool`; it is that template's last blocking placeholder now that its Get Weather tool imports (BUG-b8bwhw). Once the RSS Read node exists, its tool form is one entry in `nodes.toolForms` (nodes/tool_form.go) plus one line in the importer's `toolVariants` (internal/interop/n8n/n8n.go), with a glyph variant, an e2e coverage entry and new catalogue counts.
+
 # Related Files
 
 `results-extra.json` (RSS Read, RSS Feed Trigger)

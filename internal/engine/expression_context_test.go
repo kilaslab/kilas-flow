@@ -69,3 +69,27 @@ func TestExpressionContextCarriesEveryRootItPromises(t *testing.T) {
 		}
 	}
 }
+
+// An agent tool that runs an ordinary node's executor hands the model's
+// arguments over on the request, so the node's own expression context (built
+// here, for every executor) reads `$fromAI` as data. A request without them
+// keeps `$fromAI` an error, as it is in any node an agent does not drive.
+func TestExpressionContextCarriesAToolCallsFromAIArguments(t *testing.T) {
+	t.Parallel()
+
+	parameters := map[string]any{
+		"to": map[string]any{"mode": "expression", "value": "{{ $fromAI('to', 'recipient') }}"},
+	}
+	request := engine.Request{FromAIArguments: map[string]any{"to": "{{ $env.SECRET }}"}}
+	resolved, err := expression.Resolve(parameters, request.ExpressionContext(workflow.Item{}, nil, 0))
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if resolved["to"] != "{{ $env.SECRET }}" {
+		t.Fatalf("to = %#v, want the argument as literal text", resolved["to"])
+	}
+
+	if _, err := expression.Resolve(parameters, engine.Request{}.ExpressionContext(workflow.Item{}, nil, 0)); err == nil {
+		t.Fatal("Resolve() resolved $fromAI with no tool call behind it")
+	}
+}

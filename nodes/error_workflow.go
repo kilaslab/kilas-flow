@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/kilaslab/kilas-flow/internal/engine"
@@ -165,20 +166,36 @@ func executeStopAndError(ctx context.Context, node workflow.IRNode, input workfl
 // through — so it is evaluated as a template. Anything else is the literal
 // message. A message that cannot be resolved fails the node rather than
 // stopping the workflow with a half-rendered sentence.
+//
+// Everything is evaluated exactly once, in one resolve (BUG-vqghpm). Before
+// it, the author's own text is normalised: a plain errorMessage holding `{{`
+// becomes an expression, and an error object the author wrote (as JSON text
+// or as an object) is parsed and its plain `{{` fields become expressions,
+// beside any it already holds. After it, nothing is evaluated: a field an
+// expression produced is data. A message built from a webhook body that held
+// `{{ $env.SECRET }}` used to fail the run with the secret's value.
 func stopAndErrorMessage(parameters map[string]any, ctx expression.Context) (string, error) {
-	resolved, err := expression.Resolve(parameters, ctx)
+	// The message first, alone: the object is read only when there is no
+	// message, so a template in an object the node never shows cannot fail it.
+	message, err := resolvedMessage(parameters["errorMessage"], ctx)
 	if err != nil {
 		return "", err
 	}
-	message := strings.TrimSpace(textOf(resolved["errorMessage"]))
 	if message == "" {
-		object, ok := errorObjectOf(resolved["errorObject"])
-		if ok {
-			message = strings.TrimSpace(textOf(object["errorMessage"]))
+		object := parameters["errorObject"]
+		if written, isWritten := authoredErrorObject(object); isWritten {
+			object = templateStringsAsExpressions(written)
+		}
+		resolved, err := expression.Resolve(map[string]any{"errorObject": object}, ctx)
+		if err != nil {
+			return "", err
+		}
+		if fields, ok := errorObjectOf(resolved["errorObject"]); ok {
+			message = messageText(fields["errorMessage"])
 			if message == "" {
-				message = strings.TrimSpace(textOf(object["message"]))
+				message = messageText(fields["message"])
 			}
-			if description := strings.TrimSpace(textOf(object["errorDescription"])); description != "" {
+			if description := messageText(fields["errorDescription"]); description != "" {
 				if message == "" {
 					message = description
 				} else {
@@ -187,21 +204,51 @@ func stopAndErrorMessage(parameters map[string]any, ctx expression.Context) (str
 			}
 		}
 	}
-	if !strings.Contains(message, "{{") {
-		if message == "" {
-			return "the workflow was stopped by a Stop and Error node with no message", nil
-		}
-		return message, nil
+	if message == "" {
+		return "the workflow was stopped by a Stop and Error node with no message", nil
 	}
-	evaluated, err := expression.Evaluate(message, ctx)
+	return message, nil
+}
+
+// resolvedMessage resolves the errorMessage parameter once, the author's
+// plain template text made an expression first.
+func resolvedMessage(value any, ctx expression.Context) (string, error) {
+	if text, isText := value.(string); isText {
+		value = templateStringsAsExpressions(text)
+	}
+	resolved, err := expression.Resolve(map[string]any{"errorMessage": value}, ctx)
 	if err != nil {
 		return "", err
 	}
-	rendered := strings.TrimSpace(textOf(evaluated))
-	if rendered == "" {
-		return "the workflow was stopped by a Stop and Error node with no message", nil
+	return messageText(resolved["errorMessage"]), nil
+}
+
+// messageText reads a resolved message as text: a string as written, a
+// number or a boolean as its literal, and nothing for an object or a list,
+// which is not a message.
+func messageText(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case float64, bool:
+		return textValue(typed, "")
+	case int:
+		return strconv.Itoa(typed)
+	case json.Number:
+		return typed.String()
+	default:
+		return ""
 	}
-	return rendered, nil
+}
+
+// authoredErrorObject is the error object the author wrote, before anything
+// is resolved: an object, or JSON text parsed into one. An expression is not
+// the author's object; what it produces is data.
+func authoredErrorObject(value any) (map[string]any, bool) {
+	if value == nil || expression.IsExpression(value) {
+		return nil, false
+	}
+	return errorObjectOf(value)
 }
 
 // errorObjectOf reads the error object an author gave, in either shape a

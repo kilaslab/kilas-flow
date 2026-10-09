@@ -129,6 +129,10 @@ an `&` inside `{{ $json.query }}` no longer truncates the request line.
 | `@n8n/n8n-nodes-langchain.lmChatOpenRouter` | `kilasflow.lmChatOpenRouter` |
 | `@n8n/n8n-nodes-langchain.memoryBufferWindow` | `kilasflow.memoryBuffer` |
 | `@n8n/n8n-nodes-langchain.toolHttpRequest` | `kilasflow.httpTool` |
+| `n8n-nodes-base.httpRequestTool` | `kilasflow.httpTool` |
+| `n8n-nodes-base.gmailTool` | `kilasflow.gmailTool` |
+| `n8n-nodes-base.postgresTool` | `kilasflow.postgresTool` |
+| `n8n-nodes-base.telegramTool` | `pack.telegramTool` |
 | `@n8n/n8n-nodes-langchain.vectorStorePGVector` | `kilasflow.vectorStorePGVector` (modes insert, load, retrieve, retrieve-as-tool) |
 | `@n8n/n8n-nodes-langchain.toolVectorStore` | `kilasflow.vectorStoreTool` |
 
@@ -147,6 +151,40 @@ chat model from the documents it retrieves; at n8n version 1 its tool name is th
 yet draw the ports a store's mode gives it: a retrieve store is drawn with a main
 input and output rather than its embedding input and vector-store output. The
 imported edges are there and run all the same.
+
+**A node's agent-tool form imports as the same node's tool.** n8n offers a node
+to an agent as its own type with `Tool` appended, at the node's own versions,
+with the node's parameters plus a tool description. KilasFlow's tool forms are
+the same: the node's parameters and credentials, run by the node's own
+executor when the model calls the tool. So the import reads the node with its
+usual translation, takes the tool's name from the node's name (as n8n does),
+and carries `toolDescription`. When n8n was left to generate the description
+from the operation, one is written and reported as `lossy`. The model's
+`$fromAI` values reach the node as values: a value containing `{{ }}` is sent
+as those characters. A tool form takes `$fromAI` inside an expression only,
+which is how n8n writes it; one in plain text, in any spelling, is refused.
+What kind of call the tool makes — its resource, its operation, and for
+PostgreSQL its query, delete command and options — stays the author's, so a
+`$fromAI`, an expression or `{{ }}` text there is refused. Inside a tool form,
+`$json` is the item the agent is answering, as it is for an n8n sub-node, and
+`$('Node')` reads earlier nodes through that item's lineage. `$input` differs:
+n8n gives a sub-node its root node's whole input, and KilasFlow's tool form
+holds only the item being answered. A field the node would otherwise fill from
+its input item (a Gmail tool's recipient, for one) is not filled from the
+agent's input: set it in the tool. For the same reason a PostgreSQL tool cannot
+map its columns automatically, which would write the agent's input as the row;
+a `postgresTool` that does is a **blocking** diagnostic, and the columns have to
+be mapped one by one.
+A tool whose base node is mapped but that has no tool form here yet (Google
+Drive's, for one) imports as a placeholder that says so.
+
+**The PostgreSQL tool never runs SQL the model wrote.** n8n splices an
+expression in the query into the statement text, so a `postgresTool` whose
+query calls `$fromAI` is a **blocking** diagnostic. Put `$1`, `$2` placeholders
+in the query and the values in Query Parameters (n8n's query replacements, one
+bound value per `{{ }}` segment), or use the select, insert, update or delete
+operation, whose values are bound. A table or schema name the model chooses is
+allowed, because every identifier is quoted when the statement is built.
 
 ### Code
 
@@ -267,7 +305,7 @@ in part — each reported as a **dropped** diagnostic:
 
 | Field | Why it is not carried |
 | --- | --- |
-| `settings` | Everything except the timezone, the workflow's own `executionTimeout` and `errorWorkflow`. Execution order and the other globals have no KilasFlow equivalent yet. All three carried keys matter: a scheduled workflow whose zone was dropped runs at the wrong hour every day, the timeout is the workflow's run budget, and an error workflow is started from its own error trigger when a run of this one fails. A zone this server cannot resolve is reported as lossy rather than silently falling back to UTC; so are n8n's `-1` "no timeout" (this server always applies the instance's budget) and an `errorWorkflow` id, because n8n's ids survive the trip only if that workflow was imported too. |
+| `settings` | Everything except the timezone, the workflow's own `executionTimeout` and `errorWorkflow`, and the execution order (KilasFlow always runs `v1`, which every export writes and which imports without an issue; any other value is reported as lossy, and a file that names none stays silent). The save-data flags and the other globals have no KilasFlow equivalent yet. The three carried keys matter: a scheduled workflow whose zone was dropped runs at the wrong hour every day, the timeout is the workflow's run budget, and an error workflow is started from its own error trigger when a run of this one fails. A zone this server cannot resolve is reported as lossy rather than silently falling back to UTC; so are n8n's `-1` "no timeout" (this server always applies the instance's budget) and an `errorWorkflow` id, because n8n's ids survive the trip only if that workflow was imported too. |
 | `pinData` | Pinned test data is an n8n editor feature. It is dropped rather than parked under a reserved key, because carrying data nothing reads would create a second silent-drop problem a release later. The nodes that had data pinned will run for real. |
 | `meta` | n8n instance metadata describing where the workflow came from. It has no meaning in another installation. |
 | `staticData` | n8n's per-workflow scratch space that its nodes persist between runs. KilasFlow keeps its own for each workflow (see [Helpers and static data](/guides/code-javascript/#helpers-and-static-data)), but the values n8n had are not carried: the imported workflow starts from empty static data. |
@@ -856,10 +894,13 @@ enforces that on every run rather than trusting anyone to remember it.
   guessing: the honest answer is that each one will import, open, and not run
   until you replace that node — with an HTTP Request node against the same API,
   in most cases, since that is what the missing node would have been doing.
-- **n8n's execution order and the other global settings have no equivalent.**
+- **n8n's save-data flags and the other global settings have no equivalent.**
   `settings` is read for the timezone, the workflow's own `executionTimeout` and
-  `errorWorkflow` — all three carried, and all three honoured — and the rest is
-  reported as dropped rather than quietly applied.
+  `errorWorkflow` — all three carried, and all three honoured — and for the
+  execution order: KilasFlow always runs the `v1` order, so a file that says
+  `v1` (every KilasFlow export does) imports without an issue and `v0` is
+  reported as lossy; a file with no execution order at all stays silent. The rest is reported as dropped rather than quietly
+  applied.
 
 For what exists more broadly and what does not, start with
 [what KilasFlow is](/start/what-kilasflow-is/). For the node types available to

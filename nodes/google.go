@@ -62,54 +62,56 @@ func locatorValue(raw any) string {
 	return ""
 }
 
+// resolveGoogleIR resolves a Google node's parameters for one item, exactly
+// once.
+//
+// The importer converts n8n's `=` prefix only on a top-level parameter, so a
+// nested one (Gmail's `filters.sender: "={{ $json.from }}"`) arrives as a plain
+// string. Those are the workflow author's own templates, so they are turned
+// into expression markers in the *unresolved* tree and resolved together with
+// everything else. Nothing is evaluated after resolution: a value an
+// expression produced is data, and evaluating it again would run text an
+// outsider controls (a webhook body, an email, a model's tool argument) with
+// `$env` in reach (BUG-prhxdy).
 func resolveGoogleIR(ir workflow.IRNode, item workflow.Item, input workflow.NodeInput, request engine.Request, index int) (workflow.IRNode, error) {
 	ctx := expressionContext(item, input, request, index)
-	resolved, err := expression.Resolve(ir.Parameters, ctx)
+	authored, _ := templateStringsAsExpressions(ir.Parameters).(map[string]any)
+	resolved, err := expression.Resolve(authored, ctx)
 	if err != nil {
 		return ir, fmt.Errorf("node %q: %w", ir.Name, err)
 	}
-	walked, err := evaluateTemplateStrings(resolved, ctx)
-	if err != nil {
-		return ir, fmt.Errorf("node %q: %w", ir.Name, err)
-	}
-	parameters, _ := walked.(map[string]any)
-	if parameters == nil {
-		parameters = resolved
-	}
-	ir.Parameters = parameters
+	ir.Parameters = resolved
 	return ir, nil
 }
 
-func evaluateTemplateStrings(value any, ctx expression.Context) (any, error) {
+// templateStringsAsExpressions returns a copy of an unresolved parameter tree
+// in which every plain string holding `{{` is an expression marker. Existing
+// markers are left as they are: their text is already an expression.
+func templateStringsAsExpressions(value any) any {
+	if expression.IsExpression(value) {
+		return value
+	}
 	switch typed := value.(type) {
 	case string:
 		trimmed := strings.TrimSpace(typed)
 		if !strings.Contains(trimmed, "{{") {
-			return typed, nil
+			return typed
 		}
-		return expression.Evaluate(strings.TrimPrefix(trimmed, "="), ctx)
+		return map[string]any{"mode": "expression", "value": strings.TrimPrefix(trimmed, "=")}
 	case map[string]any:
 		out := make(map[string]any, len(typed))
 		for key, nested := range typed {
-			evaluated, err := evaluateTemplateStrings(nested, ctx)
-			if err != nil {
-				return nil, err
-			}
-			out[key] = evaluated
+			out[key] = templateStringsAsExpressions(nested)
 		}
-		return out, nil
+		return out
 	case []any:
 		out := make([]any, len(typed))
 		for index, nested := range typed {
-			evaluated, err := evaluateTemplateStrings(nested, ctx)
-			if err != nil {
-				return nil, err
-			}
-			out[index] = evaluated
+			out[index] = templateStringsAsExpressions(nested)
 		}
-		return out, nil
+		return out
 	default:
-		return value, nil
+		return value
 	}
 }
 

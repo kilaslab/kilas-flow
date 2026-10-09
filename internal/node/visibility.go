@@ -119,6 +119,64 @@ func (registry *Registry) checkScopeAgrees(nodeType string, version workflow.Typ
 	return nil
 }
 
+// checkToolFormScope refuses a tool form registered before its base, or with a
+// scope other than its base's. The tool runs the base's executor with the
+// base's credentials, so a tenant the base is hidden from must not reach it
+// through the tool. Composition time only, like checkScopeAgrees.
+func (registry *Registry) checkToolFormScope(toolType, baseType string, tenants []string) error {
+	if baseType == "" {
+		return nil
+	}
+	if baseType == toolType {
+		return fmt.Errorf("node type %q cannot be the tool form of itself", toolType)
+	}
+	var base Definition
+	found := false
+	for key, definition := range registry.definitions {
+		if key.nodeType == baseType {
+			base, found = definition, true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("node type %q is the tool form of %q, which is not registered: register the base first", toolType, baseType)
+	}
+	if !slices.Equal(base.VisibleTo, tenants) {
+		return fmt.Errorf("node type %q declares %s but its base %q has %s: a tool form shares its base's scope",
+			toolType, describeScope(tenants), baseType, describeScope(base.VisibleTo))
+	}
+	return nil
+}
+
+// toolFormBase returns the base a registered type is the tool form of, or "".
+func (registry *Registry) toolFormBase(nodeType string) string {
+	for key, definition := range registry.definitions {
+		if key.nodeType == nodeType && definition.ToolFormOf != "" {
+			return definition.ToolFormOf
+		}
+	}
+	return ""
+}
+
+// toolFormsOf lists the registered types that are tool forms of baseType, in
+// name order.
+func (registry *Registry) toolFormsOf(baseType string) []string {
+	seen := map[string]struct{}{}
+	forms := make([]string, 0, 1)
+	for key, definition := range registry.definitions {
+		if definition.ToolFormOf != baseType {
+			continue
+		}
+		if _, done := seen[key.nodeType]; done {
+			continue
+		}
+		seen[key.nodeType] = struct{}{}
+		forms = append(forms, key.nodeType)
+	}
+	sort.Strings(forms)
+	return forms
+}
+
 // indexScope records a type's scope in the lookup index. A type with no scope
 // has no entry, which is what keeps an unscoped registry on the one-length-check
 // fast path.
@@ -323,6 +381,9 @@ func (registry *Registry) ApplyVisibility(grants map[string][]string) error {
 		if builtin {
 			return fmt.Errorf("node type %q is built in and cannot be scoped to tenants: built-in nodes are visible to every tenant", nodeType)
 		}
+		if base := registry.toolFormBase(nodeType); base != "" {
+			return fmt.Errorf("node type %q is the agent-tool form of %q and always shares its scope: scope its base %q instead", nodeType, base, base)
+		}
 		if len(grants[nodeType]) == 0 {
 			return fmt.Errorf("node type %q: name at least one tenant; an empty list would read as both nobody and everybody", nodeType)
 		}
@@ -335,11 +396,15 @@ func (registry *Registry) ApplyVisibility(grants map[string][]string) error {
 
 	for _, nodeType := range types {
 		tenants := normalised[nodeType]
-		registry.setScope(nodeType, tenants)
-		for key, definition := range registry.definitions {
-			if key.nodeType == nodeType {
-				definition.VisibleTo = append([]string(nil), tenants...)
-				registry.definitions[key] = definition
+		// A base's tool forms follow it: the grant is for the node, and the
+		// tool is the same node offered to an agent.
+		for _, scoped := range append([]string{nodeType}, registry.toolFormsOf(nodeType)...) {
+			registry.setScope(scoped, tenants)
+			for key, definition := range registry.definitions {
+				if key.nodeType == scoped {
+					definition.VisibleTo = append([]string(nil), tenants...)
+					registry.definitions[key] = definition
+				}
 			}
 		}
 	}

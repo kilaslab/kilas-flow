@@ -105,7 +105,12 @@ const VALIDATION_COVERAGE = [
 	'kilasflow.googleDriveTrigger@1',
 	'kilasflow.gmail@1',
 	'kilasflow.gmailTrigger@1',
+	'kilasflow.googleSheets@1',
+	'kilasflow.googleSheetsTrigger@1',
 	'kilasflow.datastoreTool@1',
+	'kilasflow.gmailTool@1',
+	'kilasflow.postgresTool@2',
+	'pack.telegramTool@1',
 	'kilasflow.postgres@1',
 	'kilasflow.postgres@2',
 	'kilasflow.mysql@1',
@@ -915,6 +920,19 @@ test('the agent cluster fails closed without wiring or credentials', async ({ se
 	expect(dsToolAttempt.status).toBe(422);
 	expect(errorText(dsToolAttempt.body)).toContain('toolDescription is required');
 
+	// The tool forms of the Gmail, PostgreSQL and Telegram nodes run their
+	// base node against a live service, so their headless tier is the same
+	// refusal: a bare one names its missing description.
+	for (const form of [
+		{ type: 'kilasflow.gmailTool', version: 1 },
+		{ type: 'kilasflow.postgresTool', version: 2 },
+		{ type: 'pack.telegramTool', version: 1 }
+	]) {
+		const formId = await createWorkflow(server.baseURL, `Coverage ${form.type} Bare`, [manual(), node('tool', 'Tool', form.type, form.version, {})], []);
+		const formAttempt = await startRun(server.baseURL, formId);
+		expect(formAttempt.status).toBe(422);
+		expect(errorText(formAttempt.body)).toContain('toolDescription is required');
+	}
 	// The Vector Store Tool answers from a retrieve-mode store with a chat
 	// model of its own, so it needs a live LLM to run; validation is its
 	// headless tier, and the description is what it names first.
@@ -1017,11 +1035,19 @@ test('extract from file, customer pgvector and google nodes fail closed without 
 	expect(pgAttempt.status).toBe(422);
 	expect(errorText(pgAttempt.body)).toContain('postgres');
 
-	const remotes: Array<{ type: string; credential: string }> = [
+	// The Sheets nodes also need a document and a tab before the missing
+	// credential is the only thing wrong with them.
+	const sheetsLocators = {
+		documentId: { __rl: true, mode: 'id', value: 'coverage-document' },
+		sheetName: { __rl: true, mode: 'name', value: 'Sheet1' }
+	};
+	const remotes: Array<{ type: string; credential: string; parameters?: Record<string, unknown> }> = [
 		{ type: 'kilasflow.googleDrive', credential: 'googleDriveOAuth2Api' },
 		{ type: 'kilasflow.googleDriveTrigger', credential: 'googleDriveOAuth2Api' },
 		{ type: 'kilasflow.gmail', credential: 'gmailOAuth2' },
-		{ type: 'kilasflow.gmailTrigger', credential: 'gmailOAuth2' }
+		{ type: 'kilasflow.gmailTrigger', credential: 'gmailOAuth2' },
+		{ type: 'kilasflow.googleSheets', credential: 'googleSheetsOAuth2Api', parameters: { operation: 'read', ...sheetsLocators } },
+		{ type: 'kilasflow.googleSheetsTrigger', credential: 'googleSheetsTriggerOAuth2Api', parameters: sheetsLocators }
 	];
 	for (const remote of remotes) {
 		const isTrigger = remote.type.endsWith('Trigger');
@@ -1029,8 +1055,8 @@ test('extract from file, customer pgvector and google nodes fail closed without 
 			server.baseURL,
 			`Coverage ${remote.type}`,
 			isTrigger
-				? [node('node', 'Google', remote.type, 1, {})]
-				: [manual(), node('node', 'Google', remote.type, 1, { operation: 'search' })],
+				? [node('node', 'Google', remote.type, 1, remote.parameters ?? {})]
+				: [manual(), node('node', 'Google', remote.type, 1, remote.parameters ?? { operation: 'search' })],
 			isTrigger ? [] : [conn('c1', 'manual', 'main', 'node', 'main')]
 		);
 		const attempt = await startRun(server.baseURL, workflowId);

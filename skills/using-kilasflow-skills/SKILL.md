@@ -168,7 +168,7 @@ kilasflow exec tail                 stream-execution-events            stream an
 kilasflow debug eval                eval-expression                    evaluate an expression against an execution's stored trace, as a node's parameters saw it (--execution <id>, --node <nodeId>, --run <n>, --item <n>)
 kilasflow node list                 list-node-types                    list the node catalogue the server will run
 kilasflow node describe             list-node-types                    print one node type's definition from the catalogue
-kilasflow node options              load-node-property-options         load a property's selectable values from the service that owns them (--property, --version, --mode, --credential)
+kilasflow node options              load-node-property-options         load a property's selectable values from the service that owns them (--property, --version, --mode, --credential, --param, --parameters)
 kilasflow credential list           list-credentials                   list stored credentials, without any secret value (--limit, --cursor)
 kilasflow credential get            get-credential                     read one credential, without its secret value
 kilasflow credential test           test-credential                    run the credential type's probe and report pass or fail

@@ -303,6 +303,7 @@ func run(args []string) error {
 		nodes.WithDatabaseCeiling(databaseCeiling(cfg.SQL)), nodes.WithVectorStore(vectorStore),
 		nodes.WithDatastoreEngine(datastoreEngine),
 		nodes.WithCodeCaches(codeArtifacts, moduleCache),
+		nodes.WithNodeCatalog(nodeRegistry),
 		javaScript); err != nil {
 		return fmt.Errorf("register built-in executors: %w", err)
 	}
@@ -328,6 +329,11 @@ func run(args []string) error {
 	// exactly as it is at run time.
 	if err := loadoptions.RegisterSQL(optionLoader, sqlGuard); err != nil {
 		return fmt.Errorf("register the database option loaders: %w", err)
+	}
+	// The Google Sheets pickers read Google as the credential, under the same
+	// egress policy and the credential's own allowed hosts.
+	if err := loadoptions.RegisterGoogleSheets(optionLoader); err != nil {
+		return fmt.Errorf("register the Google Sheets option loaders: %w", err)
 	}
 	// Generated node packs. The definitions, their routing and their option
 	// loaders are registered together: a pack whose runtime is missing fails
@@ -383,6 +389,12 @@ func run(args []string) error {
 		Modules: modulePacks, Context: ctx,
 	}, cfg.Packs.Dir); err != nil {
 		return fmt.Errorf("load directory node packs: %w", err)
+	}
+	// The agent-tool forms of pack nodes (Telegram's), after every pack and
+	// before packs.visible_to, so each form is registered with its base's
+	// scope and follows any override applied to the base below.
+	if err := nodes.RegisterPackToolForms(nodeRegistry); err != nil {
+		return fmt.Errorf("register the pack nodes' tool forms: %w", err)
 	}
 
 	// packs.visible_to: the operator's override of what each pack's manifest
@@ -781,10 +793,7 @@ func run(args []string) error {
 		pollService, pollErr := poller.New(poller.Options{
 			Cursors:  repository.NewPollCursorStore(db.DB),
 			Versions: workflows,
-			Handlers: map[string]poller.Handler{
-				nodes.GmailTriggerNodeType:       nodes.NewGmailPoller(outboundPolicy(cfg.Outbound)),
-				nodes.GoogleDriveTriggerNodeType: nodes.NewGoogleDrivePoller(outboundPolicy(cfg.Outbound)),
-			},
+			Handlers: nodes.PollHandlers(outboundPolicy(cfg.Outbound)),
 			Queue: func(ctx context.Context, tenantID, workflowID, versionID, triggerNodeID string, payload json.RawMessage) error {
 				_, err := runtime.QueuePolled(ctx, tenantID, workflowID, versionID, triggerNodeID, payload)
 				return err

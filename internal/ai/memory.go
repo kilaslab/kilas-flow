@@ -63,7 +63,11 @@ type BufferMemory struct {
 
 	mu       sync.Mutex
 	sessions map[string][]storedMessage
-	touched  map[string]time.Time
+	// touched orders sessions by recency with a counter rather than the clock:
+	// two sessions touched within one clock tick would otherwise tie, and map
+	// order would decide which one the ceiling evicts.
+	touched map[string]uint64
+	ticks   uint64
 }
 
 var _ Memory = (*BufferMemory)(nil)
@@ -92,7 +96,7 @@ func NewBufferMemory(retention Retention, now func() time.Time, options ...Buffe
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	memory := &BufferMemory{retention: normalized, now: now, sessions: map[string][]storedMessage{}, touched: map[string]time.Time{}}
+	memory := &BufferMemory{retention: normalized, now: now, sessions: map[string][]storedMessage{}, touched: map[string]uint64{}}
 	for _, option := range options {
 		option(memory)
 	}
@@ -124,7 +128,7 @@ func (memory *BufferMemory) loadPolicy(session SessionKey, retention Retention) 
 
 	retained := memory.prune(session.String(), retention)
 	if len(retained) > 0 {
-		memory.touched[session.String()] = memory.now().UTC()
+		memory.touch(session.String())
 	}
 	messages := make([]Message, 0, len(retained))
 	for _, stored := range retained {
@@ -165,7 +169,7 @@ func (memory *BufferMemory) appendPolicy(session SessionKey, messages []Message,
 		stored = append(stored, storedMessage{message: message, at: at})
 	}
 	memory.sessions[key] = stored
-	memory.touched[key] = at
+	memory.touch(key)
 	memory.prune(key, retention)
 	memory.evictBeyondCeiling(session.TenantID)
 	return nil
@@ -200,6 +204,12 @@ func (memory *BufferMemory) ForgetTenant(tenantID string) {
 			memory.drop(key)
 		}
 	}
+}
+
+// touch marks a session as the most recently used. The caller holds the lock.
+func (memory *BufferMemory) touch(key string) {
+	memory.ticks++
+	memory.touched[key] = memory.ticks
 }
 
 func (memory *BufferMemory) drop(key string) {
@@ -244,16 +254,16 @@ func (memory *BufferMemory) evictBeyondCeiling(tenantID string) {
 	prefix := tenantID + "\x00"
 	for {
 		oldest := ""
-		var oldestAt time.Time
+		var oldestAt uint64
 		count := 0
 		for key := range memory.sessions {
 			if !strings.HasPrefix(key, prefix) {
 				continue
 			}
 			count++
-			// An untracked session reads as the zero time, which is older
-			// than any tracked one — evict the unknown first.
-			if touched := memory.touched[key]; oldest == "" || touched.Before(oldestAt) {
+			// An untracked session reads as zero, which is older than any
+			// tracked one — evict the unknown first.
+			if touched := memory.touched[key]; oldest == "" || touched < oldestAt {
 				oldest, oldestAt = key, touched
 			}
 		}

@@ -56,7 +56,8 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		OpenRouterChatModelExecutorID:    executeProviderChatModel(openRouterChatModelProvider()),
 		MemoryExecutorID:                 engine.ExecutorFunc(executeMemory),
 		HTTPToolExecutorID:               engine.ExecutorFunc(executeHTTPTool),
-		AgentExecutorID:                  NewAgentExecutor(agentRuntime, httpPolicy, agentMemory, WithModelTimeoutCeiling(settings.modelTimeoutCeiling), WithDatastoreStore(datastoreStoreOf(settings.datastoreEngine)), WithAgentVectorStore(settings.vectorStore, NewEmbeddingsExecutor(httpPolicy, settings.vectorStore)), WithAgentSQLGuard(databaseGuard)),
+		ToolFormExecutorID:               engine.ExecutorFunc(executeToolForm),
+		AgentExecutorID:                  NewAgentExecutor(agentRuntime, httpPolicy, agentMemory, WithModelTimeoutCeiling(settings.modelTimeoutCeiling), WithDatastoreStore(datastoreStoreOf(settings.datastoreEngine)), WithAgentVectorStore(settings.vectorStore, NewEmbeddingsExecutor(httpPolicy, settings.vectorStore)), WithAgentSQLGuard(databaseGuard), WithAgentToolForms(settings.nodeCatalog, registry)),
 		ChainExecutorID:                  NewChainExecutor(httpPolicy, settings.modelTimeoutCeiling),
 		WorkflowToolExecutorID:           engine.ExecutorFunc(executeWorkflowTool),
 		CalculatorExecutorID:             engine.ExecutorFunc(executeCalculator),
@@ -73,6 +74,8 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		GoogleDriveTriggerExecutorID:     GoogleDriveTriggerExecutor{},
 		GmailExecutorID:                  NewGmailExecutor(httpPolicy),
 		GmailTriggerExecutorID:           GmailTriggerExecutor{},
+		GoogleSheetsExecutorID:           NewGoogleSheetsExecutor(httpPolicy),
+		GoogleSheetsTriggerExecutorID:    GoogleSheetsTriggerExecutor{},
 		MCPClientToolExecutorID:          NewMCPClientToolExecutor(httpPolicy),
 		CodeExecutorID:                   codeExecutorOf(codeCompiler, settings),
 		LoopExecutorID:                   engine.ExecutorFunc(executeLoop),
@@ -133,6 +136,17 @@ type executorSettings struct {
 	// this process.
 	jsRunner   jsrun.Engine
 	jsDisabled string
+	// nodeCatalog is where the agent finds a tool form's base node: its
+	// executor and its credential order. Nil leaves tool forms refusing with
+	// that reason.
+	nodeCatalog workflow.Catalog
+}
+
+// WithNodeCatalog hands the agent the node catalogue it resolves a tool
+// form's base node from. Pass the same registry the compiler uses; the agent
+// narrows it to the running tenant.
+func WithNodeCatalog(catalog workflow.Catalog) ExecutorOption {
+	return func(settings *executorSettings) { settings.nodeCatalog = catalog }
 }
 
 // WithJSRunner hands the JavaScript Code node the deployment's runtime, with

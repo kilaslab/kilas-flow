@@ -286,5 +286,8 @@ func (request Request) ExpressionContext(item workflow.Item, input workflow.Node
 		// importer preserves. Without it `$today` was midnight UTC, which is
 		// the wrong calendar day for most of the world for part of every day.
 		Timezone: request.Workflow.Timezone,
+		// Set only when an agent runs this node as a tool; nil keeps
+		// `$fromAI` an error everywhere else.
+		FromAIArguments: request.FromAIArguments,
 	}
 }

@@ -351,7 +351,16 @@ func (executor *SQLOperationExecutor) Execute(ctx context.Context, ir workflow.I
 				MaxRows: int(numberValue(parameters["maxRows"])),
 			})
 		}
-		statement, err := buildSQLStatement(executor.dialect, parameters, item, options)
+		// The unresolved conditions go along so a computed one can be told
+		// from a row the author left blank (postgresConditions).
+		statement, err := buildSQLStatement(executor.dialect, parameters, ir.Parameters["where"], item, options)
+		if err == nil && request.FromAIArguments != nil {
+			// Run as an agent's tool form: the item is the agent's input,
+			// which is not a row anybody asked to write.
+			if refusal := refuseToolAutoMapping(parameters); refusal != nil {
+				statement, err = sqlnode.Statement{}, refusal
+			}
+		}
 		if err != nil && mode != BatchingIndependently {
 			return nil, fmt.Errorf("node %q: item %d: %w", ir.Name, index+1, err)
 		}
@@ -481,12 +490,12 @@ func appendResultItems(out []workflow.Item, result sqlnode.Result, options sqlOp
 // through inverse tables, so an inversion between them is symmetric and
 // invisible until something asserts the SQL that actually runs.
 func BuildSQLStatementForTest(dialect sqlbuild.Dialect, parameters map[string]any) (sqlnode.Statement, error) {
-	return buildSQLStatement(dialect, parameters, workflow.Item{JSON: map[string]any{}},
+	return buildSQLStatement(dialect, parameters, nil, workflow.Item{JSON: map[string]any{}},
 		readSQLOptions(parameters["options"]))
 }
 
 // buildSQLStatement turns one item's resolved parameters into SQL.
-func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, item workflow.Item, options sqlOptions) (sqlnode.Statement, error) {
+func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, whereTemplate any, item workflow.Item, options sqlOptions) (sqlnode.Statement, error) {
 	operation := textValue(parameters["operation"], PostgresOperationExecuteQuery)
 	if operation == PostgresOperationExecuteQuery {
 		bound, err := boundParameters(parameters["queryParameters"])
@@ -523,18 +532,30 @@ func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, item
 		if truthy(parameters["returnAll"]) {
 			limit = 0
 		}
-		where, err := postgresConditions(parameters["where"])
+		where, filterCombine, err := postgresConditions(whereTemplate, parameters["where"])
 		if err != nil {
 			return sqlnode.Statement{}, err
+		}
+		if filterCombine != "" {
+			combine = filterCombine
 		}
 		return sqlbuild.Select(dialect, target, options.OutputColumns, where, combine,
 			readSQLSort(parameters["sort"]), limit)
 
 	case PostgresOperationDeleteTable:
 		mode := textValue(parameters["deleteCommand"], sqlbuild.DeleteRows)
-		where, err := postgresConditions(parameters["where"])
-		if err != nil {
-			return sqlnode.Statement{}, err
+		// Truncate and drop take no conditions, so a where left over from
+		// deleting rows is not read for them.
+		var where []sqlbuild.Comparison
+		if mode == sqlbuild.DeleteRows {
+			conditions, filterCombine, err := postgresConditions(whereTemplate, parameters["where"])
+			if err != nil {
+				return sqlnode.Statement{}, err
+			}
+			where = conditions
+			if filterCombine != "" {
+				combine = filterCombine
+			}
 		}
 		return sqlbuild.Delete(dialect, target, mode, where, combine, sqlbuild.Removal{
 			Cascade:          options.Cascade,
@@ -579,11 +600,34 @@ func buildSQLStatement(dialect sqlbuild.Dialect, parameters map[string]any, item
 	}
 }
 
-// postgresConditions reads the WHERE builder's rows.
-func postgresConditions(value any) ([]sqlbuild.Comparison, error) {
-	rows, ok := value.([]any)
-	if !ok {
-		return nil, nil
+// refuseToolAutoMapping refuses automatic column mapping on a write made as an
+// agent's tool. Automatic mapping writes the incoming item's fields as the
+// row; a tool form runs on the agent's input item, so it would write the
+// conversation (a chat message, a session id, whatever the trigger carried)
+// into the table. A tool writes the columns its author mapped, with $fromAI
+// for the values the model supplies.
+func refuseToolAutoMapping(parameters map[string]any) error {
+	switch textValue(parameters["operation"], PostgresOperationExecuteQuery) {
+	case PostgresOperationInsert, PostgresOperationUpdate, PostgresOperationUpsert:
+	default:
+		return nil
+	}
+	if mapping, ok := property.ReadMapping(parameters["columns"]); ok && mapping.Mode == property.MappingAuto {
+		return fmt.Errorf("as an agent's tool this node cannot map its columns automatically: the item it runs on " +
+			"is the agent's input, not a row to write. Map each column below instead, using $fromAI for the values " +
+			"the model supplies")
+	}
+	return nil
+}
+
+// postgresConditions reads the WHERE builder's rows, and the combinator when
+// the rows came in the editor's filter shape (empty otherwise). template is
+// the same parameter unresolved, or nil when the caller has none; it is what
+// tells a computed condition from a row the author left blank.
+func postgresConditions(template, value any) ([]sqlbuild.Comparison, string, error) {
+	rows, combinator, err := checkedConditionRows(template, value)
+	if err != nil {
+		return nil, "", err
 	}
 	comparisons := make([]sqlbuild.Comparison, 0, len(rows))
 	for _, entry := range rows {
@@ -601,7 +645,97 @@ func postgresConditions(value any) ([]sqlbuild.Comparison, error) {
 			Value:    row["value"],
 		})
 	}
-	return comparisons, nil
+	return comparisons, combinator, nil
+}
+
+// conditionRows reads a `where` in either shape a document holds: this
+// node's list of {field, operator, value} rows, which the importer writes, or
+// the editor's filter, {combinator, conditions: [{leftValue, operator:
+// {operation}, rightValue}]}, which the conditions control writes. ok is false
+// for anything else, which is refused rather than read as no conditions.
+func conditionRows(value any) (rows []any, combinator string, ok bool) {
+	switch typed := value.(type) {
+	case nil:
+		return nil, "", true
+	case string:
+		return nil, "", strings.TrimSpace(typed) == ""
+	case []any:
+		return typed, "", true
+	case map[string]any:
+		if expression.IsExpression(typed) {
+			return nil, "", false
+		}
+		conditions, isList := typed["conditions"].([]any)
+		if !isList {
+			return nil, "", false
+		}
+		rows = make([]any, 0, len(conditions))
+		for _, entry := range conditions {
+			row, isRow := entry.(map[string]any)
+			if !isRow {
+				rows = append(rows, entry)
+				continue
+			}
+			operator := row["operator"]
+			if described, isDescribed := operator.(map[string]any); isDescribed {
+				operator = described["operation"]
+			}
+			rows = append(rows, map[string]any{"field": row["leftValue"], "operator": operator, "value": row["rightValue"]})
+		}
+		return rows, strings.ToUpper(textValue(typed["combinator"], "")), true
+	default:
+		return nil, "", false
+	}
+}
+
+// checkedConditionRows reads the resolved rows and refuses any condition that
+// would otherwise vanish. postgresConditions skips a row with no column, which
+// is right for a row the author left blank and wrong for one an expression
+// produced: the condition would vanish and the statement match more rows than
+// it was written to — every row, for a delete with one condition. So a row
+// the author wrote with an expression anywhere inside it, and every row of a
+// `where` that is itself an expression, must resolve to a condition naming a
+// column; a `where` in a shape this node does not read is refused outright.
+func checkedConditionRows(template, resolved any) ([]any, string, error) {
+	rows, combinator, ok := conditionRows(resolved)
+	if !ok {
+		return nil, "", fmt.Errorf("the conditions are not in a shape this node reads (a list of conditions, or the " +
+			"editor's condition rows); they are refused rather than ignored, because the statement would then " +
+			"match every row")
+	}
+	if template == nil {
+		return rows, combinator, nil
+	}
+	wholeComputed := expression.IsExpression(template)
+	authored, _, authoredOK := conditionRows(template)
+	if !authoredOK && !wholeComputed {
+		// A shape the resolution turned into conditions: computed as a whole.
+		wholeComputed = true
+	}
+	if wholeComputed && resolved == nil {
+		return nil, "", fmt.Errorf("the conditions are computed by an expression that resolved to nothing; they are " +
+			"refused rather than dropped, because the statement would then match every row")
+	}
+	for index, row := range rows {
+		computed := wholeComputed || index >= len(authored) || holdsExpressionMarker(authored[index])
+		if computed && !isConditionWithColumn(row) {
+			return nil, "", fmt.Errorf("condition %d is computed by an expression and did not resolve to a condition "+
+				"with a column; it is refused rather than dropped, because the statement would then match more rows "+
+				"than it was written to", index+1)
+		}
+	}
+	return rows, combinator, nil
+}
+
+// isConditionWithColumn reports whether a resolved WHERE row names a column
+// by name.
+func isConditionWithColumn(value any) bool {
+	row, isRow := value.(map[string]any)
+	if !isRow {
+		return false
+	}
+	column, isText := row["field"].(string)
+	return isText && strings.TrimSpace(column) != ""
 }
 
 // postgresOperator maps the shared condition vocabulary onto the builder's.

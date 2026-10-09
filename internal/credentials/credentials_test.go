@@ -402,6 +402,11 @@ func TestEveryStoredCredentialTypeStillResolves(t *testing.T) {
 		"googleDriveOAuth2Api": {"clientId", "clientSecret", "access_token", "refresh_token", "expiry", "scope"},
 		"gmailOAuth2":          {"clientId", "clientSecret", "access_token", "refresh_token", "expiry", "scope"},
 	}
+	// Added one by one rather than inside the literal: a longer key would make
+	// gofmt realign every line above, for no change to them.
+	for _, id := range []string{"googleSheetsOAuth2Api", "googleSheetsTriggerOAuth2Api"} {
+		want[id] = []string{"clientId", "clientSecret", "access_token", "refresh_token", "expiry", "scope"}
+	}
 
 	registry := credentials.NewRegistry()
 	if err := credentials.RegisterAll(registry); err != nil {

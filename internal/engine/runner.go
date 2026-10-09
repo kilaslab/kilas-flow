@@ -336,6 +336,14 @@ type Request struct {
 	// every node that reads it. The runner gives a request without one an
 	// empty handle that lives as long as the run.
 	StaticData *StaticData
+	// FromAIArguments is what an AI agent supplied for the one tool call this
+	// request serves, when an agent runs an ordinary node's executor as a tool.
+	// ExpressionContext hands it to every expression the node resolves, so
+	// `$fromAI('key')` reads the model's value as data. The runner never sets
+	// it: outside a tool call `$fromAI` stays an error. It is non-nil for every
+	// tool call, even one with no arguments, so an executor can tell it is
+	// running as a tool (the Gmail node then skips its item fallbacks).
+	FromAIArguments map[string]any
 }
 
 // BinaryStore is the slice of the payload store an executor may use.

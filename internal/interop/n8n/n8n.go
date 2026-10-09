@@ -228,11 +228,19 @@ type mapping struct {
 // SupportedMappings is the advertised subset, in stable order.
 //
 // It is deliberately explicit rather than derived: interoperability claims are
-// only meaningful if the exact list is written down and testable.
+// only meaningful if the exact list is written down and testable. The tool
+// forms are the one derived part — one toolVariants line each — and the test
+// still names every pair they add.
 func SupportedMappings() []string {
 	names := make([]string, 0, len(mappings))
 	for _, entry := range mappings {
 		names = append(names, entry.n8nType+" ↔ "+entry.kilasType)
+	}
+	// The agent-tool forms n8n derives from a mapped node, one pair each.
+	for _, baseType := range sortedToolVariantKeys() {
+		if base, ok := byKilasType(baseType); ok {
+			names = append(names, base.n8nType+"Tool ↔ "+toolVariants[baseType].kilasType)
+		}
 	}
 	sort.Strings(names)
 	return names
@@ -564,11 +572,28 @@ var mappings = []mapping{
 	},
 	{
 		n8nType: "n8n-nodes-base.gmail", kilasType: GmailNodeType, kilasVersion: workflow.V(1),
-		exportTypeVersion: 2.1, toKilas: packToKilas, toN8N: packToN8N,
+		exportTypeVersion: 2.1, toKilas: gmailToKilas, toN8N: gmailToN8N,
+		// The version-2 implementation's versions: export writes that shape
+		// (sendTo, emailType), which version 1 does not read.
+		publishedVersions: []float64{2, 2.1, 2.2},
 	},
 	{
 		n8nType: "n8n-nodes-base.gmailTrigger", kilasType: GmailTriggerNodeType, kilasVersion: workflow.V(1),
 		exportTypeVersion: 1.2, toKilas: packToKilas, toN8N: packToN8N,
+	},
+	// Google Sheets and its trigger. The action node imports at the version it
+	// was authored at and goes back out at it; 4.7 is the pin because it is the
+	// newest n8n publishes. Version 3 has a different parameter shape and is not
+	// listed, so an import of it is blocked and an export never writes it.
+	{
+		n8nType: "n8n-nodes-base.googleSheets", kilasType: GoogleSheetsNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 4.7, publishedVersions: googleSheetsPublishedVersions,
+		toKilas: googleSheetsToKilas, toN8N: googleSheetsToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.googleSheetsTrigger", kilasType: GoogleSheetsTriggerNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, publishedVersions: []float64{1},
+		toKilas: googleSheetsTriggerToKilas, toN8N: googleSheetsTriggerToN8N,
 	},
 	// The OpenAI-compatible providers. Each publishes an endpoint that speaks
 	// OpenAI's protocol, so the native node is the same one in every case and
@@ -737,8 +762,15 @@ type toolVariant struct {
 	kilasType string
 	// toKilas is the base node's translator plus the tool's own naming and
 	// description, so the request the tool makes is read exactly as the
-	// node's would be.
+	// node's would be. Nil derives it from the base mapping (toolFormToKilas).
 	toKilas func(node Node) (map[string]any, []Unsupported)
+	// toN8N is the export translator. Nil derives it from the base mapping
+	// (toolFormToN8N).
+	toN8N func(node workflow.Node) (map[string]any, []Lossy)
+	// publishedVersions are the n8n versions the tool has, when they are not
+	// the base node's: n8n offers a node as a tool only from the version
+	// whose implementation declares it usable as one.
+	publishedVersions []float64
 }
 
 // toolVariants is keyed by the KilasFlow type the base node imports as. n8n
@@ -747,13 +779,26 @@ type toolVariant struct {
 // covers that whole family instead of one mapping per n8n type. A base node
 // with no entry has no tool form on this server yet. The Data Table tool is
 // not here: it has an explicit mapping of its own, found first.
+//
+// Every entry but the HTTP tool's is a tool form (nodes/tool_form.go), which
+// imports and exports through the derived translators. Adding one is a line
+// here beside its entry in nodes.toolForms.
 var toolVariants = map[string]toolVariant{
 	"kilasflow.httpRequest": {kilasType: "kilasflow.httpTool", toKilas: httpToolToKilas},
+	GmailNodeType:           {kilasType: GmailToolNodeType},
+	"kilasflow.postgres": {
+		kilasType: PostgresToolNodeType, toKilas: postgresToolToKilas,
+		// The version-2 implementation is the one usable as a tool.
+		publishedVersions: []float64{2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7},
+	},
+	TelegramNodeType: {kilasType: TelegramToolNodeType},
 }
 
 // toolVariantMapping derives the import mapping of an n8n <type>Tool from
-// its base node's. It is import-only: the KilasFlow tool exports through its
-// own entry, so a round trip lands on the n8n node that tool is mapped to.
+// its base node's. It is import-only: export finds the KilasFlow tool through
+// toolVariantExportMapping, or through its own explicit entry where it has one
+// (the HTTP tool's), so a round trip lands on the n8n node that tool is
+// mapped to.
 func toolVariantMapping(nodeType string) (mapping, bool) {
 	base, ok := toolVariantBase(nodeType)
 	if !ok {
@@ -763,10 +808,43 @@ func toolVariantMapping(nodeType string) (mapping, bool) {
 	if !ok {
 		return mapping{}, false
 	}
+	toKilas := variant.toKilas
+	if toKilas == nil {
+		toKilas = toolFormToKilas(base)
+	}
 	return mapping{
-		n8nType: nodeType, kilasType: variant.kilasType, kilasVersion: workflow.V(1),
-		toKilas: variant.toKilas, refuseKilas: base.refuseKilas, importOnly: true,
+		n8nType: nodeType, kilasType: variant.kilasType, kilasVersion: base.kilasVersion,
+		toKilas: toKilas, refuseKilas: base.refuseKilas, importOnly: true,
 	}, true
+}
+
+// toolVariantExportMapping is the export mapping of a tool form: n8n's
+// <base>Tool, at the base node's versions, through the derived translator.
+func toolVariantExportMapping(kilasType string) (mapping, bool) {
+	for _, baseType := range sortedToolVariantKeys() {
+		variant := toolVariants[baseType]
+		if variant.kilasType != kilasType {
+			continue
+		}
+		base, ok := byKilasType(baseType)
+		if !ok {
+			return mapping{}, false
+		}
+		toN8N := variant.toN8N
+		if toN8N == nil {
+			toN8N = toolFormToN8N(base)
+		}
+		published := variant.publishedVersions
+		if published == nil {
+			published = base.publishedVersions
+		}
+		return mapping{
+			n8nType: base.n8nType + "Tool", kilasType: kilasType, kilasVersion: base.kilasVersion,
+			exportTypeVersion: base.exportTypeVersion, publishedVersions: published,
+			minimumExportVersion: base.minimumExportVersion, toN8N: toN8N,
+		}, true
+	}
+	return mapping{}, false
 }
 
 // toolVariantBase is the mapping of the node an n8n <type>Tool is the agent
@@ -803,7 +881,9 @@ func byKilasType(nodeType string) (mapping, bool) {
 			return entry, true
 		}
 	}
-	return mapping{}, false
+	// A tool form exports as its base node's n8n tool. After the table, so a
+	// tool with an explicit entry of its own (the HTTP tool) keeps it.
+	return toolVariantExportMapping(nodeType)
 }
 
 // ImportFragment converts nodes pasted from an n8n canvas.
@@ -1225,6 +1305,22 @@ func withDefaultExportSeverity(issues []ExportIssue) []ExportIssue {
 func importSettings(source map[string]any) (map[string]any, []ImportIssue) {
 	settings := map[string]any{}
 	issues := make([]ImportIssue, 0)
+	// The order n8n runs a workflow's branches in. This server always runs the
+	// v1 order, which is also what an export declares, so v1 describes this
+	// server exactly and needs no issue. Anything else asks for an order that
+	// will not be honoured and is named rather than ignored. An absent key stays
+	// silent: it is what n8n reads as its legacy order, but the file did not ask
+	// for anything, and every KilasFlow export states the key.
+	if order, present := source["executionOrder"]; present && order != "v1" {
+		// Quoted and cut: the value is the file's, and a hostile one must not
+		// make the message enormous.
+		encoded, _ := json.Marshal(order)
+		issues = append(issues, ImportIssue{
+			Severity: SeverityLossy, Field: "settings.executionOrder",
+			Reason: fmt.Sprintf("this workflow asked for the execution order %s; KilasFlow always runs the v1 order, "+
+				"so the order its branches run in may differ", preview(encoded)),
+		})
+	}
 	zone, _ := source["timezone"].(string)
 	zone = strings.TrimSpace(zone)
 	if zone == "" || strings.EqualFold(zone, "DEFAULT") {
@@ -1281,7 +1377,7 @@ func importSettings(source map[string]any) (map[string]any, []ImportIssue) {
 func hasUncarriedSettings(source map[string]any) bool {
 	for key := range source {
 		switch key {
-		case "timezone", "executionTimeout", "errorWorkflow":
+		case "timezone", "executionTimeout", "errorWorkflow", "executionOrder":
 		default:
 			return true
 		}
@@ -1297,8 +1393,8 @@ func documentIssues(source Document) []ImportIssue {
 		reason  string
 	}{
 		{"settings", hasUncarriedSettings(source.Settings),
-			"n8n workflow settings beyond the timezone, the execution timeout and the error workflow — " +
-				"execution order, the save-data flags and the rest — have no KilasFlow equivalent yet and were not carried"},
+			"n8n workflow settings beyond the timezone, the execution timeout, the error workflow and the execution order — " +
+				"the save-data flags and the rest — have no KilasFlow equivalent yet and were not carried"},
 		{"pinData", len(source.PinData) > 0,
 			"pinned test data is an n8n editor feature with no KilasFlow equivalent; it was not carried, so the nodes that had it pinned will run for real"},
 		{"meta", len(source.Meta) > 0,

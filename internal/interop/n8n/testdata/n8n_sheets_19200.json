@@ -1,0 +1,185 @@
+{
+  "_source": "hand-authored KilasFlow fixture. Shape of n8n template 19200's Google Sheets steps. Not an n8n.io export.",
+  "name": "Sheets steps shaped like template 19200",
+  "nodes": [
+    {
+      "id": "0b7d1a10-0000-4000-8000-000000000001",
+      "name": "When clicking Test workflow",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "id": "0b7d1a10-0000-4000-8000-000000000002",
+      "name": "Get pending rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [220, 0],
+      "alwaysOutputData": true,
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1PLACEHOLDERdocumentId",
+          "mode": "list",
+          "cachedResultName": "Orders and log (placeholder)",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1PLACEHOLDERdocumentId/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 0,
+          "mode": "list",
+          "cachedResultName": "Orders",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1PLACEHOLDERdocumentId/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "={{ $json.status }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0b7d1a10-0000-4000-8000-000000000003",
+      "name": "Limit",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [440, 0],
+      "parameters": {
+        "maxItems": 2
+      }
+    },
+    {
+      "id": "0b7d1a10-0000-4000-8000-000000000004",
+      "name": "Mark as done",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [660, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1PLACEHOLDERdocumentId",
+          "mode": "list",
+          "cachedResultName": "Orders and log (placeholder)",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1PLACEHOLDERdocumentId/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 0,
+          "mode": "list",
+          "cachedResultName": "Orders",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1PLACEHOLDERdocumentId/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "status": "done"
+          },
+          "matchingColumns": ["row_number"],
+          "schema": [
+            {"id": "order", "displayName": "order", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false},
+            {"id": "status", "displayName": "status", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false},
+            {"id": "row_number", "displayName": "row_number", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "readOnly": true, "removed": false}
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0b7d1a10-0000-4000-8000-000000000005",
+      "name": "Log result",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [880, 0],
+      "alwaysOutputData": true,
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1PLACEHOLDERdocumentId",
+          "mode": "list",
+          "cachedResultName": "Orders and log (placeholder)",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1PLACEHOLDERdocumentId/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 7,
+          "mode": "list",
+          "cachedResultName": "Log",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1PLACEHOLDERdocumentId/edit#gid=7"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "event": "marked done",
+            "order_row": "={{ $json.row_number }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {"id": "event", "displayName": "event", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "order_row", "displayName": "order_row", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true}
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0b7d1a10-0000-4000-8000-000000000006",
+      "name": "Upsert totals",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [1100, 0],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1PLACEHOLDERdocumentId",
+          "mode": "list",
+          "cachedResultName": "Orders and log (placeholder)",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1PLACEHOLDERdocumentId/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 9,
+          "mode": "list",
+          "cachedResultName": "Totals",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1PLACEHOLDERdocumentId/edit#gid=9"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "key": "last_row",
+            "value": "={{ $json.order_row }}"
+          },
+          "matchingColumns": ["key"],
+          "schema": [
+            {"id": "key", "displayName": "key", "required": false, "defaultMatch": true, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "value", "displayName": "value", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true}
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "When clicking Test workflow": {"main": [[{"node": "Get pending rows", "type": "main", "index": 0}]]},
+    "Get pending rows": {"main": [[{"node": "Limit", "type": "main", "index": 0}]]},
+    "Limit": {"main": [[{"node": "Mark as done", "type": "main", "index": 0}]]},
+    "Mark as done": {"main": [[{"node": "Log result", "type": "main", "index": 0}], []]},
+    "Log result": {"main": [[{"node": "Upsert totals", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"}
+}

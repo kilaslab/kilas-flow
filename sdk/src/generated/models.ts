@@ -1299,7 +1299,7 @@ export interface LoadOptionsInputBody {
   /** For a resource locator, the mode whose list to load. */
   mode?: string;
   parameters?: LoadOptionsInputBodyParameters;
-  /** The property whose options to load. */
+  /** The property whose options to load, by its key. A property inside a collection or a fixed collection's group is accepted by its own key; a top-level property of the same key wins, and among nested ones the first declared does. */
   property: string;
   /** Node type version. Omit for the registered default. */
   version?: string;

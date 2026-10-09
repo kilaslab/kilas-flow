@@ -1176,6 +1176,9 @@ type AgentExecutor struct {
 	vectors   VectorStore
 	embedder  *EmbeddingsExecutor
 	sqlGuard  sqlnode.Guard
+	// forms runs tool forms (tool_form.go): the base node's own executor,
+	// found through the catalogue when the tool is built.
+	forms toolFormRuntime
 }
 
 // modelBackend binds a deployment's outbound policy for model calls. Both the
@@ -1477,7 +1480,7 @@ func (executor *AgentExecutor) Execute(ctx context.Context, ir workflow.IRNode, 
 			ModelName:        model.name,
 			SystemPrompt:     systemPrompt,
 			Input:            textValue(parameters["prompt"], ""),
-			Tools:            tools,
+			Tools:            bindToolsToItem(tools, item),
 			MaxIterations:    int(numberValue(parameters["maxIterations"])),
 			MaxTokens:        model.maxTokens,
 			MaxRetries:       model.maxRetries,
@@ -3393,6 +3396,8 @@ func (executor *AgentExecutor) toolFrom(ctx context.Context, ir workflow.IRNode,
 		return executor.vectorStoreAnswerToolFrom(ctx, ir, descriptor, request)
 	case toolKindMCP:
 		return executor.mcpToolFrom(ir, descriptor, request)
+	case toolKindForm:
+		return executor.toolFormFrom(ir, descriptor, request)
 	default:
 		return nil, fmt.Errorf("node %q: connected tool %q has unknown kind %q",
 			ir.Name, textValue(descriptor["nodeName"], ""), textValue(descriptor["kind"], ""))

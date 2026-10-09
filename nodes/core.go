@@ -60,6 +60,8 @@ func RegisterAll(registry *node.Registry) error {
 		googleDriveTrigger(),
 		gmailNode(),
 		gmailTrigger(),
+		googleSheetsNode(),
+		googleSheetsTrigger(),
 		codeNode(),
 		stickyNoteNode(),
 		loopNode(),
@@ -93,7 +95,9 @@ func RegisterAll(registry *node.Registry) error {
 			return err
 		}
 	}
-	return nil
+	// After every base they derive from; a pack's forms are registered by
+	// RegisterPackToolForms once the packs are loaded.
+	return registerToolForms(registry, false)
 }
 
 func manualTrigger() node.Definition {

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kilaslab/kilas-flow/internal/expression"
 	"github.com/kilaslab/kilas-flow/internal/jsrun"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/scheduler"
@@ -2142,7 +2143,15 @@ func webhookToN8N(node workflow.Node) (map[string]any, []ExportIssue) {
 }
 
 // toN8NTree is the export inverse of fromN8NTree.
+//
+// An expression marker is itself a map, so it has to be recognised before the
+// walk descends: recursing into `{mode: expression, value}` rewrote its two
+// keys and handed n8n the marker object, which it reads as literal data
+// (BUG-8xz9t1).
 func toN8NTree(value any) any {
+	if expression.IsExpression(value) {
+		return toN8NValue(value)
+	}
 	switch typed := value.(type) {
 	case map[string]any:
 		converted := make(map[string]any, len(typed))
@@ -2417,6 +2426,9 @@ func stopAndErrorToKilas(node Node) (map[string]any, []Unsupported) {
 		if len(described) > 0 {
 			if encoded, err := json.Marshal(described); err == nil {
 				parameters["errorObject"] = string(encoded)
+				// The message lives in the object only. Set on its own as well,
+				// it is what the node shows, and the description never is.
+				delete(parameters, "errorMessage")
 			}
 		}
 	case "json":
@@ -3543,7 +3555,11 @@ func postgresToKilas(node Node) (map[string]any, []Unsupported) {
 	}
 
 	if options, ok := node.Parameters["options"].(map[string]any); ok {
-		carried, bound, optionIssues := sqlOptionsToKilas(options)
+		// n8n reads an expression replacement one {{ }} segment at a time from
+		// PostgreSQL 2.5 on; before it, and in the MySQL node, it resolves the
+		// whole replacement and splits the result on its commas.
+		perSegment := strings.Contains(strings.ToLower(node.Type), "postgres") && node.TypeVersion >= 2.5
+		carried, bound, optionIssues := sqlOptionsToKilas(options, perSegment)
 		if len(carried) > 0 {
 			parameters["options"] = carried
 		}
@@ -3566,7 +3582,7 @@ func postgresToKilas(node Node) (map[string]any, []Unsupported) {
 // own validator refuses a key this server does not know, so passing a newer
 // n8n's option straight through would turn an import into a workflow that
 // cannot be saved. What is dropped is named.
-func sqlOptionsToKilas(options map[string]any) (map[string]any, any, []Unsupported) {
+func sqlOptionsToKilas(options map[string]any, perSegment bool) (map[string]any, any, []Unsupported) {
 	declared := map[string]bool{}
 	for _, key := range nodes.DeclaredSQLOptions() {
 		declared[key] = true
@@ -3592,7 +3608,7 @@ func sqlOptionsToKilas(options map[string]any) (map[string]any, any, []Unsupport
 			"these n8n options have no equivalent and were dropped: %s", strings.Join(unknown, ", "))})
 	}
 
-	bound, replacementIssues := queryReplacementToKilas(options["queryReplacement"])
+	bound, replacementIssues := queryReplacementToKilas(options["queryReplacement"], perSegment)
 	issues = append(issues, replacementIssues...)
 	return carried, bound, issues
 }
@@ -3604,7 +3620,7 @@ func sqlOptionsToKilas(options map[string]any) (map[string]any, any, []Unsupport
 // there is nothing in the stored document that could say otherwise. So a split
 // that changes the count is reported rather than guessed at: binding the wrong
 // number of values would run a different query, silently.
-func queryReplacementToKilas(value any) (any, []Unsupported) {
+func queryReplacementToKilas(value any, perSegment bool) (any, []Unsupported) {
 	switch typed := value.(type) {
 	case nil:
 		return nil, nil
@@ -3614,6 +3630,31 @@ func queryReplacementToKilas(value any) (any, []Unsupported) {
 	case string:
 		if strings.TrimSpace(typed) == "" {
 			return nil, nil
+		}
+		// An expression is not split on its commas. From PostgreSQL 2.5 n8n
+		// resolves each {{ }} segment of it on its own and binds each result as
+		// one value, ignoring the text between segments; splitting the stored
+		// text first bound the expressions' source as literal strings. Before
+		// 2.5, and in the MySQL node, n8n resolves the whole replacement and
+		// splits the result on its commas, which no stored value can express
+		// here: it is bound per segment all the same and reported.
+		if template, isExpression := strings.CutPrefix(typed, "="); isExpression {
+			template = strings.TrimLeft(template, "=")
+			if bodies, err := expression.Bodies(template); err == nil && len(bodies) > 0 {
+				bound := make([]any, 0, len(bodies))
+				for _, body := range bodies {
+					bound = append(bound, expressionValue("{{ "+strings.TrimSpace(body)+" }}"))
+				}
+				if perSegment {
+					return bound, nil
+				}
+				return bound, []Unsupported{{Field: "options.queryReplacement", Severity: SeverityLossy, Reason: fmt.Sprintf(
+					"this node resolves its query replacements as one string and splits the result on every comma; "+
+						"they were bound as %d values, one per {{ }} segment, which differs only when a value "+
+						"holds a comma or the text between the segments matters", len(bound))}}
+			}
+			// No segment: n8n splits the text as it does a fixed value.
+			typed = template
 		}
 		// Split, filter, then trim — n8n's own stringToArray, in that order.
 		// The order is observable: it drops an empty entry from "a,,b" but
@@ -3815,6 +3856,9 @@ func queryReplacementToN8N(value any) (string, []Lossy) {
 	default:
 		return "", nil
 	}
+	if slices.ContainsFunc(bound, expression.IsExpression) {
+		return queryReplacementSegments(bound)
+	}
 	parts := make([]string, 0, len(bound))
 	for _, entry := range bound {
 		text := fmt.Sprintf("%v", entry)
@@ -3833,6 +3877,76 @@ func queryReplacementToN8N(value any) (string, []Lossy) {
 		return "", nil
 	}
 	return strings.Join(parts, ","), nil
+}
+
+// queryReplacementSegments writes bound values that include expressions as
+// n8n's expression replacement: one {{ }} segment per value, which n8n
+// resolves one by one. A fixed value becomes a segment holding its JSON
+// literal, because n8n ignores the text between segments.
+func queryReplacementSegments(bound []any) (string, []Lossy) {
+	segments := make([]string, 0, len(bound))
+	for _, entry := range bound {
+		if !expression.IsExpression(entry) {
+			literal, err := segmentLiteral(entry)
+			if err != nil {
+				return "", []Lossy{{Field: "queryParameters", Severity: SeverityDropped, Reason: "a bound value " +
+					"could not be written as an n8n query replacement, so the replacements were left out"}}
+			}
+			segments = append(segments, "{{ "+literal+" }}")
+			continue
+		}
+		template := strings.TrimSpace(entry.(map[string]any)["value"].(string))
+		bodies, err := expression.Bodies(template)
+		if err != nil || len(bodies) != 1 || !strings.HasPrefix(template, "{{") || !strings.HasSuffix(template, "}}") {
+			return "", []Lossy{{Field: "queryParameters", Severity: SeverityDropped, Reason: "a bound value is an " +
+				"expression that is not exactly one {{ }} segment, which n8n's query replacements cannot carry, so " +
+				"the replacements were left out and the query will run unbound"}}
+		}
+		segments = append(segments, template)
+	}
+	return "=" + strings.Join(segments, ", "), nil
+}
+
+// segmentLiteral writes a fixed value as a JavaScript literal that holds no
+// `{{` or `}}`. n8n ends a segment at the first `}}` after its opener, so a
+// nested object's closing braces, or braces inside a string, would end it
+// early. Braces inside strings become \u escapes, which JSON and JavaScript
+// read back as the same characters, and two structural braces in a row get a
+// space between them.
+func segmentLiteral(value any) (string, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	var builder strings.Builder
+	inString, escaped := false, false
+	var previous byte
+	for index := 0; index < len(encoded); index++ {
+		char := encoded[index]
+		switch {
+		case inString && escaped:
+			escaped = false
+		case inString && char == '\\':
+			escaped = true
+		case inString && char == '"':
+			inString = false
+		case inString && char == '{':
+			builder.WriteString("\\u007b")
+			previous = 0
+			continue
+		case inString && char == '}':
+			builder.WriteString("\\u007d")
+			previous = 0
+			continue
+		case !inString && char == '"':
+			inString = true
+		case !inString && (char == '{' || char == '}') && previous == char:
+			builder.WriteByte(' ')
+		}
+		builder.WriteByte(char)
+		previous = char
+	}
+	return builder.String(), nil
 }
 
 // n8nConditionName is the inverse of postgresConditionOperators.
@@ -5644,20 +5758,11 @@ func memoryToN8N(node workflow.Node) (map[string]any, []Lossy) {
 func httpToolToKilas(node Node) (map[string]any, []Unsupported) {
 	parameters, issues := httpToKilas(node)
 
-	// n8n has no tool-name parameter at all: the name a model calls is derived
-	// from the node's own canvas name. Deriving it the same way is what keeps an
-	// imported system prompt that named the tool still naming the same tool.
-	parameters["toolName"] = nodes.NormalizeToolName(node.Name)
-
-	description := node.Parameters["toolDescription"]
-	if description == nil || description == "" {
-		// Required here, and a model given no description cannot know when to
-		// call the tool. Filling the gap visibly beats failing compilation with
-		// nothing for the author to look at.
-		parameters["toolDescription"] = "Calls " + node.Name + "."
-	} else {
-		parameters["toolDescription"] = fromN8NValue(description)
-	}
+	// The tool's name derives from the node's canvas name, as n8n's does, and
+	// a missing description is filled visibly rather than failing compilation
+	// with nothing for the author to look at (withToolFields). Not reported:
+	// n8n's own default for this tool is the node's generic description.
+	issues = append(issues, withToolFields(node, parameters, false)...)
 
 	// n8n lets the model fill {placeholder} segments of the URL, declared in a
 	// placeholderDefinitions collection. This server's tool takes its arguments
@@ -5682,15 +5787,7 @@ func httpToolToN8N(node workflow.Node) (map[string]any, []Lossy) {
 
 	// The name the model calls is the node's canvas name in n8n and a parameter
 	// here, so a tool renamed away from its node name cannot be expressed.
-	if name := stringParameter(node.Parameters, "toolName"); name != "" && name != nodes.NormalizeToolName(node.Name) {
-		lossy = append(lossy, Lossy{
-			Severity: SeverityLossy, Field: "toolName",
-			Reason: fmt.Sprintf(
-				"the model called this tool %q. n8n derives a tool's name from the node's own name, "+
-					"so after export it is called %q; rename the node to keep the old name.", name, nodes.NormalizeToolName(node.Name)),
-		})
-	}
-	return parameters, lossy
+	return parameters, append(lossy, toolNameLossy(node)...)
 }
 
 // --- Workflow Tool and Structured Output Parser --------------------------------

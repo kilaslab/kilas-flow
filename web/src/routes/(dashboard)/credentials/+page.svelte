@@ -99,7 +99,7 @@
 
 	onDestroy(stopConnectListener);
 
-	const GOOGLE_TYPES = new Set(['googleDriveOAuth2Api', 'gmailOAuth2']);
+	const GOOGLE_TYPES = new Set(['googleDriveOAuth2Api', 'gmailOAuth2', 'googleSheetsOAuth2Api', 'googleSheetsTriggerOAuth2Api']);
 	const GOOGLE_HIDDEN_FIELDS = new Set(['access_token', 'refresh_token', 'expiry']);
 
 	const definition = $derived((types.data ?? []).find((candidate) => candidate.id === typeID) ?? null);
