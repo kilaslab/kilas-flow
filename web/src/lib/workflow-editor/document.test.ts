@@ -7,6 +7,7 @@ import {
 	createWorkflowNode,
 	nextNodePosition,
 	positionAfter,
+	positionBelow,
 	documentFromCanvas,
 	duplicateNodes,
 	renameNode,
@@ -125,6 +126,25 @@ describe('workflow editor document helpers', () => {
 		expect(positionAfter({ x: 60, y: 60 }, [dragged]).y).toBeGreaterThan(dragged.y);
 		// A node in the next column over is not in the way.
 		expect(positionAfter({ x: 60, y: 60 }, [{ x: 500, y: 60 }])).toEqual({ x: 212, y: 60 });
+	});
+
+	// BUG-w1jp70: a sub-node picked for an attachment slot belongs under the
+	// consumer, where the slot's handle and its dashed "+" are.
+	it('puts a node added for an attachment slot below its consumer, and steps sideways past what is there', () => {
+		const consumer = { x: 400, y: 60 };
+		const first = positionBelow(consumer, []);
+		expect(first.x).toBe(400);
+		expect(first.y).toBeGreaterThan(consumer.y + 100);
+
+		const second = positionBelow(consumer, [first]);
+		expect(second.y).toBe(first.y);
+		expect(second.x).toBeGreaterThan(first.x + 100);
+
+		// A node in the next row down is not in the way, and one the user dragged
+		// there earlier is stepped past.
+		expect(positionBelow(consumer, [{ x: 400, y: first.y + 400 }])).toEqual(first);
+		const third = positionBelow(consumer, [first, second]);
+		expect([first, second].some((taken) => taken.x === third.x && taken.y === third.y)).toBe(false);
 	});
 
 	it('draws an attachment connection as a distinct kind of edge, and keeps it out of the saved document', () => {

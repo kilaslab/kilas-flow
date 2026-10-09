@@ -21,7 +21,13 @@ export const IMPORT_ONLY_TYPES: Record<string, true> = { [UNSUPPORTED_TYPE]: tru
 export type CatalogFilter = {
 	/** Only nodes that start a workflow. */
 	triggersOnly?: boolean;
-	/** Only nodes that can receive `main` items after an existing step. */
+	/**
+	 * Only nodes that can receive `main` items after an existing step.
+	 *
+	 * Ignored when `providesKind` is set: the picker says it is "connecting" for
+	 * an attachment slot too, and a sub-node (a model, a memory, a tool) has no
+	 * main input by design, so asking for both listed nothing (BUG-w1jp70).
+	 */
 	acceptsMain?: boolean;
 	/** Only nodes that provide an output of this kind — an agent slot asking for a model. */
 	providesKind?: string;
@@ -46,7 +52,7 @@ export function catalogEntries(definitions: Definition[], filter: CatalogFilter 
 		// Behaviour comes from the group and the ports, never from the display
 		// category: a node filed somewhere unexpected is still a trigger if it
 		// starts workflows.
-		if (filter.acceptsMain && !(definition.inputs ?? []).some((port) => port.kind === 'main')) continue;
+		if (filter.acceptsMain && !filter.providesKind && !(definition.inputs ?? []).some((port) => port.kind === 'main')) continue;
 		if (filter.providesKind && !(definition.outputs ?? []).some((port) => port.kind === filter.providesKind)) continue;
 		if (filter.acceptsKind && !(definition.inputs ?? []).some((port) => port.kind === filter.acceptsKind)) continue;
 		const current = latest.get(definition.type);
