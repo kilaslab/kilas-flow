@@ -5,7 +5,8 @@
   "type": "module",
   "packageManager": "pnpm@10.15.0",
   "scripts": {
-    "test": "playwright test"
+    "test": "playwright test",
+    "test:visual": "playwright test -c playwright.visual.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",

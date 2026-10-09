@@ -47,7 +47,7 @@ func nodeVerbs() []Verb {
 		{
 			Path:      "node options",
 			Operation: "load-node-property-options",
-			Summary:   "load a property's selectable values from the service that owns them (`--property`, `--version`, `--mode`, `--credential`)",
+			Summary:   "load a property's selectable values from the service that owns them (`--property`, `--version`, `--mode`, `--credential`, `--param`, `--parameters`)",
 			Args:      []Arg{arg("node type")},
 			Flags:     registerNodeOptionsFlags,
 			Run:       runNodeOptions,
@@ -62,17 +62,79 @@ type nodeOptionsFlags struct {
 	version      string
 	mode         string
 	credentialID string
+	// params are the repeatable --param name=value pairs; parameters is the
+	// --parameters object. Both end up in the request's parameters member,
+	// which is what the loader's dependsOn keys are read from.
+	params     *pairFlags
+	parameters string
 }
 
 // registerNodeOptionsFlags attaches the load-options parameters.
 func registerNodeOptionsFlags(fs *flag.FlagSet) any {
-	flags := &nodeOptionsFlags{}
+	flags := &nodeOptionsFlags{params: newPairFlags()}
 	fs.StringVar(&flags.property, "property", "", "the property whose options to load (required)")
 	fs.StringVar(&flags.version, "version", "", "node type version; defaults to the registered one")
 	fs.StringVar(&flags.mode, "mode", "", "for a resource locator, the mode whose list to load")
 	fs.StringVar(&flags.credentialID, "credential", "", "credential id to resolve against, from your own tenant")
+	fs.Var(flags.params, "param", "set one node parameter the property's options depend on, as name=value; the value is sent as a string (repeatable)")
+	fs.StringVar(&flags.parameters, "parameters", "", "the node's parameters as a JSON object, @<file>, or - to read stdin; a --param of the same name overrides it")
 
 	return flags
+}
+
+// requestParameters resolves --parameters and --param into the parameters
+// member of the request, or nil when the caller named none.
+//
+// The values stay raw JSON so a number or a resource locator in --parameters
+// reaches the server exactly as it was written; a --param value is always a
+// string, which is what almost every dependency is (a base URL, a schema name).
+func (f *nodeOptionsFlags) requestParameters(ctx *Context) (map[string]json.RawMessage, error) {
+	parameters := map[string]json.RawMessage{}
+
+	if source := strings.TrimSpace(f.parameters); source != "" {
+		var raw []byte
+		switch {
+		case source == "-" || strings.HasPrefix(source, "@"):
+			document, err := readDocument(strings.TrimPrefix(source, "@"), ctx.Env.Stdin)
+			if err != nil {
+				return nil, err
+			}
+			raw = document
+		default:
+			if !json.Valid([]byte(source)) {
+				return nil, usageError("--parameters is not valid JSON: %s", source)
+			}
+			raw = []byte(source)
+		}
+
+		// A parameters member is a map by definition; null, an array or a
+		// scalar is a mistake the server would otherwise answer with a decode
+		// error that does not name the flag.
+		if trimmed := strings.TrimSpace(string(raw)); !strings.HasPrefix(trimmed, "{") {
+			return nil, usageError("--parameters must be a JSON object of parameter name to value")
+		}
+		if err := json.Unmarshal(raw, &parameters); err != nil {
+			return nil, usageError("--parameters is not a JSON object: %v", err)
+		}
+	}
+
+	for _, name := range f.params.keys {
+		values := f.params.values[name]
+		if len(values) > 1 {
+			return nil, usageError("--param %s was given %d times: pass each parameter once", name, len(values))
+		}
+		encoded, err := json.Marshal(values[0])
+		if err != nil {
+			return nil, usageError("could not encode --param %s: %v", name, err)
+		}
+		parameters[name] = encoded
+	}
+
+	if len(parameters) == 0 {
+		return nil, nil
+	}
+
+	return parameters, nil
 }
 
 // runNodeList reads the catalogue. The operation takes no parameters, so the
@@ -141,10 +203,12 @@ func runNodeDescribe(ctx *Context, args []string) error {
 
 // runNodeOptions resolves a property's selectable values.
 //
-// The node as configured in the editor is what the loader reads, but the three
-// parameters that change which list comes back are the ones the verb exposes:
-// a partially configured node is a document, and a caller that has one sends it
-// through `kilasflow api load-node-property-options`.
+// A property whose list depends on other parameters (a chat model's models need
+// the base URL they are listed from) cannot load without them, so the node as
+// far as it is configured goes in with --param and --parameters, and the
+// credential the loader signs with with --credential. What the loader reads is
+// the request's `parameters`; `workflowId`, which bounds an embed session's
+// lookup, is the one member left to `kilasflow api load-node-property-options`.
 func runNodeOptions(ctx *Context, args []string) error {
 	nodeType, err := requireOneID(args, "node type")
 	if err != nil {
@@ -159,15 +223,22 @@ func runNodeOptions(ctx *Context, args []string) error {
 		return usageError("no property: pass --property <key>")
 	}
 
+	parameters, err := flags.requestParameters(ctx)
+	if err != nil {
+		return err
+	}
+
 	body, err := json.Marshal(struct {
-		Property     string `json:"property"`
-		Version      string `json:"version,omitempty"`
-		Mode         string `json:"mode,omitempty"`
-		CredentialID string `json:"credentialId,omitempty"`
+		Property     string                     `json:"property"`
+		Version      string                     `json:"version,omitempty"`
+		Mode         string                     `json:"mode,omitempty"`
+		Parameters   map[string]json.RawMessage `json:"parameters,omitempty"`
+		CredentialID string                     `json:"credentialId,omitempty"`
 	}{
 		Property:     flags.property,
 		Version:      strings.TrimSpace(flags.version),
 		Mode:         strings.TrimSpace(flags.mode),
+		Parameters:   parameters,
 		CredentialID: strings.TrimSpace(flags.credentialID),
 	})
 	if err != nil {

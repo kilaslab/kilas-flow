@@ -1,3 +1,7 @@
 /test-results/
 /playwright-report/
 /capstone-results/
+/test-results-visual/
+/playwright-report-visual/
+# darwin baselines are local; CI compares against committed linux ones.
+/visual/__screenshots__/darwin/

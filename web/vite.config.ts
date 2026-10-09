@@ -22,7 +22,17 @@ const port = Number(process.env.KILASFLOW_WEB_PORT ?? 5173);
 
 const proxied = ['/api', '/webhook', '/docs', '/resume', '/oauth'];
 
+// The /design/states harness (the VR-03 state matrix) ships only in dev and in
+// builds made with KILASFLOW_DESIGN_HARNESS=1 (the e2e global setup). The flag
+// is a build-time literal, so in a release build the route's load function is
+// `if (false) { import(...) }` and Rollup drops the harness chunk entirely.
+const designHarness = process.env.KILASFLOW_DESIGN_HARNESS === '1';
+
 export default defineConfig({
+	define: {
+		__KF_DESIGN_HARNESS__: JSON.stringify(designHarness)
+	},
+
 	// The strategy is deliberately reduced to the base locale: `$lib/i18n`
 	// owns the runtime locale by overriding the generated getLocale, so
 	// paraglide's own detection must not be able to read navigator, a cookie,

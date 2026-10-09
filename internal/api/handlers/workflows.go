@@ -1043,7 +1043,32 @@ func (handler *Workflows) problem(ctx context.Context, err error) error {
 	if errors.Is(err, repository.ErrNeverFires) {
 		return huma.Error422UnprocessableEntity(err.Error())
 	}
+	// A sub-workflow call whose target is missing or not active is a document
+	// the caller wrote, like a cron that never fires: the fix is theirs, and
+	// the node and the child it needs are in the refusal. Answering 500 left
+	// both in the server log.
+	var subworkflow *repository.SubworkflowRefusalError
+	if errors.As(err, &subworkflow) {
+		return subworkflowProblem(subworkflow)
+	}
 	return serverProblem(ctx, "workflow operation failed", err)
+}
+
+// subworkflowProblem is a 422 whose detail is the whole sentence (every
+// sentence, when several nodes are refused), so a client that only reads the
+// headline (the CLI envelope's error.message, an MCP tool result) still gets the
+// nodes and the children, plus one config.invalid issue per node that the editor
+// can place on it.
+func subworkflowProblem(refused *repository.SubworkflowRefusalError) error {
+	problem := &huma.ErrorModel{Status: http.StatusUnprocessableEntity, Detail: refused.Error()}
+	for _, refusal := range refused.Refusals {
+		problem.Errors = append(problem.Errors, &huma.ErrorDetail{
+			Message:  refusal.Error(),
+			Location: "body" + refusal.Path,
+			Value:    WorkflowValidationIssue{Code: workflow.ErrorInvalidConfig, NodeID: refusal.NodeID},
+		})
+	}
+	return problem
 }
 
 func draftProblem(err error) error {

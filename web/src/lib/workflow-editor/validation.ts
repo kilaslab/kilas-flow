@@ -57,8 +57,20 @@ export function withNodeNames(
 	return issues.map((issue) => {
 		const name = issue.nodeID ? nameByID.get(issue.nodeID) : undefined;
 		if (!name) return issue;
-		return { ...issue, message: issue.message.split(issue.nodeID!).join(name) };
+		return { ...issue, message: replaceStandaloneID(issue.message, issue.nodeID!, name) };
 	});
+}
+
+/**
+ * Replaces an id only where it stands alone in the message: not preceded or
+ * followed by a character an id or a word is made of. A node id is whatever the
+ * author typed (`call` is one), so a plain substring replacement also rewrote
+ * the `call` in `calls workflow` and in another node's name.
+ */
+function replaceStandaloneID(message: string, id: string, name: string): string {
+	const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	// A function replacement, so a `$&` or `$1` in the node's name stays text.
+	return message.replace(new RegExp(`(?<![\\w.-])${escaped}(?![\\w.-])`, 'g'), () => name);
 }
 
 function isApiProblemError(value: unknown): value is ApiProblemError {

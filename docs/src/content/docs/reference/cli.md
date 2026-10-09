@@ -468,6 +468,8 @@ these verbs are how an agent finds out what it may put in a document.
 kilasflow node list --json                       # the whole catalogue
 kilasflow node describe kilasflow.httpRequest    # one entry, newest version
 kilasflow node options kilasflow.executeWorkflow --property workflowId --mode list
+kilasflow node options kilasflow.lmChatOpenAi --property model --mode list --param baseUrl=https://gateway.example.test/v1 --credential "$CREDENTIAL_ID"   # exit 1: the egress policy refuses that host, so the loader got the baseUrl
+kilasflow node options kilasflow.lmChatOpenAi --property model --mode list --parameters '{"baseUrl":{"mode":"expression","value":"{{ $json.baseUrl }}"}}'   # an expression dependency answers an empty list and says why
 kilasflow node describe httpRequest              # exit 4: a type is matched exactly, with its namespace
 ```
 
@@ -486,8 +488,21 @@ kilasflow node describe httpRequest              # exit 4: a type is matched exa
   refuses a credential id that is not. A property the server answers itself, such
   as `executeWorkflow`'s `workflowId`, needs none, and a resource locator needs
   `--mode list` to say which of its modes to list. `--property` is required; the
-  request body carries `property`, and `version`, `mode` and `credentialId` only
-  when they were given. A type that does not have the property exits 4.
+  request body carries `property`, and `version`, `mode`, `parameters` and
+  `credentialId` only when they were given. A type that does not have the
+  property exits 4.
+- A property whose list depends on other parameters (a chat model's models are
+  listed from its `baseUrl`; a table list from its `schema`) cannot load until
+  those are sent, as the node's `parameters`. `--param name=value` sets one and
+  repeats; its value is always a string, and naming the same parameter twice
+  exits 2. `--parameters` takes the whole object as JSON, `@file.json`, or `-`
+  for stdin, and is the way to send a number, a boolean or a resource locator
+  (`--parameters '{"table":{"__rl":true,"mode":"list","value":"orders"}}'`); a
+  `--param` of the same name overrides the object's. A dependency that is an
+  expression cannot be resolved while editing, so the server answers an empty
+  list with a `reason` saying so. `workflowId`, which only bounds an embed
+  session's lookup, is the one member of the request left to `kilasflow api
+  load-node-property-options`.
 - The catalogue is not paged (the operation takes no parameters), so neither
   verb takes `--limit` or `--cursor`.
 

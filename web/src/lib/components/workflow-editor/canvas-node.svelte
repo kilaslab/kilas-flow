@@ -3,6 +3,7 @@
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import Plus from '@lucide/svelte/icons/plus';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
+	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 
 	import * as m from '$lib/paraglide/messages.js';
 	import type { EditorFlowNode } from '$lib/workflow-editor/document';
@@ -119,12 +120,14 @@
 	const importSeverity = $derived(worstSeverity(importIssues));
 	// Blocking is the only severity that decides whether the workflow runs, so
 	// the badge carries it as an alarm; lossy and dropped are notes, not faults.
+	// Warning is never a solid fill on a control and always travels with the
+	// triangle glyph (FEAT-p75n7j), so the lossy badge is an outlined chip.
 	const importBadgeClass = $derived(
 		importSeverity === 'blocking'
-			? 'bg-destructive text-destructive-foreground'
+			? 'border-background bg-destructive text-destructive-foreground'
 			: importSeverity === 'lossy'
-				? 'bg-warning text-warning-foreground'
-				: 'bg-muted-foreground text-background'
+				? 'border-warning bg-background text-warning'
+				: 'border-background bg-muted-foreground text-background'
 	);
 </script>
 
@@ -240,11 +243,12 @@
 			<button
 				type="button"
 				data-import-diagnostic={importSeverity}
-				class="nodrag absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full border-2 border-background px-0.5 text-[0.5rem] font-bold {importBadgeClass}"
+				class="nodrag absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center gap-px rounded-full border-2 px-0.5 text-[0.5rem] font-bold {importBadgeClass}"
 				title={importIssues.map((issue) => `${DIAGNOSTIC_SEVERITY_LABELS[issue.severity]}: ${issue.reason}`).join(' · ')}
 				aria-label={m.canvas_node_import_badge_aria({ summary: diagnosticSummaryLabel(importIssues), name: node.name })}
 				onclick={() => importReport?.().openReport()}
 			>
+				{#if importSeverity === 'lossy'}<TriangleAlert aria-hidden="true" class="size-2" strokeWidth={3} />{/if}
 				{importIssues.length}
 			</button>
 		{/if}

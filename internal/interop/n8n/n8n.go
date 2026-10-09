@@ -1239,6 +1239,22 @@ func withDefaultExportSeverity(issues []ExportIssue) []ExportIssue {
 func importSettings(source map[string]any) (map[string]any, []ImportIssue) {
 	settings := map[string]any{}
 	issues := make([]ImportIssue, 0)
+	// The order n8n runs a workflow's branches in. This server always runs the
+	// v1 order, which is also what an export declares, so v1 describes this
+	// server exactly and needs no issue. Anything else asks for an order that
+	// will not be honoured and is named rather than ignored. An absent key stays
+	// silent: it is what n8n reads as its legacy order, but the file did not ask
+	// for anything, and every KilasFlow export states the key.
+	if order, present := source["executionOrder"]; present && order != "v1" {
+		// Quoted and cut: the value is the file's, and a hostile one must not
+		// make the message enormous.
+		encoded, _ := json.Marshal(order)
+		issues = append(issues, ImportIssue{
+			Severity: SeverityLossy, Field: "settings.executionOrder",
+			Reason: fmt.Sprintf("this workflow asked for the execution order %s; KilasFlow always runs the v1 order, "+
+				"so the order its branches run in may differ", preview(encoded)),
+		})
+	}
 	zone, _ := source["timezone"].(string)
 	zone = strings.TrimSpace(zone)
 	if zone == "" || strings.EqualFold(zone, "DEFAULT") {
@@ -1295,7 +1311,7 @@ func importSettings(source map[string]any) (map[string]any, []ImportIssue) {
 func hasUncarriedSettings(source map[string]any) bool {
 	for key := range source {
 		switch key {
-		case "timezone", "executionTimeout", "errorWorkflow":
+		case "timezone", "executionTimeout", "errorWorkflow", "executionOrder":
 		default:
 			return true
 		}
@@ -1311,8 +1327,8 @@ func documentIssues(source Document) []ImportIssue {
 		reason  string
 	}{
 		{"settings", hasUncarriedSettings(source.Settings),
-			"n8n workflow settings beyond the timezone, the execution timeout and the error workflow — " +
-				"execution order, the save-data flags and the rest — have no KilasFlow equivalent yet and were not carried"},
+			"n8n workflow settings beyond the timezone, the execution timeout, the error workflow and the execution order — " +
+				"the save-data flags and the rest — have no KilasFlow equivalent yet and were not carried"},
 		{"pinData", len(source.PinData) > 0,
 			"pinned test data is an n8n editor feature with no KilasFlow equivalent; it was not carried, so the nodes that had it pinned will run for real"},
 		{"meta", len(source.Meta) > 0,

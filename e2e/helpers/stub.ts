@@ -83,7 +83,8 @@ export async function startStub({ bindHost = '127.0.0.1' }: { bindHost?: string 
 // minted over the API — the same exchange sdk/src/browser.ts performs — and
 // records every message so the test can await them instead of sleeping. A
 // record keeps the fields a run's messages carry, so a test can read how the
-// run it started ended.
+// run it started ended. An `accent` query parameter is passed through as the
+// session's branding accent, the one value a host re-accents the editor with.
 function hostPage(): string {
 	return `<!doctype html>
 <html><head><meta charset="utf-8"><title>e2e host</title></head>
@@ -97,13 +98,14 @@ var workflowId = query.get('workflow');
 var token = query.get('token');
 var scopes = (query.get('scopes') || '').split(',').filter(Boolean);
 var locale = query.get('locale');
+var accent = query.get('accent');
 var frame = document.getElementById('e2e-frame');
 window.addEventListener('message', function (event) {
 	var data = event.data || {};
 	window.__e2eEvents.push({ origin: event.origin, type: data.type, executionId: data.executionId, status: data.status });
 	if (event.data && event.data.type === 'kilasflow:embed-ready') {
 		event.source.postMessage(
-			{ type: 'kilasflow:embed-session', token: token, workflowId: workflowId, scopes: scopes, branding: {}, locale: locale },
+			{ type: 'kilasflow:embed-session', token: token, workflowId: workflowId, scopes: scopes, branding: accent ? { accent: accent } : {}, locale: locale },
 			event.origin
 		);
 	}

@@ -209,9 +209,32 @@ export function isTypingTarget(target: EventTarget | null): boolean {
  */
 export function controlOwnsKey(target: EventTarget | null, key: string): boolean {
 	if (isTypingTarget(target)) return true;
+	if (key === 'Tab') return isNavigableControl(target);
 	if (key !== 'Enter') return false;
 	const element = target as { tagName?: unknown; closest?: (selector: string) => unknown } | null;
 	if (element === null) return false;
 	if (element.tagName === 'BUTTON' || element.tagName === 'A') return true;
 	return typeof element.closest === 'function' && element.closest('[role="button"],[role="link"]') !== null;
+}
+
+const CONTROL_ROLES = ['button', 'link', 'tab', 'menuitem', 'switch', 'checkbox', 'radio', 'option', 'combobox', 'slider', 'spinbutton', 'treeitem']
+	.map((role) => `[role="${role}"]`)
+	.join(',');
+
+/**
+ * Whether Tab on `target` is keyboard navigation rather than the canvas's
+ * add-step key. A focused control (toolbar button, inspector field, tab, menu
+ * item) moves focus on Tab; the canvas, a node (role="group") and the page do
+ * not, so Tab there still opens the node picker. Without this a keyboard user
+ * could not leave the first toolbar button (BUG-ywbvfa).
+ *
+ * Svelte Flow's multi-select box (.svelte-flow__selection-wrapper) is a
+ * role="button" too, so Tab moves focus off a marquee selection rather than
+ * opening the picker; shortcuts.test.ts pins that.
+ */
+function isNavigableControl(target: EventTarget | null): boolean {
+	const element = target as { tagName?: unknown; closest?: (selector: string) => unknown } | null;
+	if (element === null) return false;
+	if (element.tagName === 'BUTTON' || element.tagName === 'A' || element.tagName === 'SUMMARY') return true;
+	return typeof element.closest === 'function' && element.closest(CONTROL_ROLES) !== null;
 }

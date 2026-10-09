@@ -348,6 +348,13 @@ themeable, exactly:
 | `accent` | Hex, `oklch()`, `rgb()`, or a plain colour name | Anything that is not a colour literal |
 | `hideRun`, `hideSave` | Booleans | They are presentation only: the server still enforces scopes, so hiding a control can never be the thing that stops an action |
 
+`accent` is one colour, and the editor derives every accent use from it:
+the primary button with its hover and pressed shades, links, the keyboard
+focus ring, and the selection of canvas nodes and list rows. The text on an
+accent-filled button flips between near-black ink and white depending on how
+light the accent is, so it stays readable on any colour you pass. Status
+colours (success, warning, error, running) never take the accent.
+
 ### Deployment defaults
 
 An operator may set `branding.name` and `branding.logo` to the values an
