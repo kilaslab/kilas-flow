@@ -35,10 +35,10 @@ The picker lists the nodes that provide a language model (Chat Model, OpenAI Cha
 The picker is empty ("no results"). If a node were added some other way from that flow it would not be connected to the slot.
 
 # Acceptance Criteria
-- [ ] `catalogEntries` applies `acceptsMain` only when no `providesKind` is set, so a slot's picker lists the nodes that provide that kind (vitest on the filter with a realistic sub-node that has no main input, and with `acceptsMain` alone still excluding sub-nodes)
-- [ ] A node picked for an attachment slot is connected from its own output of the slot's kind to the consumer's slot, through the same validator a dragged wire uses; a main-output "+" still wires main to main (vitest on the extracted connection builder: both directions, refused when the new node has no output of that kind)
-- [ ] The picked sub-node is placed under the consumer, clear of other nodes, rather than to its right (vitest on the position helper)
-- [ ] An e2e spec clicks the "+" under an Agent's Chat Model slot, picks a chat model from the list, and finds it wired to the slot with the "+" gone
+- [x] `catalogEntries` applies `acceptsMain` only when no `providesKind` is set, so a slot's picker lists the nodes that provide that kind (vitest on the filter with a realistic sub-node that has no main input, and with `acceptsMain` alone still excluding sub-nodes)
+- [x] A node picked for an attachment slot is connected from its own output of the slot's kind to the consumer's slot, through the same validator a dragged wire uses; a main-output "+" still wires main to main (vitest on the extracted connection builder: both directions, refused when the new node has no output of that kind)
+- [x] The picked sub-node is placed under the consumer, clear of other nodes, rather than to its right (vitest on the position helper)
+- [x] An e2e spec clicks the "+" under an Agent's Chat Model slot, picks a chat model from the list, and finds it wired to the slot with the "+" gone
 
 # Implementation Plan
 
@@ -70,3 +70,13 @@ Remaining:
 1. Commit the `addNode` hunks (re-apply the working-tree diff; `pnpm check` and `pnpm test` were green with it).
 2. Add `e2e/tests/attachment-slot-picker.spec.ts`: seed Manual Trigger -> AI Agent with no model wired (`kilasflow.agent`, main connection only); click the button named "Add a Chat Model to Agent" (aria label `canvas_node_attachment_add_aria`); in the dialog check the options are providers only (a Chat Model is listed, HTTP Request is not); click the Chat Model option; expect the new node's edge (ariaLabel "<name> model to Agent model") and that the "Add a Chat Model to Agent" button is gone; save and check the stored connection is `ai_languageModel` from the new node's `model` to the Agent's `model`. Run with `cd e2e && pnpm exec playwright test tests/attachment-slot-picker.spec.ts` (first run builds the binary through global-setup; `KILASFLOW_E2E_PREBUILT=1` reuses it afterwards, but the web change needs a rebuild).
 3. Tick the criteria with evidence once the e2e passes.
+
+### Finished (2026-10-09, 4c2e5539)
+
+The remaining steps above are done; the "Done in the working tree but NOT committed" paragraph is superseded. `addNode` places a node picked for a slot with `positionBelow` and wires it with `connectionForPickedNode`. Criteria, with evidence:
+- `acceptsMain` only when `providesKind` is unset: `catalog.test.ts` "for an attachment slot".
+- Picked node connected from its own output of the slot's kind, through the drag validator: `ports.picked.test.ts` (direction, Tools slot, main unchanged, null with nothing of the kind, full single-slot port refused) and the e2e below.
+- Placed under the consumer: `document.test.ts` "puts a node added for an attachment slot below its consumer" (the e2e does not assert the position).
+- e2e `e2e/tests/attachment-slot-picker.spec.ts` passes against a `make build-all` binary: the "+" under the Agent's Chat Model slot lists providers (no HTTP Request), the chat model picked is saved as an `ai_languageModel` wire from its `model` to the Agent's `model`, and the "+" is gone.
+Also run green: `pnpm check` (0 errors), `pnpm test` (80 files, 1178 tests), and the neighbouring editor specs smoke, n8n-paste, workflow-tool-inputs, editor-chat, focus-tab-order (18 tests) against the same binary.
+Not done: the mirror case (dropping a wire from an attachment OUTPUT onto empty canvas still asks for a main input) stays out of scope, as the Notes say.

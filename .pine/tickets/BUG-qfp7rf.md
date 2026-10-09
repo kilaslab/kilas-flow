@@ -37,10 +37,10 @@ The editor never leaves a wire in the document that it cannot show. When a chang
 The wire is invisible and unselectable but still stored; Execute or Activate fails with "connection must reference declared source and target ports" naming a connection the author cannot see. Changing the Mode back makes the wire reappear, silently.
 
 # Acceptance Criteria
-- [ ] A pure function returns the connections of a node whose source or target port its current configuration no longer resolves (vitest: vector store modes, Switch rules, Merge inputs, error output; connections of other nodes and valid connections are untouched)
-- [ ] After a property change that strands wires, the editor removes them in the same history step as the change (one Undo restores both the property and the wires), and shows what was removed in the status line, in both locales
-- [ ] A typed edit that passes through a smaller port count (clearing a Merge's input count before typing the new one) does not destroy wires: removal waits for the edit to settle, and a transient state is never applied
-- [ ] vitest for the removal and for the settle timing; e2e (`vector-store-ports.spec.ts`) changes the Mode, sees the notice, sees the wire gone from the saved document, and undoes back to the wire
+- [x] A pure function returns the connections of a node whose source or target port its current configuration no longer resolves (vitest: vector store modes, Switch rules, Merge inputs, error output; connections of other nodes and valid connections are untouched)
+- [x] After a property change that strands wires, the editor removes them in the same history step as the change (one Undo restores both the property and the wires), and shows what was removed in the status line, in both locales
+- [x] A typed edit that passes through a smaller port count (clearing a Merge's input count before typing the new one) does not destroy wires: removal waits for the edit to settle, and a transient state is never applied
+- [x] vitest for the removal and for the settle timing; e2e (`vector-store-ports.spec.ts`) changes the Mode, sees the notice, sees the wire gone from the saved document, and undoes back to the wire
 
 # Implementation Plan
 
@@ -73,3 +73,12 @@ Remaining:
 1. Update `e2e/tests/vector-store-ports.spec.ts`, which still asserts the OLD behaviour (the stale wire stays in the saved document and Execute reports it) and will fail once the editor hunks land. New flow: select Mode "Retrieve as Tool", expect the handles, expect a status line containing "Removed 1 connection that Policies Store has no port for any more" and "Policies Store vectorStore → Handbook Tool vectorStore" (it appears after about 500 ms); click Undo and expect the Mode select back on "retrieve", the `vectorStore` handle and the `c-store` edge back, and the notice gone; select "Insert Documents", wait for the notice again, Save, and fetch the stored workflow: `c-store` must be absent and `c-embeddings` present.
 2. Commit the editor hunks and the spec together, run the spec (`cd e2e && pnpm exec playwright test tests/vector-store-ports.spec.ts`, rebuild needed for the web change), and tick the criteria.
 3. Not covered yet by a vitest at component level: the typed-edit case (a Merge's input count) is covered only by `port-settle.test.ts` and `ports.stale.test.ts`; consider a manual check in the editor by backspacing the number.
+
+### Finished (2026-10-09, 4c2e5539)
+
+The remaining steps above are done; the "In the working tree, NOT committed" paragraph is superseded. `updateProperty` schedules the settler, `removeStrandedConnections` removes the stranded wires with the edit's history key and sets the status line, and `undo()` / `redo()` clear the notice. Criteria, with evidence:
+- Pure finder: `ports.stale.test.ts` (vector store modes, insert store main input, Switch rule, Merge inputs including the transient value 1, error output, other nodes untouched, unknown definition not judged).
+- Removed in the edit's own undo step, with a notice in both locales: e2e `vector-store-ports.spec.ts` changes Mode to Retrieve as Tool, sees "Removed 1 connection that Policies Store has no port for any more: Policies Store vectorStore → Handbook Tool vectorStore", presses Undo and gets the mode, the handle and the wire back with the notice gone, then changes the mode again and finds the wire absent from the saved document. `port-settle.test.ts` shows by `record()` that the removal coalesces into one history entry. The Indonesian copy (`web/messages/id/editor.json`) exists and passes the catalog parity test, but no e2e reads it.
+- Typed edits do not destroy wires: removal waits `PORT_SETTLE_MS` (500 ms) after the last edit of the node (`port-settle.test.ts`, fake timers). Not exercised in a browser: nobody has backspaced a Merge's input count in the running editor, so that remains a manual check.
+Also run green: `pnpm check` (0 errors), `pnpm test` (80 files, 1178 tests), the two new/changed specs and 18 neighbouring editor tests against a `make build-all` binary.
+Known limit: only the edited node's own wires are judged, so a stranded wire that arrives any other way (an import, a paste) is still reported only by the compiler on activate or run.
