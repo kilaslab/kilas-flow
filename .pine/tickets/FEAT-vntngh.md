@@ -23,13 +23,13 @@ Found by the 2026-09-23 n8n-parity and UX audit (source reports: node-gap; findi
 
 # Steps to Reproduce
 
-1. Import Manual → Google Sheets v4.7. I used a real instance from template 19200 (`operation: appendOrUpdate`, `documentId`/`sheetName` locators, `columns` resourceMapper).
+1. Import Manual → Google Sheets v4.7. I used a real instance from template 19200. Correction (2026-10-09): 19200 has no `appendOrUpdate` node. Its 8 Sheets nodes are 2 × read (no `operation`, so n8n's default `read`), 3 × append (`columns` defineBelow) and 3 × update (`matchingColumns: ["row_number"]`), with `documentId`/`sheetName` locators and the `columns` resourceMapper. `appendOrUpdate` is still an n8n operation we implement; it just is not in this template.
 2. Run it.
 3. Repeat with `googleSheetsTrigger` and `googleSheetsTool`.
 
 # Expected
 
-Sheets read / append / appendOrUpdate / update / delete / clear, plus the rowAdded/rowUpdated trigger and the tool variant, import and run.
+Sheets read / append / appendOrUpdate / update / delete / clear, plus the trigger (events `rowAdded`, `rowUpdate`, `anyUpdate`; n8n spells the update event `rowUpdate`, not `rowUpdated`) and the tool variant, import and run.
 
 # Actual
 
@@ -39,7 +39,7 @@ Sheets read / append / appendOrUpdate / update / delete / clear, plus the rowAdd
 
 # Acceptance Criteria
 - [ ] `n8n-nodes-base.googleSheets` imports onto a native `kilasflow.googleSheets` that implements read/append/appendOrUpdate/update/delete/clear, using n8n's operation and value strings and the `columns` resourceMapper
-- [ ] `googleSheetsTrigger` (rowAdded/rowUpdated) runs on the leased poll framework, and `googleSheetsTool` is usable by the AI Agent
+- [ ] `googleSheetsTrigger` (rowAdded/rowUpdate/anyUpdate) runs on the leased poll framework, and `googleSheetsTool` is usable by the AI Agent
 - [ ] Uses the existing Google OAuth2 credential flow from Drive/Gmail
 - [ ] Template 19200 imports with no blocking issue and runs its Sheets step against a stub or real sheet
 
@@ -52,6 +52,36 @@ Build on the Google OAuth2 (FEAT-mc6s65) and leased poll trigger (FEAT-wcmk3r) t
 Related tickets: FEAT-gcq50s, FEAT-mc6s65, FEAT-wcmk3r
 
 Related (from the audit): FEAT-gcq50s explicitly marks Google Sheets "out of scope". No open ticket covers it.
+
+## Scope split (2026-10-09)
+
+- Wave 1 (this branch): node, trigger, the two credential types, option/schema loaders, importer mappings, a hand-authored 19200-shaped fixture and an end-to-end run test.
+- Wave 2: `googleSheetsTool`, after the generic base-executor-as-tool mechanism from the AI-tools track lands. Acceptance criterion 2 stays half open until then.
+
+## Behaviour notes (written in our own words, 2026-10-09)
+
+Wire-format and behaviour facts only, read as a behaviour reference under memory/licensing.md (2026-09-24). Nothing here is copied from n8n.
+
+Node `n8n-nodes-base.googleSheets` (published versions 3, 4, 4.1 to 4.7; we write 4.7 and read 4 to 4.7, and refuse the v3 shape):
+- `authentication` is `oAuth2` (default) or `serviceAccount`. The credential is `googleSheetsOAuth2Api`, or `googleApi` for a service account.
+- `resource` is `sheet` (default) or `spreadsheet`. Sheet operations: `read` (default), `append`, `appendOrUpdate`, `update`, `delete`, `clear`, `create`, `remove`. We run the six data operations and refuse `create`, `remove` and the `spreadsheet` resource at import.
+- `documentId` is a resource locator with modes `list`, `url` and `id`. `sheetName` has `list`, `url`, `id` (a number or `gid=N`) and `name`. In `list` mode the sheet value is the numeric gid.
+- From v4 the `columns` parameter is a resourceMapper value: `{mappingMode: defineBelow | autoMapInputData, value, matchingColumns, schema, attemptToConvertTypes, convertFieldsToString}`. Only one matching column is allowed. For `update`, the pseudo column `row_number` can be the match.
+- Read: `filtersUI.values[]{lookupColumn, lookupValue}` with `combineFilters` AND or OR. The default is OR below 4.3 and AND from 4.3. Below 4.5 the option is `returnAllMatches` with the strings `returnFirstMatch` (default) or `returnAllMatches`; from 4.5 it is a boolean `returnFirstMatch`, default false. `options.dataLocationOnSheet.values` carries `rangeDefinition`, `readRowsUntil`, `headerRow` (1), `firstDataRow` (2) and `range`. `options.outputFormatting.values` carries `general` (UNFORMATTED_VALUE, FORMATTED_VALUE, FORMULA) and `date` (FORMATTED_STRING, SERIAL_NUMBER).
+- Read output: one item per data row, keyed by the header row, plus `row_number` (the real sheet row). Missing cells are the empty string.
+- Write options: `cellFormat` USER_ENTERED (default) or RAW, `locationDefine.values{headerRow, firstDataRow}`, `handlingExtraData` insertInNewColumn (default), ignoreIt or error, `useAppend` bool.
+- `delete`: `toDelete` is rows or columns. `startIndex` is a 1-based row number (default 2) for rows and a column letter (default "A") for columns. `numberToDelete` defaults to 1. It emits one `{success: true}` item.
+- `clear`: `clear` is wholeSheet, specificRows, specificColumns or specificRange, plus `keepFirstRow`. `range` defaults to "A:F". It passes its input items through.
+- `alwaysOutputData` (a node setting) matters here because a read with no match returns zero items.
+
+Node `n8n-nodes-base.googleSheetsTrigger` (version 1):
+- `authentication` is `triggerOAuth2` (default) or `serviceAccount`; credential `googleSheetsTriggerOAuth2Api`.
+- `event` is `rowAdded`, `rowUpdate` or `anyUpdate` (default). `includeInOutput` is new (default), old or both. `options`: `columnsToWatch`, `dataLocationOnSheet`, `valueRender`, `dateTimeRenderOption`. `pollTimes` as the other poll triggers.
+- The first non-manual poll stores a baseline and emits nothing.
+
+`googleSheetsTool` exports as the base parameters plus `descriptionType` and `toolDescription` (wave 2).
+
+Open to confirm before closing: the `update`/`appendOrUpdate` match rule (first row whose matching column text equals the input value) and the output shapes of the write operations. Recorded under Progress once checked.
 
 # Related Files
 
