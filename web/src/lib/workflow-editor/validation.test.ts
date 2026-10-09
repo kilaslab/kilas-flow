@@ -56,6 +56,30 @@ describe('naming the nodes an issue is about', () => {
 		).toEqual([{ message: 'node "Send to Slack" configuration is invalid', nodeID: 'ef4c6982-0000-0000-0000-000000000000' }]);
 	});
 
+	it('replaces the id only where it stands alone, never inside a longer word', () => {
+		// An id such as `call` is a legitimate node id, and the activation refusal
+		// for a sub-workflow call says `calls workflow` and names `Run billings`
+		// in the same sentence.
+		const message = 'node "Run billings" (call) calls workflow "Billing" (wf_1), which is not active';
+		expect(withNodeNames([{ message, nodeID: 'call' }], [{ id: 'call', name: 'Run billings' }] as unknown as Node[])).toEqual([
+			{ message: 'node "Run billings" (Run billings) calls workflow "Billing" (wf_1), which is not active', nodeID: 'call' }
+		]);
+	});
+
+	it('does not treat a longer id that contains this one as a match', () => {
+		const message = 'node "ab1" and node "ab12" are both wrong';
+		expect(withNodeNames([{ message, nodeID: 'ab1' }], [{ id: 'ab1', name: 'First' }] as unknown as Node[])).toEqual([
+			{ message: 'node "First" and node "ab12" are both wrong', nodeID: 'ab1' }
+		]);
+	});
+
+	it('reads an id that carries regular expression characters literally', () => {
+		const message = 'node "a.b" calls "axb"';
+		expect(withNodeNames([{ message, nodeID: 'a.b' }], [{ id: 'a.b', name: 'Dotted' }] as unknown as Node[])).toEqual([
+			{ message: 'node "Dotted" calls "axb"', nodeID: 'a.b' }
+		]);
+	});
+
 	it('leaves an issue alone when no node answers to the id', () => {
 		const issue = { message: 'node "ffff" is unknown', nodeID: 'ffff' };
 		expect(withNodeNames([issue], nodes)).toEqual([issue]);

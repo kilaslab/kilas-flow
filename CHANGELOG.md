@@ -181,6 +181,13 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   sub-node and has a single `ai_vectorStore` output. n8n's
   `toolVectorStore` imports onto it and exports back.
 
+- `kilasflow node options` takes the parameters a property's list depends on:
+  `--param name=value` (repeatable, a string) and `--parameters` (a JSON
+  object, `@file.json`, or `-` for stdin), beside the existing `--credential`.
+  A chat model's model list, which needs the `baseUrl` it is listed from, now
+  loads through the verb; the same two flags are on the MCP `node_options`
+  tool as `param` and `parameters`.
+
 ### Changed
 
 - Credentials and captured trigger values are sealed in a new, versioned
@@ -385,6 +392,17 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Fixed
 
+- Activating, or publishing a revision of, a workflow that calls a sub-workflow
+  which is not active, or does not exist, answers `422` (`config.invalid`)
+  instead of a `500 workflow operation failed`. The message names the calling
+  node and the child by name and id, and says to activate the child first;
+  every such node is listed, one `errors[]` entry each, and the CLI and MCP
+  carry the same text.
+- n8n import: `settings.executionOrder: "v1"` — the order KilasFlow runs in and
+  the one every export writes — imports without an issue, so exporting and
+  importing a workflow no longer reports a dropped `settings` entry. `"v0"` or
+  any other value is reported as lossy, saying KilasFlow always runs the v1
+  order; a file with no `executionOrder` stays silent.
 - HTTP Request: a 4xx/5xx failure names its status code, method, host and
   response body (cut to 1 KiB), and its error item carries `httpCode`,
   `description`, `method`, `url` and `body` in n8n's shape, with credential

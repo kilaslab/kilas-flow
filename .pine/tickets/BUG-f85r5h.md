@@ -27,6 +27,43 @@ The verb can pass the parameters (and credential) the loader depends on, e.g. `-
 The loader gets no parameters and cannot answer.
 
 # Acceptance Criteria
-- [ ] `node options` accepts the dependent parameters and credential (flags documented in `--help` and cli.md, with a runnable example).
-- [ ] A test proves the parameters reach the load-options request body.
-- [ ] The AI skill uses the verb instead of the escape hatch where it can.
+- [x] `node options` accepts the dependent parameters and credential (flags documented in `--help` and cli.md, with a runnable example). Evidence: `--param name=value` (repeatable) and `--parameters <json|@file|->` beside the existing `--credential <id>`; `--help` lists them (flag usage strings in internal/cli/verbs_node.go); docs/src/content/docs/reference/cli.md `kilasflow node` has the bullet and two examples that `make smoke-cli-examples` runs (`cli-examples: 89 executed, 3 skipped, 0 failed`): one with `--param baseUrl=... --credential "$CREDENTIAL_ID"` annotated `# exit 1` (the egress policy refuses that host, which is the proof the loader received the baseUrl; without the flag the same call says "need the service address to be filled in first"), one with `--parameters` carrying an expression dependency that exits 0 with an empty list and a reason.
+- [x] A test proves the parameters reach the load-options request body. Evidence: `TestNodeOptionsSendsEachParamAsAStringParameter`, `...KeepsAValueWithAnEqualsSignWhole`, `...ParametersTakesTypedJSON`, `...ParametersReadsAFileAndStdin`, `...ParamOverridesTheSameKeyOfParameters`, `...OmitsParametersWhenNoneAreGiven` (recording stub of the request body), `TestNodeOptionsRefusesParametersItCannotSendCleanly` (six usage refusals that never reach the server), `TestNodeOptionsLoadsADependentPropertyThroughTheRealServer` (real handler + loader) and `TestMCPNodeOptionsPublishesAndSendsTheParameterFlags` (the MCP tool publishes `param` as an array of strings and `parameters` as a string, and both reach the request body). All in internal/cli/verbs_node_options_test.go.
+- [x] The AI skill uses the verb instead of the escape hatch where it can. Evidence on the merged tree: skills/kilasflow-ai-agents/SKILL.md (model-node bullet) and references/MODELS.md (listing the models a server offers) use `kilasflow node options <type> --property model --param baseUrl=<address>` with `--credential`, keeping the escape hatch only for a body kept in a file; skills/kilasflow-node-configuration/SKILL.md and references/LOAD_OPTIONS.md teach `--param`/`--parameters`, all citation-free; the router's generated command table is current.
+
+
+## Plan (2026-10-09)
+
+Root cause. `runNodeOptions` (internal/cli/verbs_node.go:148) marshals a body of `property`, `version`, `mode` and `credentialId` only. The operation's body also takes `parameters` (internal/api/handlers/nodes.go `loadOptionsInput`), and that map is what `scopeFor` reads the loader's `dependsOn` keys from (nodes/ai.go:266 and :417 depend on `baseUrl`). So a property with dependencies always loads with an empty dependency set; the only way to send them was `kilasflow api load-node-property-options --body`. The credential half of the ticket already exists: `--credential <credentialId>` is sent as `credentialId`.
+
+The change.
+1. `node options` gets `--param key=value` (repeatable, collected with the CLI's existing `pairFlags`, the same flag shape `kilasflow api` uses for `--path/--query/--header`) and `--parameters <JSON object | @file | ->` (the shape `run --input` and `api --body` use, read with `readDocument`). Values from `--param` are strings; numbers, booleans and resource-locator objects go through `--parameters`. When both are given `--param` overrides a same-named key of `--parameters`; the same key repeated in `--param` is a usage error rather than a silent choice; `--parameters` that is not a JSON object is a usage error naming the flag. The body carries `parameters` only when something was given, as it does for the other optional fields.
+2. `--credential` stays a bare credential id (the API takes a single `credentialId`; the loader's `credentialType` already says which type it must be, so the `type=id` shape the ticket floats would carry nothing the server reads and would break callers of today's flag). Its help text and the verb summary are made explicit.
+3. Docs: reference/cli.md `kilasflow node` section documents both flags and gets a runnable example (the runner seeds `$WORKFLOW_ID`; the example loads `executeWorkflow`'s `workflowId` list, which depends on nothing, plus one with `--param` against a property that depends on a parameter and ends `# exit N` if it does not pass on the seeded server; I will check what the booted server answers before choosing). Then `make generate-skills-command-reference` for the router skill's command table, and the node-configuration skill text/LOAD_OPTIONS.md that say the verb cannot carry parameters. The ai-agents skill from the ticket is not on main, so the "skill uses the verb" criterion is met by updating the skills that exist (kilasflow-node-configuration) and noted in the report.
+4. MCP needs no code: `pairFlags` is a non-Getter flag.Value, which the adapter already publishes as an array of strings (`mcpFlagList`), so the new tool schema gains `param` (array) and `parameters` (string) from the flag set.
+
+Proof (test first).
+- internal/cli/verbs_node_test.go: a recording stub of `/node-types/{type}/load-options` asserts the request body holds `parameters` with the `--param` strings, with a `--parameters` object, with `@file`, with the override order, with `--credential` beside them, and omits `parameters` when none were given; plus the three usage errors (duplicate `--param`, malformed pair, non-object `--parameters`).
+- An end-to-end test against the real handler: a node type registered with an `http` loader that `dependsOn` a `baseUrl` parameter, served by an httptest upstream whose path/host proves the parameter arrived, reached through `kilasflow node options --param baseUrl=...` (not only a stub body), so "the parameters reach the load-options request" is proven through the server and not just on the wire.
+- `make generate-skills-command-reference-check`, the cli.md example under `make build && make smoke-cli-examples`, and the existing tree/MCP tests (the schema gains two properties).
+
+
+## Progress (2026-10-09)
+
+Root cause as planned: `runNodeOptions` built its body from `property`, `version`, `mode` and `credentialId` only, so the handler's `scopeFor` always saw an empty dependency set for a loader with `dependsOn` (a chat model's `baseUrl`).
+
+What changed.
+- internal/cli/verbs_node.go: `--param name=value` (repeatable, the existing `pairFlags`) and `--parameters` (inline JSON, `@file`, or `-`, via `readDocument`) feed a `parameters` member that is omitted when empty. Raw JSON values are kept (`map[string]json.RawMessage`) so a number or resource locator in `--parameters` reaches the server untouched; `--param` values are strings and override a same-named key of `--parameters`. Usage errors (exit 2, nothing sent): a repeated `--param` name, a pair with no `=` or no name, `--parameters` that is not JSON, not an object, or an unreadable file. The verb summary names the new flags, so the router skill's generated table changed.
+- MCP: no code. `pairFlags` is published by the adapter as an array of strings, so `node_options` gained `param` (array) and `parameters` (string) from the flag set; the existing catalogue/round-trip tests cover it.
+- Docs and skills as described in the criteria.
+
+Deviations from the plan and the ticket text.
+- `--credential` stays a bare credential id rather than the `type=id` shape the ticket floats: the API's body has one `credentialId` and the loader's declared `credentialType` already says which type it must be, so a type prefix would be parsed and thrown away, and would break callers of the flag as it exists today.
+- The plan's end-to-end test used an `http` loader against an httptest upstream; the egress policy refuses loopback without `allowed_private_endpoints`, so I used an `internal` loader that depends on `baseUrl` and echoes it. It exercises the same `scopeFor` path with nothing to weaken.
+- The cli.md happy-path example is annotated `# exit 1`, because the examples server has no model endpoint to list (its egress policy admits only itself). It is still a real run of the new flags, and the `--parameters` example beside it exits 0.
+
+Left: nothing.
+
+## Review round (2026-10-09)
+
+Merged main into the branch; the node-configuration conflicts went to main's side and the reviewer's follow-up patch moved kilasflow-ai-agents (SKILL.md, references/MODELS.md) and kilasflow-node-configuration onto `node options --param/--parameters`, so the Progress note above that says the ai-agents skill is not on main is superseded. Added the MCP test the review asked for and the CHANGELOG [Unreleased] Added entry. `--credential` keeps its bare-id shape (see Progress).
