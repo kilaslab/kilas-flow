@@ -37,8 +37,8 @@ func workflowVerbs() []Verb {
 		{
 			Path:      "workflow list",
 			Operation: "list-workflows",
-			Summary:   "list workflows, newest first (`--limit`, `--cursor`)",
-			Flags:     registerPageFlags,
+			Summary:   "list workflows, newest first (`--limit`, `--cursor`, `--tag`)",
+			Flags:     registerWorkflowListFlags,
 			Run:       runWorkflowList,
 			Human:     humanResourceList("id", "name", "active", "updatedAt"),
 		},
@@ -179,6 +179,33 @@ func (f *pageFlags) query() url.Values {
 	return query
 }
 
+// workflowListFlags are the page parameters plus the listing's one filter.
+type workflowListFlags struct {
+	pageFlags
+	tag string
+}
+
+// registerWorkflowListFlags attaches --limit, --cursor and --tag.
+func registerWorkflowListFlags(fs *flag.FlagSet) any {
+	flags := &workflowListFlags{}
+	fs.IntVar(&flags.limit, "limit", 0, "maximum items to return (server default when 0)")
+	fs.StringVar(&flags.cursor, "cursor", "", "opaque cursor from a previous page")
+	fs.StringVar(&flags.tag, "tag", "", "only workflows carrying this tag (case is ignored)")
+
+	return flags
+}
+
+// query renders the page parameters and the tag filter, omitting what the
+// caller did not set.
+func (f *workflowListFlags) query() url.Values {
+	query := f.pageFlags.query()
+	if tag := strings.TrimSpace(f.tag); tag != "" {
+		query.Set("tag", tag)
+	}
+
+	return query
+}
+
 // createFlags carry the document to create.
 type createFlags struct {
 	file string
@@ -267,7 +294,12 @@ func runWorkflowList(ctx *Context, args []string) error {
 		return err
 	}
 
-	list, err := ctx.listPage("/workflows", pageQuery(ctx))
+	flags, ok := ctx.VerbFlags.(*workflowListFlags)
+	if !ok {
+		return usageError("the workflow list verb was registered without its flags")
+	}
+
+	list, err := ctx.listPage("/workflows", flags.query())
 	if err != nil {
 		return err
 	}

@@ -10,15 +10,17 @@ during composition at startup and is read-only for the rest of the process's
 life, which is what makes compiled graphs and the metadata served to the editor
 deterministic.
 
-A default install holds **65 distinct node types across 72
-type-and-version pairs**: 61 types (66 pairs) compiled into the binary, counting
-the `kilasflow.unsupported` import placeholder, and 4 types (6 pairs) from the
-declarative packs it ships with, counting the Telegram pack's agent-tool form. A pack loaded from `packs.dir` adds to that.
-The list of record is [`GET /api/v1/node-types`](/reference/api/), which serves
-one entry per type-and-version pair and is what the editor reads. The numbers
-here are checked against the same registrations by a test
-(`cmd/kilasflow/catalogue_docs_test.go`), which fails when a node is added or
-removed and this sentence is not.
+<!-- generated:catalogue-size -->
+A default install serves 66 distinct node types across 73 type-and-version pairs: 62 types (67 pairs) compiled into the binary, counting the `kilasflow.unsupported` import placeholder for nodes KilasFlow does not implement, and 4 types (6 pairs) from the declarative packs it ships with.
+<!-- /generated:catalogue-size -->
+
+A pack loaded from `packs.dir` adds to that. The list of record is
+[`GET /api/v1/node-types`](/reference/api/), which serves one entry per
+type-and-version pair and is what the editor reads. The sentence above is not
+typed: `make generate-docs-facts` writes it from the registrations a default
+install makes (`internal/shippedcatalogue`), and a test
+(`cmd/kilasflow/catalogue_docs_test.go`) fails when a node is added or removed
+and the sentence is not regenerated.
 
 ## What a definition holds
 

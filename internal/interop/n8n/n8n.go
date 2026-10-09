@@ -51,6 +51,9 @@ type Document struct {
 	// StaticData is n8n's per-workflow persisted scratch space. It was not even
 	// a field, so it was dropped before anything could report it.
 	StaticData map[string]any `json:"staticData,omitempty"`
+	// Tags is the workflow's tags as raw JSON, read and written by tags.go: a
+	// value that is not a well-formed list must cost its tags, not the file.
+	Tags json.RawMessage `json:"tags,omitempty"`
 }
 
 // Node is one n8n node.
@@ -541,7 +544,11 @@ var mappings = []mapping{
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.vectorStorePGVector", kilasType: VectorStorePGVectorNodeType, kilasVersion: workflow.V(1),
-		exportTypeVersion: 1.3, toKilas: packToKilas, toN8N: packToN8N,
+		exportTypeVersion: 1.3, toKilas: vectorStorePGVectorToKilas, toN8N: vectorStorePGVectorToN8N,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.toolVectorStore", kilasType: VectorStoreToolNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: toolVectorStoreToKilas, toN8N: toolVectorStoreToN8N,
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.documentDefaultDataLoader", kilasType: DocumentLoaderNodeType, kilasVersion: workflow.V(1),
@@ -898,7 +905,7 @@ func ImportFragment(payload []byte, catalog workflow.Catalog) (ImportResult, err
 // workflowOnlyField reports a document-level element a pasted fragment has no
 // use for, because the workflow it lands in keeps its own.
 func workflowOnlyField(field string) bool {
-	return field == "meta" || field == "settings" || field == "staticData" || strings.HasPrefix(field, "settings.")
+	return field == "meta" || field == "settings" || field == "staticData" || field == "tags" || strings.HasPrefix(field, "settings.")
 }
 
 // ImportResult is one converted workflow plus everything the adapter refused.
@@ -1092,6 +1099,8 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 	unsupported = dropResolvedParserFlags(unsupported, connections)
 	settings, settingIssues := importSettings(source.Settings)
 	unsupported = append(unsupported, settingIssues...)
+	tags, tagIssues := importTags(source.Tags)
+	unsupported = append(unsupported, tagIssues...)
 	unsupported = append(unsupported, documentIssues(source)...)
 
 	document := workflow.Document{
@@ -1100,6 +1109,7 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 		Nodes:         nodes,
 		Connections:   connections,
 		Settings:      settings,
+		Tags:          tags,
 	}
 	if catalog != nil {
 		unsupported = append(unsupported, cycleIssues(document, catalog, sourceByID)...)
@@ -1787,6 +1797,7 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 			Nodes:       make([]Node, 0, len(document.Nodes)),
 			Connections: Connections{},
 			Settings:    exportSettings(document.Settings),
+			Tags:        exportTags(document.Tags),
 		},
 		Lossy: make([]Lossy, 0),
 	}

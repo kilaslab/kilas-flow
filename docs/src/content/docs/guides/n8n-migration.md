@@ -133,11 +133,24 @@ an `&` inside `{{ $json.query }}` no longer truncates the request line.
 | `n8n-nodes-base.gmailTool` | `kilasflow.gmailTool` |
 | `n8n-nodes-base.postgresTool` | `kilasflow.postgresTool` |
 | `n8n-nodes-base.telegramTool` | `pack.telegramTool` |
+| `@n8n/n8n-nodes-langchain.vectorStorePGVector` | `kilasflow.vectorStorePGVector` (modes insert, load, retrieve, retrieve-as-tool) |
+| `@n8n/n8n-nodes-langchain.toolVectorStore` | `kilasflow.vectorStoreTool` |
 
-An AI cluster's typed edges — `ai_languageModel`, `ai_memory`, `ai_tool` — need
-no translation. n8n keys a connection by its source node, and for a typed
-channel the source is the sub-node and the target is the agent it configures,
-which is the direction KilasFlow already uses.
+An AI cluster's typed edges — `ai_languageModel`, `ai_memory`, `ai_tool`,
+`ai_embedding`, `ai_document`, `ai_vectorStore` — need no translation. n8n keys a
+connection by its source node, and for a typed channel the source is the sub-node
+and the target is the node it configures, which is the direction KilasFlow
+already uses.
+
+A PGVector store saved with no `mode` is in n8n's default mode, retrieve, and
+imports that way: it takes only its embeddings and hands itself to a Vector Store
+Tool over `ai_vectorStore`. A store with no table name reads n8n's default table,
+`n8n_vectors`. The Vector Store Tool answers the agent's question with its own
+chat model from the documents it retrieves; at n8n version 1 its tool name is the
+`name` parameter, and from 1.1 it is the node's name. The editor canvas does not
+yet draw the ports a store's mode gives it: a retrieve store is drawn with a main
+input and output rather than its embedding input and vector-store output. The
+imported edges are there and run all the same.
 
 **A node's agent-tool form imports as the same node's tool.** n8n offers a node
 to an agent as its own type with `Tool` appended, at the node's own versions,
@@ -286,6 +299,21 @@ in part — each reported as a **dropped** diagnostic:
 | `meta` | n8n instance metadata describing where the workflow came from. It has no meaning in another installation. |
 | `staticData` | n8n's per-workflow scratch space that its nodes persist between runs. KilasFlow keeps its own for each workflow (see [Helpers and static data](/guides/code-javascript/#helpers-and-static-data)), but the values n8n had are not carried: the imported workflow starts from empty static data. |
 
+**Tags are carried.** A workflow's `tags` become the workflow's tags here: they
+show as chips in the workflow list, filter it (`?tag=` on the API, `--tag` on
+`kilasflow workflow list`) and go back out on export. n8n identifies a tag by
+its name, so the importer reads the `name` of each entry and ignores the `id`
+and timestamps, which belong to the instance the file came from. A workflow
+keeps at most 20 tags of at most 24 characters each, with no comma, no leading
+or trailing space and no control character, and two tags that differ only in
+case are one tag. A tag the importer cannot keep never refuses the file; it is
+named in the report instead: **dropped** for a bare string (in a file that is
+an instance-local id, not a name), an entry with no name, a name that breaks
+those rules, a repeat, or anything past the twentieth tag, and **lossy** for a
+name that arrived with spaces around it and was trimmed. Pasting nodes with
+the convert tool says nothing about tags, because the workflow they land in
+keeps its own.
+
 ### Node-level elements
 
 Per node, on a **mapped** node only — an unsupported node keeps all of this in
@@ -350,8 +378,9 @@ than being curated away.
 ### 1. Export from n8n
 
 Use n8n's own workflow export. The importer reads the standard document — `name`,
-`nodes`, `connections`, plus `settings`, `pinData`, `meta` and `staticData`,
-which it reports on rather than carrying. There is no KilasFlow-specific export
+`nodes`, `connections`, `tags`, plus `settings`, `pinData`, `meta` and
+`staticData`, which it reports on rather than carrying (the tags are kept; see
+[Document-level elements](#document-level-elements)). There is no KilasFlow-specific export
 format and nothing to install on the n8n side.
 
 :::caution[Two nodes with the same name cannot be imported]
@@ -732,6 +761,11 @@ a round trip as lossless:
   all of them from its capsule.
 - **Workflow settings, including the timezone.** The exported document carries
   an empty `settings` object, so n8n will apply its own default zone.
+
+Tags do go back. They are written in document order as `{"name": "…"}` objects
+with no `id`: ids belong to one n8n instance, and when n8n imports a file it
+matches each tag to an existing one by name and creates the ones it does not
+have. The key is left out when the workflow has no tags.
 
 ## How far the importer actually gets
 

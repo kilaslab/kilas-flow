@@ -3297,6 +3297,8 @@ func (executor *AgentExecutor) toolFrom(ctx context.Context, ir workflow.IRNode,
 		return executor.datastoreToolFrom(ir, descriptor, request)
 	case toolKindVectorStore:
 		return executor.vectorStoreToolFrom(ir, descriptor, request)
+	case toolKindVectorStoreAnswer:
+		return executor.vectorStoreAnswerToolFrom(ctx, ir, descriptor, request)
 	case toolKindMCP:
 		return executor.mcpToolFrom(ir, descriptor, request)
 	case toolKindForm:

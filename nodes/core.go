@@ -55,6 +55,7 @@ func RegisterAll(registry *node.Registry) error {
 		embeddingsNode(),
 		extractFromFileNode(),
 		vectorStorePGVectorNode(),
+		vectorStoreToolNode(),
 		googleDriveNode(),
 		googleDriveTrigger(),
 		gmailNode(),

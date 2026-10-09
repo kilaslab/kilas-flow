@@ -36,12 +36,15 @@ engine's own store.
 The engine, the editor, the node registry, encrypted credential storage, the
 expression evaluator, webhook and cron triggers, sub-workflows, durable waits,
 opt-in authentication, the n8n importer and exporter, and the embedded-editor
-session flow are all implemented and covered by tests. The registry serves 65
-distinct node types out of the box, across 72 type-and-version pairs: 61 types
-(66 pairs) compiled into the binary, counting the import placeholder for
-unsupported nodes, and 4 types (6 pairs) from the declarative packs it ships
-with. [`GET /api/v1/node-types`](/reference/api/) is the list of record, and a
-test fails when this sentence stops matching the registrations behind it.
+session flow are all implemented and covered by tests.
+
+<!-- generated:catalogue-size -->
+A default install serves 66 distinct node types across 73 type-and-version pairs: 62 types (67 pairs) compiled into the binary, counting the `kilasflow.unsupported` import placeholder for nodes KilasFlow does not implement, and 4 types (6 pairs) from the declarative packs it ships with.
+<!-- /generated:catalogue-size -->
+
+[`GET /api/v1/node-types`](/reference/api/) is the list of record, and the
+sentence above is generated from the registrations behind it, so it cannot go
+stale unnoticed.
 
 Imported n8n JavaScript Code nodes run as written, on a JavaScript engine
 linked into the binary rather than on Node.js, and a new one can be added from

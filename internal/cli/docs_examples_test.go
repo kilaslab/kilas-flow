@@ -1,10 +1,15 @@
 package cli
 
 import (
+	"flag"
+	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/kilaslab/kilas-flow/internal/docexamples"
 )
 
 // cli.md's examples are what an agent copies, and they drifted from the binary:
@@ -49,4 +54,69 @@ func TestEveryVerbCliMdRunsExists(t *testing.T) {
 	if checked == 0 {
 		t.Fatal("no kilasflow command found in cli.md's code blocks")
 	}
+}
+
+// The names are right, but an example can still be unrunnable: a flag the verb
+// does not have, a flag with no value, a positional argument left out. Parsing
+// each example's words against its verb's own flag set, the way run() builds
+// it, catches all three without a server. Whether the example then does what its
+// page says is `make smoke-cli-examples`, which runs it against a booted one.
+func TestEveryCliMdExampleParsesAgainstItsVerb(t *testing.T) {
+	source, err := os.ReadFile(cliReferencePath)
+	if err != nil {
+		t.Fatalf("read cli.md: %v", err)
+	}
+
+	verbs := registry()
+	checked := 0
+	for _, example := range docexamples.Extract(string(source)) {
+		if example.ServerPath {
+			continue
+		}
+		checked++
+		where := fmt.Sprintf("cli.md:%d %q", example.Line, example.Text)
+
+		verb, rest, found := splitVerb(verbs, example.Words[1:])
+		if !found {
+			t.Errorf("%s names no verb this binary has", where)
+
+			continue
+		}
+
+		fs := flag.NewFlagSet(verb.Path, flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		flags := registerGlobalFlags(fs)
+		if verb.Flags != nil {
+			verb.Flags(fs)
+		}
+		positional, err := parseFlags(fs, flags, rest)
+		if err != nil {
+			t.Errorf("%s does not parse against `%s`: %v", where, verb.Path, err)
+
+			continue
+		}
+
+		required := 0
+		for _, declared := range verb.Args {
+			if !declared.Optional {
+				required++
+			}
+		}
+		if len(positional) < required {
+			t.Errorf("%s gives `%s` %d of its %d required arguments (%s)",
+				where, verb.Path, len(positional), required, argumentNames(verb))
+		}
+	}
+	if checked < 40 {
+		t.Fatalf("only %d verb examples were checked; the extractor is reading cli.md wrongly", checked)
+	}
+}
+
+func argumentNames(verb Verb) string {
+	names := make([]string, 0, len(verb.Args))
+	for _, declared := range verb.Args {
+		names = append(names, declared.Name)
+	}
+
+	return strings.Join(names, ", ")
 }

@@ -2,96 +2,47 @@ package main
 
 // BUG-b4cb1c: two pages stated the size of the node catalogue and called it
 // measured, and the numbers were twelve types stale by the time anyone checked.
-// This test is the measurement. It registers what run() registers before a
-// directory pack can add anything — the compiled nodes, the vector nodes and
-// the two embedded packs — and fails when a page's sentence disagrees, so the
-// prose is corrected in the change that moves the count.
+// The size is now generated: scripts/docs-facts writes one sentence, rendered by
+// internal/shippedcatalogue from the registrations a default install makes,
+// between two markers on each page, and this test fails when a page's block is
+// not that sentence. A node added in one change moves the count in the same
+// change, because the one command that fixes the pages is a make target.
 
 import (
 	"os"
-	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/kilaslab/kilas-flow/internal/engine"
-	"github.com/kilaslab/kilas-flow/internal/loadoptions"
 	"github.com/kilaslab/kilas-flow/internal/node"
-	"github.com/kilaslab/kilas-flow/internal/nodepack"
-	"github.com/kilaslab/kilas-flow/internal/routing"
-	"github.com/kilaslab/kilas-flow/internal/safehttp"
-	"github.com/kilaslab/kilas-flow/internal/webhook"
-	"github.com/kilaslab/kilas-flow/nodes"
-	"github.com/kilaslab/kilas-flow/packs/telegram"
-	"github.com/kilaslab/kilas-flow/packs/waha"
+	"github.com/kilaslab/kilas-flow/internal/shippedcatalogue"
 )
 
-// catalogueCount is a catalogue's size, as GET /api/v1/node-types counts it:
-// one entry per type-and-version pair.
-type catalogueCount struct{ types, pairs int }
+const (
+	catalogueSizeBegin = "<!-- generated:catalogue-size -->"
+	catalogueSizeEnd   = "<!-- /generated:catalogue-size -->"
+)
 
-func countCatalogue(registry *node.Registry) catalogueCount {
-	definitions := registry.List()
-	types := map[string]struct{}{}
-	for _, definition := range definitions {
-		types[definition.Type] = struct{}{}
+// generatedBlock is the text between a page's two markers, trimmed. ok is false
+// when the page does not carry exactly one well-ordered pair.
+func generatedBlock(page, begin, end string) (block string, ok bool) {
+	if strings.Count(page, begin) != 1 || strings.Count(page, end) != 1 {
+		return "", false
 	}
-	return catalogueCount{types: len(types), pairs: len(definitions)}
+	from := strings.Index(page, begin) + len(begin)
+	to := strings.Index(page, end)
+	if to < from {
+		return "", false
+	}
+
+	return strings.TrimSpace(page[from:to]), true
 }
-
-// shippedCatalogue registers the nodes a default install serves, split into
-// the compiled ones and the ones from the declarative packs, in the calls
-// run() makes.
-func shippedCatalogue(t *testing.T) (compiled, packs catalogueCount) {
-	t.Helper()
-	compiledRegistry := node.NewRegistry()
-	if err := nodes.RegisterAll(compiledRegistry); err != nil {
-		t.Fatalf("RegisterAll() error = %v", err)
-	}
-	if err := nodes.RegisterVectorNodes(compiledRegistry, ""); err != nil {
-		t.Fatalf("RegisterVectorNodes() error = %v", err)
-	}
-
-	packRegistry := node.NewRegistry()
-	routes := routing.NewRegistry()
-	executors := engine.NewRegistry()
-	options := loadoptions.NewResolver(safehttp.DefaultPolicy(), 0)
-	packTriggers := nodepack.NewTriggerRegistry()
-	// A pack refuses to register against an executor the server has not
-	// installed, so the two it binds to are installed first, as run() does.
-	if err := nodes.RegisterRoutingExecutor(executors, safehttp.DefaultPolicy(), routes, packRegistry); err != nil {
-		t.Fatalf("RegisterRoutingExecutor() error = %v", err)
-	}
-	if err := executors.Register(nodepack.TriggerExecutorID,
-		nodepack.NewTriggerExecutor(packTriggers, safehttp.DefaultPolicy())); err != nil {
-		t.Fatalf("register the pack trigger executor: %v", err)
-	}
-	if err := telegram.Register(packRegistry, routes, executors, options); err != nil {
-		t.Fatalf("telegram.Register() error = %v", err)
-	}
-	if err := waha.Register(waha.Deps{
-		Definitions: packRegistry, Routes: routes, Triggers: packTriggers,
-		Deliveries: webhook.NewRegistry(), Lifecycles: webhook.NewLifecycleRegistry(),
-		Executors: executors, Options: options,
-	}); err != nil {
-		t.Fatalf("waha.Register() error = %v", err)
-	}
-	// The packs' agent-tool forms (pack.telegramTool), as run() registers them.
-	if err := nodes.RegisterPackToolForms(packRegistry); err != nil {
-		t.Fatalf("RegisterPackToolForms() error = %v", err)
-	}
-	return countCatalogue(compiledRegistry), countCatalogue(packRegistry)
-}
-
-// sentence matches a page's statement of the catalogue's size, written as
-// "N distinct node types … across M type-and-version pairs: A types (B pairs)
-// compiled into the binary, … and C types (D pairs) from the declarative packs".
-var sentence = regexp.MustCompile(`(\d+) distinct node types[^.]*?across (\d+) type-and-version pairs\*{0,2}: (\d+) types \((\d+) pairs\) compiled into the binary.*?(\d+) types \((\d+) pairs\) from the\s+declarative packs`)
 
 func TestTheDocumentedCatalogueSizeIsTheShippedOne(t *testing.T) {
-	compiled, packs := shippedCatalogue(t)
-	total := catalogueCount{types: compiled.types + packs.types, pairs: compiled.pairs + packs.pairs}
-	want := []int{total.types, total.pairs, compiled.types, compiled.pairs, packs.types, packs.pairs}
+	registry := node.NewRegistry()
+	if err := shippedcatalogue.Register(registry); err != nil {
+		t.Fatalf("shippedcatalogue.Register() error = %v", err)
+	}
+	want := shippedcatalogue.RenderSentence(shippedcatalogue.Count(registry))
 
 	for _, page := range []string{
 		"../../docs/src/content/docs/concepts/node-registry.md",
@@ -101,20 +52,33 @@ func TestTheDocumentedCatalogueSizeIsTheShippedOne(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", page, err)
 		}
-		text := strings.Join(strings.Fields(string(raw)), " ")
-		match := sentence.FindStringSubmatch(text)
-		if match == nil {
-			t.Errorf("%s no longer states the catalogue's size in the sentence this test reads; "+
-				"keep the sentence or move the check with it", page)
+		block, ok := generatedBlock(string(raw), catalogueSizeBegin, catalogueSizeEnd)
+		if !ok {
+			t.Errorf("%s does not carry exactly one %s ... %s block; the catalogue's size is generated, "+
+				"so keep the markers and run `make generate-docs-facts`", page, catalogueSizeBegin, catalogueSizeEnd)
+
 			continue
 		}
-		for index, value := range want {
-			if got, _ := strconv.Atoi(match[index+1]); got != value {
-				t.Errorf("%s says %q; the shipped catalogue is %d types across %d pairs: "+
-					"%d types (%d pairs) compiled, %d types (%d pairs) from packs",
-					page, match[0], total.types, total.pairs, compiled.types, compiled.pairs, packs.types, packs.pairs)
-				break
-			}
+		if block != want {
+			t.Errorf("%s states the catalogue's size as\n  %q\nthe shipped catalogue is\n  %q\nrun `make generate-docs-facts`",
+				page, block, want)
 		}
+	}
+}
+
+func TestGeneratedBlockRefusesAnAmbiguousPage(t *testing.T) {
+	for name, page := range map[string]string{
+		"no markers":      "prose",
+		"begin only":      "a\n" + catalogueSizeBegin + "\nx",
+		"end before":      catalogueSizeEnd + "\nx\n" + catalogueSizeBegin,
+		"two sections":    catalogueSizeBegin + "\nx\n" + catalogueSizeEnd + "\n" + catalogueSizeBegin + "\ny\n" + catalogueSizeEnd,
+		"end without any": catalogueSizeEnd,
+	} {
+		if block, ok := generatedBlock(page, catalogueSizeBegin, catalogueSizeEnd); ok {
+			t.Errorf("%s: generatedBlock() = %q, want it refused", name, block)
+		}
+	}
+	if block, ok := generatedBlock("a\n"+catalogueSizeBegin+"\n  sentence.  \n"+catalogueSizeEnd+"\nb", catalogueSizeBegin, catalogueSizeEnd); !ok || block != "sentence." {
+		t.Errorf("generatedBlock() = %q, %v, want the trimmed text between the markers", block, ok)
 	}
 }
