@@ -113,10 +113,7 @@ func (handler *GoogleSheetsPoller) poll(ctx context.Context, claim poller.Claim)
 	ranged := false
 	switch textValue(location["rangeDefinition"], "") {
 	case "specifyRangeA1":
-		if requested := strings.TrimSpace(textValue(location["range"], "")); requested != "" {
-			if _, after, found := strings.Cut(requested, "!"); found {
-				requested = after
-			}
+		if requested := a1Region(textValue(location["range"], "")); requested != "" {
 			rangeA1 += "!" + requested
 			headerRow = rangeStartRow(requested)
 			firstDataRow = headerRow + 1
@@ -146,14 +143,14 @@ func (handler *GoogleSheetsPoller) poll(ctx context.Context, claim poller.Claim)
 	// to key a row by.
 	headerIndex := headerRow - firstRowRead
 	if headerIndex < 0 || headerIndex >= len(data) {
-		return nil, "", fmt.Errorf("node %q: could not retrieve the column names from row %d of %q", node.Name, headerRow, tab.title)
+		return nil, "", fmt.Errorf("node %q: row %d of %q holds no column names, so there is nothing to watch the rows by", node.Name, headerRow, tab.title)
 	}
 	var header []string
 	for _, cell := range data[headerIndex] {
 		header = append(header, sheetsCellText(cell))
 	}
 	if len(header) == 0 {
-		return nil, "", fmt.Errorf("node %q: could not retrieve the column names from row %d of %q", node.Name, headerRow, tab.title)
+		return nil, "", fmt.Errorf("node %q: row %d of %q holds no column names, so there is nothing to watch the rows by", node.Name, headerRow, tab.title)
 	}
 
 	watched, err := watchedColumns(options["columnsToWatch"], header)

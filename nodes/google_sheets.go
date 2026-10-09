@@ -396,13 +396,10 @@ func googleSheetsTrigger() node.Definition {
 			},
 			{
 				Key: "includeInOutput", Label: "Include in Output", Kind: node.PropertyOptions, Default: "new",
-				Options: []node.PropertyOption{
-					{Label: "New Version", Value: "new"},
-					{Label: "Old Version", Value: "old"},
-					{Label: "Both Versions", Value: "both"},
-				},
+				Options: []node.PropertyOption{{Label: "New Version", Value: "new"}},
 				Description: "The trigger compares fingerprints of the rows and does not keep their previous values, so only the " +
-					"new version can be produced. An imported workflow that asked for the old or both versions arrives set to new.",
+					"new version can be produced. An imported workflow that asked for the old or both versions arrives set to new, " +
+					"and one that still carries either is refused.",
 				DisplayOptions: node.Visibility{Show: []node.Condition{{Key: "event", Values: []any{SheetsEventRowUpdate, SheetsEventAnyUpdate}}}},
 			},
 			{
@@ -506,6 +503,9 @@ func validateGoogleSheetsTriggerConfiguration(n workflow.Node) error {
 	case "", SheetsEventRowAdded, SheetsEventRowUpdate, SheetsEventAnyUpdate:
 	default:
 		return fmt.Errorf("event %q is not supported: use rowAdded, rowUpdate or anyUpdate", event)
+	}
+	if include := sheetsLiteral(n.Parameters, "includeInOutput"); include != "" && include != "new" {
+		return fmt.Errorf("includeInOutput %q is not supported: the trigger does not keep the previous version of a row, so it can only emit the new one", include)
 	}
 	if !property.LocatorIsSet(n.Parameters["documentId"]) {
 		return fmt.Errorf("documentId is not set: choose the spreadsheet, or give its ID or link")

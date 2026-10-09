@@ -326,19 +326,24 @@ func TestSheetsTriggerExecutorEmitsThePolledRow(t *testing.T) {
 
 // The poll service looks handlers up by node type, and activation stores a
 // cursor row only for the types ExtractPolls recognises: the two lists must be
-// the same list.
+// the same list. The types are found by asking the catalogue, not by naming the
+// ones known today, so a polling trigger added later with its handler but not
+// its ExtractPolls entry (or the reverse) fails here.
 func TestPollHandlersCoverEveryTriggerExtractPollsRecognises(t *testing.T) {
-	policy := safehttp.DefaultPolicy()
-	handlers := nodes.PollHandlers(policy)
+	handlers := nodes.PollHandlers(safehttp.DefaultPolicy())
 
 	recognised := []string{}
-	for _, nodeType := range []string{
-		nodes.GmailTriggerNodeType, nodes.GoogleDriveTriggerNodeType, nodes.GoogleSheetsTriggerNodeType,
-		"kilasflow.manual", "kilasflow.googleSheets",
-	} {
-		polls := nodes.ExtractPolls(workflow.Document{Nodes: []workflow.Node{{ID: "n", Type: nodeType, Parameters: map[string]any{}}}})
-		if len(polls) == 1 && polls[0].NodeType == nodeType {
-			recognised = append(recognised, nodeType)
+	polling := []string{}
+	for _, definition := range sheetsRegistry(t).List() {
+		for _, parameter := range definition.Parameters {
+			if parameter.Key == "pollTimes" {
+				polling = append(polling, definition.Type)
+			}
+		}
+		node := workflow.Node{ID: "n", Type: definition.Type, Parameters: map[string]any{}}
+		polls := nodes.ExtractPolls(workflow.Document{Nodes: []workflow.Node{node}})
+		if len(polls) == 1 && polls[0].NodeType == definition.Type {
+			recognised = append(recognised, definition.Type)
 		}
 	}
 	keys := make([]string, 0, len(handlers))
@@ -350,12 +355,18 @@ func TestPollHandlersCoverEveryTriggerExtractPollsRecognises(t *testing.T) {
 	if !reflect.DeepEqual(keys, recognised) {
 		t.Fatalf("handlers = %v, ExtractPolls recognises %v", keys, recognised)
 	}
-	if !contains(keys, nodes.GoogleSheetsTriggerNodeType) {
+	// And every trigger that offers poll times is one of them.
+	for _, nodeType := range polling {
+		if !sheetsContains(keys, nodeType) {
+			t.Errorf("%s offers poll times but has no poll handler", nodeType)
+		}
+	}
+	if !sheetsContains(keys, nodes.GoogleSheetsTriggerNodeType) {
 		t.Errorf("handlers = %v, want the Sheets trigger among them", keys)
 	}
 }
 
-func contains(list []string, want string) bool {
+func sheetsContains(list []string, want string) bool {
 	for _, entry := range list {
 		if entry == want {
 			return true

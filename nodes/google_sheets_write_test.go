@@ -311,7 +311,7 @@ func TestSheetsUpdateRefusesWhatItCannotAddress(t *testing.T) {
 			columnsParam("defineBelow", map[string]any{"mail": "a@b", "status": "x"}, "mail"), sheetItems(map[string]any{}), `"mail"`,
 		},
 		"nothing mapped": {
-			columnsParam("defineBelow", map[string]any{}, "name"), sheetItems(map[string]any{}), "at least one value",
+			columnsParam("defineBelow", map[string]any{}, "name"), sheetItems(map[string]any{}), "maps no columns",
 		},
 	}
 	for name, test := range cases {

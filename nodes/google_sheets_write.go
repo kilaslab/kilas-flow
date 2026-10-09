@@ -98,7 +98,7 @@ func (run *sheetsRun) itemValues(index int, item workflow.Item, mapping property
 		return itemData{values: values, auto: true}, nil
 	}
 	if len(mapping.Values) == 0 {
-		return itemData{}, run.errorf("item %d: at least one value has to be added under Values to Send", index)
+		return itemData{}, run.errorf("item %d maps no columns, so it has nothing to write: map at least one", index)
 	}
 	values := make(map[string]any, len(mapping.Values))
 	for column, value := range mapping.Values {
@@ -190,18 +190,18 @@ func (run *sheetsRun) prepareColumns(context *writeContext, data []itemData) err
 			}
 		}
 	}
+	if len(context.header) == 0 {
+		return run.errorf("row %d of %q holds no column names, so there is nothing to map the values by", context.headerRow, context.tab.title)
+	}
 	for _, entry := range data {
 		if entry.auto {
 			continue
 		}
 		for column := range entry.values {
 			if column != "row_number" && !slices.Contains(context.header, column) {
-				return run.errorf("the sheet has no column %q. It may have been renamed or removed since the node was set up", column)
+				return run.errorf("column %q is mapped but the sheet no longer has it: it was renamed or removed after this node was configured", column)
 			}
 		}
-	}
-	if len(context.header) == 0 {
-		return run.errorf("could not retrieve the column names from row %d of %q", context.headerRow, context.tab.title)
 	}
 	return nil
 }
@@ -374,7 +374,7 @@ func (run *sheetsRun) updateRows(items []workflow.Item, resolved []workflow.IRNo
 	match := mapping.MatchingColumns[0]
 	forceAuto := upsert && len(context.existing) == 0
 	if !forceAuto && len(context.header) == 0 {
-		return nil, run.errorf("could not retrieve the column names from row %d of %q", context.headerRow, tab.title)
+		return nil, run.errorf("row %d of %q holds no column names, so there is nothing to map the values by", context.headerRow, tab.title)
 	}
 	data := make([]itemData, len(items))
 	for index, item := range items {
@@ -395,7 +395,7 @@ func (run *sheetsRun) updateRows(items []workflow.Item, resolved []workflow.IRNo
 	if !byRowNumber {
 		keyIndex := slices.Index(context.header, match)
 		if keyIndex < 0 {
-			return nil, run.errorf("could not find the column %q to match rows on", match)
+			return nil, run.errorf("the sheet has no column %q, so rows cannot be matched on it", match)
 		}
 		for rowIndex := context.firstDataRow - 1; rowIndex < len(context.existing); rowIndex++ {
 			var cell any
@@ -416,6 +416,11 @@ func (run *sheetsRun) updateRows(items []workflow.Item, resolved []workflow.IRNo
 	for index, entry := range data {
 		matchValue, hasMatch := entry.values[match]
 		if hasMatch && matchValue == nil {
+			hasMatch = false
+		}
+		// An item whose match value is empty text found nothing to match: it
+		// must not land on the first row whose match cell is empty too.
+		if entry.auto && hasMatch && sheetsCellText(matchValue) == "" {
 			hasMatch = false
 		}
 		if !entry.auto && (!hasMatch || sheetsCellText(matchValue) == "") {
@@ -574,9 +579,7 @@ func (run *sheetsRun) clearSpans(items []workflow.Item, resolved []workflow.IRNo
 			rangeA1 = title + "!" + colLetters(start-1) + ":" + colLetters(start+count-2)
 		case "specificRange":
 			region := strings.TrimSpace(textValue(parameters["range"], "A:F"))
-			if _, after, found := strings.Cut(region, "!"); found {
-				region = after
-			}
+			region = a1Region(region)
 			if region == "" {
 				return nil, run.errorf("item %d: the range to clear is empty", index)
 			}

@@ -227,6 +227,28 @@ func sheetsSheetRef(raw any) (sheetRef, error) {
 	return sheetRef{name: text}, nil
 }
 
+// a1Region is the cell part of an A1 range: what follows the "!" that ends a
+// sheet name. That "!" is the last one outside single quotes, because a tab can
+// be called "a!b". A range with no sheet name comes back as it is.
+func a1Region(text string) string {
+	text = strings.TrimSpace(text)
+	quoted, cut := false, -1
+	for index := 0; index < len(text); index++ {
+		switch text[index] {
+		case '\'':
+			quoted = !quoted
+		case '!':
+			if !quoted {
+				cut = index
+			}
+		}
+	}
+	if cut < 0 {
+		return text
+	}
+	return text[cut+1:]
+}
+
 // a1Quote is a tab title as the sheet part of an A1 range: single-quoted, with
 // a quote inside the title doubled.
 func a1Quote(title string) string {
@@ -415,10 +437,7 @@ func (run *sheetsRun) readFor(parameters map[string]any, tab sheetsTab) ([]map[s
 	rangeA1 := a1Quote(tab.title)
 	firstRow := 1
 	if definition == "specifyRangeA1" {
-		if requested := strings.TrimSpace(textValue(location["range"], "")); requested != "" {
-			if _, after, found := strings.Cut(requested, "!"); found {
-				requested = after
-			}
+		if requested := a1Region(textValue(location["range"], "")); requested != "" {
 			rangeA1 += "!" + requested
 			firstRow = rangeStartRow(requested)
 		}
@@ -444,8 +463,11 @@ func (run *sheetsRun) readFor(parameters map[string]any, tab sheetsTab) ([]map[s
 	default:
 		numbered = detectDataRows(numbered, textValue(location["readRowsUntil"], "lastRowInSheet") == "firstEmptyRow")
 	}
-	if headerAt < 0 || dataFrom < headerAt || headerAt >= len(numbered) {
-		return nil, run.errorf("the key row does not exist: the header row is outside the rows read")
+	if headerAt < 0 || headerAt >= len(numbered) {
+		return nil, run.errorf("the header row %d is not among the %d rows read", headerAt+1, len(numbered))
+	}
+	if dataFrom < headerAt {
+		return nil, run.errorf("the first data row %d comes before the header row %d", dataFrom+1, headerAt+1)
 	}
 
 	width := 0
@@ -489,7 +511,7 @@ func (run *sheetsRun) readFor(parameters map[string]any, tab sheetsTab) ([]map[s
 	}
 	for _, filter := range filters {
 		if !known[filter.column] {
-			return nil, run.errorf("the column %q could not be found", filter.column)
+			return nil, run.errorf("the sheet has no column %q to filter on", filter.column)
 		}
 	}
 	return matchFilters(candidates, filters, textValue(parameters["combineFilters"], "AND") == "OR",
@@ -605,7 +627,8 @@ func readFilters(raw any) []sheetsFilter {
 	filters := make([]sheetsFilter, 0, len(list))
 	for _, entry := range list {
 		fields := sheetsMap(entry)
-		column := strings.TrimSpace(textValue(fields["lookupColumn"], ""))
+		// A column is named by its heading as written, spaces included.
+		column := textValue(fields["lookupColumn"], "")
 		if column == "" {
 			continue
 		}
