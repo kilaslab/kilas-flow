@@ -110,6 +110,7 @@ const VALIDATION_COVERAGE = [
 	'kilasflow.datastoreTool@1',
 	'kilasflow.gmailTool@1',
 	'kilasflow.postgresTool@2',
+	'kilasflow.googleSheetsTool@1',
 	'pack.telegramTool@1',
 	'kilasflow.postgres@1',
 	'kilasflow.postgres@2',
@@ -920,12 +921,13 @@ test('the agent cluster fails closed without wiring or credentials', async ({ se
 	expect(dsToolAttempt.status).toBe(422);
 	expect(errorText(dsToolAttempt.body)).toContain('toolDescription is required');
 
-	// The tool forms of the Gmail, PostgreSQL and Telegram nodes run their
+	// The tool forms of the Gmail, PostgreSQL, Google Sheets and Telegram nodes run their
 	// base node against a live service, so their headless tier is the same
 	// refusal: a bare one names its missing description.
 	for (const form of [
 		{ type: 'kilasflow.gmailTool', version: 1 },
 		{ type: 'kilasflow.postgresTool', version: 2 },
+		{ type: 'kilasflow.googleSheetsTool', version: 1 },
 		{ type: 'pack.telegramTool', version: 1 }
 	]) {
 		const formId = await createWorkflow(server.baseURL, `Coverage ${form.type} Bare`, [manual(), node('tool', 'Tool', form.type, form.version, {})], []);

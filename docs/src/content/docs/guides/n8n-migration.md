@@ -132,6 +132,7 @@ an `&` inside `{{ $json.query }}` no longer truncates the request line.
 | `n8n-nodes-base.httpRequestTool` | `kilasflow.httpTool` |
 | `n8n-nodes-base.gmailTool` | `kilasflow.gmailTool` |
 | `n8n-nodes-base.postgresTool` | `kilasflow.postgresTool` |
+| `n8n-nodes-base.googleSheetsTool` | `kilasflow.googleSheetsTool` |
 | `n8n-nodes-base.telegramTool` | `pack.telegramTool` |
 | `@n8n/n8n-nodes-langchain.vectorStorePGVector` | `kilasflow.vectorStorePGVector` (modes insert, load, retrieve, retrieve-as-tool) |
 | `@n8n/n8n-nodes-langchain.toolVectorStore` | `kilasflow.vectorStoreTool` |
@@ -174,7 +175,9 @@ its input item (a Gmail tool's recipient, for one) is not filled from the
 agent's input: set it in the tool. For the same reason a PostgreSQL tool cannot
 map its columns automatically, which would write the agent's input as the row;
 a `postgresTool` that does is a **blocking** diagnostic, and the columns have to
-be mapped one by one.
+be mapped one by one. The Google Sheets tool follows the same rule, and it also
+does not offer the clear operation to a model: a `googleSheetsTool` that clears,
+or maps its columns automatically, is a **blocking** diagnostic.
 A tool whose base node is mapped but that has no tool form here yet (Google
 Drive's, for one) imports as a placeholder that says so.
 
