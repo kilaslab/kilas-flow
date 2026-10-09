@@ -165,8 +165,22 @@ func executeStopAndError(ctx context.Context, node workflow.IRNode, input workfl
 // through — so it is evaluated as a template. Anything else is the literal
 // message. A message that cannot be resolved fails the node rather than
 // stopping the workflow with a half-rendered sentence.
+//
+// Each is evaluated exactly once (BUG-vqghpm). The author's plain-text
+// templates are made expressions before the single resolve, and an error
+// object the author wrote as JSON text has its fields' templates evaluated
+// once, after it is parsed. Nothing an expression produced is evaluated
+// again: a message built from a webhook body that held `{{ $env.SECRET }}`
+// used to fail the run with the secret's value.
 func stopAndErrorMessage(parameters map[string]any, ctx expression.Context) (string, error) {
-	resolved, err := expression.Resolve(parameters, ctx)
+	authored := make(map[string]any, len(parameters))
+	for key, value := range parameters {
+		authored[key] = value
+	}
+	if text, isText := parameters["errorMessage"].(string); isText && strings.Contains(text, "{{") {
+		authored["errorMessage"] = map[string]any{"mode": "expression", "value": strings.TrimPrefix(strings.TrimSpace(text), "=")}
+	}
+	resolved, err := expression.Resolve(authored, ctx)
 	if err != nil {
 		return "", err
 	}
@@ -174,11 +188,33 @@ func stopAndErrorMessage(parameters map[string]any, ctx expression.Context) (str
 	if message == "" {
 		object, ok := errorObjectOf(resolved["errorObject"])
 		if ok {
-			message = strings.TrimSpace(textOf(object["errorMessage"]))
-			if message == "" {
-				message = strings.TrimSpace(textOf(object["message"]))
+			// JSON text the author wrote is the author's template; an object
+			// an expression produced is data.
+			authoredText := !expression.IsExpression(parameters["errorObject"])
+			field := func(key string) (string, error) {
+				text := strings.TrimSpace(textOf(object[key]))
+				if !authoredText || !strings.Contains(text, "{{") {
+					return text, nil
+				}
+				evaluated, err := expression.Evaluate(text, ctx)
+				if err != nil {
+					return "", err
+				}
+				return strings.TrimSpace(textOf(evaluated)), nil
 			}
-			if description := strings.TrimSpace(textOf(object["errorDescription"])); description != "" {
+			if message, err = field("errorMessage"); err != nil {
+				return "", err
+			}
+			if message == "" {
+				if message, err = field("message"); err != nil {
+					return "", err
+				}
+			}
+			description, err := field("errorDescription")
+			if err != nil {
+				return "", err
+			}
+			if description != "" {
 				if message == "" {
 					message = description
 				} else {
@@ -187,21 +223,10 @@ func stopAndErrorMessage(parameters map[string]any, ctx expression.Context) (str
 			}
 		}
 	}
-	if !strings.Contains(message, "{{") {
-		if message == "" {
-			return "the workflow was stopped by a Stop and Error node with no message", nil
-		}
-		return message, nil
-	}
-	evaluated, err := expression.Evaluate(message, ctx)
-	if err != nil {
-		return "", err
-	}
-	rendered := strings.TrimSpace(textOf(evaluated))
-	if rendered == "" {
+	if message == "" {
 		return "the workflow was stopped by a Stop and Error node with no message", nil
 	}
-	return rendered, nil
+	return message, nil
 }
 
 // errorObjectOf reads the error object an author gave, in either shape a

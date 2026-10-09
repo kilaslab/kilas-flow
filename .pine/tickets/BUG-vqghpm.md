@@ -36,10 +36,10 @@ The run fails with the text `{{ $env.SECRET }}`, verbatim. An expression's resul
 The run fails with the secret's value as its error message.
 
 # Acceptance Criteria
-- [ ] A resolved `errorMessage` containing `{{ … }}` becomes the run's error verbatim; proven with `$env.SECRET` set.
-- [ ] The same for an error object that comes from an expression: its `message`, `errorMessage` and `errorDescription` are data.
-- [ ] A message the author typed as a plain string with a `{{ … }}` template (the shape the node's own comment documents), and an error object written as JSON text with a template inside, still render, evaluated exactly once.
-- [ ] Every other executor that evaluates already-resolved values is either fixed or listed here with why it is safe.
+- [x] A resolved `errorMessage` containing `{{ … }}` becomes the run's error verbatim; proven with `$env.SECRET` set. (`TestStopAndErrorNeverEvaluatesAResolvedMessage`, nodes/stop_and_error_leak_test.go; it failed with the secret in the error before the fix)
+- [x] The same for an error object that comes from an expression: its `message`, `errorMessage` and `errorDescription` are data. (same test, the errorObject case)
+- [x] A message the author typed as a plain string with a `{{ … }}` template (the shape the node's own comment documents), and an error object written as JSON text with a template inside, still render, evaluated exactly once. (same test, plus the existing `TestStopAndErrorFailsWithTheMessageTheAuthorGave`)
+- [x] Every other executor that evaluates already-resolved values is either fixed or listed here with why it is safe. (see Progress)
 
 # Notes
 
@@ -48,3 +48,15 @@ Found by the Track C review of FEAT-cf5n4j (2026-10-09). Fixed the way `resolveG
 # Related Files
 - nodes/error_workflow.go — stopAndErrorMessage
 - nodes/stop_and_error_leak_test.go — reproduction
+
+# Progress (2026-10-09)
+
+- `stopAndErrorMessage` (nodes/error_workflow.go) resolves once. A plain-text `errorMessage` holding `{{` (optionally with n8n's `=` prefix) is made an expression marker before the single `expression.Resolve`; an error object the author wrote as JSON text has its `errorMessage`, `message` and `errorDescription` templates evaluated once after parsing; an error object or message that an expression produced is used as data and never evaluated.
+- Verified: `TestStopAndErrorNeverEvaluatesAResolvedMessage` failed before the fix with `s3cr3t-value` in the run's error for both the message and the object case, and passes after it; the existing Stop and Error tests pass.
+- Other places that evaluate text at run time, checked with `grep -rn "expression.Evaluate(" nodes internal cmd packs` and a search for code that detects `{{`:
+  - `nodes/google.go` (Gmail, Drive): fixed by BUG-prhxdy.
+  - `internal/engine/eval.go`: the editor's evaluate-this-expression endpoint; the template is the author's request, evaluated once.
+  - `internal/routing/request.go` and `internal/routing/executor.go`: evaluate the pack's own routing templates (request defaults, `routing.send` values, the post-receive download URL); a parameter's resolved value is bound as `$value` or `$parameter`, data, and never parsed.
+  - `internal/loadoptions/loadoptions.go`, `internal/credentials/registry.go`: plain `{{key}}` placeholder substitution, not expression evaluation; loader dependency values are path-escaped, and a credential's URL template only receives that credential's own fields.
+  - `internal/sidecarnode/convert.go`: marks a community node's declared `=` default as an expression at conversion time, before any resolution.
+  None of them evaluates an already-resolved value.
