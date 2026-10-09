@@ -1,11 +1,11 @@
 ---
 id: BUG-2d1pdx
 title: 'make test is red: an OpenAI base-URL test shares one recording credential stub across parallel subtests'
-status: todo
+status: done
 priority: medium
 parent: EPIC-8rbys7
 created: "2026-10-09T11:52:28Z"
-updated: "2026-10-09T11:52:28Z"
+updated: "2026-10-09T11:52:38Z"
 ---
 
 # Description
@@ -32,3 +32,18 @@ The test passes under `-race`.
 # Notes
 
 Test-only change; production code is untouched.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-10-09.
+
+- Base: `ce0645fb` (last commit at or before ticket created 2026-10-09)
+- Commits (1):
+  - `16d9e13e` — BUG-2d1pdx: each subtest of the OpenAI base-URL fallback test gets its own credential stub, so make test is no longer red under -race
+- Files changed (base → working tree):
+
+```
+ .pine/tickets/BUG-2d1pdx.md         | 34 ++++++++++++++++++++++++++++++++++
+ nodes/openai_credential_url_test.go | 18 +++++++++++-------
+ 2 files changed, 45 insertions(+), 7 deletions(-)
+```
