@@ -59,6 +59,11 @@ func gmailNode() node.Definition {
 			{Key: "to", Label: "To", Kind: node.PropertyString},
 			{Key: "subject", Label: "Subject", Kind: node.PropertyString},
 			{Key: "message", Label: "Message", Kind: node.PropertyString},
+			{
+				Key: "emailType", Label: "Email Type", Kind: node.PropertyOptions, Default: "text",
+				Options:     []node.PropertyOption{{Label: "Text", Value: "text"}, {Label: "HTML", Value: "html"}},
+				VisibleWhen: []node.VisibilityCondition{{Key: "operation", Equals: "send"}},
+			},
 			{Key: "q", Label: "Search", Kind: node.PropertyString},
 		},
 		SharedSettings: sharedSettings(),
@@ -187,7 +192,19 @@ func (executor *GmailExecutor) send(ctx context.Context, ir workflow.IRNode, ite
 	if to == "" {
 		return nil, fmt.Errorf("node %q: to is required to send", ir.Name)
 	}
-	raw := "To: " + to + "\r\nSubject: " + subject + "\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + body
+	// The header block is built by hand, so a line break in a value would
+	// start a header the caller chose — a Bcc to somebody else. The values can
+	// come from a webhook or an agent's model.
+	for name, value := range map[string]string{"to": to, "subject": subject} {
+		if strings.ContainsAny(value, "\r\n") {
+			return nil, fmt.Errorf("node %q: %s contains a line break, which would start another mail header", ir.Name, name)
+		}
+	}
+	contentType := "text/plain"
+	if strings.EqualFold(strings.TrimSpace(textValue(ir.Parameters["emailType"], "")), "html") {
+		contentType = "text/html"
+	}
+	raw := "To: " + to + "\r\nSubject: " + subject + "\r\nContent-Type: " + contentType + "; charset=utf-8\r\n\r\n" + body
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
 	var payload map[string]any
 	if err := executor.google.json(ctx, request, ir, GmailCredentialType, http.MethodPost, gmailAPIRoot+"/users/me/messages/send", nil, map[string]any{"raw": encoded}, &payload); err != nil {

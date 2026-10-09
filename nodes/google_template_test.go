@@ -121,3 +121,71 @@ func TestGmailStillEvaluatesANestedTemplateTheAuthorWrote(t *testing.T) {
 		t.Fatalf("q = %q, want the author's nested template evaluated once", query)
 	}
 }
+
+// The send builds the message's header block by hand, so a line break in a
+// header value would start a header of the caller's choosing (a Bcc to an
+// outsider). The value can come from a webhook or a model, so it is refused.
+func TestGmailSendRefusesALineBreakInAHeaderValue(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		_, _ = io.WriteString(w, `{"id":"sent-1"}`)
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(nodes.SetGoogleAPIRootsForTest("", server.URL+"/gmail/v1"))
+
+	executor := nodes.NewGmailExecutor(allowing(server))
+	for name, parameters := range map[string]map[string]any{
+		"to":      {"to": "ops@example.com\r\nBcc: outsider@example.com", "subject": "Hi"},
+		"subject": {"to": "ops@example.com", "subject": "Hi\nBcc: outsider@example.com"},
+	} {
+		parameters["operation"] = "send"
+		parameters["message"] = "body"
+		ir := workflow.IRNode{
+			ID: "gmail", Name: "Gmail", Type: nodes.GmailNodeType, TypeVersion: workflow.V(1),
+			Parameters: parameters, Credentials: map[string]string{nodes.GmailCredentialType: "cred"},
+		}
+		_, err := executor.Execute(context.Background(), ir, workflow.NodeInput{"main": {{JSON: map[string]any{}}}}, secretRequest(server, nodes.GmailCredentialType))
+		if err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("a line break in %s: error = %v, want a refusal naming it", name, err)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("Gmail was called %d times, want none", calls)
+	}
+}
+
+// n8n's Gmail sends HTML unless told otherwise, so an imported send keeps its
+// markup only if this node can send HTML too.
+func TestGmailSendsHTMLWhenTheEmailTypeSaysSo(t *testing.T) {
+	var sent string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Raw string `json:"raw"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		decoded, _ := base64.RawURLEncoding.DecodeString(body.Raw)
+		sent = string(decoded)
+		_, _ = io.WriteString(w, `{"id":"sent-1"}`)
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(nodes.SetGoogleAPIRootsForTest("", server.URL+"/gmail/v1"))
+
+	executor := nodes.NewGmailExecutor(allowing(server))
+	for emailType, want := range map[string]string{"html": "text/html", "text": "text/plain", "": "text/plain"} {
+		ir := workflow.IRNode{
+			ID: "gmail", Name: "Gmail", Type: nodes.GmailNodeType, TypeVersion: workflow.V(1),
+			Parameters: map[string]any{
+				"operation": "send", "to": "ops@example.com", "subject": "Hi",
+				"message": "<b>bold</b>", "emailType": emailType,
+			},
+			Credentials: map[string]string{nodes.GmailCredentialType: "cred"},
+		}
+		if _, err := executor.Execute(context.Background(), ir, workflow.NodeInput{"main": {{JSON: map[string]any{}}}}, secretRequest(server, nodes.GmailCredentialType)); err != nil {
+			t.Fatalf("Execute(%q) error = %v", emailType, err)
+		}
+		if !strings.Contains(sent, "Content-Type: "+want+"; charset=utf-8\r\n") {
+			t.Errorf("emailType %q sent:\n%s\nwant Content-Type %s", emailType, sent, want)
+		}
+	}
+}
