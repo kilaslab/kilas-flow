@@ -13,8 +13,8 @@ deletion, and the SQL migrations it ships for each driver.
    database, so a failed migration is a container that does not start rather
    than a server running against the wrong schema. A Compose stack orders on the
    database healthcheck for exactly this reason.
-2. **SQL migrations.** Versioned files under `migrations/sqlite` and
-   `migrations/postgres`, each with an up and a down, applied by a runner that
+2. **SQL migrations.** Versioned SQL files, one set per driver, each
+   with an up and a down, applied by a runner that
    records what it applied in a `schema_migrations` table it creates itself. A
    rollback is expressible through the down files; there is no release-to-release
    compatibility policy, because there has been no release to keep one against.

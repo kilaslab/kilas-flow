@@ -153,6 +153,18 @@ func TestSourceCitationsRuleReadsPathsNotPunctuation(t *testing.T) {
 		{"a docs citation", "(docs: concepts/execution-model)", false},
 		{"a skills citation", "`kilasflow skills show kilasflow-datastore --reference FILTERS.md`", false},
 		{"a word that merely contains a directory", "the external/ and nodes_modules/ words", false},
+		{"nodes and connections as two words", "the nodes/connections of a document", false},
+		{"a documentation hostname", "see pkg.go.dev for the module", false},
+		{"a tailnet hostname", "reach it at host.example.ts.net", false},
+		{"a pack directory without a file", "the packs/telegram pack ships in the binary", false},
+		{"a user's own pack file", "validate ./packs/acme/pack.json first", false},
+		{"a pack manifest in the repository", "copy packs/telegram/pack.json", true},
+		{"a migration file", "migrations/sqlite/000006_vector_store.up.sql", true},
+		{"a migration glob", "the SQL in migrations/{sqlite,postgres}/**", true},
+		{"a node source file", "see nodes/http.go", true},
+		{"a script glob", "scripts/**", true},
+		{"an internal package directory", "the internal/engine package", true},
+		{"a sentence-final source file", "It is set in runner.go.", true},
 	}
 
 	for _, tc := range cases {

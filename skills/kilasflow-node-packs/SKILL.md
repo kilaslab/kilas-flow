@@ -29,7 +29,7 @@ kilasflow_not_shipped:
 ## Strong defaults
 
 - Decide the kind first, because a pack is exactly one of them: an action pack with `resources`, a `trigger` pack with events, or a `module` pack whose behaviour is code. A manifest that declares two, or none, is refused at load.
-- Author a hand-written pack from the reference shape in `packs/telegram/pack.json`, or scaffold the smallest pack that still loads and runs with the `nodepackgen` generator from a KilasFlow checkout — it also writes the `sha256sum`-compatible sidecar, so nobody computes a digest by hand.
+- Author a hand-written pack from the manifest shape in references/PACK_FORMAT.md (`kilasflow skills show kilasflow-node-packs --reference PACK_FORMAT.md`), or scaffold the smallest pack that still loads and runs with the `nodepackgen` generator from a KilasFlow checkout — it also writes the `sha256sum`-compatible sidecar, so nobody computes a digest by hand.
 - Validate before installing: `kilasflow pack validate ./packs/acme` checks a directory the way an install reads it — sidecar first, then manifest — and reports every problem at once, each with its file and JSON path, because one round trip per mistake is the failure it exists to prevent. A refusal exits 1 with `error.code = "invalid_pack"` and the whole list under `error.detail.issues`.
 - A module pack is a wasip1 module beside the manifest plus a declaration of what it may do: `file` (a bare `.wasm` name), `sha256`, `abi` (which must equal the SDK's `v1`), `mode` (`item` per input item, or `batch`), `outputs`, `capabilities`, `credentials`, `limits`.
 - The guest side of that path is `pkg/sdk`: import it, write a run function over items, and build with `GOOS=wasip1 GOARCH=wasm CGO_ENABLED=0 go build -o pack.wasm ./...`. The host module a module imports from is `kilasflow_v1`, so a pack built against another ABI fails at instantiation rather than being silently satisfied.
@@ -48,7 +48,7 @@ kilasflow_not_shipped:
 what are you doing?
 |
 +-- authoring a declarative pack
-|     -> copy the shape of packs/telegram/pack.json, or scaffold with nodepackgen
+|     -> follow references/PACK_FORMAT.md, or scaffold with nodepackgen
 |        kilasflow pack validate ./packs/acme
 |        place the directory under packs.dir and restart: no reload, no remote fetch
 |

@@ -395,20 +395,42 @@ func checkNotShippedCommands(skill Skill) []Finding {
 // The source-citation patterns. A directory of the product's own tree followed
 // by a path, and a bare source file name.
 //
-// The directories are the ones an installed bundle cannot see: the Go packages,
-// the node implementations, the commands, the web and SDK sources, the build
-// scripts, the end-to-end tests and the docs source. What a user's project has
-// is spared by construction: a path that follows "./" or "/" is the user's own
-// (./packs/acme, ./nodes/mine), and the guest import path
-// github.com/kilaslab/kilas-flow/pkg/sdk and the files a pack author writes
-// (main.go, go.mod) name things the author creates.
+// Some roots only the product's tree uses: internal/, cmd/, web/src/, sdk/src/
+// and docs/src/, so anything below them is a citation. The others are ordinary
+// words in a skill ("the nodes/connections of a document", "the packs
+// directory"), so a path under nodes/, sdk/, scripts/, e2e/, packs/ or
+// migrations/ is a citation only when it names a file (an extension) or a glob.
+//
+// What a user's project has is spared by construction: a path that follows "./"
+// or "/" is the user's own (./packs/acme, ./nodes/mine, /nodes/N/parameters),
+// and the guest import path github.com/kilaslab/kilas-flow/pkg/sdk and the
+// files a pack author writes (main.go, go.mod) name things the author creates.
+// A bare file name that is the first label of a hostname (pkg.go.dev) is not a
+// file.
 var (
-	sourceTreePath = regexp.MustCompile(`(?:internal|nodes|cmd|web/src|sdk|scripts|e2e|docs/src)/[A-Za-z0-9_.*{},-]+(?:/[A-Za-z0-9_.*{},-]+)*`)
+	sourceTreePath = regexp.MustCompile(`(?:internal|nodes|cmd|web/src|sdk|scripts|e2e|docs/src|packs|migrations)/[A-Za-z0-9_.*{},-]+(?:/[A-Za-z0-9_.*{},-]+)*`)
 	sourceFileName = regexp.MustCompile(`[A-Za-z0-9_]+\.(?:go|ts|svelte)\b`)
+	sourceFileExt  = regexp.MustCompile(`\.(?:go|ts|svelte|md|mdx|json|sql|sh|mjs|js|yaml|yml|toml)$`)
 )
+
+// productOnlyRoots are the directories nothing but the product's own tree is
+// called, so any path below one is a citation.
+var productOnlyRoots = []string{"internal/", "cmd/", "web/src/", "sdk/src/", "docs/src/"}
 
 // allowedSourceFiles are file names a pack author writes in their own project.
 var allowedSourceFiles = map[string]bool{"main.go": true}
+
+// citesSource reports whether a matched tree path points into the product's
+// source rather than using a directory name as a word.
+func citesSource(cited string) bool {
+	for _, root := range productOnlyRoots {
+		if strings.HasPrefix(cited, root) {
+			return true
+		}
+	}
+
+	return sourceFileExt.MatchString(cited) || strings.ContainsAny(cited, "*{")
+}
 
 // checkSourceCitations scans the body and every reference file.
 //
@@ -443,13 +465,23 @@ func checkSourceCitations(skill Skill) []Finding {
 			if span[0] > 0 && isPathContinuation(document.text[span[0]-1]) {
 				continue
 			}
-			report(strings.TrimRight(document.text[span[0]:span[1]], ".,;:"))
+			cited := strings.TrimRight(document.text[span[0]:span[1]], ".,;:")
+			if !citesSource(cited) {
+				continue
+			}
+			report(cited)
 			remaining = remaining[:span[0]] + strings.Repeat(" ", span[1]-span[0]) + remaining[span[1]:]
 		}
 
-		for _, span := range sourceFileName.FindAllStringIndex(unfenced(remaining), -1) {
-			name := unfenced(remaining)[span[0]:span[1]]
+		prose := unfenced(remaining)
+		for _, span := range sourceFileName.FindAllStringIndex(prose, -1) {
+			name := prose[span[0]:span[1]]
 			if allowedSourceFiles[name] {
+				continue
+			}
+			// "pkg.go.dev" and "host.ts.net" are hostnames: the extension is
+			// followed by another label.
+			if span[1]+1 < len(prose) && prose[span[1]] == '.' && isLetter(prose[span[1]+1]) {
 				continue
 			}
 			report(name)
@@ -467,6 +499,11 @@ func isPathContinuation(before byte) bool {
 		(before >= '0' && before <= '9') ||
 		(before >= 'a' && before <= 'z') ||
 		(before >= 'A' && before <= 'Z')
+}
+
+// isLetter reports an ASCII letter.
+func isLetter(value byte) bool {
+	return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z')
 }
 
 // unfenced is a document with every fenced block replaced by blank lines, so a
