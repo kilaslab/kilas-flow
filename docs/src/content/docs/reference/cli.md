@@ -270,6 +270,7 @@ should be one request.
 
 ```bash
 kilasflow workflow list --limit 20 --json
+kilasflow workflow list --tag billing --json             # only workflows carrying the tag
 kilasflow workflow get wf_01J8ZP
 kilasflow workflow create --file workflow.json --quiet   # the new id
 kilasflow workflow validate --file patch.json            # exit 0, then read data.valid
@@ -289,6 +290,11 @@ kilasflow workflow delete wf_01J8ZP --yes
   workflows answer with a bare array and a cursor in `X-Next-Cursor`, revisions
   with an object carrying both — and normalising that here is what lets one
   agent loop page every listing the same way.
+- Every workflow summary carries `tags`, an array that is empty when the
+  workflow has none, and `workflow list --tag <name>` keeps only the workflows
+  whose latest revision carries that tag (case is ignored). The tags live in the
+  workflow document's `tags` field, so a save that rewrites the document must
+  send back the tags it read: a save without `tags` clears them.
 - `workflow create --file <path>|-` sends the document **unchanged**. A document
   that is not valid JSON is refused with exit 2 before a request is made.
 - `workflow validate --file <path>|-` sends the same draft document and saves
