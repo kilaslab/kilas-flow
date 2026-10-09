@@ -2,7 +2,7 @@
 
 Every node parameter is a `property.PropertyDefinition`, and both the node
 catalogue and the credential catalogue validate against it — which is why the
-package is a leaf (internal/property/property.go, internal/node/registry.go).
+package is a leaf.
 `kilasflow node describe <type>` prints exactly this for one type, at the version
 the server would resolve a document to.
 
@@ -22,12 +22,12 @@ the server would resolve a document to.
 
 Nested content is in typed fields rather than overloaded onto `options`; a field
 whose meaning depended on its sibling kind would produce a JSON schema nothing
-can express (internal/property/property.go).
+can express.
 
-## The fifteen kinds
+## The kinds
 
-The set is closed, and an unknown kind is refused at registration
-(internal/property/property.go, `KnownKinds`).
+The set is closed, and an unknown kind is refused at registration. A test pins
+this table to the kinds the product accepts.
 
 | Kind | Stores |
 | --- | --- |
@@ -53,7 +53,7 @@ control would make every generated pack guess which one this server speaks.
 ## Type options
 
 `TypeOptions` refines a control rather than multiplying kinds, and an unknown key
-is refused at registration (internal/property/property.go, `TypeOptions`):
+is refused at registration:
 `password` masks a field, `rows` makes a string multi-line, `minValue` and
 `maxValue` bound a number, `numberPrecision` fixes its decimals,
 `multipleValues` makes the property a list, and `multipleValueButtonText` labels
@@ -72,25 +72,23 @@ like `{}` — it does not default to `{}`.
   values per key, operators beyond equality, a type-version gate — and when it is
   set it **replaces** the shorthand, so a property has exactly one rule.
 - Visibility is always evaluated against the parameters **with defaults filled
-  in** (`WithDefaults`), which is why a rule reading a key nobody ever stored
+  in**, which is why a rule reading a key nobody ever stored
   still shows the right field.
-- A hidden property is not required, so required-ness is computed per node
-  (`internal/node/registry.go`, `visibleRequiredParameters`). The compiler
+- A hidden property is not required, so required-ness is computed per node. The compiler
   refuses a missing one as `config.required` at `/nodes/N/parameters/<key>`, and
-  a missing credential as `config.required` at `/nodes/N/credentials/<type>`
-  (internal/workflow/compiler.go).
+  a missing credential as `config.required` at `/nodes/N/credentials/<type>`.
 
 ## Resource locator
 
 A locator is stored as a self-describing object carrying the `__rl` sentinel —
 `{__rl: true, mode, value}`, n8n's own shape — rather than a bare string with a
 sibling mode parameter, which loses the pairing the moment visibility hides one
-half (internal/property/property.go, `LocatorSentinel`, `WriteLocator`;
-`ReadLocator` accepts the old bare string too). Each mode declares how it renders
+half. A bare string, which an older document carries, is still read as a
+locator. Each mode declares how it renders
 and, for a list mode, its own loader, so "from list" searches and "by id" does
 not. One mode name is refused outright: a mode literally called `expression`
 would be indistinguishable from the expression marker, which uses the same
-`mode` and `value` keys (`ExpressionModeName`, `ValidateModes`).
+`mode` and `value` keys.
 
 ## Resource mapper
 
@@ -98,8 +96,7 @@ would be indistinguishable from the expression marker, which uses the same
 declaration names the schema loader, whether auto-mapping is offered, whether
 matching columns are required, and the label of the values column; each column
 carries an id, a display name, a type, a required flag, match eligibility,
-read-only-ness and any fixed options (internal/property/mapper.go,
-`ResourceMapperDeclaration`, `MapperField`). The columns themselves come from the
+read-only-ness and any fixed options. The columns themselves come from the
 sibling operation — see LOAD_OPTIONS.md. A mapper that sets `modelDefinable` (the
 Workflow Tool's `workflowInputs`) lets each column be left to the model, stored as
 one whole `$fromAI` call, with a column that has no entry counting as the model's
@@ -109,15 +106,13 @@ one whole `$fromAI` call, with a column that has no entry counting as the model'
 
 Rows are `{name, type, value}`; the declared type is a closed set — `string`,
 `number`, `boolean`, `array`, `object` — and a row without a name is refused at
-registration because it would write nothing (internal/property/property.go,
-`AssignmentTypes`, `ValidateAssignments`). One field set twice takes the later
-row's value, which is how `kilasflow.set` documents itself (nodes/core.go,
-`setNode`).
+registration because it would write nothing. One field set twice takes the later
+row's value, which is how `kilasflow.set` documents itself.
 
 ## Shared settings
 
 Every built-in node declares the same settings block, and they are stored in
-`node.settings`, never in `node.parameters` (nodes/core.go, `sharedSettings`):
+`node.settings`, never in `node.parameters`:
 
 | Setting | Default | Bound or accepted values |
 | --- | --- | --- |
@@ -131,8 +126,7 @@ Every built-in node declares the same settings block, and they are stored in
 The compiler also accepts `onError` in `settings`, one of `stopWorkflow`,
 `continueRegularOutput` or `continueErrorOutput`, and adds the node's own
 `error` output port when it is the branch form — which is what makes a
-connection from that port compile (internal/workflow/compiler.go,
-`validateSharedSettings`, `withErrorPort`).
+connection from that port compile.
 
 A numeric setting outside its bound, or an `onError` that is not one of the
 three, is refused at compile as `config.invalid` at `/nodes/N/settings`.
@@ -142,27 +136,21 @@ three, is refused at compile as `config.invalid` at `/nodes/N/settings`.
 - Ports come from the definition, and some are computed: `kilasflow.switch`
   declares one output per rule (bounded by `MaxSwitchOutputs`) and
   `kilasflow.merge` takes its input count from `numberInputs`, while the static
-  `inputs`/`outputs` are what an unconfigured node shows (nodes/flow.go,
-  `switchNode`; nodes/core.go, `mergeNode`; internal/node/registry.go,
-  `PortsFor`).
+  `inputs`/`outputs` are what an unconfigured node shows.
 - A document's `typeVersion` resolves **downward**: the highest registered
   version not greater than the one asked for, or the highest when none is asked
   for. An unknown type is `node.unknown_type`, an unknown-or-too-high version
-  `node.unknown_version` (internal/node/registry.go, `Resolve`;
-  internal/workflow/compiler.go).
+  `node.unknown_version`.
 - A type scoped to other tenants is absent from the catalogue, the icon route and
   the loaders, exactly as if it were unregistered; only a document that
-  references it reports `node.not_available` (internal/node/visibility.go).
+  references it reports `node.not_available`.
 - An undeclared key is not refused generically: the compiler refuses a missing
   required key (`config.required`), a node's own `Validate` may refuse a value it
   cannot use (`config.invalid`, path `/nodes/N/parameters`), and anything else is
-  never read by the executor, which reads the keys its definition declares
-  (nodes/http.go).
+  never read by the executor, which reads the keys its definition declares.
 
-## Source
+## Further reading
 
-`internal/property/{property,loader,mapper}.go`, `internal/node/{registry,visibility}.go`,
-`internal/workflow/compiler.go`, `internal/cli/verbs_node.go`,
-`nodes/{core,flow,http,code}.go`,
-`docs/src/content/docs/concepts/node-registry.md`,
-`docs/src/content/docs/reference/cli.md` (`kilasflow node describe`).
+The node catalogue and the CLI that prints it are documented beside the product
+(docs: concepts/node-registry, reference/cli); `kilasflow node describe <type>`
+is the live definition.

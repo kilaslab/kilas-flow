@@ -48,35 +48,70 @@ var ErrManagerUnreachable = errors.New("external secret manager is unreachable")
 // the environment path — base64, hex, or raw 32 bytes — so a key can move
 // from one source to the other without being re-encoded.
 func KeyFromManager(ctx context.Context, provider Provider, key string) ([]byte, error) {
+	decoded, _, err := KeyFromManagerFormat(ctx, provider, key)
+	return decoded, err
+}
+
+// KeyFromManagerFormat is KeyFromManager that also reports how the stored
+// value was encoded, so boot can warn about a raw string.
+func KeyFromManagerFormat(ctx context.Context, provider Provider, key string) ([]byte, KeyFormat, error) {
 	if provider == nil {
-		return nil, fmt.Errorf("%w: no secret manager is configured", ErrNoKey)
+		return nil, 0, fmt.Errorf("%w: no secret manager is configured", ErrNoKey)
 	}
 	if strings.TrimSpace(key) == "" {
-		return nil, fmt.Errorf("%w: no secret key is configured", ErrNoKey)
+		return nil, 0, fmt.Errorf("%w: no secret key is configured", ErrNoKey)
 	}
 	raw, err := provider.Fetch(ctx, key)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrManagerUnreachable, err)
+		return nil, 0, fmt.Errorf("%w: %v", ErrManagerUnreachable, err)
 	}
-	decoded, err := decodeKey(strings.TrimSpace(raw))
+	decoded, format, err := ParseKey(strings.TrimSpace(raw))
 	if err != nil {
-		return nil, fmt.Errorf("external secret %q: %w", key, err)
+		return nil, 0, fmt.Errorf("external secret %q: %w", key, err)
 	}
-	return decoded, nil
+	return decoded, format, nil
 }
 
-// decodeKey accepts the three encodings operators paste — base64, hex, or raw
-// 32 bytes — and rejects everything else with the variable or secret named by
-// the caller.
-func decodeKey(raw string) ([]byte, error) {
+// KeyFormat is how a configured key was written down.
+type KeyFormat int
+
+const (
+	// KeyFormatBase64 and KeyFormatHex are 32 random bytes, encoded: what
+	// `openssl rand -base64 32` or `-hex 32` prints.
+	KeyFormatBase64 KeyFormat = iota + 1
+	KeyFormatHex
+	// KeyFormatRaw is a 32-character string used as the key bytes themselves.
+	// It is accepted, because refusing it would lock an installation out of
+	// every credential it already stores, but it is usually a passphrase
+	// somebody typed rather than 256 bits of randomness, and boot says so.
+	KeyFormatRaw
+)
+
+func (format KeyFormat) String() string {
+	switch format {
+	case KeyFormatBase64:
+		return "base64"
+	case KeyFormatHex:
+		return "hex"
+	case KeyFormatRaw:
+		return "raw"
+	}
+	return "unknown"
+}
+
+// ParseKey accepts the three encodings operators paste — base64, hex, or raw
+// 32 bytes — reports which one it found, and rejects everything else. The
+// order matters: a 44-character base64 key or a 64-character hex key is
+// never 32 characters long, so a raw string is only ever the last reading.
+func ParseKey(raw string) ([]byte, KeyFormat, error) {
 	if decoded, err := base64.StdEncoding.DecodeString(raw); err == nil && len(decoded) == KeySize {
-		return decoded, nil
+		return decoded, KeyFormatBase64, nil
 	}
 	if decoded, err := hex.DecodeString(raw); err == nil && len(decoded) == KeySize {
-		return decoded, nil
+		return decoded, KeyFormatHex, nil
 	}
 	if len(raw) == KeySize {
-		return []byte(raw), nil
+		return []byte(raw), KeyFormatRaw, nil
 	}
-	return nil, fmt.Errorf("must hold a %d-byte key encoded as base64, hex, or raw bytes", KeySize)
+	return nil, 0, fmt.Errorf("must hold a %d-byte key encoded as base64, hex, or raw bytes", KeySize)
 }

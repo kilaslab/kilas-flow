@@ -229,9 +229,41 @@ read from the config file.
 Optional at boot: when the named variable holds no key the server still
 starts and still runs workflows, but credential storage is disabled —
 reads and writes report unconfigured. Generate one before storing
-anything (openssl rand -base64 32); there is no re-encryption pass, so
-changing the key later makes every credential already stored
+anything (openssl rand -base64 32). The key is never used directly:
+payloads are sealed under an HKDF-derived key and bound to their tenant,
+id and type. To change it, follow the key rotation procedure
+(security.secondary_encryption_key_env and -reseal-credentials);
+replacing it outright makes every credential already stored
 undecryptable.
+
+### security.secondary_encryption_key_env
+
+- Type: `string`
+- Default: `'KILASFLOW_ENCRYPTION_KEY_SECONDARY'`
+- Environment: `KILASFLOW_SECURITY_SECONDARY_ENCRYPTION_KEY_ENV`
+- Required: no
+
+SecondaryEncryptionKeyEnv names the environment variable holding the
+previous master key during a key rotation. It opens payloads sealed
+under that key and never seals one: every write uses the primary key.
+It is read from the environment even when the primary key comes from a
+secrets manager. Leave the variable unset outside a rotation; once
+`kilasflow -reseal-credentials` reports no row left to reseal, unset it.
+
+### security.legacy_seals
+
+- Type: `string`
+- Default: `'open'`
+- Environment: `KILASFLOW_SECURITY_LEGACY_SEALS`
+- Required: no
+
+LegacySeals decides whether credential payloads sealed before payloads
+were versioned still open: "open" or "refuse". Such a payload is not
+bound to its row, so while it opens, a copy of it taken before
+`kilasflow -reseal-credentials` upgraded the stored rows — a dump, a
+backup, a replica — could be placed in another row and open there.
+Keep "open" until a reseal reports nothing left to reseal, then set
+"refuse" so no legacy payload opens again under any key.
 
 ## secrets
 

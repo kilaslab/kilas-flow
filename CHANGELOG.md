@@ -23,6 +23,23 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- Credential key rotation. `security.secondary_encryption_key_env` (default
+  `KILASFLOW_ENCRYPTION_KEY_SECONDARY`) holds the previous key during a
+  rotation: it opens what it sealed and seals nothing. `kilasflow
+  -reseal-credentials` seals every stored credential and captured trigger value
+  again under the primary key, across tenants, logs what it resealed, and exits
+  non-zero naming any row no configured key opens. `security.legacy_seals`
+  (`open` by default, or `refuse`) stops payloads stored before this release
+  opening at all, once a reseal reports none left. See [Key
+  rotation](/operate/key-rotation/).
+- A credential audit trail: every create, update, delete and test of a stored
+  credential, and every Google Connect, is recorded in `credential_events` with
+  who did it (the signed-in user, or the API key's name and id). The Google
+  callback is attributed to whoever started that Connect.
+- `GET /api/v1/credentials/{id}` lists the workflows whose draft or published
+  version attaches the credential (`usedBy`, left out for scoped API keys), and
+  the credentials page's delete dialog lists them before deleting.
+  `kilasflow credential delete` takes `--force`.
 - The CLI reference's examples run as written, and CI runs them. Every shell
   example in the [Agent CLI](/reference/cli/) page is executed against a booted
   server (`make smoke-cli-examples`), the ids a server issues are shell
@@ -124,6 +141,26 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   checkout — which is what makes them work from the distroless image. See
   [`kilasflow skills`](/reference/cli/#kilasflow-skills).
 
+- Two agent skills: `kilasflow-ai-agents` (wiring a chat model, memory, tools and
+  an output parser into an agent by AI connection kind; choosing a model node and
+  its credential, including a local OpenAI-compatible server; the retrieval
+  ingest graph) and `kilasflow-flow-patterns` (loops over batches, files as
+  binary references, and a parent calling a child workflow). Both are listed in
+  the router skill, and a test fails when a skill is missing from it.
+- Every skill ships `references/EXAMPLE.md`: a minimal, connected, validated
+  example, fenced as `json kilasflow-workflow` or `json kilasflow-request
+  <operation-id>`. `go test` and `make skills-check` compile each workflow
+  through `kilasflow workflow validate` and send each request body to its real
+  operation against an in-process server holding the shipped catalogue, so an
+  example that drifts from the product fails the build. The examples show the
+  stored shape of every complex property kind (assignment collection, resource
+  locator, resource mapper, fixed collection, key/value), and the n8n example
+  is exported and imported again by a test.
+- The skills checker refuses a skill that cites the product's own source tree
+  (`internal/`, `nodes/`, `cmd/`, `web/src/`, `sdk/`, ...) and a test resolves
+  every `(docs: <slug>)` and `skills show <skill> --reference <FILE>` citation,
+  so the bundle points an installed agent at pages it can read.
+
 - Pack-trigger lifecycle templates can send a structured parameter (a list or
   an object) as JSON through `{{ .ParameterJSON.<key> }}`, and a `set` request
   can `capture` values from its JSON answer (`capture: {key: "data.id"}`) for
@@ -165,6 +202,20 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Changed
 
+- Credentials and captured trigger values are sealed in a new, versioned
+  format (key id, HKDF-derived key, bound to their tenant, id and type). A
+  binary from before this release cannot open it: upgrade every replica
+  together, and downgrade only by restoring a backup. Run `kilasflow
+  -reseal-credentials` once after upgrading; see [Backups and
+  upgrades](/operate/upgrades/#upgrading).
+- `DELETE /api/v1/credentials/{id}` refuses a credential a workflow attaches,
+  answering `409` with one error per workflow, unless `?force=true` is sent.
+  `kilasflow credential delete` exits 5 on that refusal.
+- Activating a workflow whose enabled nodes attach a credential the workspace
+  does not have is refused with `422` (`config.invalid`), naming the node, the
+  credential type and the credential id, instead of activating and failing on
+  the first run. A run that reaches such a node fails with `credential "<id>"
+  no longer exists in this workspace: attach another credential to this node`.
 - `execution.default_timeout` defaults to 2 minutes instead of 1. An AI agent on
   a local or reasoning model routinely needs longer than a minute. Set
   `execution.default_timeout` (`KILASFLOW_EXECUTION_DEFAULT_TIMEOUT`) or a
@@ -556,6 +607,18 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   so the two cannot disagree. It names the loop even beside other blocking
   issues, where the compiler would only reach the loop once those were fixed.
 
+- The skills no longer tell an agent that shipped verbs do not exist: activation,
+  deactivation and delete, `workflow validate` and `duplicate`, `run --revision`,
+  the guarded credential, datastore and tenant writes, the `skills` verbs and
+  `--skills-used` are described as the binary has them. A drift test now reads
+  every sentence of a skill's not-shipped claims, and the whole bundle's prose,
+  for a shipped verb, flag or operation denied in any wording.
+
+- The message a SQLite install shows for the vector store, and the one a PostgreSQL
+  without the pgvector extension shows at start, name the vector store node alone.
+  They used to say the embeddings node needs pgvector too, which it never did: it
+  calls an OpenAI-compatible HTTP API and runs on either database.
+
 - n8n import: a Postgres PGVector Store saved with no `mode` imports in n8n's
   default mode, retrieve, and one saved with no table name reads n8n's default
   table, `n8n_vectors`, instead of `documents`. Template 16706 now imports with
@@ -567,6 +630,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Security
 
+- A stored credential's sealed payload opens only in the row it was written
+  for: copied into another tenant's credential, another credential, or a
+  credential of another type, it no longer opens. The credential master key no
+  longer seals anything directly or signs the Google Connect state; both use
+  keys derived from it with HKDF. A key given as a raw 32-character string is
+  accepted with a warning at boot.
+- A secret binding may only name a `KILASFLOW_EXTERNAL_SECRET_TOKEN_<NAME>`
+  variable for its manager token, checked when it is saved and when it is used,
+  and a Google token refresh or Connect no longer seals the resolved value of an
+  `ext://` client secret over its reference.
 - Database credentials verify the server certificate by default: an empty
   Postgres `sslMode` means `verify-full` and an empty MySQL `tls` means
   verified TLS. A server with a self-signed certificate now needs the opt-out

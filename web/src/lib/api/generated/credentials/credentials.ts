@@ -25,6 +25,7 @@ import type {
   CredentialBody,
   CredentialResource,
   CredentialTypeResource,
+  DeleteCredentialParams,
   ErrorModel,
   ListCredentialsParams,
   OauthStartResource,
@@ -491,21 +492,30 @@ export type deleteCredentialResponseError = (deleteCredentialResponseDefault) & 
 
 export type deleteCredentialResponse = (deleteCredentialResponseSuccess | deleteCredentialResponseError)
 
-export const getDeleteCredentialUrl = (id: string,) => {
+export const getDeleteCredentialUrl = (id: string,
+    params?: DeleteCredentialParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/credentials/${id}`
+  return stringifiedParams.length > 0 ? `/api/v1/credentials/${id}?${stringifiedParams}` : `/api/v1/credentials/${id}`
 }
 
 /**
- * Permanently removes a stored credential.
+ * Permanently removes a stored credential. A credential that a workflow's draft or published version attaches is not deleted: the request is refused with 409, one error per workflow, unless force=true is sent.
  * @summary Delete a credential
  */
-export const deleteCredential = async (id: string, options?: Parameters<typeof apiFetch>[1]): Promise<deleteCredentialResponse> => {
+export const deleteCredential = async (id: string,
+    params?: DeleteCredentialParams, options?: Parameters<typeof apiFetch>[1]): Promise<deleteCredentialResponse> => {
 
-  return apiFetch<deleteCredentialResponse>(getDeleteCredentialUrl(id),
+  return apiFetch<deleteCredentialResponse>(getDeleteCredentialUrl(id,params),
   {
     ...options,
     method: 'DELETE'
@@ -535,9 +545,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteCredential>>, DeleteCredentialMutationVariables> = (props) => {
-          const {id} = props ?? {};
+          const {id,params} = props ?? {};
 
-          return  deleteCredential(id,requestOptions)
+          return  deleteCredential(id,params,requestOptions)
         }
 
 
@@ -550,7 +560,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type DeleteCredentialMutationResult = NonNullable<Awaited<ReturnType<typeof deleteCredential>>>
 
     export type DeleteCredentialMutationError = ErrorType<ErrorModel>
-    export type DeleteCredentialMutationVariables = {id: string}
+    export type DeleteCredentialMutationVariables = {id: string;params?: DeleteCredentialParams}
 
     /**
  * @summary Delete a credential

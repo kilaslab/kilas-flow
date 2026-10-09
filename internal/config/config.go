@@ -265,13 +265,41 @@ type Security struct {
 	// Optional at boot: when the named variable holds no key the server still
 	// starts and still runs workflows, but credential storage is disabled —
 	// reads and writes report unconfigured. Generate one before storing
-	// anything (openssl rand -base64 32); there is no re-encryption pass, so
-	// changing the key later makes every credential already stored
+	// anything (openssl rand -base64 32). The key is never used directly:
+	// payloads are sealed under an HKDF-derived key and bound to their tenant,
+	// id and type. To change it, follow the key rotation procedure
+	// (security.secondary_encryption_key_env and -reseal-credentials);
+	// replacing it outright makes every credential already stored
 	// undecryptable.
 	// Env: KILASFLOW_SECURITY_ENCRYPTION_KEY_ENV.
 	// Default: "KILASFLOW_ENCRYPTION_KEY".
 	EncryptionKeyEnv string `koanf:"encryption_key_env"`
+	// SecondaryEncryptionKeyEnv names the environment variable holding the
+	// previous master key during a key rotation. It opens payloads sealed
+	// under that key and never seals one: every write uses the primary key.
+	// It is read from the environment even when the primary key comes from a
+	// secrets manager. Leave the variable unset outside a rotation; once
+	// `kilasflow -reseal-credentials` reports no row left to reseal, unset it.
+	// Env: KILASFLOW_SECURITY_SECONDARY_ENCRYPTION_KEY_ENV.
+	// Default: "KILASFLOW_ENCRYPTION_KEY_SECONDARY".
+	SecondaryEncryptionKeyEnv string `koanf:"secondary_encryption_key_env"`
+	// LegacySeals decides whether credential payloads sealed before payloads
+	// were versioned still open: "open" or "refuse". Such a payload is not
+	// bound to its row, so while it opens, a copy of it taken before
+	// `kilasflow -reseal-credentials` upgraded the stored rows — a dump, a
+	// backup, a replica — could be placed in another row and open there.
+	// Keep "open" until a reseal reports nothing left to reseal, then set
+	// "refuse" so no legacy payload opens again under any key.
+	// Env: KILASFLOW_SECURITY_LEGACY_SEALS.
+	// Default: "open".
+	LegacySeals string `koanf:"legacy_seals"`
 }
+
+// The two values security.legacy_seals takes.
+const (
+	LegacySealsOpen   = "open"
+	LegacySealsRefuse = "refuse"
+)
 
 // Google holds the optional platform Google Cloud OAuth client. Tenants can
 // still paste their own client id and secret on a credential; empty fields
@@ -942,7 +970,9 @@ func Default() Config {
 			MaxValueBytes:          1 << 20,
 		},
 		Security: Security{
-			EncryptionKeyEnv: "KILASFLOW_ENCRYPTION_KEY",
+			EncryptionKeyEnv:          "KILASFLOW_ENCRYPTION_KEY",
+			SecondaryEncryptionKeyEnv: "KILASFLOW_ENCRYPTION_KEY_SECONDARY",
+			LegacySeals:               LegacySealsOpen,
 		},
 		Google: Google{
 			ClientSecretEnv: "KILASFLOW_GOOGLE_CLIENT_SECRET",
@@ -1264,17 +1294,22 @@ const (
 	// container that configures both sets them in the server's environment too.
 	cliURLVar   = "KILASFLOW_URL"
 	cliTokenVar = "KILASFLOW_TOKEN"
+	// externalSecretTokenPrefix is where a secret binding's manager token
+	// lives; internal/credentials reads it as BindingTokenEnvPrefix, and a
+	// test keeps the two equal.
+	externalSecretTokenPrefix = "KILASFLOW_EXTERNAL_SECRET_TOKEN_"
 )
 
 // readDirectly reports whether the process reads an environment variable itself
 // instead of through the configuration tree: one a *_env setting names, a
-// workflow variable, or one of the CLI's two.
+// workflow variable, a secret binding's manager token, or one of the CLI's two.
 //
 // Only what is read is exempt. A variable a setting used to name and no longer
 // does — the setting was pointed elsewhere — is ignored now, and says so.
 func readDirectly(variable string, named map[string]bool) bool {
 	return named[variable] ||
 		strings.HasPrefix(variable, workflowEnvPrefix) ||
+		strings.HasPrefix(variable, externalSecretTokenPrefix) ||
 		variable == cliURLVar || variable == cliTokenVar
 }
 
@@ -1571,6 +1606,14 @@ func (c Config) Validate() error {
 	case "text", "json":
 	default:
 		return fmt.Errorf("log.format %q must be text or json", c.Log.Format)
+	}
+
+	// Refused rather than read as either value: a typo that kept legacy seals
+	// open would leave the exposure "refuse" was set to close.
+	switch c.Security.LegacySeals {
+	case LegacySealsOpen, LegacySealsRefuse:
+	default:
+		return fmt.Errorf("security.legacy_seals %q must be %s or %s", c.Security.LegacySeals, LegacySealsOpen, LegacySealsRefuse)
 	}
 
 	// Checked here so a typo names the key at boot rather than surfacing as

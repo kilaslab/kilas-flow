@@ -129,6 +129,13 @@ type OAuthState struct {
 	Expiry       int64  `json:"exp"`
 }
 
+// OAuthStateKeyInfo is the HKDF purpose the OAuth signing key is derived from
+// the credential master key under. The state signature and the PKCE verifier
+// are both made with that derived key, never with the master key itself, so
+// nothing the Connect flow puts in a URL or a cookie was computed with the key
+// that seals every stored secret.
+const OAuthStateKeyInfo = "kilasflow/oauth-state/v1"
+
 // OAuthStateTTL is how long a Connect popup has to come back.
 const OAuthStateTTL = 10 * time.Minute
 

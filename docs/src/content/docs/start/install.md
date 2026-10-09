@@ -105,8 +105,9 @@ repeats these at every start and why they are worth reading once.
 **The encryption key** is the one the quickstart sets, because without it
 credentials cannot be stored at all — creating one fails, and any node that
 needs one cannot run. It encrypts credentials at rest with AES-256-GCM.
-Changing it later makes everything already stored undecryptable; there is no
-re-encryption pass, so back it up somewhere other than `.env`.
+Replacing it outright makes everything already stored undecryptable, so back it
+up somewhere other than `.env`, and change it only through
+[key rotation](/operate/key-rotation/).
 
 **The embed signing key** only matters if you are embedding the editor in your
 own product. Until it is set, the embed endpoints report themselves as
