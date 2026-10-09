@@ -144,8 +144,9 @@ Tool over `ai_vectorStore`. A store with no table name reads n8n's default table
 `n8n_vectors`. The Vector Store Tool answers the agent's question with its own
 chat model from the documents it retrieves; at n8n version 1 its tool name is the
 `name` parameter, and from 1.1 it is the node's name. The editor canvas does not
-yet draw a store's mode-dependent ports (BUG-pc284d), although the imported edges
-are there and run.
+yet draw the ports a store's mode gives it: a retrieve store is drawn with a main
+input and output rather than its embedding input and vector-store output. The
+imported edges are there and run all the same.
 
 ### Code
 
