@@ -17,6 +17,7 @@
 	import { sectionForPath, sectionLabel } from '$lib/dashboard/nav-sections';
 	import { EDITOR_SIDEBAR_BREAKPOINT, isEditorRoute, sidebarCollapsed as collapsedFor } from '$lib/dashboard/sidebar';
 	import * as m from '$lib/paraglide/messages.js';
+	import { DEFAULT_THEME_COLOR, watchThemeColor } from '$lib/design-system/theme-color';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
 	let { children } = $props();
 	let principal = $state<PrincipalResource | null>(null);
@@ -43,6 +44,10 @@
 	const sidebarCollapsed = $derived(collapsedFor({ stored: storedCollapsed, editorRoute, compact: compact.current, editorChoice }));
 
 	const STORAGE_KEY = 'kilasflow.sidebar.collapsed';
+
+	// The browser chrome follows --kf-bg for whichever theme <html> carries.
+	let themeColor = $state(DEFAULT_THEME_COLOR);
+	onMount(() => watchThemeColor((hex) => (themeColor = hex)));
 
 	onMount(() => {
 		// Auth-off deployments never reach /auth/me: the health probe says the
@@ -76,7 +81,7 @@
 </script>
 
 <svelte:head>
-	<meta name="theme-color" content="#111a18" />
+	<meta name="theme-color" content={themeColor} />
 </svelte:head>
 
 <div

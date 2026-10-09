@@ -1315,7 +1315,7 @@
 			<span aria-hidden="true" class="mx-0.5 h-4 w-px shrink-0 bg-border"></span>
 		{/if}
 		{#if !locked}
-			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-primary px-2 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2" onclick={() => openPicker(false)}>
+			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-primary px-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-(--kf-accent-hover) active:bg-(--kf-accent-press) focus-visible:outline-2 focus-visible:outline-offset-2" onclick={() => openPicker(false)}>
 				<Plus aria-hidden="true" class="size-3.5" />{m.editor_add_step()}
 			</button>
 		{/if}
@@ -1344,7 +1344,7 @@
 			     would execute the saved draft, not the graph being looked at,
 			     which is the one thing a preview must never be mistaken for.
 			     Primary brand CTA — n8n-style prominence without orange. -->
-			<button type="button" data-testid="toolbar-run" class="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-primary px-2.5 text-xs font-semibold text-primary-foreground shadow-sm transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40" disabled={dirty || running || previewing} aria-describedby={dirty ? 'save-first-hint' : undefined} onclick={() => void run()}>
+			<button type="button" data-testid="toolbar-run" class="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-primary px-2.5 text-xs font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-(--kf-accent-hover) active:bg-(--kf-accent-press) focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-primary" disabled={dirty || running || previewing} aria-describedby={dirty ? 'save-first-hint' : undefined} onclick={() => void run()}>
 				<Play aria-hidden="true" class="size-3.5" />{running ? m.editor_running() : m.editor_execute()}
 			</button>
 		{/if}
