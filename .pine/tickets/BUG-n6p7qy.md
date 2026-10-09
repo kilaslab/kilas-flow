@@ -135,7 +135,7 @@ Related tickets: BUG-6jvcs5, BUG-tcqkad
 
 ## Progress
 
-Criterion 2 is done. For criterion 1, the backend half is done: the schema comes from the trigger's declared names and types. A per-field model/fixed choice also exists, but only through the Workflow inputs JSON: a key written there is fixed, and a key left out is the model's.
+(Superseded for criterion 1 by "Progress (2026-10-09)" below: the NDV switch and the mapper are built.) Criterion 2 is done. For criterion 1, the backend half is done: the schema comes from the trigger's declared names and types. A per-field model/fixed choice also exists, but only through the Workflow inputs JSON: a key written there is fixed, and a key left out is the model's.
 
 Left: the NDV toggle per field ("defined by model" / fixed) that the finding suggests. The editor already has a resource-mapper control (`web/src/lib/workflow-editor/resource-mapper.ts`, `node.PropertyResourceMapper`), and n8n's Workflow Tool v2 stores `workflowInputs` in that shape (`{mappingMode, value, schema}`). Building the toggle means three things:
 1. Turn `workflowInputs` into a resource mapper whose schema loader lists the selected workflow's trigger fields.
