@@ -122,6 +122,16 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   captured value (`secretCapture`); such a trigger refuses deliveries until the
   secret has been kept.
 
+- Vector Store Tool (`kilasflow.vectorStoreTool`): an AI Agent tool that
+  answers a question from a vector store. It takes a vector store in the new
+  **Retrieve (for Vector Store Tool)** mode on its Vector Store port and a chat
+  model of its own on its Chat Model port; when the agent calls it, it embeds the
+  question, takes the closest documents (Top K, default 4) and returns the
+  model's answer drawn from them. Both the internal vector store and the
+  Postgres PGVector Store have the retrieve mode: it takes only the embeddings
+  sub-node and has a single `ai_vectorStore` output. n8n's
+  `toolVectorStore` imports onto it and exports back.
+
 ### Changed
 
 - `execution.default_timeout` defaults to 2 minutes instead of 1. An AI agent on
@@ -514,6 +524,14 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   `workflow.invalid_topology`. The report uses the compiler's own cycle rule,
   so the two cannot disagree. It names the loop even beside other blocking
   issues, where the compiler would only reach the loop once those were fixed.
+
+- n8n import: a Postgres PGVector Store saved with no `mode` imports in n8n's
+  default mode, retrieve, and one saved with no table name reads n8n's default
+  table, `n8n_vectors`, instead of `documents`. Template 16706 now imports with
+  no edge held back: its store's `ai_embedding` edge and its `ai_vectorStore`
+  edge into the Vector Store Tool used to be dropped. A workflow imported in
+  that shape before this change saved the store with no mode, which this server
+  reads as an insert, so import it again.
 
 
 ### Security

@@ -129,11 +129,23 @@ an `&` inside `{{ $json.query }}` no longer truncates the request line.
 | `@n8n/n8n-nodes-langchain.lmChatOpenRouter` | `kilasflow.lmChatOpenRouter` |
 | `@n8n/n8n-nodes-langchain.memoryBufferWindow` | `kilasflow.memoryBuffer` |
 | `@n8n/n8n-nodes-langchain.toolHttpRequest` | `kilasflow.httpTool` |
+| `@n8n/n8n-nodes-langchain.vectorStorePGVector` | `kilasflow.vectorStorePGVector` (modes insert, load, retrieve, retrieve-as-tool) |
+| `@n8n/n8n-nodes-langchain.toolVectorStore` | `kilasflow.vectorStoreTool` |
 
-An AI cluster's typed edges — `ai_languageModel`, `ai_memory`, `ai_tool` — need
-no translation. n8n keys a connection by its source node, and for a typed
-channel the source is the sub-node and the target is the agent it configures,
-which is the direction KilasFlow already uses.
+An AI cluster's typed edges — `ai_languageModel`, `ai_memory`, `ai_tool`,
+`ai_embedding`, `ai_document`, `ai_vectorStore` — need no translation. n8n keys a
+connection by its source node, and for a typed channel the source is the sub-node
+and the target is the node it configures, which is the direction KilasFlow
+already uses.
+
+A PGVector store saved with no `mode` is in n8n's default mode, retrieve, and
+imports that way: it takes only its embeddings and hands itself to a Vector Store
+Tool over `ai_vectorStore`. A store with no table name reads n8n's default table,
+`n8n_vectors`. The Vector Store Tool answers the agent's question with its own
+chat model from the documents it retrieves; at n8n version 1 its tool name is the
+`name` parameter, and from 1.1 it is the node's name. The editor canvas does not
+yet draw a store's mode-dependent ports (BUG-pc284d), although the imported edges
+are there and run.
 
 ### Code
 
