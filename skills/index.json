@@ -292,6 +292,7 @@
         "No workflow update, import or restore verb: those operations are served and reached through the escape hatch"
       ],
       "references": [
+        "references/EXAMPLE.md",
         "references/MAPPING_LIMITS.md"
       ]
     },

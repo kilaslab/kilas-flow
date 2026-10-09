@@ -389,3 +389,139 @@ func TestNodeConfigurationExampleStoresEveryComplexKind(t *testing.T) {
 		}
 	}
 }
+
+// kilasflow-import-export promises a document that survives the trip to n8n and
+// back, and a promise about a translation is only worth what a round trip
+// proves: the example is saved, exported in the n8n format with nothing lossy,
+// imported again with nothing unsupported but the workflow-level settings n8n
+// adds, and the node types and names that
+// come back are the ones that went out.
+func TestImportExportExampleRoundTripsThroughN8n(t *testing.T) {
+	server := newExampleServer(t)
+
+	var examples []skills.Example
+	for _, skill := range embeddedBundle(t) {
+		if skill.Name != "kilasflow-import-export" {
+			continue
+		}
+		found, err := skills.Examples(skill)
+		if err != nil {
+			t.Fatalf("read the examples: %v", err)
+		}
+		examples = found
+	}
+
+	tested := 0
+	for _, example := range examples {
+		if example.Kind != skills.ExampleWorkflow {
+			continue
+		}
+		tested++
+
+		dir := t.TempDir()
+		original := filepath.Join(dir, "original.json")
+		if err := os.WriteFile(original, []byte(example.JSON), 0o600); err != nil {
+			t.Fatalf("write the example: %v", err)
+		}
+
+		var created struct {
+			Data struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		server.decode(t, &created, "workflow", "create", "--file", original)
+		if created.Data.ID == "" {
+			t.Fatal("`workflow create` answered no id")
+		}
+
+		var exported struct {
+			Data struct {
+				Workflow json.RawMessage `json:"workflow"`
+				Lossy    []any           `json:"lossy"`
+			} `json:"data"`
+		}
+		server.decode(t, &exported, "workflow", "export", created.Data.ID, "--format", "n8n")
+		if len(exported.Data.Lossy) != 0 {
+			t.Errorf("%s:%d: the n8n export is lossy: %v", example.Path, example.Line, exported.Data.Lossy)
+		}
+
+		body, err := json.Marshal(map[string]any{"format": "n8n", "workflow": exported.Data.Workflow})
+		if err != nil {
+			t.Fatalf("encode the import body: %v", err)
+		}
+		importBody := filepath.Join(dir, "import.json")
+		if err := os.WriteFile(importBody, body, 0o600); err != nil {
+			t.Fatalf("write the import body: %v", err)
+		}
+
+		var imported struct {
+			Data struct {
+				Unsupported []struct {
+					Severity string `json:"severity"`
+					Field    string `json:"field"`
+					NodeID   string `json:"nodeId"`
+					Reason   string `json:"reason"`
+				} `json:"unsupported"`
+				Workflow struct {
+					LatestVersion struct {
+						Document struct {
+							Nodes []struct {
+								Name string `json:"name"`
+								Type string `json:"type"`
+							} `json:"nodes"`
+						} `json:"document"`
+					} `json:"latestVersion"`
+				} `json:"workflow"`
+			} `json:"data"`
+		}
+		server.decode(t, &imported, "api", "import-workflow", "--body", "@"+importBody)
+		// The exporter writes n8n's workflow-level `settings.executionOrder`, which
+		// KilasFlow has no equivalent for, so the way back reports it once as a
+		// dropped `settings` field. Anything else the import reports is a node or
+		// a value that did not survive.
+		for _, issue := range imported.Data.Unsupported {
+			if issue.Severity == "dropped" && issue.Field == "settings" && issue.NodeID == "" {
+				continue
+			}
+			t.Errorf("%s:%d: the import reports %s at %q (node %q): %s",
+				example.Path, example.Line, issue.Severity, issue.Field, issue.NodeID, issue.Reason)
+		}
+
+		var want struct {
+			Nodes []struct {
+				Name string `json:"name"`
+				Type string `json:"type"`
+			} `json:"nodes"`
+		}
+		if err := json.Unmarshal([]byte(example.JSON), &want); err != nil {
+			t.Fatalf("decode the example: %v", err)
+		}
+		got := imported.Data.Workflow.LatestVersion.Document.Nodes
+		if len(got) != len(want.Nodes) {
+			t.Fatalf("%s:%d: %d nodes went out and %d came back", example.Path, example.Line, len(want.Nodes), len(got))
+		}
+		for index, node := range want.Nodes {
+			if got[index].Name != node.Name || got[index].Type != node.Type {
+				t.Errorf("%s:%d: node %d went out as %s %q and came back as %s %q",
+					example.Path, example.Line, index, node.Type, node.Name, got[index].Type, got[index].Name)
+			}
+		}
+	}
+	if tested == 0 {
+		t.Fatal("kilasflow-import-export carries no workflow example to round-trip")
+	}
+}
+
+// decode runs a verb and decodes its envelope, failing the test on a non-zero
+// exit.
+func (server exampleServer) decode(t *testing.T, into any, args ...string) {
+	t.Helper()
+
+	code, stdout, stderr := server.run(t, args...)
+	if code != cli.ExitOK {
+		t.Fatalf("`kilasflow %s` exited %d: %s%s", strings.Join(args, " "), code, strings.TrimSpace(stdout), strings.TrimSpace(stderr))
+	}
+	if err := json.Unmarshal([]byte(stdout), into); err != nil {
+		t.Fatalf("decode `kilasflow %s`: %v\n%s", strings.Join(args, " "), err, stdout)
+	}
+}

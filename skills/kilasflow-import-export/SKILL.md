@@ -34,6 +34,7 @@ kilasflow_not_shipped:
 
 ## Strong defaults
 
+- Start from the validated example: `kilasflow skills show kilasflow-import-export --reference EXAMPLE.md` is a document built only from mapped node types, with what changes at the border spelled out. A test exports it, requires `lossy[]` to be empty and imports it again.
 - Export with `kilasflow workflow export <workflowId> --format n8n` (`export-workflow`). `--format` is the verb's only flag — there is no `--out` — and the response carries `format`, the n8n `workflow` document, `lossy[]` and `supportedMappings[]` (internal/cli/verbs_workflow.go, internal/api/handlers/interop.go).
 - When you need the file itself, take it through the escape hatch's own `--out`: `kilasflow api export-workflow --path id=<workflowId> --query format=n8n --out workflow.json` writes the body 0600, and `--out -` streams it (internal/cli/verbs_api.go). Any format other than `n8n` is a 422.
 - Import with `kilasflow api import-workflow --body @workflow.json` (`import-workflow`, `POST /workflows/import`). The body is `{"format": "n8n", "workflow": <the n8n JSON>, "name": "<optional override>"}`; the answer is 201 with a `Location`, the saved workflow, `unsupported[]` and `webhooks[]` — the public addresses its triggers will answer on once activated (internal/api/handlers/interop.go).
@@ -98,4 +99,5 @@ what are you doing?
 
 | File | Read when |
 | --- | --- |
+| EXAMPLE.md | you want a document known to export with nothing lossy, and what changes at the n8n border: the expression marker, node type names, connections and credentials |
 | MAPPING_LIMITS.md | you are reading a lossy or unsupported report, or you need what an n8n construct maps to and what it costs |
