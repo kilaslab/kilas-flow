@@ -76,13 +76,15 @@ FEAT-gcq50s (todo, in-memory store listed), NG-13, NG-11
 # Acceptance Criteria
 - [ ] The vector store has a `retrieve` mode with an `ai_vectorStore` output
 - [ ] `toolVectorStore` imports and runs over it
-- [ ] An in-memory store (per tenant and execution) and Qdrant over REST
-- [ ] The token splitter
-- [ ] RAG works on the default SQLite install: an in-process or SQLite-backed vector store per tenant, so insert and retrieve-as-tool run without PostgreSQL
+- ~~An in-memory store (per tenant and execution) and Qdrant over REST~~ moved (2026-10-09): the in-memory store to FEAT-v8md2e, scoped per tenant and memoryKey rather than per execution, and Qdrant to FEAT-bvyc0b
+- ~~The token splitter~~ moved (2026-10-09) to FEAT-gcq50s, onto its existing "Additional text splitters (character, token)" criterion
+- ~~RAG works on the default SQLite install: an in-process or SQLite-backed vector store per tenant, so insert and retrieve-as-tool run without PostgreSQL~~ moved (2026-10-09) to FEAT-v8md2e
 
 # Implementation Plan
 
-Add a `retrieve` mode to the vector store (an `ai_vectorStore` output) and a `kilasflow.toolVectorStore` over it. Add an in-memory store per tenant and execution, then Qdrant over REST.
+Add a `retrieve` mode to the vector store (an `ai_vectorStore` output) and a Vector Store Tool node (`kilasflow.vectorStoreTool`) over it, and map n8n's `toolVectorStore` onto that node.
+
+Split on 2026-10-09: the in-memory/SQLite store went to FEAT-v8md2e, Qdrant to FEAT-bvyc0b and the token splitter to FEAT-gcq50s. This ticket closes on criteria 1 and 2. The canvas not drawing mode-dependent store ports is BUG-pc284d.
 
 # Notes
 
