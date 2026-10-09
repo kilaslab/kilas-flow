@@ -1465,7 +1465,7 @@
 	<div class="relative flex min-h-0 flex-1 flex-col lg:grid" style={showInspector || selectedUncatalogued ? 'grid-template-columns: minmax(0,1fr) 20rem' : 'grid-template-columns: minmax(0,1fr)'}>
 		<!-- tabindex makes this a place focus can land after a node is deleted; -1
 		     keeps it out of the tab sequence. -->
-		<div bind:this={canvasRegion} tabindex="-1" class="relative min-h-0 flex-1 overflow-hidden outline-none" data-testid="workflow-canvas">
+		<div bind:this={canvasRegion} tabindex="-1" class="focus-region relative min-h-0 flex-1 overflow-hidden" data-testid="workflow-canvas">
 			<!-- Selection must not reorder the canvas: a sticky note selected with
 			     the default elevation jumped above the steps it groups and hid
 			     them, and its own ring is visible without the lift. -->
@@ -1530,7 +1530,7 @@
 									id="node-rename-input"
 									bind:this={renameInput}
 									bind:value={renameValue}
-									class="h-7 w-full rounded-md border border-primary bg-background px-2 text-xs shadow-md outline-none"
+									class="h-7 w-full rounded-md border border-primary bg-background px-2 text-xs shadow-md"
 									onkeydown={(event) => {
 										if (event.key === 'Enter') {
 											event.preventDefault();
@@ -1618,7 +1618,7 @@
 		</div>
 
 		{#if showInspector && selectedNode && selectedDefinition}
-			<aside bind:this={inspectorRegion} tabindex="-1" class="hidden min-h-0 border-l border-border outline-none lg:block">
+			<aside bind:this={inspectorRegion} tabindex="-1" class="focus-region hidden min-h-0 border-l border-border lg:block">
 				<div class="flex h-full min-h-0 flex-col">
 					<div class="min-h-0 flex-1">
 						<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} workflowID={document.id} savedNode={selectedSavedNode} {active} upstreamNodeNames={selectedUpstreamNames} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} />
@@ -1630,7 +1630,7 @@
 			</aside>
 		{/if}
 		{#if selectedUncatalogued && selectedNode}
-			<aside tabindex="-1" class="hidden min-h-0 overflow-y-auto border-l border-border bg-card outline-none lg:block">
+			<aside tabindex="-1" class="focus-region hidden min-h-0 overflow-y-auto border-l border-border bg-card lg:block">
 				<section aria-label={m.editor_node_details_aria({ name: selectedNode.name })} class="flex h-full min-h-0 flex-col p-3">
 					<p class="flex items-center gap-1.5 text-xs font-semibold">
 						<TriangleAlert aria-hidden="true" class="size-3.5 shrink-0 text-destructive" />
@@ -1654,7 +1654,7 @@
 		{/if}
 
 		{#if narrow.current && propertyPanelOpen && selectedNode && selectedDefinition}
-			<div bind:this={propertyDialog} class="absolute inset-x-2 bottom-2 z-30 max-h-[min(28rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={m.editor_node_properties_aria({ name: selectedNode.name })} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
+			<div bind:this={propertyDialog} class="focus-region absolute inset-x-2 bottom-2 z-30 max-h-[min(28rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={m.editor_node_properties_aria({ name: selectedNode.name })} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
 				<div class="flex justify-end border-b border-border px-1.5 py-1"><button bind:this={propertyCloseButton} type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted" aria-label={m.editor_close_properties_aria()} onclick={closePropertyPanel}><X aria-hidden="true" class="size-3.5" /></button></div>
 				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} readOnly={locked} workflowID={document.id} savedNode={selectedSavedNode} {active} upstreamNodeNames={selectedUpstreamNames} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} />
 				{#if selectedResolvedVersion !== null && selectedResolvedVersion !== selectedNode.typeVersion}
@@ -1663,7 +1663,7 @@
 			</div>
 		{/if}
 		{#if narrow.current && propertyPanelOpen && selectedUncatalogued && selectedNode}
-			<div class="absolute inset-x-2 bottom-2 z-30 max-h-[min(28rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={m.editor_node_details_aria({ name: selectedNode.name })} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
+			<div class="focus-region absolute inset-x-2 bottom-2 z-30 max-h-[min(28rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={m.editor_node_details_aria({ name: selectedNode.name })} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
 				<div class="flex justify-end border-b border-border px-1.5 py-1"><button type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted" aria-label={m.editor_close_details_aria()} onclick={closePropertyPanel}><X aria-hidden="true" class="size-3.5" /></button></div>
 				<section aria-label={m.editor_node_details_aria({ name: selectedNode.name })} class="max-h-[min(24rem,calc(100%-3rem))] overflow-y-auto p-3">
 					<p class="flex items-center gap-1.5 text-xs font-semibold">

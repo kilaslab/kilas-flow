@@ -144,15 +144,15 @@
 		     assistive technology because Escape and the close button already
 		     serve that path. -->
 		<button type="button" tabindex="-1" aria-hidden="true" class="absolute inset-0 cursor-default" onclick={close}></button>
-		<div bind:this={dialogElement} class="relative flex max-h-[min(30rem,calc(100dvh-2rem))] w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="node-picker-title" tabindex="-1" onkeydown={handleKeydown}>
-			<div class="flex items-center gap-2 border-b border-border px-2.5 py-2">
+		<div bind:this={dialogElement} class="focus-region relative flex max-h-[min(30rem,calc(100dvh-2rem))] w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="node-picker-title" tabindex="-1" onkeydown={handleKeydown}>
+			<div class="focus-within-ring flex items-center gap-2 border-b border-border px-2.5 py-2">
 				<Search aria-hidden="true" class="size-4 shrink-0 text-muted-foreground" />
 				<label class="sr-only" for="node-picker-search">{m.canvas_picker_search_label()}</label>
 				<input
 					id="node-picker-search"
 					bind:this={searchInput}
 					bind:value={query}
-					class="h-6 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+					class="focus-delegate h-6 min-w-0 flex-1 bg-transparent text-sm placeholder:text-muted-foreground"
 					placeholder={triggersOnly ? m.canvas_picker_search_triggers() : providesKind ? m.canvas_picker_search_kind({ kind: providesKind }) : m.canvas_picker_search_placeholder()}
 					role="combobox"
 					aria-expanded="true"

@@ -15,6 +15,7 @@
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test": "pnpm i18n:compile && vitest run",
     "test:watch": "vitest",
+		"lint:focus": "vitest run src/lib/design-system/focus-lint.test.ts",
     "generate:api": "node scripts/generate-api-client.mjs",
     "generate:api:check": "node scripts/check-api-client.mjs"
   },

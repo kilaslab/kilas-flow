@@ -97,6 +97,46 @@
 	--color-cat-utility: var(--kf-cat-utility);
 }
 
+/* ---------- focus: one ring (BUG-ywbvfa) ----------
+   Every control gets the same ring from the global :focus-visible rule in
+   @layer base below: 2px solid --kf-focus, 2px off the edge, drawn instantly.
+   Markup almost never needs a focus class. These four cover the exceptions,
+   and web/src/lib/design-system/focus-lint.ts fails a build that removes an
+   outline any other way. */
+
+/* A dense list or grid row: the ring is drawn just inside the row instead of
+   2px out, so neighbours and an overflow-hidden list card cannot clip it
+   (at -1px the card clipped the outer pixel and left a 1px ring). */
+@utility focus-inset {
+	outline-offset: calc(var(--kf-focus-width) * -1);
+}
+
+/* A programmatic focus target (tabindex="-1": canvas region, inspector,
+   dialog and menu content): ring only on :focus-visible, drawn inset. */
+@utility focus-region {
+	outline: none;
+
+	&:focus-visible {
+		outline: var(--kf-focus-width) solid var(--kf-focus);
+		outline-offset: calc(var(--kf-focus-width) * -1);
+	}
+}
+
+/* A composite field (search box with an icon, chat composer, code editor):
+   the container draws the ring while the control inside has focus... */
+@utility focus-within-ring {
+	&:has(:focus-visible) {
+		outline: var(--kf-focus-width) solid var(--kf-focus);
+		outline-offset: var(--kf-focus-offset);
+	}
+}
+
+/* ...and that inner control draws none of its own. Only valid inside a
+   focus-within-ring container (the lint checks the ancestor). */
+@utility focus-delegate {
+	outline: none;
+}
+
 /* ================================================================
    KilasFlow tokens v2: "Kunyit", turmeric on cool slate.
    Dark-first: the bare :root palette is the dark theme, so a document with no
@@ -458,6 +498,10 @@
 	--kf-edge-selected: var(--kf-selection);
 	--kf-edge-running: var(--kf-info);
 	--kf-edge-error: var(--kf-danger);
+	/* A control's border under the pointer: a quarter of the way from the
+	   resting control border toward the text colour, so it reads in both
+	   themes (darker in light, lighter in dark). */
+	--kf-border-hover: color-mix(in oklch, var(--kf-border-strong), var(--kf-fg) 25%);
 	--kf-port: var(--kf-border-strong);
 	--kf-port-fill: var(--kf-raised);
 	--kf-port-hover: var(--kf-selection);
@@ -577,6 +621,29 @@
 	background: var(--kf-text-selection);
 }
 
+/* Canvas node states, drawn on the tile rather than on Svelte Flow's wrapper
+   (which also holds the label under the tile). Unlayered on purpose: they
+   must beat the tile's utility classes, and Svelte Flow's own unlayered
+   `.svelte-flow__node.selectable:focus-visible { outline: none }`, restated
+   here so the wrapper stays ringless if the library ever drops it. Edges
+   show focus by stroke (Svelte Flow's selected-stroke rule), not outline. */
+.svelte-flow__node.selectable:focus-visible {
+	outline: none;
+}
+
+.svelte-flow__node:focus-visible .kf-node-tile {
+	outline: var(--kf-focus-width) solid var(--kf-focus);
+	outline-offset: var(--kf-focus-offset);
+}
+
+.svelte-flow__node:hover .kf-node-tile {
+	background-color: var(--kf-hover);
+}
+
+.svelte-flow__node:active .kf-node-tile {
+	background-color: var(--kf-pressed);
+}
+
 /* The canvas draws its own ports: the library's 6px dot is stripped back to an
    empty 8px box and refilled per connection kind — a circle for `main`, a
    diamond for the `ai_*` attachment kinds. Shape carries the kind, so a wrong
@@ -689,6 +756,13 @@
 @layer base {
 	* {
 		@apply border-border outline-ring;
+	}
+
+	/* The one focus ring (BUG-ywbvfa). Author styles beat the browser's
+	   `outline: auto`, so hand-rolled fields get it too. Never transitioned. */
+	:focus-visible {
+		outline: var(--kf-focus-width) solid var(--kf-focus);
+		outline-offset: var(--kf-focus-offset);
 	}
 
 	html {

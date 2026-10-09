@@ -167,7 +167,7 @@
 			{/if}
 		</header>
 
-		<main id="dashboard-content" tabindex="-1" class:min-h-0={editorRoute} class={editorRoute ? 'h-[calc(100dvh-2.75rem)] overflow-hidden lg:h-dvh' : 'min-w-0 px-4 py-5 sm:px-5'}>
+		<main id="dashboard-content" tabindex="-1" class:min-h-0={editorRoute} class={editorRoute ? 'focus-region h-[calc(100dvh-2.75rem)] overflow-hidden lg:h-dvh' : 'focus-region min-w-0 px-4 py-5 sm:px-5'}>
 			{@render children()}
 		</main>
 	</section>
