@@ -2,8 +2,11 @@ package loadoptions
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 )
 
@@ -61,4 +64,80 @@ type WorkflowOption struct {
 	ID     string
 	Name   string
 	Active bool
+}
+
+// WorkflowInputsDependency is the parameter key the inputs loader reads: the
+// resource locator holding the workflow a tool or call targets.
+const WorkflowInputsDependency = "workflowId"
+
+// WorkflowInputField is one field a called workflow's trigger declares it
+// expects, in the trigger's own vocabulary (string, number, boolean, array,
+// object or any).
+type WorkflowInputField struct {
+	Name string
+	Type string
+}
+
+// WorkflowInputs answers a resource mapper's column list from the fields a
+// target workflow's trigger declares.
+//
+// Read from the workflow's *active* revision, which is the one a call runs, so
+// the editor never lists a field the model would not be offered at run time.
+// declared is false for a target that takes whatever the caller sends: it has
+// no fields to list, and the reason says so rather than leaving an empty form
+// to be read as a fault.
+//
+// Like Workflows, it constructs no outbound request, so the tenancy check and
+// the embed bound have to be here: an embed session is bound to its own
+// workflow, and a mapper that described any other would be a way to read the
+// shape of every workflow in the tenant.
+func WorkflowInputs(describe func(ctx context.Context, tenant repository.TenantScope, workflowID string) (fields []WorkflowInputField, declared bool, err error)) SchemaLoader {
+	return func(ctx context.Context, scope Scope) (property.MapperSchema, error) {
+		if describe == nil {
+			return property.MapperSchema{}, fmt.Errorf("workflow storage is not available on this server")
+		}
+		if scope.TenantID == "" {
+			return property.MapperSchema{}, fmt.Errorf("a workflow's inputs need a tenant")
+		}
+		reference := strings.TrimSpace(scope.Dependencies[WorkflowInputsDependency])
+		if reference == "" {
+			return property.MapperSchema{}, fmt.Errorf("choose a workflow first")
+		}
+		if scope.WorkflowID != "" && reference != scope.WorkflowID {
+			return property.MapperSchema{Reason: "this embedded editor can only see its own workflow"}, nil
+		}
+		found, declared, err := describe(ctx, repository.TenantScope{ID: scope.TenantID}, reference)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return property.MapperSchema{Reason: "this workflow is not active or no longer exists, so its inputs cannot be read"}, nil
+			}
+			return property.MapperSchema{}, fmt.Errorf("the workflow's inputs could not be read")
+		}
+		if !declared {
+			return property.MapperSchema{Reason: "this workflow accepts whatever its caller sends and declares no input fields"}, nil
+		}
+		if len(found) == 0 {
+			return property.MapperSchema{Reason: "this workflow's trigger declares no input fields"}, nil
+		}
+		fields := make([]property.MapperField, 0, len(found))
+		for _, field := range found {
+			fields = append(fields, property.MapperField{
+				ID: field.Name, DisplayName: field.Name, Type: workflowInputMapperType(field.Type),
+			})
+		}
+		return property.MapperSchema{Fields: fields}, nil
+	}
+}
+
+// workflowInputMapperType renders a trigger's field type in the mapper's own
+// vocabulary. An input declared as any (or anything unrecognised) has no type
+// of its own, so its column is untyped rather than forced to text.
+func workflowInputMapperType(declared string) string {
+	normalised := strings.ToLower(strings.TrimSpace(declared))
+	switch normalised {
+	case "string", "number", "boolean", "array", "object":
+		return normalised
+	default:
+		return ""
+	}
 }

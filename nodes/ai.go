@@ -2879,7 +2879,7 @@ type workflowTool struct {
 	parameters  map[string]any
 	// declared is what the target's trigger says it expects, read when the
 	// agent run built its tools.
-	declared  []workflowInput
+	declared  []WorkflowInput
 	nodeName  string
 	agentNode string
 	request   engine.Request
@@ -2932,7 +2932,7 @@ func (tool *workflowTool) Definition() ai.ToolDefinition {
 }
 
 // modelDefinedInputs is the declared inputs the author left for the model.
-func (tool *workflowTool) modelDefinedInputs() []workflowInput {
+func (tool *workflowTool) modelDefinedInputs() []WorkflowInput {
 	raw, present := tool.parameters["workflowInputs"]
 	if !present || raw == nil {
 		return tool.declared
@@ -2941,7 +2941,7 @@ func (tool *workflowTool) modelDefinedInputs() []workflowInput {
 	if !literal || expression.IsExpression(raw) {
 		return nil
 	}
-	inputs := make([]workflowInput, 0, len(tool.declared))
+	inputs := make([]WorkflowInput, 0, len(tool.declared))
 	for _, input := range tool.declared {
 		if _, isFixed := fixed[input.Name]; !isFixed {
 			inputs = append(inputs, input)
@@ -2953,7 +2953,7 @@ func (tool *workflowTool) modelDefinedInputs() []workflowInput {
 // workflowInputSchema is the JSON Schema property for one declared input. An
 // input declared as any accepts anything, so it carries no type; an array
 // names its items, which OpenAI refuses a function schema without.
-func workflowInputSchema(input workflowInput) map[string]any {
+func workflowInputSchema(input WorkflowInput) map[string]any {
 	switch input.Type {
 	case "array":
 		return map[string]any{"type": "array", "items": map[string]any{}}
@@ -3321,12 +3321,6 @@ func (executor *AgentExecutor) workflowToolFrom(ctx context.Context, ir workflow
 	}, nil
 }
 
-// workflowInput is one field a called workflow's trigger declares it expects.
-type workflowInput struct {
-	Name string
-	Type string
-}
-
 // declaredWorkflowInputs reads the fields a Workflow Tool's target declares,
 // once per agent run, so the model is offered them by name and type.
 //
@@ -3335,7 +3329,7 @@ type workflowInput struct {
 // target that cannot be read — not active, deleted, a runtime that cannot
 // describe one — declares nothing here, and the call itself reports why it
 // could not be run.
-func declaredWorkflowInputs(ctx context.Context, request engine.Request, raw any) []workflowInput {
+func declaredWorkflowInputs(ctx context.Context, request engine.Request, raw any) []WorkflowInput {
 	describer, ok := request.Workflows.(engine.WorkflowDescriber)
 	if !ok || expression.IsExpression(raw) {
 		return nil
@@ -3346,20 +3340,10 @@ func declaredWorkflowInputs(ctx context.Context, request engine.Request, raw any
 		return nil
 	}
 	trigger, found, err := describer.SubworkflowTrigger(ctx, request.Execution, target)
-	if err != nil || !found || textParameter(trigger.Parameters, "inputSource") != "fields" {
+	if err != nil || !found {
 		return nil
 	}
-	declaration, _ := trigger.Parameters["workflowInputs"].(map[string]any)
-	values, _ := declaration["values"].([]any)
-	inputs := make([]workflowInput, 0, len(values))
-	for _, value := range values {
-		field, _ := value.(map[string]any)
-		name := strings.TrimSpace(textValue(field["name"], ""))
-		if name == "" {
-			continue
-		}
-		inputs = append(inputs, workflowInput{Name: name, Type: textValue(field["type"], "string")})
-	}
+	inputs, _ := DeclaredWorkflowInputs(trigger)
 	return inputs
 }
 
