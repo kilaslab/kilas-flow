@@ -530,3 +530,117 @@ func (server exampleServer) decode(t *testing.T, into any, args ...string) {
 		t.Fatalf("decode `kilasflow %s`: %v\n%s", strings.Join(args, " "), err, stdout)
 	}
 }
+
+// The compiler does not refuse a parameter or a setting a node never declared:
+// a key the executor does not read is stored and ignored, and a typo such as
+// "metod" validates. An example is the shape an agent copies, so every key it
+// writes has to be one the node's own definition declares.
+//
+// allowedUndeclaredParameters are the keys a node reads without listing them,
+// each with the reason; a key is added here only when the node's code reads it.
+var allowedUndeclaredParameters = map[string]map[string]string{
+	"kilasflow.embeddings": {
+		"mode": "read when the node computes its ports: cluster removes the main input, though the definition does not list it",
+	},
+}
+
+// compilerSettings are the settings the compiler accepts beyond the shared
+// block a definition lists: the error mode that adds a node's error port.
+var compilerSettings = map[string]bool{"onError": true}
+
+// undeclaredKeys returns one message per parameter or setting a workflow
+// document writes that its node's definition does not declare.
+func undeclaredKeys(t *testing.T, registry *node.Registry, document string) []string {
+	t.Helper()
+
+	var decoded struct {
+		Nodes []workflow.Node `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(document), &decoded); err != nil {
+		t.Fatalf("decode the document: %v", err)
+	}
+
+	var problems []string
+	for _, instance := range decoded.Nodes {
+		definition, found := registry.Resolve(instance.Type, instance.TypeVersion)
+		if !found {
+			problems = append(problems, fmt.Sprintf("node %q: the catalogue has no %s", instance.ID, instance.Type))
+
+			continue
+		}
+
+		declared := map[string]bool{}
+		for _, parameter := range definition.Parameters {
+			declared[parameter.Key] = true
+		}
+		shared := map[string]bool{}
+		for _, setting := range definition.SharedSettings {
+			shared[setting.Key] = true
+		}
+
+		for key := range instance.Parameters {
+			if declared[key] {
+				continue
+			}
+			if _, allowed := allowedUndeclaredParameters[instance.Type][key]; allowed {
+				continue
+			}
+			problems = append(problems, fmt.Sprintf("node %q (%s) sets the parameter %q, which its definition does not declare", instance.ID, instance.Type, key))
+		}
+		for key := range instance.Settings {
+			if shared[key] || compilerSettings[key] {
+				continue
+			}
+			problems = append(problems, fmt.Sprintf("node %q (%s) sets the setting %q, which is not a shared setting", instance.ID, instance.Type, key))
+		}
+	}
+	sort.Strings(problems)
+
+	return problems
+}
+
+func TestEverySkillExampleWritesOnlyDeclaredKeys(t *testing.T) {
+	registry := node.NewRegistry()
+	if err := shippedcatalogue.Register(registry); err != nil {
+		t.Fatalf("register the shipped catalogue: %v", err)
+	}
+
+	checked := 0
+	for name, examples := range bundleExamples(t) {
+		for _, example := range examples {
+			if example.Kind != skills.ExampleWorkflow {
+				continue
+			}
+			checked++
+			for _, problem := range undeclaredKeys(t, registry, example.JSON) {
+				t.Errorf("%s: %s:%d: %s", name, example.Path, example.Line, problem)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no workflow example was checked")
+	}
+}
+
+func TestTheKeyCheckRefusesATypo(t *testing.T) {
+	registry := node.NewRegistry()
+	if err := shippedcatalogue.Register(registry); err != nil {
+		t.Fatalf("register the shipped catalogue: %v", err)
+	}
+
+	const document = `{"nodes": [
+  {"id": "call", "name": "Call", "type": "kilasflow.httpRequest", "typeVersion": 1,
+   "parameters": {"metod": "GET", "url": "https://example.com", "method": "GET"},
+   "settings": {"retryOnFail": true, "retryOnFial": true}},
+  {"id": "vec", "name": "Embed", "type": "kilasflow.embeddings", "typeVersion": 1,
+   "parameters": {"mode": "cluster", "model": "m"}}
+]}`
+
+	problems := strings.Join(undeclaredKeys(t, registry, document), "\n")
+	if !strings.Contains(problems, `"metod"`) || !strings.Contains(problems, `"retryOnFial"`) {
+		t.Fatalf("the check did not name both typos:\n%s", problems)
+	}
+	if strings.Contains(problems, `"mode"`) || strings.Contains(problems, `"url"`) || strings.Contains(problems, `"retryOnFail"`) {
+		t.Fatalf("the check refused a declared or allow-listed key:\n%s", problems)
+	}
+}
