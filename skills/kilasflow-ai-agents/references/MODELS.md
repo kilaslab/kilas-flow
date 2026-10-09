@@ -1,8 +1,12 @@
 # Choosing a model node and its credential
 
-Three node types supply a chat model to an agent or a chain. All of them have one
+Several node types supply a chat model to an agent or a chain: every node whose
+output has the kind `ai_languageModel`. List them with
+`kilasflow node list --json | jq -r '.data.items[] | select(.category != "Imported" and any(.outputs[]?; .kind == "ai_languageModel")) | .type'`,
+and read the live definition of each with `kilasflow node describe <type>`. Each has one
 output, `model`, of kind `ai_languageModel`, and none has an input. They differ
-in where the model lives and which credential reaches it.
+in where the model lives and which credential reaches it. The table lists the ones
+that were shipped when this was written.
 
 | Node | Model lives at | Credential type | Model is stored as |
 | --- | --- | --- | --- |

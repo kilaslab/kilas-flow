@@ -35,7 +35,7 @@ with the detail `workflow draft is invalid` and the first fault as its message.
 | `workflow node "X" type is required` | the node has no type | set the registered type, e.g. `kilasflow.set` |
 | `workflow node "X" credential "c" reference is required` | a credential entry is an empty string | reference a credential by id, or remove the entry |
 | `workflow connection id is required` / `connection id "X" is duplicated` | connection keys must be present and unique | give every edge its own key |
-| `workflow connection "X" kind is invalid` | the kind is not one of the thirteen channels | use one of `main`, `ai_agent`, `ai_chain`, `ai_document`, `ai_embedding`, `ai_languageModel`, `ai_memory`, `ai_outputParser`, `ai_retriever`, `ai_reranker`, `ai_textSplitter`, `ai_tool` or `ai_vectorStore`, spelled lowerCamel after the prefix |
+| `workflow connection "X" kind is invalid` | the kind is not one of the connection channels | use a channel from the list in NAMING_AND_DESCRIPTIONS.md ("Connection channel names"): `main`, or an `ai_` prefix with lowerCamel after it |
 | `workflow connection "X" source and target endpoints are required` | an endpoint is missing `nodeId` or `port` | name both ends |
 
 Draft validation deliberately accepts a work-in-progress graph: it is the

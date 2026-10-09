@@ -24,9 +24,10 @@ Nested content is in typed fields rather than overloaded onto `options`; a field
 whose meaning depended on its sibling kind would produce a JSON schema nothing
 can express.
 
-## The fifteen kinds
+## The kinds
 
-The set is closed, and an unknown kind is refused at registration.
+The set is closed, and an unknown kind is refused at registration. A test pins
+this table to the kinds the product accepts.
 
 | Kind | Stores |
 | --- | --- |

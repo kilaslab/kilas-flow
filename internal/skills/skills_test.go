@@ -56,8 +56,10 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/config"
 	"github.com/kilaslab/kilas-flow/internal/expression"
 	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/shippedcatalogue"
 	"github.com/kilaslab/kilas-flow/internal/skills"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // binaryName is the word a fenced command starts with.
@@ -938,5 +940,93 @@ kilasflow_not_shipped: []
 	}
 	if strings.Contains(problems, "concepts/execution-model") {
 		t.Errorf("the resolver refused a docs page that exists:\n%s", problems)
+	}
+}
+
+// Two reference files enumerate a closed set of the product's: the property
+// kinds and the connection channels. A count in prose goes stale silently, so
+// the files state no count and these tests pin each list to the product's own.
+func referenceOf(t *testing.T, skillName, reference string) string {
+	t.Helper()
+
+	for _, skill := range embeddedBundle(t) {
+		if skill.Name != skillName {
+			continue
+		}
+		if text, found := skill.ReferenceText["references/"+reference]; found {
+			return text
+		}
+	}
+	t.Fatalf("%s has no %s", skillName, reference)
+
+	return ""
+}
+
+// sectionBetween returns the text from a heading to the next second-level one.
+func sectionBetween(t *testing.T, document, heading string) string {
+	t.Helper()
+
+	_, after, found := strings.Cut(document, "\n"+heading+"\n")
+	if !found {
+		t.Fatalf("the document has no %q section", heading)
+	}
+	if next := strings.Index(after, "\n## "); next >= 0 {
+		after = after[:next]
+	}
+
+	return after
+}
+
+func TestPropertyKindsReferenceListsEveryKindTheProductHas(t *testing.T) {
+	section := sectionBetween(t, referenceOf(t, "kilasflow-node-configuration", "PROPERTY_KINDS.md"), "## The kinds")
+
+	listed := map[string]bool{}
+	row := regexp.MustCompile("(?m)^\\| `([A-Za-z]+)` \\|")
+	for _, match := range row.FindAllStringSubmatch(section, -1) {
+		listed[match[1]] = true
+	}
+
+	known := map[string]bool{}
+	for _, kind := range property.KnownKinds() {
+		known[string(kind)] = true
+	}
+
+	for kind := range known {
+		if !listed[kind] {
+			t.Errorf("PROPERTY_KINDS.md does not list the kind %q the product accepts", kind)
+		}
+	}
+	for kind := range listed {
+		if !known[kind] {
+			t.Errorf("PROPERTY_KINDS.md lists %q, which is not a kind the product accepts", kind)
+		}
+	}
+}
+
+func TestConnectionChannelsReferenceListsEveryChannelTheProductHas(t *testing.T) {
+	section := sectionBetween(t, referenceOf(t, "kilasflow-workflow-lifecycle", "NAMING_AND_DESCRIPTIONS.md"), "## Connection channel names")
+	// The first paragraph lists the channels; a later one names a spelling that
+	// is not a channel.
+	paragraph, _, _ := strings.Cut(strings.TrimSpace(section), "\n\n")
+
+	listed := map[string]bool{}
+	for _, match := range regexp.MustCompile("`((?:main)|(?:ai_[A-Za-z]+))`").FindAllStringSubmatch(paragraph, -1) {
+		listed[match[1]] = true
+	}
+
+	known := map[string]bool{}
+	for _, kind := range workflow.ConnectionKinds() {
+		known[string(kind)] = true
+	}
+
+	for kind := range known {
+		if !listed[kind] {
+			t.Errorf("NAMING_AND_DESCRIPTIONS.md does not list the channel %q the product has", kind)
+		}
+	}
+	for kind := range listed {
+		if !known[kind] {
+			t.Errorf("NAMING_AND_DESCRIPTIONS.md lists %q, which is not a connection channel", kind)
+		}
 	}
 }

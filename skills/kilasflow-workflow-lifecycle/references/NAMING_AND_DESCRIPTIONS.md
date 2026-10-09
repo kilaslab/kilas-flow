@@ -59,8 +59,8 @@ around.
 
 ## Connection channel names
 
-The `kind` of a connection is one of thirteen channels, spelled exactly as the
-document spells them: `main`, then `ai_` followed by lowerCamel —
+The `kind` of a connection is one of the channels, spelled exactly as the
+document spells them (a test pins this list to the product's): `main`, then `ai_` followed by lowerCamel —
 `ai_agent`, `ai_chain`, `ai_document`, `ai_embedding`, `ai_languageModel`,
 `ai_memory`, `ai_outputParser`, `ai_retriever`, `ai_reranker`,
 `ai_textSplitter`, `ai_tool`, `ai_vectorStore`.
