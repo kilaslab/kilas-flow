@@ -329,14 +329,18 @@ test('a tool whose inputs are one expression keeps it until the author confirms 
 	await panel.getByRole('button', { name: 'Use per-field inputs' }).click();
 	const confirmation = panel.getByRole('alertdialog');
 	await expect(confirmation).toBeVisible();
+	await expect(confirmation.getByRole('button', { name: 'Cancel' })).toBeFocused();
 	await confirmation.getByRole('button', { name: 'Cancel' }).click();
 	await expect(confirmation).toHaveCount(0);
 	await expect(panel.getByText('These inputs are written as one expression')).toBeVisible();
 	await panel.getByRole('button', { name: 'Use per-field inputs' }).click();
 	await expect(confirmation).toBeVisible();
-	await confirmation.focus();
+	// The question takes focus on its safe answer, so Escape cancels at once,
+	// and focus goes back to the button that asked.
+	await expect(confirmation.getByRole('button', { name: 'Cancel' })).toBeFocused();
 	await page.keyboard.press('Escape');
 	await expect(confirmation).toHaveCount(0);
+	await expect(panel.getByRole('button', { name: 'Use per-field inputs' })).toBeFocused();
 
 	await panel.getByRole('button', { name: 'Use per-field inputs' }).click();
 	await confirmation.getByRole('button', { name: 'Delete the expression' }).click();
@@ -369,4 +373,34 @@ test('the static inputs a plain-JSON tool kept stay visible and removable when t
 	const stored = await storedInputs(server.baseURL, parentId);
 	expect(Object.keys(stored.value)).toEqual(['note']);
 	expect(stored.value.note).toEqual({ mode: 'expression', value: '{{ $json.note }}' });
+});
+
+// The edit rules of the model switch reach the Workflow Tool's columns, and
+// only theirs: braces typed into a fixed column make an expression, and a
+// number cleared is empty. A table's mapper keeps its own (literal text, zero).
+test('braces typed into a fixed column make an expression, and a cleared number column is empty, not zero', async ({ page, server }) => {
+	const { parentId } = await seedToolWith(
+		server.baseURL,
+		[
+			{ name: 'unit', type: 'string' },
+			{ name: 'roundTo', type: 'number' }
+		],
+		{ mappingMode: 'defineBelow', value: {}, matchingColumns: [] }
+	);
+	const panel = await openToolPanel(page, server.baseURL, parentId);
+
+	await panel.getByRole('switch', { name: 'unit: defined by the model' }).click();
+	await panel.getByRole('textbox', { name: 'unit', exact: true }).fill('{{ $json.unit }}');
+	await panel.getByRole('switch', { name: 'roundTo: defined by the model' }).click();
+	const roundTo = panel.getByRole('textbox', { name: 'roundTo', exact: true });
+	await roundTo.fill('5');
+	await roundTo.fill('');
+
+	const save = page.getByRole('button', { name: 'Save', exact: true });
+	await expect(save).toBeEnabled();
+	await save.click();
+	await expect(save).toBeDisabled();
+	const stored = await storedInputs(server.baseURL, parentId);
+	expect(stored.value.unit).toEqual({ mode: 'expression', value: '{{ $json.unit }}' });
+	expect(stored.value.roundTo).toBe('');
 });
