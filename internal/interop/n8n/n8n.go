@@ -533,7 +533,11 @@ var mappings = []mapping{
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.vectorStorePGVector", kilasType: VectorStorePGVectorNodeType, kilasVersion: workflow.V(1),
-		exportTypeVersion: 1.3, toKilas: packToKilas, toN8N: packToN8N,
+		exportTypeVersion: 1.3, toKilas: vectorStorePGVectorToKilas, toN8N: packToN8N,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.toolVectorStore", kilasType: VectorStoreToolNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: toolVectorStoreToKilas, toN8N: toolVectorStoreToN8N,
 	},
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.documentDefaultDataLoader", kilasType: DocumentLoaderNodeType, kilasVersion: workflow.V(1),
