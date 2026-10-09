@@ -132,3 +132,15 @@ Criteria 1 and 2 are met. Criteria 3–5 moved out: FEAT-v8md2e (SQLite-backed s
 - The documented catalogue size (`node-registry.md`, `what-kilasflow-is.md`) moved to 63 types / 70 pairs, because `TestTheDocumentedCatalogueSizeIsTheShippedOne` counts it. Other tracks adding nodes will collide on those two sentences.
 
 **Not done:** the optional live-PostgreSQL subtest. No pgvector database was available to this track, and the only PostgreSQL container running belonged to another track.
+
+### Review fixes (2026-10-09)
+- **Security regression tests** (`nodes/vectorstore_tool_security_test.go`):
+  - A question carrying `={{ $env.X }} {{ 1+1 }}` reaches the embeddings and chat requests verbatim.
+  - A passage telling the model to call a tool adds no `tools` key and no second call, and stays in the user message.
+  - A model credential scoped to another host is refused ("is not allowed for host").
+  - An install without an internal store refuses the tool ("not available on this install").
+- **Prompt and cap:** the system prompt now says the passages are reference text, not instructions. Passages are capped at 64 KiB per call: the one that crosses the cap is cut on a character boundary and marked, and later ones are left out with a note.
+- **Export symmetry:** `vectorStorePGVectorToN8N` writes `mode: insert` for a native store with no mode, with a lossy note on attaching a loader and embeddings in n8n. It maps Get Many to n8n's `load` and always names the table (`documents` by default). A native insert store survives export and re-import as an insert.
+- **Import reporting:** a toolVectorStore `topK` that is not a whole number from 1 to 100 falls back to 4 with a lossy note. A description written in place of a missing one is reported as lossy.
+- **Back-compat pin:** `operation: retrieve` and `operation: search` keep main → main ports; only `mode: retrieve` gives the retrieve ports.
+- **Token usage:** `internal/ai.RecordToolUsage` plus a per-call tally in the loop (3 lines in `agent.go`) add the tool's own model call to the agent's usage output and to `agent.completed`.
