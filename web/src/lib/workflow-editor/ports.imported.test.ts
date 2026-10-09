@@ -115,7 +115,8 @@ describe('imported n8n RAG workflows on the canvas', () => {
 
 		// The wire that no longer fits is neither pruned nor redrawn: the document
 		// keeps it, the canvas has no vectorStore handle for it, and the compiler
-		// names it on save (unknown_port) — what a Switch that lost a rule does.
+		// names it when the workflow is activated or run (a save does not compile)
+		// — what a Switch that lost a rule does.
 		expect(after.connections).toContainEqual(wire);
 		const edge = next.edges.find((candidate) => candidate.id === wire.id)!;
 		expect(edge.sourceHandle).toBe('vectorStore');

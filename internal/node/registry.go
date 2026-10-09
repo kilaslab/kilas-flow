@@ -115,6 +115,12 @@ type Definition struct {
 	// The static Inputs and Outputs stay, and are what the editor shows for an
 	// unconfigured node and what the catalogue advertises — a picker cannot ask
 	// a node that does not exist yet how many ports it will have.
+	//
+	// The function is not serialised, so the web editor mirrors it by hand in
+	// web/src/lib/workflow-editor/ports.ts (resolvedPorts). A new PortsFor must
+	// be mirrored there too: nodes/ports_for_golden_test.go fails for a node
+	// that resolves ports in Go and has no case in the editor, and its golden
+	// is what the web suite holds the mirror to.
 	PortsFor func(parameters map[string]any, version workflow.TypeVersion) (inputs, outputs []workflow.Port) `json:"-"`
 	// RequiredInputsFor names the item inputs, by port name, that must have
 	// received items before a node with several of them runs; see

@@ -191,7 +191,8 @@ describe('canConnect through the ports a mode resolves', () => {
 	it('refuses to re-draw a wire the new mode has no handle for', () => {
 		// The wire is not pruned when the mode changes: the document keeps the
 		// connection, the canvas has no handle to draw it on, and the compiler names
-		// it on save (unknown_port). A Switch that lost a rule takes the same path.
+		// it when the workflow is activated or run (a save does not compile). A
+		// Switch that lost a rule takes the same path.
 		const retrieveAsTool = canvas('retrieve-as-tool');
 
 		expect(resolvedPorts(retrieveAsTool[0], storeDefinition).outputs.map((port) => port.name)).toEqual(['tool']);
