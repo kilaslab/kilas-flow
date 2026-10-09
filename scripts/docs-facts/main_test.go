@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -166,15 +167,94 @@ func TestFactsCoverTheCredentialTypeCountOfTheCredentialsPage(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		section, ok := builtInCatalogueSection(string(raw))
+		if !ok {
+			t.Fatalf("%s has no \"## The built-in catalogue\" section", path)
+		}
+		var ids []string
 		for _, credentialType := range credentials.Default().List() {
-			if !strings.Contains(string(raw), "| `"+credentialType.ID+"`") {
-				t.Errorf("%s has no table row for the credential type %s", path, credentialType.ID)
-			}
+			ids = append(ids, credentialType.ID)
+		}
+		for _, id := range missingTableRows(section, ids) {
+			t.Errorf("%s has no row for the credential type %s in its built-in catalogue table", path, id)
 		}
 
 		return
 	}
 	t.Fatalf("facts() has no section for %s", path)
+}
+
+// builtInCatalogueSection is the text of the credentials page between the
+// "The built-in catalogue" heading and the next second-level heading. The page
+// names the same ids in other tables (the default allowed domains, say), and a
+// row there must not stand in for the catalogue's own.
+func builtInCatalogueSection(page string) (string, bool) {
+	const heading = "\n## The built-in catalogue\n"
+	start := strings.Index(page, heading)
+	if start < 0 {
+		return "", false
+	}
+	section := page[start+len(heading):]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+
+	return section, true
+}
+
+// missingTableRows lists the ids that have no row of their own: a line that
+// opens with the id in backticks as the first cell.
+func missingTableRows(section string, ids []string) []string {
+	var missing []string
+	for _, id := range ids {
+		if !regexp.MustCompile("(?m)^\\| `" + regexp.QuoteMeta(id) + "` \\|").MatchString(section) {
+			missing = append(missing, id)
+		}
+	}
+
+	return missing
+}
+
+// Planted: a removed row has to be reported, and a row in some other table of
+// the page, or an id that only appears inside a longer first cell, is not the
+// catalogue's row.
+func TestMissingTableRowsSeesARemovedRowAndIgnoresOtherTables(t *testing.T) {
+	root, err := splice.RepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "src", "content", "docs", "concepts", "credentials.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	section, ok := builtInCatalogueSection(string(raw))
+	if !ok {
+		t.Fatal("the credentials page has no built-in catalogue section")
+	}
+	if missing := missingTableRows(section, []string{"httpBearerAuth", "openAiApi"}); len(missing) != 0 {
+		t.Fatalf("missingTableRows() = %v on the committed section, want none", missing)
+	}
+
+	var kept []string
+	for _, line := range strings.Split(section, "\n") {
+		if !strings.HasPrefix(line, "| `openAiApi` |") {
+			kept = append(kept, line)
+		}
+	}
+	if missing := missingTableRows(strings.Join(kept, "\n"), []string{"openAiApi", "httpBearerAuth"}); len(missing) != 1 || missing[0] != "openAiApi" {
+		t.Fatalf("missingTableRows() = %v after removing the openAiApi row, want [openAiApi]", missing)
+	}
+
+	// The default-domains table names openAiApi too, but it is outside the section.
+	if !strings.Contains(string(raw), "| `openAiApi` | the host of") {
+		t.Fatal("the page no longer has a second table naming openAiApi; the planted case has lost its point")
+	}
+	if strings.Contains(section, "the host of the credential's own") {
+		t.Fatal("builtInCatalogueSection() reaches into the default-domains table")
+	}
+	if missing := missingTableRows("| `googleDriveOAuth2Api`, `gmailOAuth2` | the Google API and sign-in hosts |", []string{"gmailOAuth2"}); len(missing) != 1 {
+		t.Fatalf("a shared first cell satisfied the check: %v", missing)
+	}
 }
 
 // The committed pages are the real subject: this is the same comparison

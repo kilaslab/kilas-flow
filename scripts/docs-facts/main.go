@@ -110,8 +110,9 @@ func facts() ([]fact, error) {
 		{name: "credential types", path: "docs/src/content/docs/concepts/credentials.md",
 			begin: credentialsBegin, end: credentialsEnd,
 			body: func() (string, error) {
-				return fmt.Sprintf("%d credential types ship, all declared in one place, and node packs do not add "+
-					"credential types today:", len(credentials.Default().List())), nil
+				// The count only. What the page says about where the types are
+				// declared, and that packs add none, is its own claim to keep.
+				return fmt.Sprintf("%d credential types ship.", len(credentials.Default().List())), nil
 			}},
 	}, nil
 }

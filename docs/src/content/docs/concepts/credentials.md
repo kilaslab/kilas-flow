@@ -364,8 +364,11 @@ every tenant can open every file the server can.
 ## The built-in catalogue
 
 <!-- generated:credential-types -->
-15 credential types ship, all declared in one place, and node packs do not add credential types today:
+15 credential types ship.
 <!-- /generated:credential-types -->
+
+They are all declared in one place, and node packs do not add credential types
+today:
 
 | ID | For |
 | --- | --- |
