@@ -90,6 +90,59 @@ func TestGoogleSheetsColumnsReadTheHeaderRowTheNodeNames(t *testing.T) {
 	}
 }
 
+// A header row that is an expression cannot be known while editing, and falling
+// back to row 1 would list the wrong columns without saying so.
+func TestGoogleSheetsColumnsSayWhenTheHeaderRowIsAnExpression(t *testing.T) {
+	expression := `{"mode":"expression","value":"{{ $json.row }}"}`
+	for name, options := range map[string]string{
+		"the header row of a write":  `{"locationDefine":{"values":{"headerRow":` + expression + `}}}`,
+		"the trigger's header row":   `{"dataLocationOnSheet":{"values":{"rangeDefinition":"specifyRange","headerRow":` + expression + `}}}`,
+		"the trigger's A1 range":     `{"dataLocationOnSheet":{"values":{"rangeDefinition":"specifyRangeA1","range":` + expression + `}}}`,
+		"an expression elsewhere ok": ``,
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := newSheetsStub(t)
+			resolver := sheetsResolver(t, grantedPolicy(t, stub.server.URL))
+
+			schema, err := resolver.LoadSchema(context.Background(), columnsLoader(), columnsScope("Sheet1", options), "cred_sheets", sheetsCredential("127.0.0.1"))
+			if err != nil {
+				t.Fatalf("LoadSchema() error = %v", err)
+			}
+			if options == "" {
+				if len(schema.Fields) == 0 {
+					t.Fatalf("no options setting gave %#v, want the columns of row 1", schema)
+				}
+				return
+			}
+			if len(schema.Fields) != 0 || !strings.Contains(schema.Reason, "expression") {
+				t.Fatalf("schema = %#v, want no columns and a reason that says the header row depends on an expression", schema)
+			}
+			if calls := stub.calls(); len(calls) != 0 {
+				t.Errorf("calls = %v, want none made for a row that cannot be known", calls)
+			}
+		})
+	}
+}
+
+// The columns mapper says which case an empty first row is, from what the
+// loader returns, not from the wording of its reason.
+func TestGoogleSheetsColumnsOfAnEmptyHeaderRowOfferTheAutomaticMapping(t *testing.T) {
+	stub := newSheetsStub(t)
+	stub.header = nil
+	resolver := sheetsResolver(t, grantedPolicy(t, stub.server.URL))
+	schema, err := resolver.LoadSchema(context.Background(), columnsLoader(), columnsScope("Sheet1", ""), "cred_sheets", sheetsCredential("127.0.0.1"))
+	if err != nil || len(schema.Fields) != 0 || !strings.Contains(schema.Reason, "Map the columns automatically") {
+		t.Fatalf("LoadSchema(empty header) = %#v, %v, want a reason that offers the automatic mapping", schema, err)
+	}
+
+	// A refusal from Google is not an empty row, and does not offer it.
+	stub.status = http.StatusForbidden
+	refused, err := resolver.LoadSchema(context.Background(), columnsLoader(), columnsScope("Sheet1", ""), "cred_sheets", sheetsCredential("127.0.0.1"))
+	if err != nil || strings.Contains(refused.Reason, "Map the columns automatically") || refused.Reason == "" {
+		t.Fatalf("LoadSchema(refused) = %#v, %v, want Google's refusal and no suggestion to map automatically", refused, err)
+	}
+}
+
 // The tab arrives as the locator's value alone, which for a link is the whole
 // link: its #gid= names the tab.
 func TestGoogleSheetsColumnsFindTheTabByTheGidInALink(t *testing.T) {

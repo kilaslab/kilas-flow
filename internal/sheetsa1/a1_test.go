@@ -52,3 +52,28 @@ func TestStartRowIsTheRowARangeBeginsOn(t *testing.T) {
 		}
 	}
 }
+
+// HeaderRange is the one row of a range that holds the column names, across the
+// columns the range covers.
+func TestHeaderRangeIsTheHeaderRowAcrossTheRangesColumns(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		region string
+		row    int
+		want   string
+	}{
+		{"", 1, "1:1"},
+		{"", 3, "3:3"},
+		{"A:F", 1, "A1:F1"},
+		{"B2:D", 2, "B2:D2"},
+		{"C4:E7", 4, "C4:E4"},
+		{"$B$2:$D$9", 2, "B2:D2"},
+		{"C4", 4, "C4:C4"},
+		{"3:8", 3, "3:3"},
+		{"AA2:AC9", 2, "AA2:AC2"},
+	} {
+		if got := sheetsa1.HeaderRange(test.region, test.row); got != test.want {
+			t.Errorf("HeaderRange(%q, %d) = %q, want %q", test.region, test.row, got, test.want)
+		}
+	}
+}

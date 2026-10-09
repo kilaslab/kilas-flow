@@ -1,6 +1,7 @@
 package nodes_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -66,6 +67,52 @@ func TestSheetsTriggerStartsAgainWhenItsConfigurationChanges(t *testing.T) {
 				t.Fatalf("a change after the new baseline emitted nothing")
 			}
 		})
+	}
+}
+
+// Update events read the values as numbers and dates as serial numbers, so a
+// heading that is a date arrives as 45123. Columns are named by the text the
+// sheet shows, as the picker lists them, so the trigger reads the heading row
+// as shown.
+func TestSheetsTriggerNamesColumnsByTheHeadingAsTheSheetShowsIt(t *testing.T) {
+	setup := newTriggerSetup(t)
+	tab := setup.fake.addTab(0, "Sheet1", 20,
+		sheetsRow(fakeFormatted{Raw: 45123.0, Shown: "2023-07-01"}, "name"),
+		sheetsRow(5.0, "Ann"),
+	)
+	node := triggerNode("anyUpdate", map[string]any{"columnsToWatch": []any{"2023-07-01"}})
+	setup.poll(t, node)
+
+	tab.rows[1][0] = 6.0
+	got := setup.poll(t, node)
+	want := []map[string]any{{"row_number": 2.0, "change_type": "updated", "2023-07-01": 6.0, "name": "Ann"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("rows = %v, want %v: keyed by the heading the sheet shows, not its serial number", got, want)
+	}
+
+	// Plain text headings need no second read of the header row.
+	plain := newTriggerSetup(t)
+	plain.people()
+	plain.poll(t, triggerNode("anyUpdate", nil))
+	if reads := plain.fake.callsMatching(`GET .*/values/`); len(reads) != 1 {
+		t.Errorf("value reads on a tick = %d, want 1 when the headings are text", len(reads))
+	}
+}
+
+// The tab is identified by its gid; a rename is not a different tab, and must
+// not throw the fingerprints away.
+func TestSheetsTriggerKeepsItsBaselineWhenTheTabIsRenamed(t *testing.T) {
+	setup := newTriggerSetup(t)
+	tab := setup.people()
+	node := triggerNode("anyUpdate", nil)
+	node.Parameters["sheetName"] = sheetsLocator("list", float64(0))
+	setup.poll(t, node)
+
+	tab.title = "Orders"
+	tab.rows[1][1] = "closed"
+	got := setup.poll(t, node)
+	if len(got) != 1 || got[0]["row_number"] != 2.0 {
+		t.Fatalf("rows = %v, want the one changed row: a renamed tab keeps its baseline", got)
 	}
 }
 

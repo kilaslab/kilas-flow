@@ -36,6 +36,32 @@ func Region(text string) string {
 	return text[cut+1:]
 }
 
+// HeaderRange is the single row of a range that holds the column names, across
+// the columns the range covers: B2:D with its header on row 2 is B2:D2. A range
+// that names no columns is the whole row.
+func HeaderRange(region string, row int) string {
+	letters := func(cell string) string {
+		cell = strings.TrimLeft(strings.TrimSpace(cell), "$")
+		end := 0
+		for end < len(cell) && (cell[end] >= 'A' && cell[end] <= 'Z' || cell[end] >= 'a' && cell[end] <= 'z') {
+			end++
+		}
+		return strings.ToUpper(cell[:end])
+	}
+	first, last, _ := strings.Cut(region, ":")
+	startColumn, endColumn := letters(first), letters(last)
+	if endColumn == "" {
+		endColumn = startColumn
+	}
+	if startColumn == "" {
+		startColumn = endColumn
+	}
+	if startColumn == "" {
+		return strconv.Itoa(row) + ":" + strconv.Itoa(row)
+	}
+	return startColumn + strconv.Itoa(row) + ":" + endColumn + strconv.Itoa(row)
+}
+
 // StartRow is the row a range begins on: 4 for C4:E7, 1 for A:F or anything it
 // cannot read. The text is the cell part, without a sheet name.
 func StartRow(region string) int {

@@ -46,6 +46,13 @@ type fakeTab struct {
 	colCount int
 }
 
+// fakeFormatted is a cell with a number format, such as a date: unformatted it
+// is the serial number the sheet holds, formatted it is the text it shows.
+type fakeFormatted struct {
+	Raw   any
+	Shown string
+}
+
 type fakeCall struct {
 	Method string
 	Path   string // decoded
@@ -372,6 +379,14 @@ func (fake *fakeSheets) window(parsed a1Range, render string) [][]any {
 		}
 		for colNumber := startCol; colNumber <= endCol; colNumber++ {
 			cell := row[colNumber-1]
+			if styled, ok := cell.(fakeFormatted); ok {
+				// A cell with a number format: the sheet shows one thing and holds another.
+				if render == "FORMATTED_VALUE" {
+					cell = styled.Shown
+				} else {
+					cell = styled.Raw
+				}
+			}
 			if render == "FORMATTED_VALUE" {
 				switch typed := cell.(type) {
 				case float64:

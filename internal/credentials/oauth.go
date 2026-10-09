@@ -76,7 +76,13 @@ func googleOAuthType(id, display, description, scope string) Type {
 // call is answered under the metadata scope every Sheets type asks for.
 func googleSheetsOAuthType(id, display, description, scope string) Type {
 	credentialType := googleOAuthType(id, display, description, scope)
-	credentialType.Test = &TestRequest{URL: "https://www.googleapis.com/drive/v3/about?fields=user"}
+	credentialType.Test = &TestRequest{
+		URL: "https://www.googleapis.com/drive/v3/about?fields=user",
+		// An operator may drop the Drive scope (the url and id pickers need none),
+		// and Google then refuses this call to a token that is itself good.
+		ForbiddenNote: "the token is valid, but the Drive scope this check uses is not granted. " +
+			"The spreadsheet list will be empty; choose a spreadsheet By URL or By ID.",
+	}
 	return credentialType
 }
 

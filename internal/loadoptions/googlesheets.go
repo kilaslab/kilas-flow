@@ -293,11 +293,12 @@ func headingText(cell any) string {
 // headerRowOf reads which row the column names are on from the node's Options
 // collection, sent as JSON: Data Location on Sheet for the writing operations,
 // and for the trigger its rows or the start of its A1 range. Anything it cannot
-// read is row 1.
-func headerRowOf(optionsJSON string) int {
+// read is row 1. A setting that is an expression cannot be known while editing,
+// and is answered with a reason rather than guessed as row 1.
+func headerRowOf(optionsJSON string) (row int, reason string) {
 	var options map[string]any
 	if strings.TrimSpace(optionsJSON) == "" || json.Unmarshal([]byte(optionsJSON), &options) != nil {
-		return 1
+		return 1, ""
 	}
 	group := func(name string) map[string]any {
 		holder, _ := options[name].(map[string]any)
@@ -314,66 +315,91 @@ func headerRowOf(optionsJSON string) int {
 		}
 		return 0
 	}
-	if row := whole(group("locationDefine")["headerRow"]); row >= 1 {
-		return row
+	const expressionReason = "the header row depends on an expression, which cannot be resolved while editing."
+	locate := group("locationDefine")
+	if property.ExpressionMarker(locate["headerRow"]) {
+		return 1, expressionReason
+	}
+	if row := whole(locate["headerRow"]); row >= 1 {
+		return row, ""
 	}
 	location := group("dataLocationOnSheet")
 	switch location["rangeDefinition"] {
 	case "specifyRange":
+		if property.ExpressionMarker(location["headerRow"]) {
+			return 1, expressionReason
+		}
 		if row := whole(location["headerRow"]); row >= 1 {
-			return row
+			return row, ""
 		}
 	case "specifyRangeA1":
+		if property.ExpressionMarker(location["range"]) {
+			return 1, expressionReason
+		}
 		if requested, _ := location["range"].(string); strings.TrimSpace(requested) != "" {
-			return sheetsa1.StartRow(sheetsa1.Region(requested))
+			return sheetsa1.StartRow(sheetsa1.Region(requested)), ""
 		}
 	}
-	return 1
+	return 1, ""
+}
+
+// headings is what reading a tab's header row came to. Reason, when set, says
+// what to choose first or what Google refused; RowEmpty says the row was read
+// and holds no names, which is a different thing from not having been able to
+// read it.
+type headings struct {
+	Names    []string
+	Reason   string
+	RowEmpty bool
 }
 
 // sheetHeadings reads the column names of the tab a scope names. A reason, with
-// no error, says what to choose first or what Google refused.
-func sheetHeadings(ctx context.Context, policy safehttp.Policy, scope Scope) (names []string, reason string, err error) {
+// no error, is something the user can act on.
+func sheetHeadings(ctx context.Context, policy safehttp.Policy, scope Scope) (headings, error) {
 	documentID, err := spreadsheetIDOf(scope.Dependencies[googleSheetsDocumentDependency])
 	if err != nil {
-		return nil, "", err
+		return headings{}, err
 	}
 	sheet := strings.TrimSpace(scope.Dependencies[googleSheetsSheetDependency])
 	if documentID == "" || sheet == "" {
-		return nil, "choose a document and a sheet first", nil
+		return headings{Reason: "choose a document and a sheet first"}, nil
+	}
+	row, reason := headerRowOf(scope.Dependencies[googleSheetsOptionsDependency])
+	if reason != "" {
+		return headings{Reason: reason}, nil
 	}
 	tabs, reason, err := spreadsheetTabs(ctx, policy, scope, documentID)
 	if err != nil {
-		return nil, "", err
+		return headings{}, err
 	}
 	if reason != "" {
-		return nil, reason, nil
+		return headings{Reason: reason}, nil
 	}
 	tab, found := tabNamed(tabs, sheet)
 	if !found {
-		return nil, "that sheet is not in the document", nil
+		return headings{Reason: "that sheet is not in the document"}, nil
 	}
 
-	row := headerRowOf(scope.Dependencies[googleSheetsOptionsDependency])
 	query := url.Values{"valueRenderOption": []string{"FORMATTED_VALUE"}}
 	rangeA1 := sheetsa1.Quote(tab.title) + "!" + strconv.Itoa(row) + ":" + strconv.Itoa(row)
 	body, status, err := googleGet(ctx, policy, scope,
 		googleSheetsBase+"/spreadsheets/"+url.PathEscape(documentID)+"/values/"+url.PathEscape(rangeA1), query)
 	if err != nil {
-		return nil, "", err
+		return headings{}, err
 	}
 	if refusedForScope(status) {
-		return nil, "Google did not let this credential read that sheet.", nil
+		return headings{Reason: "Google did not let this credential read that sheet."}, nil
 	}
 	if status >= 400 {
-		return nil, "", fmt.Errorf("Google answered %d", status)
+		return headings{}, fmt.Errorf("Google answered %d", status)
 	}
 	var payload struct {
 		Values [][]any `json:"values"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, "", fmt.Errorf("Google's header row was not JSON")
+		return headings{}, fmt.Errorf("Google's header row was not JSON")
 	}
+	result := headings{}
 	seen := map[string]bool{}
 	if len(payload.Values) > 0 {
 		for _, cell := range payload.Values[0] {
@@ -382,34 +408,34 @@ func sheetHeadings(ctx context.Context, policy safehttp.Policy, scope Scope) (na
 				continue
 			}
 			seen[name] = true
-			names = append(names, name)
+			result.Names = append(result.Names, name)
 		}
 	}
-	if len(names) == 0 {
-		reason = fmt.Sprintf("row %d of this sheet is empty, so there are no column names yet.", row)
+	if len(result.Names) == 0 {
+		result.RowEmpty = true
+		result.Reason = fmt.Sprintf("row %d of this sheet is empty, so there are no column names yet.", row)
 	}
-	return names, reason, nil
+	return result, nil
 }
 
 // googleSheetsColumns answers the columns mapper: the header row becomes the
 // column list, and Update also offers the row number as a column to match on.
 func googleSheetsColumns(policy safehttp.Policy) SchemaLoader {
 	return func(ctx context.Context, scope Scope) (property.MapperSchema, error) {
-		names, reason, err := sheetHeadings(ctx, policy, scope)
+		read, err := sheetHeadings(ctx, policy, scope)
 		if err != nil {
 			return property.MapperSchema{}, err
 		}
-		schema := property.MapperSchema{}
+		schema := property.MapperSchema{Reason: read.Reason}
 		seen := map[string]bool{}
-		for _, name := range names {
+		for _, name := range read.Names {
 			seen[name] = true
 			schema.Fields = append(schema.Fields, property.MapperField{
 				ID: name, DisplayName: name, Type: "string", CanBeUsedToMatch: true,
 			})
 		}
-		schema.Reason = reason
-		if len(names) == 0 && reason != "" && strings.HasSuffix(reason, "no column names yet.") {
-			schema.Reason = reason + " Map the columns automatically and the first rows written will create them."
+		if read.RowEmpty {
+			schema.Reason += " Map the columns automatically and the first rows written will create them."
 		}
 		if strings.TrimSpace(scope.Dependencies[googleSheetsOperationDependency]) == "update" && !seen["row_number"] {
 			schema.Fields = append(schema.Fields, property.MapperField{
@@ -424,14 +450,14 @@ func googleSheetsColumns(policy safehttp.Policy) SchemaLoader {
 // as the trigger's Columns to Watch.
 func googleSheetsHeadings(policy safehttp.Policy) InternalLoader {
 	return func(ctx context.Context, scope Scope) (Result, error) {
-		names, reason, err := sheetHeadings(ctx, policy, scope)
+		read, err := sheetHeadings(ctx, policy, scope)
 		if err != nil {
 			return Result{}, err
 		}
-		options := make([]Option, 0, len(names))
-		for _, name := range names {
+		options := make([]Option, 0, len(read.Names))
+		for _, name := range read.Names {
 			options = append(options, Option{Label: name, Value: name})
 		}
-		return Result{Options: options, Reason: reason}, nil
+		return Result{Options: options, Reason: read.Reason}, nil
 	}
 }

@@ -118,11 +118,16 @@ func (handler *GoogleSheetsPoller) poll(ctx context.Context, claim poller.Claim)
 	options := sheetsMap(parameters["options"])
 	location := sheetsMap(sheetsMap(options["dataLocationOnSheet"])["values"])
 	rangeA1 := sheetsa1.Quote(tab.title)
+	// region is the cell range the settings name, empty for the whole tab. It
+	// is what the config fingerprint holds, not the tab's title: the gid
+	// identifies the tab, and a rename is not a change of what is watched.
+	region := ""
 	headerRow, firstDataRow := 1, 2
 	ranged := false
 	switch textValue(location["rangeDefinition"], "") {
 	case "specifyRangeA1":
 		if requested := sheetsa1.Region(textValue(location["range"], "")); requested != "" {
+			region = requested
 			rangeA1 += "!" + requested
 			headerRow = sheetsa1.StartRow(requested)
 			firstDataRow = headerRow + 1
@@ -154,8 +159,22 @@ func (handler *GoogleSheetsPoller) poll(ctx context.Context, claim poller.Claim)
 	if headerIndex < 0 || headerIndex >= len(data) {
 		return nil, "", fmt.Errorf("node %q: row %d of %q holds no column names, so there is nothing to watch the rows by", node.Name, headerRow, tab.title)
 	}
+	// Columns are named by the heading as the sheet shows it, as the picker
+	// lists them. The values were read as numbers and serial dates, so a heading
+	// that is not plain text is read again as shown; headings that are text read
+	// the same either way, and then there is no second read.
+	headerCells := data[headerIndex]
+	if render != "FORMATTED_VALUE" && (render == "FORMULA" || !allText(headerCells)) {
+		shown, err := run.values(sheetsa1.Quote(tab.title)+"!"+sheetsa1.HeaderRange(region, headerRow), "FORMATTED_VALUE", "")
+		if err != nil {
+			return nil, "", err
+		}
+		if len(shown) > 0 {
+			headerCells = shown[0]
+		}
+	}
 	var header []string
-	for _, cell := range data[headerIndex] {
+	for _, cell := range headerCells {
 		header = append(header, sheetsCellText(cell))
 	}
 	if len(header) == 0 {
@@ -187,7 +206,7 @@ func (handler *GoogleSheetsPoller) poll(ctx context.Context, claim poller.Claim)
 		}
 	}
 
-	config := sheetsTriggerConfig(options["columnsToWatch"], render, dateRender, rangeA1, headerRow, firstDataRow)
+	config := sheetsTriggerConfig(options["columnsToWatch"], render, dateRender, region, headerRow, firstDataRow)
 	current := sheetsPollCursor{Version: 1, Doc: docID, Gid: tab.gid, Config: config, Rows: make(map[string]string, len(rows))}
 	for _, row := range rows {
 		current.Rows[strconv.Itoa(row.number)] = row.hash
@@ -261,6 +280,17 @@ func (handler *GoogleSheetsPoller) poll(ctx context.Context, claim poller.Claim)
 	return emitted, next, err
 }
 
+// allText reports whether every cell is text, so reading it as shown or as
+// stored gives the same answer.
+func allText(cells []any) bool {
+	for _, cell := range cells {
+		if _, isText := cell.(string); !isText {
+			return false
+		}
+	}
+	return true
+}
+
 // headingList reads a list of column names as written. The shared stringList
 // trims each entry, which would turn the heading "Email " into one that is not
 // in the sheet.
@@ -312,7 +342,7 @@ func watchedColumns(raw any, header []string) ([]int, error) {
 // sheetsTriggerConfig is a digest of the settings a row's fingerprint depends
 // on. The watched columns are sorted, so listing them in another order is not
 // a change.
-func sheetsTriggerConfig(watched any, render, dateRender, rangeA1 string, headerRow, firstDataRow int) string {
+func sheetsTriggerConfig(watched any, render, dateRender, region string, headerRow, firstDataRow int) string {
 	names := slices.Clone(headingList(watched))
 	sort.Strings(names)
 	encoded, _ := json.Marshal(struct {
@@ -322,7 +352,7 @@ func sheetsTriggerConfig(watched any, render, dateRender, rangeA1 string, header
 		Range        string   `json:"range"`
 		HeaderRow    int      `json:"headerRow"`
 		FirstDataRow int      `json:"firstDataRow"`
-	}{names, render, dateRender, rangeA1, headerRow, firstDataRow})
+	}{names, render, dateRender, region, headerRow, firstDataRow})
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:])[:16]
 }

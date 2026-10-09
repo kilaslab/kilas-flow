@@ -185,7 +185,7 @@ type loadOptionsInput struct {
 	Type string `path:"type"`
 	Body struct {
 		Version  string `json:"version,omitempty" doc:"Node type version. Omit for the registered default."`
-		Property string `json:"property" doc:"The property whose options to load."`
+		Property string `json:"property" doc:"The property whose options to load, by its key. A property inside a collection or a fixed collection's group is accepted by its own key; a top-level property of the same key wins, and among nested ones the first declared does."`
 		// Mode names which of a resource locator's modes is asking. A locator
 		// carries a loader per mode rather than one for the property, because
 		// "from list" searches and "by ID" does not.

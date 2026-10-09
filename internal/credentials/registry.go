@@ -78,6 +78,11 @@ type TestRequest struct {
 	// ExpectStatusBelow passes when the response code is under this value.
 	// Zero means "any 2xx or 3xx".
 	ExpectStatusBelow int `json:"expectStatusBelow,omitempty"`
+	// ForbiddenNote, when set, makes a 403 a pass that reports this text: the
+	// probe's service accepted the credential and refused only what it was asked,
+	// which for a probe that needs a scope an operator may have dropped is not a
+	// broken credential. A 401 stays a failure.
+	ForbiddenNote string `json:"forbiddenNote,omitempty"`
 }
 
 // Type is one registered credential type.
@@ -504,6 +509,9 @@ func RunTest(ctx context.Context, credentialType Type, record Record, fields map
 	// turn pass/fail into a general-purpose fetch.
 	_, _, _ = policy.ReadBody(response.Body)
 
+	if response.StatusCode == http.StatusForbidden && credentialType.Test.ForbiddenNote != "" {
+		return credentialType.Test.ForbiddenNote, nil
+	}
 	limit := credentialType.Test.ExpectStatusBelow
 	if limit == 0 {
 		limit = 400
