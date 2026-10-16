@@ -30,5 +30,10 @@ Proof 3 resolves the server's pid (or the container's process table) and judges 
 `lsof found no listener on tcp:<port>`; 2 failed (this and, before BUG-zw16h7, js-code), 26 skipped.
 
 # Acceptance Criteria
-- [ ] The no-Node check resolves the server process in CI's topology (e.g. `docker top`/`docker inspect` when the server is a container, or `ss -ltnp`/`/proc/net/tcp` inode matching), with the reason recorded.
+- [x] The no-Node check resolves the server process in CI's topology (e.g. `docker top`/`docker inspect` when the server is a container, or `ss -ltnp`/`/proc/net/tcp` inode matching), with the reason recorded.
 - [ ] CI's End-to-end job passes the proof and the skip budget on main.
+
+## Progress (2026-10-16)
+
+The binary host now hands the no-Node check the server's own pid (`PgServer.pid`, `EpicServer.pid`, `assertNoNodeBesideServer(port, scope, serverPid)`), and the check judges that process subtree directly; lsof stays only as the fallback when no pid is known (the image host keeps its container path). Local evidence: `KILASFLOW_E2E_PREBUILT=1 pnpm exec playwright test tests/epic-acceptance.spec.ts --workers=1` → 5 passed, 2 skipped (no PostgreSQL / no local model here). Criterion 2 waits on the CI run for this push; leave this ticket open until that run's End-to-end job is green.
+

@@ -60,6 +60,7 @@ export function binaryHost(): EpicHost {
 			return {
 				baseURL: server.baseURL,
 				port: server.port,
+				pid: server.pid > 0 ? server.pid : undefined,
 				close: () => server.close(),
 				logs: () => readFile(server.logPath, 'utf-8')
 			};
@@ -78,7 +79,7 @@ export function binaryHost(): EpicHost {
 			};
 		},
 		async assertNoNode(server: EpicServer): Promise<NoNodeVerdict> {
-			return assertNoNodeBesideServer(server.port);
+			return assertNoNodeBesideServer(server.port, undefined, server.pid);
 		},
 		async nodepackgen(packsRoot: string, args: string[]) {
 			// The Go toolchain, never a Node process serving anything; {root}

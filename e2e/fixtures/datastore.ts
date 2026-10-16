@@ -431,6 +431,8 @@ export function pgSkipReason(): string {
 export interface PgServer {
 	baseURL: string;
 	port: number;
+	// The server process's own id, so a check can judge its subtree directly.
+	pid: number;
 	logPath: string;
 	close: () => Promise<void>;
 }
@@ -535,6 +537,7 @@ export async function startPostgresServer(
 	return {
 		baseURL,
 		port,
+		pid: child.pid ?? 0,
 		logPath,
 		close: async () => {
 			if (closed) return;

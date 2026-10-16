@@ -86,6 +86,10 @@ const TERMINAL: Record<string, true> = { succeeded: true, failed: true, cancelle
 export interface EpicServer {
 	baseURL: string;
 	port: number;
+	// Binary host only: the server process's id. When known, the no-Node check
+	// judges this subtree directly instead of resolving the listener with lsof,
+	// which cannot always see it (CI runners).
+	pid?: number;
 	close(): Promise<void>;
 	logs?(): Promise<string>;
 	// Image host only: the container this server runs in, so the no-Node check

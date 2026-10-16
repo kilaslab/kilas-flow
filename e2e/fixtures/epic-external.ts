@@ -359,7 +359,13 @@ export async function startExternalHost(dir: string): Promise<ExternalHost> {
 // processes (workers, stubs, hosts) are ancestors or unrelated pids, never
 // descendants of the server, and are therefore out of scope by the criterion's
 // own wording ("in or beside the server").
-export async function assertNoNodeBesideServer(port: number, scope = `tcp:${port}`): Promise<NoNodeVerdict> {
+export async function assertNoNodeBesideServer(port: number, scope = `tcp:${port}`, serverPid?: number): Promise<NoNodeVerdict> {
+	// A known server pid is the authoritative root: lsof run as the runner's
+	// user does not always see the listener (it found none on CI's runners).
+	if (serverPid && serverPid > 0) {
+		const { stdout: table } = await execFileAsync('ps', ['-eo', 'pid,ppid,comm']);
+		return noNodeVerdict({ rows: parsePsTable(table), rootPids: [serverPid], scope });
+	}
 	let listenerOut: string;
 	try {
 		// LISTEN only: without the state filter every established client
