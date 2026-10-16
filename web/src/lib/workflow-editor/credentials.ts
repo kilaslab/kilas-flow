@@ -69,15 +69,45 @@ export function credentialPresenceKey(ids: readonly string[]): readonly string[]
 	return ['credential-presence', ...[...ids].sort()];
 }
 
+/**
+ * The credential ids worth asking the server about: the ones the panel is
+ * showing a picker for right now.
+ *
+ * An id counts only when its type is one the panel renders (a hidden type's
+ * reference is not on screen, so nothing would display its verdict), only while
+ * the credential section is shown, and only once the list has loaded (an empty
+ * list before the load finishes would send every attached id to the server).
+ * Ids the list holds are known to exist, and one id attached under two types is
+ * asked about once. Each probe that finds a live credential makes the server
+ * run its usage scan, so the set is kept as small as the UI it feeds.
+ */
+export function credentialIdsToProbe(input: {
+	types: readonly string[];
+	attached: Record<string, string> | undefined;
+	listed: readonly { id: string }[];
+	shown: boolean;
+	listLoaded: boolean;
+}): string[] {
+	if (!input.shown || !input.listLoaded) return [];
+	const known = new Set(input.listed.map((credential) => credential.id));
+	const ids = new Set<string>();
+	for (const type of input.types) {
+		const id = input.attached?.[type];
+		if (id && !known.has(id)) ids.add(id);
+	}
+	return [...ids];
+}
+
 /** Asks the server about each id on its own, so one failure cannot taint another. */
 export async function probeCredentials(
 	ids: readonly string[],
-	read: (id: string) => Promise<unknown> = getCredential
+	read: (id: string, signal?: AbortSignal) => Promise<unknown> = (id, signal) => getCredential(id, { signal }),
+	signal?: AbortSignal
 ): Promise<Record<string, CredentialPresence>> {
 	const verdicts = await Promise.all(
-		ids.map(async (id): Promise<[string, CredentialPresence]> => {
+		[...new Set(ids)].map(async (id): Promise<[string, CredentialPresence]> => {
 			try {
-				await read(id);
+				await read(id, signal);
 				return [id, 'present'];
 			} catch (error) {
 				return [id, error instanceof ApiError && error.status === 404 ? 'deleted' : 'unknown'];

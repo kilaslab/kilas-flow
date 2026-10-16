@@ -10,7 +10,7 @@
 	import { propertyVisible, withDefaults } from '$lib/workflow-editor/visibility';
 	import type { CredentialResource, CredentialTypeResource, Definition, Node, PropertyDefinition, WebhookRouteResource } from '$lib/api/generated/models';
 	import type { PropertyScope } from '$lib/workflow-editor/document';
-	import { credentialGone, credentialPresenceKey, credentialTypesFor, probeCredentials, requiresCredential } from '$lib/workflow-editor/credentials';
+	import { credentialGone, credentialIdsToProbe, credentialPresenceKey, credentialTypesFor, probeCredentials, requiresCredential } from '$lib/workflow-editor/credentials';
 	import { savedNodeBinds, webhookAddress } from '$lib/workflow-editor/webhook-address';
 	import { Button } from '$lib/components/ui/button';
 	import * as m from '$lib/paraglide/messages.js';
@@ -25,6 +25,7 @@
 		node,
 		definition,
 		credentials = [],
+		credentialsLoaded = true,
 		readOnly = false,
 		workflowID,
 		savedNode = null,
@@ -37,6 +38,8 @@
 		node: Node;
 		definition: Definition;
 		credentials?: CredentialResource[];
+		/** Whether the credential list has finished loading; before that an empty list says nothing. */
+		credentialsLoaded?: boolean;
 		readOnly?: boolean;
 		/** The workflow being edited, which is what a webhook node's address is looked up under. */
 		workflowID?: string;
@@ -68,23 +71,6 @@
 	const applicableCredentialTypes = $derived(credentialTypesFor(definition, (node.parameters ?? {}) as Record<string, unknown>));
 	const credentialRequired = $derived(requiresCredential(definition));
 	const selectedCredential = $derived((typeID: string) => node.credentials?.[typeID] ?? '');
-	// Credentials the node names that the picker's list does not hold. Each is
-	// asked about by id rather than assumed gone: the list is confined in an
-	// embed session and can fail to load, so a missing row says nothing about
-	// whether the credential exists. Only the server's 404 flags it.
-	const unlistedCredentialIDs = $derived(
-		Object.values(node.credentials ?? {}).filter((id) => id && !credentials.some((candidate) => candidate.id === id))
-	);
-	const credentialPresence = createQuery(() => ({
-		queryKey: credentialPresenceKey(unlistedCredentialIDs),
-		queryFn: () => probeCredentials(unlistedCredentialIDs),
-		enabled: unlistedCredentialIDs.length > 0
-	}));
-	/** Whether the server has deleted the credential this node names for a type. */
-	function credentialDeleted(typeID: string): boolean {
-		const id = selectedCredential(typeID);
-		return Boolean(id) && unlistedCredentialIDs.includes(id) && credentialGone(credentialPresence.data, id);
-	}
 	let tab = $state<PropertyScope>('parameters');
 	const tabButtons: Record<PropertyScope, HTMLButtonElement | undefined> = { parameters: undefined, settings: undefined };
 
@@ -154,6 +140,31 @@
 			: null
 	);
 	const activeTab = $derived(tab === 'parameters' && (definition.parameters?.length ?? 0) === 0 ? 'settings' : tab);
+	// Credentials the section is showing whose id the picker's list does not
+	// hold. Each is asked about by id rather than assumed gone: the list is
+	// confined in an embed session and can fail to load, so a missing row says
+	// nothing about whether the credential exists. Only the server's 404 flags
+	// it. The ids are limited to what the section renders (see
+	// credentialIdsToProbe), so this sits after the tab is known.
+	const unlistedCredentialIDs = $derived(
+		credentialIdsToProbe({
+			types: applicableCredentialTypes,
+			attached: node.credentials,
+			listed: credentials,
+			shown: activeTab === 'parameters' && Boolean(onCredentialChange),
+			listLoaded: credentialsLoaded
+		})
+	);
+	const credentialPresence = createQuery(() => ({
+		queryKey: credentialPresenceKey(unlistedCredentialIDs),
+		queryFn: ({ signal }) => probeCredentials(unlistedCredentialIDs, undefined, signal),
+		enabled: unlistedCredentialIDs.length > 0
+	}));
+	/** Whether the server has deleted the credential this node names for a type. */
+	function credentialDeleted(typeID: string): boolean {
+		const id = selectedCredential(typeID);
+		return Boolean(id) && unlistedCredentialIDs.includes(id) && credentialGone(credentialPresence.data, id);
+	}
 	const properties = $derived(activeTab === 'parameters' ? definition.parameters ?? [] : definition.sharedSettings ?? []);
 	const values = $derived((activeTab === 'parameters' ? node.parameters : node.settings) ?? {});
 	/**

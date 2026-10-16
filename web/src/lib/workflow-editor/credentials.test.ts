@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ApiError } from '$lib/api/http';
 import type { CredentialResource, Definition } from '$lib/api/generated/models';
 
-import { credentialPresenceKey, credentialTypesFor, probeCredentials } from './credentials';
+import { credentialIdsToProbe, credentialPresenceKey, credentialTypesFor, probeCredentials } from './credentials';
 
 function definition(): Definition {
 	return {
@@ -67,5 +67,48 @@ describe('probeCredentials', () => {
 
 	it('keys the answer by the ids probed, in a stable order', () => {
 		expect(credentialPresenceKey(['b', 'a'])).toEqual(credentialPresenceKey(['a', 'b']));
+	});
+});
+
+describe('credentialIdsToProbe', () => {
+	const listed = [{ id: 'cred_live' }];
+	const base = { types: ['httpHeaderAuth'], attached: { httpHeaderAuth: 'cred_far' }, listed, shown: true, listLoaded: true };
+
+	it('probes an attached id the list does not hold', () => {
+		expect(credentialIdsToProbe(base)).toEqual(['cred_far']);
+	});
+
+	it('does not probe an id the list already holds', () => {
+		expect(credentialIdsToProbe({ ...base, attached: { httpHeaderAuth: 'cred_live' } })).toEqual([]);
+	});
+
+	it('does not probe the id of a credential type the panel does not render', () => {
+		// httpBasicAuth is hidden while Authentication is not basicAuth.
+		const attached = { httpHeaderAuth: 'cred_far', httpBasicAuth: 'cred_hidden' };
+		expect(credentialIdsToProbe({ ...base, attached })).toEqual(['cred_far']);
+	});
+
+	it('probes an id shared by two rendered types once', () => {
+		const attached = { httpHeaderAuth: 'cred_far', openAiApi: 'cred_far' };
+		expect(credentialIdsToProbe({ ...base, types: ['httpHeaderAuth', 'openAiApi'], attached })).toEqual(['cred_far']);
+	});
+
+	it('probes nothing while the credential section is not shown, or before the list has loaded', () => {
+		expect(credentialIdsToProbe({ ...base, shown: false })).toEqual([]);
+		expect(credentialIdsToProbe({ ...base, listLoaded: false })).toEqual([]);
+	});
+
+	it('ignores an empty reference and a node with no credentials', () => {
+		expect(credentialIdsToProbe({ ...base, attached: { httpHeaderAuth: '' } })).toEqual([]);
+		expect(credentialIdsToProbe({ ...base, attached: undefined })).toEqual([]);
+	});
+});
+
+describe('probeCredentials cancellation', () => {
+	it('hands the query signal to every read', async () => {
+		const controller = new AbortController();
+		const seen: (AbortSignal | undefined)[] = [];
+		await probeCredentials(['a', 'b'], async (_id, signal) => void seen.push(signal), controller.signal);
+		expect(seen).toEqual([controller.signal, controller.signal]);
 	});
 });
