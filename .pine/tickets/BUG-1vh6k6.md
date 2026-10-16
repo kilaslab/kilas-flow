@@ -1,11 +1,11 @@
 ---
 id: BUG-1vh6k6
 title: The node-authoring guide says pack validate cannot check triggers, and that lifecycle.set always PUTs
-status: todo
+status: done
 priority: medium
 parent: EPIC-8rbys7
 created: "2026-10-16T15:30:38Z"
-updated: "2026-10-16T15:30:38Z"
+updated: "2026-10-16T15:33:10Z"
 ---
 
 # Description
@@ -21,3 +21,31 @@ Follow-up from the 2026-10-16 review of FEAT-qdwm1k. The node-authoring guide (d
 
 - Replaced the "One honest caveat" paragraph in guides/node-authoring.md with what file-level `pack validate` checks today: the trigger rules (events and catch-all, webhook, `hmac.algorithm`, lifecycle `capture` placement, `{{ .Captured.<key> }}` reads, `secretCapture` against `secretParameter` and against the captured keys). It also states what validate cannot check: the bound credential and the remote service's answer.
 - Described `lifecycle.set` as the pack-declared method in both pages.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-10-16.
+
+- Base: `1ee0166f` (last commit at or before ticket created 2026-10-16)
+- Commits (3):
+  - `a86840e8` — merge: the node-authoring guide says what pack validate checks for a trigger and that each lifecycle step uses its declared method (BUG-1vh6k6)
+  - `94e845c4` — BUG-1vh6k6: the node-authoring guide says what pack validate checks for a trigger pack, and lifecycle.set uses the method the pack declares
+  - `1ee0166f` — chore(pine): BUG-9wpy6m, BUG-745mh2 and BUG-1vh6k6 record three small follow-ups from tonight's reviews
+- Files changed (base → working tree):
+
+```
+ .pine/tickets/BUG-1vh6k6.md                        |  11 +-
+ .pine/tickets/FEAT-53pa9a.md                       |  17 +-
+ cmd/kilasflow/main.go                              |   3 +
+ config.example.yaml                                |   9 +
+ docs/src/content/docs/guides/node-authoring.md     |  20 +-
+ .../docs/operate/configuration-reference.md        |  15 +
+ docs/src/content/docs/reference/node-packs.md      |   4 +-
+ internal/config/boot_strictness_test.go            |  33 ++
+ internal/config/config.go                          |  22 +-
+ internal/engine/service.go                         |  74 ++---
+ internal/engine/terminal_log.go                    | 191 ++++++++++++
+ internal/engine/terminal_log_test.go               | 334 +++++++++++++++++++++
+ internal/engine/wait_service.go                    |   8 +-
+ 13 files changed, 678 insertions(+), 63 deletions(-)
+```
