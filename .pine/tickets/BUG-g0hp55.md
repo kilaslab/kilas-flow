@@ -1,7 +1,7 @@
 ---
 id: BUG-g0hp55
 title: Four e2e specs were stale after the tool forms, the vector-store tool and the executionOrder fix
-status: todo
+status: done
 priority: medium
 parent: EPIC-8rbys7
 created: "2026-10-16T15:19:52Z"
@@ -21,3 +21,11 @@ The pre-push e2e run on 2026-10-16 found four functional specs red on main, each
 - [x] The WAHA diagnostics expect three dropped entries, with the reason in the comment.
 - [x] The capsule test clicks the node wrapper and asserts the "Original node type" field's value.
 - [x] `KILASFLOW_E2E_PREBUILT=1 pnpm exec playwright test tests/n8n-compare.spec.ts tests/waha-migration.spec.ts` → 19 passed, 5 skipped (live-n8n gated), 0 failed.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-10-16.
+
+- Base: `76e1238a` (last commit at or before ticket created 2026-10-16)
+- Commits (1):
+  - `76e1238a` — BUG-g0hp55: the n8n-compare matrix names the four tool forms, and the WAHA specs expect the silent executionOrder and click and read the capsule the way the canvas draws it
