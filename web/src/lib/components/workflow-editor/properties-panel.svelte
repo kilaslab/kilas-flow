@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { createQuery } from '@tanstack/svelte-query';
 	import { tick } from 'svelte';
 
 	import { goto } from '$app/navigation';
@@ -9,7 +10,7 @@
 	import { propertyVisible, withDefaults } from '$lib/workflow-editor/visibility';
 	import type { CredentialResource, CredentialTypeResource, Definition, Node, PropertyDefinition, WebhookRouteResource } from '$lib/api/generated/models';
 	import type { PropertyScope } from '$lib/workflow-editor/document';
-	import { credentialTypesFor, requiresCredential } from '$lib/workflow-editor/credentials';
+	import { credentialGone, credentialPresenceKey, credentialTypesFor, probeCredentials, requiresCredential } from '$lib/workflow-editor/credentials';
 	import { savedNodeBinds, webhookAddress } from '$lib/workflow-editor/webhook-address';
 	import { Button } from '$lib/components/ui/button';
 	import * as m from '$lib/paraglide/messages.js';
@@ -67,6 +68,23 @@
 	const applicableCredentialTypes = $derived(credentialTypesFor(definition, (node.parameters ?? {}) as Record<string, unknown>));
 	const credentialRequired = $derived(requiresCredential(definition));
 	const selectedCredential = $derived((typeID: string) => node.credentials?.[typeID] ?? '');
+	// Credentials the node names that the picker's list does not hold. Each is
+	// asked about by id rather than assumed gone: the list is confined in an
+	// embed session and can fail to load, so a missing row says nothing about
+	// whether the credential exists. Only the server's 404 flags it.
+	const unlistedCredentialIDs = $derived(
+		Object.values(node.credentials ?? {}).filter((id) => id && !credentials.some((candidate) => candidate.id === id))
+	);
+	const credentialPresence = createQuery(() => ({
+		queryKey: credentialPresenceKey(unlistedCredentialIDs),
+		queryFn: () => probeCredentials(unlistedCredentialIDs),
+		enabled: unlistedCredentialIDs.length > 0
+	}));
+	/** Whether the server has deleted the credential this node names for a type. */
+	function credentialDeleted(typeID: string): boolean {
+		const id = selectedCredential(typeID);
+		return Boolean(id) && unlistedCredentialIDs.includes(id) && credentialGone(credentialPresence.data, id);
+	}
 	let tab = $state<PropertyScope>('parameters');
 	const tabButtons: Record<PropertyScope, HTMLButtonElement | undefined> = { parameters: undefined, settings: undefined };
 
@@ -258,6 +276,8 @@
 								id={`credential-${typeID}`}
 								value={selectedCredential(typeID)}
 								class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1.5 text-xs"
+								aria-invalid={credentialDeleted(typeID) ? 'true' : undefined}
+								aria-describedby={credentialDeleted(typeID) ? `credential-${typeID}-deleted` : undefined}
 								onchange={(event) => onCredentialChange?.(typeID, event.currentTarget.value)}
 							>
 								<option value="">{m.properties_credential_none()}</option>
@@ -265,12 +285,15 @@
 									<option value={candidate.id}>{candidate.name}</option>
 								{/each}
 							</select>
-							{#if selectedCredential(typeID)}
+							{#if selectedCredential(typeID) && !credentialDeleted(typeID)}
 								<Button variant="outline" size="sm" class="h-7 shrink-0 px-2 text-[0.6875rem]" disabled={testingCredentialID !== null} onclick={() => void testSelectedCredential(typeID)}>
 									{testingCredentialID ? m.credentials_testing() : m.credentials_test()}
 								</Button>
 							{/if}
 						</div>
+						{#if credentialDeleted(typeID)}
+							<p id={`credential-${typeID}-deleted`} role="alert" class="text-[0.6875rem] leading-4 text-destructive">{m.properties_credential_deleted()}</p>
+						{/if}
 						{#if matching.length === 0}
 							<p class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_no_credential_yet({ type: credentialTypeName(typeID) })}<button type="button" class="underline underline-offset-2" onclick={() => void goto('/credentials')}>{m.properties_add_one_under_credentials()}</button>.</p>
 						{:else if credentialTestResult && credentialTestResult.id === selectedCredential(typeID)}

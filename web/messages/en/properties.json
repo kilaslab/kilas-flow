@@ -16,6 +16,7 @@
 	"properties_credential": "Credential",
 	"properties_credential_required": " (required)",
 	"properties_credential_needed": "This node needs a credential before it can run.",
+	"properties_credential_deleted": "Credential deleted — pick another",
 	"properties_credential_none": "None",
 	"properties_no_credential_yet": "No {type} credential yet — ",
 	"properties_add_one_under_credentials": "add one under Credentials",

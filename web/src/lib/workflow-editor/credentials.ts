@@ -1,4 +1,6 @@
+import { getCredential } from '$lib/api/generated/credentials/credentials';
 import type { Definition } from '$lib/api/generated/models';
+import { ApiError } from '$lib/api/http';
 
 /**
  * Which credential types a node can authenticate with, read from the node's own
@@ -47,4 +49,45 @@ function credentialRequirementVisible(
 /** Whether a node cannot run without a credential attached. */
 export function requiresCredential(definition: Definition | undefined): boolean {
 	return (definition?.credentials ?? []).some((requirement) => requirement.required);
+}
+
+/**
+ * What the server says about one credential id a node names.
+ *
+ * `deleted` is the only verdict that flags anything, and it comes from one
+ * source: GET /credentials/{id} answering 404. It is never inferred from the id
+ * missing out of the credential list, because that list proves nothing about
+ * absence: an embed session's listing is confined to the credentials its grant
+ * names (and the endpoint itself is refused to it, 403), and the dashboard's
+ * list can fail to load or hold only the first page. Anything but a plain 404
+ * — a refusal, an outage, a dropped connection — is `unknown`.
+ */
+export type CredentialPresence = 'present' | 'deleted' | 'unknown';
+
+/** Cache key for the verdicts on a set of ids, independent of their order. */
+export function credentialPresenceKey(ids: readonly string[]): readonly string[] {
+	return ['credential-presence', ...[...ids].sort()];
+}
+
+/** Asks the server about each id on its own, so one failure cannot taint another. */
+export async function probeCredentials(
+	ids: readonly string[],
+	read: (id: string) => Promise<unknown> = getCredential
+): Promise<Record<string, CredentialPresence>> {
+	const verdicts = await Promise.all(
+		ids.map(async (id): Promise<[string, CredentialPresence]> => {
+			try {
+				await read(id);
+				return [id, 'present'];
+			} catch (error) {
+				return [id, error instanceof ApiError && error.status === 404 ? 'deleted' : 'unknown'];
+			}
+		})
+	);
+	return Object.fromEntries(verdicts);
+}
+
+/** Whether the server's verdict on this id is that the credential is gone. */
+export function credentialGone(verdicts: Record<string, CredentialPresence> | undefined, id: string): boolean {
+	return verdicts?.[id] === 'deleted';
 }

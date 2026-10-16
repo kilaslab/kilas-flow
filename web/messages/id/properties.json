@@ -16,6 +16,7 @@
 	"properties_credential": "Kredensial",
 	"properties_credential_required": " (wajib)",
 	"properties_credential_needed": "Node ini memerlukan kredensial sebelum dapat dijalankan.",
+	"properties_credential_deleted": "Kredensial dihapus — pilih yang lain",
 	"properties_credential_none": "Tidak ada",
 	"properties_no_credential_yet": "Belum ada kredensial {type} — ",
 	"properties_add_one_under_credentials": "tambahkan satu di Kredensial",
