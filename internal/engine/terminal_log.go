@@ -63,8 +63,40 @@ func normalizeExecutionLogLevel(level string) string {
 // data is the event payload the caller always sent: the output of a run that
 // completed, the error of one that did not.
 func (service *Service) settled(ctx context.Context, record execution.Record, workflowName string, data json.RawMessage) {
-	service.logTerminal(ctx, record, workflowName)
+	service.announce(ctx, record, workflowName, data, true)
+}
+
+// announce is settled with the line optional: a repeated cancel request for a
+// run that is already cancelled re-sends the live event, as it always has,
+// without writing a second line for one execution.
+func (service *Service) announce(ctx context.Context, record execution.Record, workflowName string, data json.RawMessage, writeLine bool) {
+	if writeLine {
+		service.logTerminal(ctx, record, workflowName)
+	}
 	service.publishTerminal(record, data)
+}
+
+// crashSettlements is what a store offers when it can fail an execution as
+// crashed inside its own claim (see repository.GORMExecutionStore.OnCrashSettled).
+type crashSettlements interface {
+	OnCrashSettled(func(execution.Record))
+}
+
+// watchCrashSettlements logs the executions the store ends as crashed.
+//
+// A run whose worker died past the reclaim cap is failed inside ClaimNext and
+// skipped, so it never reaches runOnce and none of the paths above sees it.
+// The store reports each one after its transaction commits; it is logged here
+// and deliberately not published, as it never was. A store without the hook
+// (a test fake) has no such transition to report.
+func (service *Service) watchCrashSettlements() {
+	store, ok := service.executions.(crashSettlements)
+	if !ok {
+		return
+	}
+	store.OnCrashSettled(func(record execution.Record) {
+		service.logTerminal(context.Background(), record, "")
+	})
 }
 
 // publishTerminal delivers the live event for a terminal execution.

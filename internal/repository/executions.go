@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"gorm.io/gorm"
@@ -96,6 +97,26 @@ type ExecutionPage struct {
 // GORMExecutionStore is the GORM implementation of ExecutionRepository.
 type GORMExecutionStore struct {
 	db *gorm.DB
+	// crashSettled is told about each execution ClaimNext failed as crashed,
+	// after the claim transaction committed. Nil until a service registers.
+	crashSettled atomic.Pointer[func(execution.Record)]
+}
+
+// OnCrashSettled registers the function ClaimNext calls with every execution it
+// settles as crashed (see settleCrashedExecution).
+//
+// Such a row is failed inside the claim transaction and skipped, so the engine
+// never holds it: without this, the one terminal transition that happens in the
+// store would leave no trace in the server log. The record is the one persisted
+// (failed, error code execution.crashed). The function runs on the claiming
+// goroutine after the transaction has committed, so it may read the store, and
+// it must not block or fail the claim.
+func (store *GORMExecutionStore) OnCrashSettled(settled func(execution.Record)) {
+	if settled == nil {
+		store.crashSettled.Store(nil)
+		return
+	}
+	store.crashSettled.Store(&settled)
 }
 
 var _ ExecutionRepository = (*GORMExecutionStore)(nil)
@@ -539,6 +560,7 @@ func (store *GORMExecutionStore) ClaimNext(ctx context.Context, workerID string,
 	var document workflow.Document
 	found := false
 	now := time.Now().UTC()
+	var settledCrashed []execution.Record
 	err = store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// A loop rather than one candidate: a row past its reclaim cap is
 		// settled here and then leaves the predicate, so the scan has to move
@@ -577,8 +599,12 @@ func (store *GORMExecutionStore) ClaimNext(ctx context.Context, workerID string,
 			}
 			reclaimingExpiredLease := candidate.Status == string(execution.StatusRunning)
 			if reclaimingExpiredLease && candidate.ReclaimCount+1 > MaxExecutionReclaims {
-				if err := settleCrashedExecution(tx, candidate, now); err != nil {
+				crashed, err := settleCrashedExecution(tx, candidate, now)
+				if err != nil {
 					return err
+				}
+				if crashed != nil {
+					settledCrashed = append(settledCrashed, *crashed)
 				}
 				continue
 			}
@@ -639,6 +665,12 @@ func (store *GORMExecutionStore) ClaimNext(ctx context.Context, workerID string,
 	if err != nil {
 		return execution.Record{}, workflow.Document{}, false, err
 	}
+	// Only after the commit: a rolled-back transaction settled nothing.
+	if report := store.crashSettled.Load(); report != nil {
+		for _, record := range settledCrashed {
+			(*report)(record)
+		}
+	}
 	if !found {
 		return execution.Record{}, workflow.Document{}, false, nil
 	}
@@ -653,12 +685,16 @@ func (store *GORMExecutionStore) ClaimNext(ctx context.Context, workerID string,
 // re-queue. The row is terminal and its lease is released, so it leaves the
 // claim predicate for good — the difference between one crashed execution and
 // a worker that re-runs it for ever.
-func settleCrashedExecution(tx *gorm.DB, candidate executionModel, now time.Time) error {
+//
+// It returns the record as persisted, or nil when no row changed (another
+// worker settled or claimed it first), so the caller can report exactly the
+// executions this call ended.
+func settleCrashedExecution(tx *gorm.DB, candidate executionModel, now time.Time) (*execution.Record, error) {
 	reclaims := candidate.ReclaimCount
 	message := fmt.Sprintf("execution was abandoned by its worker %d times and is not being run again; re-queue it to try once more", reclaims)
 	errorPayload, err := json.Marshal(map[string]string{"code": "execution.crashed", "message": message})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	result := tx.Model(&executionModel{}).
 		Where("id = ? AND tenant_id = ? AND status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?",
@@ -672,9 +708,19 @@ func settleCrashedExecution(tx *gorm.DB, candidate executionModel, now time.Time
 			"lease_expires_at": nil,
 		})
 	if result.Error != nil {
-		return fmt.Errorf("settle crashed execution: %w", result.Error)
+		return nil, fmt.Errorf("settle crashed execution: %w", result.Error)
 	}
-	return nil
+	if result.RowsAffected == 0 {
+		return nil, nil
+	}
+	candidate.Status = string(execution.StatusFailed)
+	candidate.Output = []byte("null")
+	candidate.Error = errorPayload
+	candidate.FinishedAt = &now
+	candidate.LeaseOwner = ""
+	candidate.LeaseExpiresAt = nil
+	record := executionFromModel(candidate)
+	return &record, nil
 }
 
 // ExtendLease renews the fenced lease of one running execution.
