@@ -204,11 +204,11 @@ func TestTheGoogleSheetsExecutorRefusesAutomaticMappingAndClearWhenRunAsATool(t 
 			t.Errorf("%s as a tool, automatic mapping: error = %v, want it refused", operation, err)
 		}
 	}
-	// Automatic mapping that an expression chose is judged after it resolves.
+	// A mode that an expression chooses is refused as written, before it can resolve.
 	chosen := sheetsParams("append", map[string]any{"columns": map[string]any{
 		"mappingMode": sheetsExpr("{{ 'autoMapInputData' }}"), "value": map[string]any{}, "matchingColumns": []any{},
 	}})
-	if _, err := setup.runAsTool(chosen, conversation, map[string]any{}); err == nil || !strings.Contains(err.Error(), "automatic") {
+	if _, err := setup.runAsTool(chosen, conversation, map[string]any{}); err == nil || !strings.Contains(err.Error(), "mappingMode") {
 		t.Errorf("a computed automatic mapping: error = %v, want it refused", err)
 	}
 	if _, err := setup.runAsTool(sheetsParams("clear", map[string]any{"clear": "wholeSheet"}), conversation, map[string]any{}); err == nil ||

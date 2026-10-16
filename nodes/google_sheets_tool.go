@@ -50,7 +50,10 @@ func validateGoogleSheetsTool(n workflow.Node) error {
 	operation := sheetsLiteral(n.Parameters, "operation")
 	if operation == SheetsOperationClear {
 		return fmt.Errorf("operation clear is not offered to an AI Agent: it empties a whole tab or range in one call. " +
-			"Use delete to remove rows or columns of a size you set, or use the Google Sheets node as a step")
+			"Use delete to remove rows of a size you set, or use the Google Sheets node as a step")
+	}
+	if operation == SheetsOperationDelete && sheetsLiteral(n.Parameters, "toDelete") == "columns" {
+		return errSheetsToolDeletesColumns
 	}
 	if err := checkSheetsToolFilters(n.Parameters["filtersUI"]); err != nil {
 		return err
@@ -61,23 +64,65 @@ func validateGoogleSheetsTool(n workflow.Node) error {
 	return refuseSheetsToolAutoMapping(operation, n.Parameters)
 }
 
-// checkSheetsToolFilters keeps the column a filter looks in the author's. Its
-// value is what the model supplies.
+// errSheetsToolDeletesColumns: a start column the model chooses can be the one
+// that holds the column names, and a deleted column takes its whole history
+// with it.
+var errSheetsToolDeletesColumns = fmt.Errorf("deleting columns (toDelete columns) is not offered to an AI Agent: a start " +
+	"column the model chooses can reach the column that holds the names. A tool deletes rows; use the Google Sheets " +
+	"node as a step to delete columns")
+
+// plainSheetsMap is a value that is an object and not an expression marker.
+func plainSheetsMap(value any) (map[string]any, bool) {
+	object, ok := value.(map[string]any)
+	if !ok || expression.IsExpression(object) {
+		return nil, false
+	}
+	if mode, _ := object["mode"].(string); mode == "expression" {
+		return nil, false
+	}
+	return object, true
+}
+
+// checkSheetsToolFilters keeps the shape of the filters the author's: the list,
+// each entry and the column a filter looks in. Only a filter's value
+// (lookupValue) is what the model supplies.
 func checkSheetsToolFilters(raw any) error {
-	filters, _ := sheetsMap(raw)["values"].([]any)
-	for _, entry := range filters {
-		if column := sheetsMap(entry)["lookupColumn"]; authorChoiceIsOpen(column) {
-			return fmt.Errorf("filtersUI names the column to look in (lookupColumn), so the workflow author sets it: " +
-				"it cannot call $fromAI, be an expression or hold {{ }}. The model supplies the value to look for, " +
-				"so write that as {{ $fromAI('key', 'what it is') }}")
+	if raw == nil {
+		return nil
+	}
+	refuse := func(what string) error {
+		return fmt.Errorf("filtersUI %s is the workflow author's, so it cannot call $fromAI, be an expression or hold "+
+			"{{ }}. Only a filter's value (lookupValue) is the model's: write that as {{ $fromAI('key', 'what it is') }}", what)
+	}
+	filters, ok := plainSheetsMap(raw)
+	if !ok {
+		return refuse("itself")
+	}
+	values, present := filters["values"]
+	if !present || values == nil {
+		return nil
+	}
+	list, ok := values.([]any)
+	if !ok {
+		return refuse("values (the list of filters)")
+	}
+	for _, entry := range list {
+		fields, ok := plainSheetsMap(entry)
+		if !ok {
+			return refuse("each filter")
+		}
+		for key, value := range fields {
+			if key != "lookupValue" && authorChoiceIsOpen(value) {
+				return refuse("the column to look in (lookupColumn) and every field of a filter but its value")
+			}
 		}
 	}
 	return nil
 }
 
 // checkSheetsToolColumns keeps the shape of the mapping the author's: its mode,
-// the column that finds a row and the names of the columns written. Only the
-// values are the model's.
+// the column that finds a row, the schema and the names of the columns written.
+// Only the values beside each column name are the model's.
 func checkSheetsToolColumns(raw any) error {
 	if raw == nil {
 		return nil
@@ -91,14 +136,24 @@ func checkSheetsToolColumns(raw any) error {
 	if !ok {
 		return nil
 	}
-	for _, key := range []string{"mappingMode", "matchingColumns"} {
+	for _, key := range []string{"mappingMode", "matchingColumns", "schema"} {
 		if value, present := columns[key]; present && authorChoiceIsOpen(value) {
 			return fmt.Errorf("columns.%s decides how the tool writes, so the workflow author sets it: "+
 				"it cannot call $fromAI, be an expression or hold {{ }}", key)
 		}
 	}
-	names := make([]string, 0)
-	for name := range sheetsMap(columns["value"]) {
+	mapped, present := columns["value"]
+	if !present || mapped == nil {
+		return nil
+	}
+	values, ok := plainSheetsMap(mapped)
+	if !ok {
+		return fmt.Errorf("columns.value is the author's list of columns, so it cannot be an expression, text holding " +
+			"{{ }} or a list: a model that chose it would choose which columns are written. Name each column, and put " +
+			"$fromAI in the value beside it")
+	}
+	names := make([]string, 0, len(values))
+	for name := range values {
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -130,14 +185,24 @@ func refuseSheetsToolAutoMapping(operation string, parameters map[string]any) er
 
 // refuseSheetsToolRun is the executor's own check of a tool call, made before
 // any request leaves for Google. The agent has validated the form already; a
-// descriptor is data, and the executor does not take the agent's word.
-func refuseSheetsToolRun(operation string, resolved []workflow.IRNode) error {
-	if operation == SheetsOperationClear {
-		return fmt.Errorf("operation clear is not offered to an AI Agent")
+// descriptor is data, and the executor does not take the agent's word. It
+// judges the authored parameters with the form's own rule, and the resolved
+// ones for what an expression chose.
+func refuseSheetsToolRun(operation string, authored map[string]any, resolved []workflow.IRNode) error {
+	judged := make(map[string]any, len(authored)+1)
+	for key, value := range authored {
+		judged[key] = value
+	}
+	judged["operation"] = operation
+	if err := validateGoogleSheetsTool(workflow.Node{Parameters: judged}); err != nil {
+		return err
 	}
 	for _, node := range resolved {
 		if err := refuseSheetsToolAutoMapping(operation, node.Parameters); err != nil {
 			return err
+		}
+		if operation == SheetsOperationDelete && textValue(node.Parameters["toDelete"], "rows") == "columns" {
+			return errSheetsToolDeletesColumns
 		}
 	}
 	return nil

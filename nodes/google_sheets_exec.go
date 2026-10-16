@@ -78,7 +78,7 @@ func (executor *GoogleSheetsExecutor) execute(ctx context.Context, ir workflow.I
 	}
 	if request.FromAIArguments != nil {
 		// Run as an agent's tool form: refused before anything is sent to Google.
-		if err := refuseSheetsToolRun(operation, resolved); err != nil {
+		if err := refuseSheetsToolRun(operation, ir.Parameters, resolved); err != nil {
 			return nil, fmt.Errorf("node %q: %w", ir.Name, err)
 		}
 	}

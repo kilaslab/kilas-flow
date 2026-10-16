@@ -50,6 +50,12 @@ func (run *sheetsRun) writeContext(parameters map[string]any, tab sheetsTab) (*w
 	default:
 		return nil, run.errorf("handling extra fields %q is not supported: use insertInNewColumn, ignoreIt or error", context.extraData)
 	}
+	if run.isToolCall() {
+		// A model's value that starts with "=" would be a formula under
+		// USER_ENTERED (IMPORTRANGE, IMAGE with a URL carrying other cells).
+		// Whatever cell format the author chose, a tool writes text.
+		context.valueInput = "RAW"
+	}
 	existing, err := run.values(sheetsa1.Quote(tab.title), "FORMATTED_VALUE", "")
 	if err != nil {
 		return nil, err
