@@ -1,7 +1,7 @@
 ---
 id: BUG-z26b0j
 title: CI's visual regression step would fail the e2e job on the first push, and its continue-on-error hid functional failures
-status: todo
+status: done
 priority: medium
 parent: EPIC-3en6xr
 created: "2026-10-16T15:15:12Z"
@@ -29,3 +29,11 @@ Every screenshot test fails with "A snapshot doesn't exist ..., writing actual."
 # Acceptance Criteria
 - [x] CI uses `updateSnapshots: 'changed'` while no linux baselines exist (writes missing snapshots without failing) and `'none'` once they do; local runs keep `'missing'`. `continue-on-error` is removed, so functional assertions gate. Evidence: a fresh clone with no baselines, `CI=1 pnpm exec playwright test -c playwright.visual.config.ts --workers=4` → 23 passed, baselines written, exit 0; Playwright 1.63's `handleMissing` returns pass for 'changed' and a soft error for 'missing'.
 - [x] The `e2e` job has `timeout-minutes: 45`.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-10-16.
+
+- Base: `ebc4bfdc` (last commit at or before ticket created 2026-10-16)
+- Commits (1):
+  - `ebc4bfdc` — BUG-z26b0j: CI's first visual run writes the missing linux baselines and passes, the visual specs' functional assertions gate, and the e2e job has a timeout
