@@ -48,10 +48,12 @@ async function loadTemplateOrSkip(): Promise<Record<string, unknown>> {
 // The template's expected diagnostics, pinned so a regression that starts
 // dropping a field is caught rather than absorbed. Every WAHA node maps to
 // the generated pack, every flow node maps to a builtin, and sticky notes
-// carry as annotations — so nothing blocks activation. The four dropped
+// carry as annotations — so nothing blocks activation. The three dropped
 // entries are the instance-local residue n8n cannot carry: its per-node
 // webhook identity, its minted route (replaced by the opaque address in
-// `webhooks`), workflow settings, and instance metadata. The Switch's error
+// `webhooks`), and instance metadata. The template's only setting is
+// `executionOrder: "v1"`, the order KilasFlow always runs in, so it imports
+// silently (BUG-jx94q9). The Switch's error
 // mode is NOT among them: `onError` crosses onto the canonical node's settings
 // (errorHandlingSettings in internal/interop/n8n), so the importer reports
 // nothing for it — a diagnostic that says a setting was dropped when it
@@ -70,7 +72,6 @@ function expectChattingDiagnostics(imported: { unsupported: unknown[]; webhooks:
 	).toEqual([
 		['dropped', 'WAHA Trigger', 'webhookId'],
 		['dropped', 'WAHA Trigger', 'path'],
-		['dropped', '', 'settings'],
 		['dropped', '', 'meta']
 	]);
 	for (const issue of issues) {
@@ -282,7 +283,10 @@ test('an unmapped node arrives as a capsule that names itself and refuses activa
 	await page.goto(`${server.baseURL}/app/workflows/${imported.workflow.id}`);
 	await expect(page.locator('[data-testid="workflow-canvas"]')).toBeVisible();
 	await expect(page.locator('[data-testid="workflow-canvas"]').getByText('Mystery Box', { exact: true }).first()).toBeVisible();
-	await page.locator('[data-testid="workflow-canvas"]').getByText('Mystery Box', { exact: true }).first().click();
+	// The click lands on the SvelteFlow node wrapper: the tile's name label
+	// never receives pointer events.
+	await page.locator('[data-testid="workflow-canvas"] .svelte-flow__node').filter({ hasText: 'Mystery Box' }).first().click();
 	await expect(page.getByText('Original node type').first()).toBeVisible();
-	await expect(page.getByText('n8n-nodes-base.mysteryBox').first()).toBeVisible();
+	// The type is the value of its (read-back) field, not free text.
+	await expect(page.getByRole('textbox', { name: 'Original node type' }).first()).toHaveValue('n8n-nodes-base.mysteryBox');
 });
