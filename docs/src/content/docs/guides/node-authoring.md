@@ -510,6 +510,7 @@ send a multi-select of events:
       "label": "Events to subscribe to",
       "description": "The Acme events this URL is registered for.",
       "kind": "multiOptions",
+      "default": [],
       "options": [
         {"label": "Message created", "value": "message.created"},
         {"label": "Message updated", "value": "message.updated"}
@@ -559,7 +560,12 @@ tries. Every key a `check` or `remove` reads must be one `set` captures.
 
 A captured value comes from a remote service, so it is escaped for where it
 lands: as one path segment, as a query value after a `?`, or inside a JSON
-string. A header value containing a line break stops the request. When a
+string. Anywhere else it is substituted as it is: a header value is only
+checked for a line break (one stops the request), and a body that is not JSON,
+such as a form body, receives the raw text, so keep captured values out of
+those. A captured value before the URL's path starts, or one that would make a
+path segment `.` or `..`, is refused, and in a JSON body outside a string it
+must itself be valid JSON, such as a bare number. When a
 route has no kept value for a key a `check` or `remove` reads, the server does
 not send the placeholder as literal text: `check` reports the webhook as not
 registered, so `set` runs, and `remove` is skipped.
@@ -580,8 +586,9 @@ outside a string is the JSON value itself:
 
 Use it over a plain string placeholder whenever the value is a list or an
 object, or when the service needs the JSON type kept. Outside a string,
-`{{ .Parameter.<key> }}` is accepted only if the value is already valid JSON
-(a number or a boolean); a text value there is refused with a message that says
+`{{ .Parameter.<key> }}` is accepted only if the value is itself one valid JSON
+value, which includes `null`, objects and arrays typed into a text parameter,
+not only numbers and booleans; any other text there is refused with a message that says
 to quote it or use `ParameterJSON`, because a bare `sales` would make the body
 invalid. Inside a string, `ParameterJSON` is the JSON text as a string, which
 is still only a string. The rendered body must be valid JSON, or nothing is
@@ -594,8 +601,9 @@ customer typed in. A service that generates the secret at registration time
 says so in its answer instead. Capture it and name that key as
 `hmac.secretCapture`, as the pack above does with `"secretCapture": "secret"`.
 
-- Exactly one of `secretParameter` and `secretCapture` may be set. A pack that
-  names both is refused, because a delivery is verified with one secret.
+- At most one of `secretParameter` and `secretCapture` may be set. A pack that
+  names both is refused, because a delivery is verified with one secret; with
+  neither, deliveries are not verified.
 - `secretCapture` must name a key that `lifecycle.set` captures. A pack with no
   lifecycle, or whose `set` does not capture that key, is refused when it
   loads: it would look verified and never be.
