@@ -243,8 +243,21 @@ func googleSheetsToolToKilas(node Node) (map[string]any, []Unsupported) {
 				"as a step, before activating.",
 		})
 	}
+	if operation == "delete" && parameters["toDelete"] == "columns" {
+		issues = append(issues, Unsupported{
+			Severity: SeverityBlocking, Field: "toDelete",
+			Reason: "this tool deletes columns, and a start column the model chooses can reach the column that holds the " +
+				"names. This server's Google Sheets tool deletes rows only: set Delete to Rows, or use the Google Sheets " +
+				"node as a step, before activating.",
+		})
+	}
 	switch operation {
 	case "append", "appendOrUpdate", "update":
+		issues = append(issues, Unsupported{
+			Severity: SeverityLossy, Field: "cellFormat",
+			Reason: "n8n writes a tool's values as typed, so a value that starts with = becomes a formula. This server's " +
+				"Google Sheets tool always writes RAW, whatever Cell Format says, so a value a model supplies stays text.",
+		})
 		if columns, _ := parameters["columns"].(map[string]any); columns["mappingMode"] == "autoMapInputData" {
 			issues = append(issues, Unsupported{
 				Severity: SeverityBlocking, Field: "columns",
