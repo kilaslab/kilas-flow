@@ -310,10 +310,10 @@ func (service *Service) SweepWaits(ctx context.Context) (int, error) {
 			requeued = true
 			continue
 		}
-		service.publish(events.Event{
-			TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
-			Type: events.ExecutionFailed, Status: record.Status, Data: record.Error,
-		})
+		// The record the store returns carries no trace, and the node this
+		// execution failed on is the one its wait was holding.
+		record.NodeRuns = append(record.NodeRuns, execution.NodeRun{NodeID: wait.NodeID, Status: execution.StatusFailed})
+		service.settled(ctx, record, "", record.Error)
 	}
 	if requeued {
 		service.Wake()

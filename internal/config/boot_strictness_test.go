@@ -363,6 +363,39 @@ func TestAnUnsupportedLogFormatIsRefused(t *testing.T) {
 	}
 }
 
+// log.execution_level decides which terminal-execution lines are written. A
+// misspelling is refused: read as "info" it would flood a pipeline the operator
+// meant to quiet, and read as "off" it would silence the one line alerts depend
+// on (FEAT-53pa9a).
+func TestTheExecutionLogLevelDefaultsToInfoAndRefusesAMisspelling(t *testing.T) {
+	if got := Default().Log.ExecutionLevel; got != "info" {
+		t.Errorf("log.execution_level default = %q, want %q", got, "info")
+	}
+	for _, supported := range []string{"info", "warn", "off"} {
+		cfg := Default()
+		cfg.Log.ExecutionLevel = supported
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("log.execution_level %q was refused: %v", supported, err)
+		}
+	}
+	cfg := Default()
+	cfg.Log.ExecutionLevel = "warning"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("log.execution_level warning was accepted: a typo would silently change which runs are logged")
+	}
+
+	// The environment name follows the repo's convention: the first underscore
+	// after the prefix is the section separator.
+	t.Setenv("KILASFLOW_LOG_EXECUTION_LEVEL", "warn")
+	loaded, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := loaded.Log.ExecutionLevel; got != "warn" {
+		t.Errorf("KILASFLOW_LOG_EXECUTION_LEVEL=warn loaded %q", got)
+	}
+}
+
 func TestBinaryStorageIsOnByDefaultBesideTheDatabase(t *testing.T) {
 	// The stock install and the container image used to run with binary storage
 	// disabled: the HTTP node's autodetect then decoded a downloaded file as

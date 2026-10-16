@@ -474,6 +474,15 @@ log:
   # pipelines.
   # Env: KILASFLOW_LOG_FORMAT
   format: 'text'
+  # ExecutionLevel chooses which terminal-execution lines are written. Every
+  # execution that reaches a terminal state (succeeded, failed, cancelled)
+  # leaves one structured line with its status, execution, workflow, failing
+  # node and error: WARN for a failed run, INFO for any other. "info" writes
+  # all of them, "warn" only the failed ones, "off" none. The line is also
+  # subject to log.level, so a "warn" log.level drops the INFO lines whatever
+  # this says.
+  # Env: KILASFLOW_LOG_EXECUTION_LEVEL
+  execution_level: 'info'
 
 sidecar:
   # Enabled turns the sidecar on. When it is on, every process that boots
