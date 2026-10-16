@@ -281,10 +281,48 @@ func TestOnlyTheSettleHelperPublishesTerminalEventsAndLogsTheLine(t *testing.T) 
 			t.Fatalf("ReadFile(%s) error = %v", name, err)
 		}
 		text := string(source)
-		for _, forbidden := range []string{"events.ExecutionCompleted", "events.ExecutionFailed", "events.ExecutionCancelled", terminalLogMessage} {
+		for _, forbidden := range []string{"events.ExecutionCompleted", "events.ExecutionFailed", "events.ExecutionCancelled", "publishTerminal(", terminalLogMessage} {
 			if strings.Contains(text, forbidden) {
 				t.Errorf("%s mentions %q: terminal events and the terminal log line belong to terminal_log.go alone", name, forbidden)
 			}
+		}
+	}
+}
+
+// An execution failed as crashed inside the claim (its worker died past the
+// reclaim cap) is settled in the store and skipped, so the engine never holds
+// it; the line still has to be written, as WARN with the crash's error code.
+func TestACrashSettledExecutionWritesAWarnLine(t *testing.T) {
+	fixture := newTerminalLogFixture(t, "", nil)
+	poison := fixture.queue(t)
+	ctx := fixture.sandbox.ctx
+	store := fixture.sandbox.store
+	if _, _, claimed, err := store.ClaimNext(ctx, "dead-worker", time.Now().UTC().Add(-time.Second)); err != nil || !claimed {
+		t.Fatalf("ClaimNext(dead) = (%v, %v), want the queued execution claimed", claimed, err)
+	}
+	for reclaim := 1; reclaim <= repository.MaxExecutionReclaims; reclaim++ {
+		if _, _, claimed, err := store.ClaimNext(ctx, "scavenger", time.Now().UTC().Add(-time.Second)); err != nil || !claimed {
+			t.Fatalf("reclaim %d = (%v, %v), want the expired lease reclaimed", reclaim, claimed, err)
+		}
+	}
+	if got := len(terminalLogs(t, fixture.logs)); got != 0 {
+		t.Fatalf("terminal lines before the crash settles = %d, want 0", got)
+	}
+	// The service's own claim is the one that settles it.
+	if worked, err := fixture.service.RunOnce(ctx); err != nil || worked {
+		t.Fatalf("RunOnce() = (%v, %v), want the crashed execution settled and nothing run", worked, err)
+	}
+
+	lines := terminalLogs(t, fixture.logs)
+	if len(lines) != 1 {
+		t.Fatalf("terminal lines = %d, want 1: %s", len(lines), fixture.logs.String())
+	}
+	for key, want := range map[string]string{
+		"level": "WARN", "status": "failed", "execution": poison.ID, "workflow": "wf_terminal",
+		"tenant": fixture.tenant.ID, "errorCode": "execution.crashed",
+	} {
+		if got := lines[0].text(key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
 		}
 	}
 }

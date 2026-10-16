@@ -237,7 +237,7 @@ func NewService(deps ServiceDeps) (*Service, error) {
 	if sweepInterval <= 0 {
 		sweepInterval = time.Minute
 	}
-	return &Service{
+	service := &Service{
 		log:                    logger,
 		executionLogLevel:      normalizeExecutionLogLevel(deps.ExecutionLogLevel),
 		executions:             deps.Executions,
@@ -262,7 +262,9 @@ func NewService(deps ServiceDeps) (*Service, error) {
 		errorTriggerType:       deps.ErrorTriggerType,
 		active:                 make(map[string]context.CancelFunc),
 		wake:                   make(chan struct{}, 1),
-	}, nil
+	}
+	service.watchCrashSettlements()
+	return service, nil
 }
 
 // DiscardBinaries removes the payloads one execution wrote.
@@ -1142,10 +1144,7 @@ func (service *Service) Cancel(ctx context.Context, tenant repository.TenantScop
 		}
 		// Queued work is cancelled without ever being claimed, so no worker
 		// will publish a terminal event for it.
-		if beforeErr != nil || before != execution.StatusCancelled {
-			service.logTerminal(ctx, record, "")
-		}
-		service.publishTerminal(record, nil)
+		service.announce(ctx, record, "", nil, beforeErr != nil || before != execution.StatusCancelled)
 	}
 	return record, nil
 }
