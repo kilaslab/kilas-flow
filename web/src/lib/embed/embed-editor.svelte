@@ -55,6 +55,8 @@
 	// to read them — leaves the picker with nothing to offer rather than
 	// blocking the editor.
 	let credentials = $state<CredentialResource[]>([]);
+	// False until the listing has settled, so an empty list is not read as "no credentials".
+	let credentialsLoaded = $state(false);
 	onMount(async () => {
 		try {
 			credentials = await drainPages(async (cursor) => {
@@ -64,6 +66,8 @@
 			});
 		} catch {
 			credentials = [];
+		} finally {
+			credentialsLoaded = true;
 		}
 	});
 
@@ -363,6 +367,7 @@
 			document={currentWorkflow.latestVersion.document}
 			definitions={nodeTypes.data ?? []}
 			credentials={credentials}
+			{credentialsLoaded}
 			readOnly={!canWrite}
 			hideRun={!canRun || branding.hideRun === true}
 			hideSave={branding.hideSave === true}

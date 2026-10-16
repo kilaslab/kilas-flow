@@ -74,6 +74,7 @@ function html(options: {
 	readOnly?: boolean;
 	definition?: Definition;
 	credentials?: CredentialResource[];
+	credentialsLoaded?: boolean;
 }): string {
 	const node = options.node ?? webhookNode('orders');
 	const rendered = render(Harness, {
@@ -83,6 +84,7 @@ function html(options: {
 				node,
 				definition: options.definition ?? WEBHOOK_DEFINITION,
 				credentials: options.credentials ?? [],
+				credentialsLoaded: options.credentialsLoaded ?? true,
 				onCredentialChange() {},
 				workflowID: WORKFLOW,
 				savedNode: options.savedNode === undefined ? node : options.savedNode,
@@ -250,5 +252,47 @@ describe('a node whose credential the server deleted', () => {
 		const markup = html({ client: probed({ cred_live: 'deleted' }), definition: HTTP_DEFINITION, node: httpNode('cred_live'), credentials: [LISTED] });
 
 		expect(markup).not.toContain(FLAG);
+	});
+});
+
+describe('which credentials the panel asks the server about', () => {
+	/** The ids the panel keyed its probe by, read from the query it registered. */
+	function probedKeys(client: QueryClient): unknown[] {
+		return client
+			.getQueryCache()
+			.findAll({ queryKey: ['credential-presence'] })
+			.map((query) => query.queryKey);
+	}
+
+	const BASIC_DEFINITION: Definition = {
+		...HTTP_DEFINITION,
+		credentials: [{ type: 'httpHeaderAuth' }, { type: 'httpBasicAuth', visibleWhen: [{ key: 'authentication', equals: 'basicAuth' }] }]
+	};
+
+	it('probes an unlisted id of a rendered type', () => {
+		const client = new QueryClient();
+		html({ client, definition: HTTP_DEFINITION, node: httpNode('cred_far'), credentials: [LISTED] });
+
+		expect(probedKeys(client)).toEqual([credentialPresenceKey(['cred_far'])]);
+	});
+
+	it('does not probe a listed id, an id of a hidden type, or a list that has not loaded', () => {
+		const attached = { ...httpNode('cred_live'), credentials: { httpHeaderAuth: 'cred_live', httpBasicAuth: 'cred_hidden' } };
+		const client = new QueryClient();
+		html({ client, definition: BASIC_DEFINITION, node: attached, credentials: [LISTED] });
+		expect(probedKeys(client)).toEqual([credentialPresenceKey([])]);
+
+		const early = new QueryClient();
+		html({ client: early, definition: HTTP_DEFINITION, node: httpNode('cred_far'), credentials: [], credentialsLoaded: false });
+		expect(probedKeys(early)).toEqual([credentialPresenceKey([])]);
+	});
+
+	it('probes a shared id once', () => {
+		const shared = { ...httpNode('cred_far'), credentials: { httpHeaderAuth: 'cred_far', httpBasicAuth: 'cred_far' } };
+		const both: Definition = { ...BASIC_DEFINITION, credentials: [{ type: 'httpHeaderAuth' }, { type: 'httpBasicAuth' }] };
+		const client = new QueryClient();
+		html({ client, definition: both, node: shared, credentials: [LISTED] });
+
+		expect(probedKeys(client)).toEqual([credentialPresenceKey(['cred_far'])]);
 	});
 });
