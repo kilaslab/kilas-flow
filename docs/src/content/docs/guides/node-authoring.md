@@ -423,8 +423,13 @@ The pieces: `webhook` binds the inbound endpoint; each delivery fans out to
 the one port matching its event, and anything unrecognised goes to the
 `catchAll` output rather than being dropped. `hmac` verifies a signature over
 the raw body before an execution exists (the implemented algorithm is
-`sha512`). `lifecycle.set` PUTs the minted webhook URL to the remote service
-on activation when the `autoRegister` parameter is on. `media`, not shown
+`sha512`), with the secret from a node parameter (`secretParameter`) or from a
+value the registration captured (`secretCapture`, covered below).
+`lifecycle.set` PUTs the minted webhook URL to the remote service
+on activation when the `autoRegister` parameter is on; `check` and `remove`
+are optional requests that ask whether it is registered and take the
+registration down, and `set` can `capture` values from the answer for them to
+use, as the section after this one describes. `media`, not shown
 here, downloads linked media into the binary store once, at the trigger, so
 the run owns it instead of referencing a URL that expires. And `notice` covers
 the activation-notice case: when the URL still has to be pasted into the
@@ -436,6 +441,172 @@ reports `bound to executor "core.packTrigger", which this server has not
 installed` — the shipped WAHA trigger pack produces the identical line. That
 line is a harness gap, not a pack defect; the authoritative check for a
 trigger pack is loading it through the server.
+
+### Keeping what the service answers
+
+The `acmeTrigger` example above registers the webhook and forgets the answer.
+A service that registers a webhook often answers with something the pack needs
+later: the id of the subscription it created, so a later call can delete it, or
+the secret it will sign every delivery with. The lifecycle keeps those with
+`capture`, reads them back with `{{ .Captured.<key> }}`, and can verify
+deliveries with a captured secret through `hmac.secretCapture`. Here is a
+complete trigger pack that uses all three, plus `{{ .ParameterJSON.<key> }}` to
+send a multi-select of events:
+
+```json
+{
+  "type": "pack.acmeSubscriptionTrigger",
+  "version": 1,
+  "displayName": "Acme Subscription Trigger",
+  "description": "Subscribes to Acme events and verifies the secret Acme generates.",
+  "category": "Triggers",
+  "icon": "builtin:zap",
+  "credentialType": "acmeApi",
+  "requestDefaults": {},
+  "trigger": {
+    "events": ["message.created", "message.updated"],
+    "catchAll": "other",
+    "eventPath": "event",
+    "shape": "bodyAsItem",
+    "webhook": {"name": "default", "pathParameter": "path", "method": "POST"},
+    "hmac": {
+      "header": "X-Acme-Signature",
+      "algorithm": "sha512",
+      "secretCapture": "secret"
+    },
+    "lifecycle": {
+      "id": "acme.subscription",
+      "enabledParameter": "autoRegister",
+      "check": {
+        "method": "GET",
+        "url": "{{ .baseUrl }}/api/subscriptions/{{ .Captured.id }}",
+        "credentialType": "acmeApi"
+      },
+      "set": {
+        "method": "POST",
+        "url": "{{ .baseUrl }}/api/subscriptions",
+        "headers": {"Content-Type": "application/json"},
+        "body": "{\"url\":\"{{ .PublicURL }}\",\"events\":{{ .ParameterJSON.subscribedEvents }}}",
+        "credentialType": "acmeApi",
+        "capture": {"id": "data.id", "secret": "data.secret"}
+      },
+      "remove": {
+        "method": "DELETE",
+        "url": "{{ .baseUrl }}/api/subscriptions/{{ .Captured.id }}",
+        "credentialType": "acmeApi"
+      }
+    }
+  },
+  "parameters": [
+    {
+      "key": "path",
+      "label": "Path",
+      "description": "A label for this endpoint.",
+      "kind": "string",
+      "required": true
+    },
+    {
+      "key": "subscribedEvents",
+      "label": "Events to subscribe to",
+      "description": "The Acme events this URL is registered for.",
+      "kind": "multiOptions",
+      "options": [
+        {"label": "Message created", "value": "message.created"},
+        {"label": "Message updated", "value": "message.updated"}
+      ]
+    },
+    {
+      "key": "autoRegister",
+      "label": "Register this URL with Acme",
+      "description": "Create a subscription in Acme on activation and remove it on deactivation.",
+      "kind": "boolean",
+      "default": false
+    }
+  ]
+}
+```
+
+#### `capture`: keep values from the registration answer
+
+`capture` belongs to `lifecycle.set`, the call that registers the webhook. It
+is a map from a key you choose to a dotted path into the JSON response, so
+`"capture": {"id": "data.id", "secret": "data.secret"}` keeps `data.id` as `id`
+and `data.secret` as `secret`. The values are kept against the node's route,
+sealed with the credential encryption key, and cleared again once `remove` has
+succeeded.
+
+- Only `set` may declare `capture`. A `check` or `remove` that does is refused
+  when the pack loads, because they are addressed by what `set` kept.
+- A key is letters, digits and underscores, so a template can name it. A path
+  is dotted object keys with no empty segment.
+- The value at each path must be non-empty text, a number or a boolean. A
+  number keeps the digits the service sent. A missing path, an empty string, an
+  object or a list fails the whole registration, and nothing is kept.
+- If the service accepted the registration but its answer could not be kept,
+  the server calls `remove` straight away when what was captured is enough to
+  address it. Otherwise the error says the registration may need removing by
+  hand.
+- A server without the credential encryption key refuses a `set` that
+  captures, before it sends anything, because there is nowhere to keep the
+  values.
+
+#### `{{ .Captured.<key> }}`: read them back
+
+`check` and `remove` read a kept value as `{{ .Captured.<key> }}` in their URL,
+headers or body, as `{{ .Captured.id }}` does in the pack above. `set` runs
+before anything is captured, so it cannot read one: the pack is refused if it
+tries. Every key a `check` or `remove` reads must be one `set` captures.
+
+A captured value comes from a remote service, so it is escaped for where it
+lands: as one path segment, as a query value after a `?`, or inside a JSON
+string. A header value containing a line break stops the request. When a
+route has no kept value for a key a `check` or `remove` reads, the server does
+not send the placeholder as literal text: `check` reports the webhook as not
+registered, so `set` runs, and `remove` is skipped.
+
+#### `{{ .ParameterJSON.<key> }}`: lists and objects
+
+`{{ .Parameter.<key> }}` is a parameter as text, which works for a string, a
+number or a boolean: a URL segment, or the inside of a JSON string.
+A `multiOptions` selection or a `collection` has no text form a service would
+read. `{{ .ParameterJSON.<key> }}` is every parameter encoded as JSON, lists
+and objects included. In a body that starts with `{` or `[`, the placeholder
+outside a string is the JSON value itself:
+
+```text
+"events": {{ .ParameterJSON.subscribedEvents }}
+→ "events": ["message.created","message.updated"]
+```
+
+Use it over a plain string placeholder whenever the value is a list or an
+object, or when the service needs the JSON type kept. Outside a string,
+`{{ .Parameter.<key> }}` is accepted only if the value is already valid JSON
+(a number or a boolean); a text value there is refused with a message that says
+to quote it or use `ParameterJSON`, because a bare `sales` would make the body
+invalid. Inside a string, `ParameterJSON` is the JSON text as a string, which
+is still only a string. The rendered body must be valid JSON, or nothing is
+sent.
+
+#### `secretCapture`: verify with a secret the service generated
+
+`hmac.secretParameter` reads the signing secret from a node parameter the
+customer typed in. A service that generates the secret at registration time
+says so in its answer instead. Capture it and name that key as
+`hmac.secretCapture`, as the pack above does with `"secretCapture": "secret"`.
+
+- Exactly one of `secretParameter` and `secretCapture` may be set. A pack that
+  names both is refused, because a delivery is verified with one secret.
+- `secretCapture` must name a key that `lifecycle.set` captures. A pack with no
+  lifecycle, or whose `set` does not capture that key, is refused when it
+  loads: it would look verified and never be.
+- Deliveries are verified with the captured value only. A parameter that
+  happens to share the key's name is never used as a fallback.
+- While the node's `enabledParameter` is on and nothing is captured yet, every
+  delivery is refused. That covers the window before the registration has
+  answered, and the window after a `remove` has cleared the secret while the
+  workflow is still active. With the registration off, nothing is ever
+  captured, which is the same as no secret configured: deliveries are not
+  verified, as with an empty `secretParameter`.
 
 ## Icons
 

@@ -66,6 +66,11 @@ A trigger accepts `events`, `catchAll`, `eventPath`, `shape`, `webhook`,
 `hmac`, `lifecycle`, `media`, `notice`. Events are in output-index order with
 the catch-all last; `hmac.algorithm` is `sha512`; `lifecycle.set` is the
 method/URL/headers/body/credentialType the server PUTs on activation.
+`hmac` takes the secret from `secretParameter` or from `secretCapture`, never
+both; `lifecycle.set.capture` keeps values from the service's answer for
+`check` and `remove` to read as `{{ .Captured.<key> }}`, and a lifecycle body
+sends a list or an object as `{{ .ParameterJSON.<key> }}` (guide:
+`guides/node-authoring`).
 
 Property kinds are a closed set: `string`, `number`, `boolean`, `options`,
 `multiOptions`, `collection`, `fixedCollection`, `notice`, `json`, `dateTime`,
