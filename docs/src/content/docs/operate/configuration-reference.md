@@ -999,6 +999,21 @@ info rather than refusing to start.
 Format is "text" for local reading or "json" for production log
 pipelines.
 
+### log.execution_level
+
+- Type: `string`
+- Default: `'info'`
+- Environment: `KILASFLOW_LOG_EXECUTION_LEVEL`
+- Required: no
+
+ExecutionLevel chooses which terminal-execution lines are written. Every
+execution that reaches a terminal state (succeeded, failed, cancelled)
+leaves one structured line with its status, execution, workflow, failing
+node and error: WARN for a failed run, INFO for any other. "info" writes
+all of them, "warn" only the failed ones, "off" none. The line is also
+subject to log.level, so a "warn" log.level drops the INFO lines whatever
+this says.
+
 ## sidecar
 
 Sidecar configures the opt-in JavaScript sidecar that runs programmatic

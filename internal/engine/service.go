@@ -164,6 +164,12 @@ type ServiceDeps struct {
 	// rather than becoming a nil dereference, because a service that refused
 	// to start over a missing logger would be worse than a quiet one.
 	Logger *slog.Logger
+	// ExecutionLogLevel is how much of the terminal-execution log line is
+	// written: "info" (the default) writes one line per terminal execution,
+	// "warn" only for failed ones, "off" none. A failed run is always logged at
+	// WARN and any other terminal status at INFO, so this chooses which lines
+	// appear, not what level they carry. Wired from log.execution_level.
+	ExecutionLogLevel string
 }
 
 // Service claims queued execution records and persists their deterministic
@@ -201,6 +207,8 @@ type Service struct {
 	startOnce  sync.Once
 	wake       chan struct{}
 	log        *slog.Logger
+	// executionLogLevel is the normalized ServiceDeps.ExecutionLogLevel.
+	executionLogLevel string
 }
 
 func NewService(deps ServiceDeps) (*Service, error) {
@@ -231,6 +239,7 @@ func NewService(deps ServiceDeps) (*Service, error) {
 	}
 	return &Service{
 		log:                    logger,
+		executionLogLevel:      normalizeExecutionLogLevel(deps.ExecutionLogLevel),
 		executions:             deps.Executions,
 		binaries:               deps.Binaries,
 		catalog:                deps.Catalog,
@@ -316,9 +325,11 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		record.Output = json.RawMessage("null")
 		record.Error = structuredError("execution.cancelled", errors.New("execution cancellation was recovered after its worker lease expired"))
 		record.FinishedAt = &now
-		if _, err := service.executions.UpdateRuntime(ctx, tenant, record); err != nil {
+		recovered, err := service.executions.UpdateRuntime(ctx, tenant, record)
+		if err != nil {
 			return true, err
 		}
+		service.logTerminal(ctx, recovered, document.Name)
 		return true, nil
 	}
 	// A re-queued wait carries its checkpoint beside the execution row. Fresh
@@ -413,7 +424,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	}
 	rows, err := service.traceRows(record, nodeTypes, seqBase, result.NodeRuns)
 	if err != nil {
-		return service.failPersist(persistCtx, tenant, record, err)
+		return service.failPersist(persistCtx, tenant, record, document.Name, err)
 	}
 	// One transaction for the whole trace. Written row by row this was a
 	// round trip per node inside the window where the lease had to survive,
@@ -428,7 +439,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	}
 	created, err := service.executions.CreateNodeRuns(persistCtx, tenant, runs)
 	if err != nil {
-		return service.failPersist(persistCtx, tenant, record, fmt.Errorf("persist execution trace: %w", err))
+		return service.failPersist(persistCtx, tenant, record, document.Name, fmt.Errorf("persist execution trace: %w", err))
 	}
 	// Only the rows this write added are announced: a row the live writer
 	// already persisted — and already published — comes back as a duplicate and
@@ -461,14 +472,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 			return true, updateErr
 		}
 		service.saveStaticData(persistCtx, updated, result.StaticData)
-		terminal := events.ExecutionFailed
-		if updated.Status == execution.StatusCancelled {
-			terminal = events.ExecutionCancelled
-		}
-		service.publish(events.Event{
-			TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
-			Type: terminal, Status: updated.Status, Data: updated.Error,
-		})
+		service.settled(persistCtx, updated, document.Name, updated.Error)
 		// The workflow named by settings.errorWorkflow, if any. Started after
 		// the failed execution is terminal, so the error workflow reads a
 		// settled record, and never for a cancellation: n8n does not treat a
@@ -484,7 +488,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		// channel — and the result cannot be persisted. Terminal, like a failed
 		// trace write: left running it would be reclaimed and the whole graph
 		// run again, side effects included, to fail at the same marshal.
-		return service.failPersist(persistCtx, tenant, record, fmt.Errorf("marshal execution output: %w", err))
+		return service.failPersist(persistCtx, tenant, record, document.Name, fmt.Errorf("marshal execution output: %w", err))
 	}
 	record.Status = execution.StatusSucceeded
 	record.Output = output
@@ -497,14 +501,7 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	// After the status settles, so a run cancelled as it finished saves
 	// nothing.
 	service.saveStaticData(persistCtx, updated, result.StaticData)
-	terminal := events.ExecutionCompleted
-	if updated.Status == execution.StatusCancelled {
-		terminal = events.ExecutionCancelled
-	}
-	service.publish(events.Event{
-		TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
-		Type: terminal, Status: updated.Status, Data: updated.Output,
-	})
+	service.settled(persistCtx, updated, document.Name, updated.Output)
 	return true, nil
 }
 
@@ -799,7 +796,7 @@ func (writer *traceWriter) wrote(sequence int) bool {
 // — only to fail at the same write. That is how one collision on a run index
 // became a workflow that never stopped running (BUG-hfhzq6). Terminal, with the
 // reason on the record, is the same failure reported once.
-func (service *Service) failPersist(ctx context.Context, tenant repository.TenantScope, record execution.Record, cause error) (bool, error) {
+func (service *Service) failPersist(ctx context.Context, tenant repository.TenantScope, record execution.Record, workflowName string, cause error) (bool, error) {
 	now := time.Now().UTC()
 	record.Status = execution.StatusFailed
 	record.Output = json.RawMessage("null")
@@ -812,10 +809,7 @@ func (service *Service) failPersist(ctx context.Context, tenant repository.Tenan
 		// is the one worth reporting.
 		return true, cause
 	}
-	service.publish(events.Event{
-		TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
-		Type: events.ExecutionFailed, Status: updated.Status, Data: updated.Error,
-	})
+	service.settled(ctx, updated, workflowName, updated.Error)
 	return true, cause
 }
 
@@ -1114,6 +1108,10 @@ func (service *Service) QueuePolled(ctx context.Context, tenantID, workflowID, v
 // elsewhere. The row is the floor: a holder that misses the notice still
 // finds cancelling on its next status poll and stops between nodes.
 func (service *Service) Cancel(ctx context.Context, tenant repository.TenantScope, executionID string) (execution.Record, error) {
+	// Read before the cancel lands so a repeated request for a run that is
+	// already cancelled re-announces it, as it always has, without writing a
+	// second terminal line for one execution.
+	before, _, beforeErr := service.executions.ExecutionState(ctx, tenant, executionID)
 	record, err := service.executions.Cancel(ctx, tenant, executionID)
 	if err != nil {
 		return execution.Record{}, err
@@ -1144,10 +1142,10 @@ func (service *Service) Cancel(ctx context.Context, tenant repository.TenantScop
 		}
 		// Queued work is cancelled without ever being claimed, so no worker
 		// will publish a terminal event for it.
-		service.publish(events.Event{
-			TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
-			Type: events.ExecutionCancelled, Status: record.Status,
-		})
+		if beforeErr != nil || before != execution.StatusCancelled {
+			service.logTerminal(ctx, record, "")
+		}
+		service.publishTerminal(record, nil)
 	}
 	return record, nil
 }
@@ -1423,7 +1421,7 @@ func (service *Service) invokeWorkflow(ctx context.Context, parent ExecutionCont
 	// Like runOnce's terminal writes: the caller's context may already be
 	// cancelled (shutdown, or the parent's own cancellation), and the child's
 	// record must still settle rather than stay running with a held lease.
-	if err := service.persistChild(context.WithoutCancel(ctx), tenant, record, result, runErr); err != nil {
+	if err := service.persistChild(context.WithoutCancel(ctx), tenant, record, document.Name, result, runErr); err != nil {
 		return WorkflowCallResult{}, err
 	}
 	if runErr != nil {
@@ -1454,7 +1452,7 @@ func checkCallStack(stack []string, target string) error {
 }
 
 // persistChild writes the child's node runs and its terminal state.
-func (service *Service) persistChild(ctx context.Context, tenant repository.TenantScope, record execution.Record, result Result, runErr error) error {
+func (service *Service) persistChild(ctx context.Context, tenant repository.TenantScope, record execution.Record, workflowName string, result Result, runErr error) error {
 	// One transaction, like the top-level trace: a sub-workflow is a whole
 	// execution and its child lease has to survive its trace write too.
 	rows := make([]execution.NodeRun, 0, len(result.NodeRuns))
@@ -1492,7 +1490,7 @@ func (service *Service) persistChild(ctx context.Context, tenant repository.Tena
 		// time to fail at the same write. The cause is returned either way, so
 		// the node that called it fails with the same reason.
 		cause := fmt.Errorf("persist sub-workflow trace: %w", err)
-		_, _ = service.failPersist(ctx, tenant, record, cause)
+		_, _ = service.failPersist(ctx, tenant, record, workflowName, cause)
 		return cause
 	}
 
@@ -1519,17 +1517,7 @@ func (service *Service) persistChild(ctx context.Context, tenant repository.Tena
 		return err
 	}
 	service.saveStaticData(ctx, updated, result.StaticData)
-	terminal := events.ExecutionCompleted
-	switch updated.Status {
-	case execution.StatusFailed:
-		terminal = events.ExecutionFailed
-	case execution.StatusCancelled:
-		terminal = events.ExecutionCancelled
-	}
-	service.publish(events.Event{
-		TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
-		Type: terminal, Status: updated.Status, Data: updated.Output,
-	})
+	service.settled(ctx, updated, workflowName, updated.Output)
 	return nil
 }
 

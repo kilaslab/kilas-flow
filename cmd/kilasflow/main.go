@@ -695,6 +695,9 @@ func run(args []string) error {
 		// What a workflow's Code nodes keep between runs with
 		// $getWorkflowStaticData, saved after its successful production runs.
 		StaticData: repository.NewStaticDataStore(db.DB),
+		// Which terminal-execution log lines are written (log.execution_level):
+		// info for every run, warn for failed runs only, off for none.
+		ExecutionLogLevel: cfg.Log.ExecutionLevel,
 		// Named so a called workflow starts from its sub-workflow trigger and
 		// not from a webhook or schedule it also happens to carry.
 		SubworkflowTriggerType: nodes.ExecuteWorkflowTriggerType,

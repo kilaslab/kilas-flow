@@ -938,6 +938,15 @@ type Log struct {
 	// pipelines.
 	// Env: KILASFLOW_LOG_FORMAT. Default: "text".
 	Format string `koanf:"format"`
+	// ExecutionLevel chooses which terminal-execution lines are written. Every
+	// execution that reaches a terminal state (succeeded, failed, cancelled)
+	// leaves one structured line with its status, execution, workflow, failing
+	// node and error: WARN for a failed run, INFO for any other. "info" writes
+	// all of them, "warn" only the failed ones, "off" none. The line is also
+	// subject to log.level, so a "warn" log.level drops the INFO lines whatever
+	// this says.
+	// Env: KILASFLOW_LOG_EXECUTION_LEVEL. Default: "info".
+	ExecutionLevel string `koanf:"execution_level"`
 }
 
 // Default returns the configuration used when nothing is overridden.
@@ -1106,8 +1115,9 @@ func Default() Config {
 			JavaScriptMaxHostCalls:    100,
 		},
 		Log: Log{
-			Level:  "info",
-			Format: "text",
+			Level:          "info",
+			Format:         "text",
+			ExecutionLevel: "info",
 		},
 	}
 }
@@ -1606,6 +1616,14 @@ func (c Config) Validate() error {
 	case "text", "json":
 	default:
 		return fmt.Errorf("log.format %q must be text or json", c.Log.Format)
+	}
+
+	// Refused for the same reason as the format: a typo here changes which
+	// failed runs reach the log an operator alerts on, and nothing would say so.
+	switch c.Log.ExecutionLevel {
+	case "info", "warn", "off":
+	default:
+		return fmt.Errorf("log.execution_level %q must be info, warn or off", c.Log.ExecutionLevel)
 	}
 
 	// Refused rather than read as either value: a typo that kept legacy seals
