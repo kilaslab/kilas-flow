@@ -153,6 +153,7 @@ export const EDITOR_VALIDATED = [
 	'kilasflow.gmailTrigger@1',
 	'kilasflow.googleSheets@1',
 	'kilasflow.googleSheetsTrigger@1',
+	'kilasflow.googleSheetsTool@1',
 	'kilasflow.datastoreTool@1',
 	'kilasflow.postgres@1',
 	'kilasflow.postgres@2',
