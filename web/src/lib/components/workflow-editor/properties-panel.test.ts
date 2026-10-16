@@ -2,7 +2,8 @@ import { QueryClient } from '@tanstack/svelte-query';
 import { render } from 'svelte/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { Definition, Node, WebhookRouteResource } from '$lib/api/generated/models';
+import type { CredentialResource, Definition, Node, WebhookRouteResource } from '$lib/api/generated/models';
+import { credentialPresenceKey } from '$lib/workflow-editor/credentials';
 import { getListWorkflowWebhooksQueryKey } from '$lib/api/generated/workflows/workflows';
 
 import Harness from './panel-query-harness.svelte';
@@ -71,6 +72,8 @@ function html(options: {
 	savedNode?: Node | null;
 	active?: boolean;
 	readOnly?: boolean;
+	definition?: Definition;
+	credentials?: CredentialResource[];
 }): string {
 	const node = options.node ?? webhookNode('orders');
 	const rendered = render(Harness, {
@@ -78,7 +81,9 @@ function html(options: {
 			client: options.client,
 			panel: {
 				node,
-				definition: WEBHOOK_DEFINITION,
+				definition: options.definition ?? WEBHOOK_DEFINITION,
+				credentials: options.credentials ?? [],
+				onCredentialChange() {},
 				workflowID: WORKFLOW,
 				savedNode: options.savedNode === undefined ? node : options.savedNode,
 				active: options.active ?? false,
@@ -170,5 +175,80 @@ describe('a webhook node with no address yet', () => {
 
 		expect(markup).toContain('Looking up the public URL');
 		expect(markup).not.toContain('/webhook/');
+	});
+});
+
+/**
+ * A node that names a credential the server has deleted.
+ *
+ * "Deleted" is decided by the server answering 404 for that id (the probe's
+ * seeded verdict here), never by the id's absence from the credential list:
+ * an embed session's list is confined to its grant and the dashboard's can fail
+ * to load, and in neither case does a missing row mean a deleted credential.
+ */
+const HTTP_DEFINITION: Definition = {
+	category: 'action',
+	displayName: 'HTTP Request',
+	group: ['action'],
+	inputs: [],
+	outputs: [],
+	parameters: [{ key: 'url', label: 'URL', kind: 'string', required: true }],
+	sharedSettings: [],
+	source: 'builtin',
+	type: 'kilasflow.http',
+	version: 1,
+	credentials: [{ type: 'httpHeaderAuth' }]
+};
+
+function httpNode(credentialID: string): Node {
+	return {
+		id: 'node-2',
+		name: 'Call API',
+		type: 'kilasflow.http',
+		typeVersion: 1,
+		position: { x: 0, y: 0 },
+		parameters: { url: 'https://example.com' },
+		credentials: { httpHeaderAuth: credentialID }
+	};
+}
+
+const LISTED = { id: 'cred_live', name: 'Live header', type: 'httpHeaderAuth' } as CredentialResource;
+const FLAG = 'Credential deleted — pick another';
+
+function probed(verdicts: Record<string, 'present' | 'deleted' | 'unknown'>): QueryClient {
+	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	client.setQueryData(credentialPresenceKey(Object.keys(verdicts)), verdicts);
+	return client;
+}
+
+describe('a node whose credential the server deleted', () => {
+	it('flags the credential and keeps the picker open for another', () => {
+		const markup = html({ client: probed({ cred_gone: 'deleted' }), definition: HTTP_DEFINITION, node: httpNode('cred_gone'), credentials: [LISTED] });
+
+		expect(markup).toContain(FLAG);
+		expect(markup).toContain('role="alert"');
+		expect(markup).toContain('Live header');
+	});
+
+	it('stops offering Test for a credential that is gone', () => {
+		const markup = html({ client: probed({ cred_gone: 'deleted' }), definition: HTTP_DEFINITION, node: httpNode('cred_gone'), credentials: [LISTED] });
+
+		expect(markup).not.toContain('>Test<');
+	});
+
+	it('does not flag a credential that is merely absent from the list', () => {
+		// No verdict yet (the probe has not answered), or it could not tell:
+		// an embed session's confined list lacks credentials that exist.
+		for (const client of [new QueryClient({ defaultOptions: { queries: { retry: false } } }), probed({ cred_far: 'unknown' }), probed({ cred_far: 'present' })]) {
+			const markup = html({ client, definition: HTTP_DEFINITION, node: httpNode('cred_far'), credentials: [LISTED] });
+
+			expect(markup).not.toContain(FLAG);
+		}
+	});
+
+	it('does not flag a credential that is in the list', () => {
+		const markup = html({ client: probed({ cred_live: 'deleted' }), definition: HTTP_DEFINITION, node: httpNode('cred_live'), credentials: [LISTED] });
+
+		expect(markup).not.toContain(FLAG);
 	});
 });
