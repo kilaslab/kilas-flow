@@ -38,7 +38,8 @@
         "kilasflow.memoryBuffer",
         "kilasflow.outputParser",
         "kilasflow.textSplitter",
-        "kilasflow.vectorStore"
+        "kilasflow.vectorStore",
+        "kilasflow.vectorStoreTool"
       ],
       "expressionRoots": [
         "$json"
