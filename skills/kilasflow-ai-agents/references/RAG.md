@@ -1,19 +1,18 @@
-# Retrieval-augmented generation: the ingest graph
+# Retrieval-augmented generation: the ingest and query graphs
 
 A retrieval workflow has two halves that never share a run. The ingest half reads
 documents, splits them into chunks, embeds each chunk and stores the vectors in a
-collection. The query half embeds a question, finds the nearest chunks and gives
-them to a model, usually as a tool an agent may call. This file validates the
-ingest half; for the query half, ask the node itself, because that side of the
-vector store is the one that changes:
+collection. The query half hands that collection to an agent as a tool: the agent
+decides when to ask, the tool embeds the question, finds the nearest chunks and
+has its own chat model answer from them. This file validates both halves, the
+ingest graph first and the query graph after it ("The validated query graph"
+below). The vector store changes more than any other AI node, so when you change
+a mode or an option, read the node again and wire the ports it now shows:
 
 ```bash
 kilasflow node describe kilasflow.vectorStore
+kilasflow node describe kilasflow.vectorStoreTool
 ```
-
-Read its `mode` options and, for each mode, which input and output ports the node
-shows. A mode that hands the store to an agent as a tool exists; its ports are
-the ones to wire, and nothing here should be copied over them.
 
 ## What it needs
 
@@ -37,7 +36,7 @@ the ones to wire, and nothing here should be copied over them.
 - **A collection name.** The vector store's `collection` groups the chunks that
   belong together; a query reads one collection.
 
-## The validated graph
+## The validated ingest graph
 
 Five nodes feed the vector store. The text source is a Set node so the example
 needs no file; in a real workflow it is an HTTP Request, an Extract From File or a
@@ -144,7 +143,7 @@ trigger carrying the text, and nothing downstream changes.
 }
 ```
 
-## How the ports line up
+## How the ingest ports line up
 
 | Connection | Kind | From (source) | To (target) |
 | --- | --- | --- | --- |
@@ -168,7 +167,7 @@ trigger carrying the text, and nothing downstream changes.
   window and the repeat between windows; a chunk that cuts a sentence in half
   retrieves worse than one that does not.
 
-## Check it
+## Check the ingest
 
 ```bash
 kilasflow credential create --file embeddings.json --yes
@@ -186,3 +185,190 @@ embeddings provider, so the credential's `allowedDomains` should name only that
 provider. Run the query side against the same `collection`, with an embeddings
 node of the same model and width, or the nearest-neighbour search compares
 vectors that were never meant to be compared.
+
+## The validated query graph
+
+The query half is an agent that owns a Vector Store Tool. The tool has two
+sub-nodes of its own: a vector store in `retrieve` mode, which says where the
+documents live, and a chat model, which writes the answer from the chunks that
+come back. The store in turn has the embeddings node that embeds the question.
+Nothing in this graph reads or writes the ingest run; it reads the collection the
+ingest run filled.
+
+```json kilasflow-workflow
+{
+  "schemaVersion": 1,
+  "name": "Answer questions from the handbook",
+  "nodes": [
+    {
+      "id": "chat",
+      "name": "When chat message received",
+      "type": "kilasflow.chatTrigger",
+      "typeVersion": 1,
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "agent",
+      "name": "AI Agent",
+      "type": "kilasflow.agent",
+      "typeVersion": 1,
+      "position": { "x": 320, "y": 0 },
+      "parameters": {
+        "prompt": { "mode": "expression", "value": "{{ $json.chatInput }}" },
+        "systemMessage": "You answer employee questions about the company handbook. Ask the handbook tool before you answer, and say so when it does not know.",
+        "maxIterations": 6
+      }
+    },
+    {
+      "id": "agentModel",
+      "name": "Agent chat model",
+      "type": "kilasflow.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": { "x": 160, "y": 240 },
+      "parameters": {
+        "model": { "__rl": true, "mode": "list", "value": "gpt-5-mini" }
+      },
+      "credentials": { "openAiApi": "<chatCredentialId>" }
+    },
+    {
+      "id": "handbookTool",
+      "name": "Handbook tool",
+      "type": "kilasflow.vectorStoreTool",
+      "typeVersion": 1,
+      "position": { "x": 480, "y": 240 },
+      "parameters": {
+        "toolName": "handbook",
+        "toolDescription": "Answers a question about company policy, such as refunds, leave and expenses, from the employee handbook. Pass one complete question.",
+        "topK": 4
+      }
+    },
+    {
+      "id": "toolModel",
+      "name": "Tool chat model",
+      "type": "kilasflow.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": { "x": 360, "y": 480 },
+      "parameters": {
+        "model": { "__rl": true, "mode": "list", "value": "gpt-5-mini" }
+      },
+      "credentials": { "openAiApi": "<chatCredentialId>" }
+    },
+    {
+      "id": "store",
+      "name": "Handbook store",
+      "type": "kilasflow.vectorStore",
+      "typeVersion": 1,
+      "position": { "x": 600, "y": 480 },
+      "parameters": { "mode": "retrieve", "collection": "handbook" }
+    },
+    {
+      "id": "embed",
+      "name": "Embeddings",
+      "type": "kilasflow.embeddings",
+      "typeVersion": 1,
+      "position": { "x": 600, "y": 700 },
+      "parameters": { "mode": "cluster", "model": "text-embedding-3-small" },
+      "credentials": { "openAiApi": "<embeddingsCredentialId>" }
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "kind": "main",
+      "source": { "nodeId": "chat", "port": "main" },
+      "target": { "nodeId": "agent", "port": "main" }
+    },
+    {
+      "id": "c2",
+      "kind": "ai_languageModel",
+      "source": { "nodeId": "agentModel", "port": "model" },
+      "target": { "nodeId": "agent", "port": "model" }
+    },
+    {
+      "id": "c3",
+      "kind": "ai_tool",
+      "source": { "nodeId": "handbookTool", "port": "tool" },
+      "target": { "nodeId": "agent", "port": "tools" }
+    },
+    {
+      "id": "c4",
+      "kind": "ai_languageModel",
+      "source": { "nodeId": "toolModel", "port": "model" },
+      "target": { "nodeId": "handbookTool", "port": "model" }
+    },
+    {
+      "id": "c5",
+      "kind": "ai_vectorStore",
+      "source": { "nodeId": "store", "port": "vectorStore" },
+      "target": { "nodeId": "handbookTool", "port": "vectorStore" }
+    },
+    {
+      "id": "c6",
+      "kind": "ai_embedding",
+      "source": { "nodeId": "embed", "port": "embedding" },
+      "target": { "nodeId": "store", "port": "embedding" }
+    }
+  ],
+  "settings": {}
+}
+```
+
+Replace `<chatCredentialId>` with the id of an `openAiApi` credential from
+`kilasflow credential list` and `<embeddingsCredentialId>` with the embeddings
+credential the ingest run used; both are referenced by id and never written as a
+key.
+
+## How the query ports line up
+
+| Connection | Kind | From (source) | To (target) |
+| --- | --- | --- | --- |
+| `c1` | `main` | the chat trigger's `main` | the agent's `main` |
+| `c2` | `ai_languageModel` | the agent model's `model` | the agent's `model` |
+| `c3` | `ai_tool` | the Vector Store Tool's `tool` | the agent's `tools` |
+| `c4` | `ai_languageModel` | the tool model's `model` | the tool's `model` |
+| `c5` | `ai_vectorStore` | the store's `vectorStore` | the tool's `vectorStore` |
+| `c6` | `ai_embedding` | the embeddings node's `embedding` | the store's `embedding` |
+
+- **The tool has its own model.** `c4` is separate from `c2`: the agent's model
+  decides when to call the tool and what to ask, and the tool's model reads the
+  retrieved chunks and writes the answer the agent receives. They may be the same
+  model or different ones, but each port takes one connection, so each needs its
+  own node. The tool's calls are billed inside the agent's run, in the agent's
+  `usage`.
+- **`mode: "retrieve"` is what turns the store into a source.** In that mode the
+  store has no `main` input and no `document` input; its only input is
+  `embedding`, and its only output is `vectorStore`. Nothing is searched at the
+  store node: the tool embeds the question and searches when the agent calls it.
+  The store's `mode` options also include a retrieve-as-tool mode, which hands the
+  agent raw matches on a `tool` port instead and has no model of its own; read it
+  with `node describe` if the agent should do the answering itself.
+- **The collection and the embeddings must match the ingest.** The store's
+  `collection` is the one the ingest run wrote, and the embeddings node is the same
+  model, width and provider; the tool then compares like with like. Set `distance`
+  on the store only to the value the collection was created with.
+- **`topK` bounds the context.** It is a whole number the node's description
+  gives the range of; a larger value sends more chunks to the tool's model on
+  every question.
+- **The tool is described for the agent.** `toolName` and `toolDescription` are
+  all the agent reads about it. Say which questions it answers, so the agent calls
+  it for those and not for arithmetic. If the agent should be able to use more
+  than the handbook, wire more tools to `tools`; discover them with `node list`
+  as the skill describes, and do not copy a tool list from this file.
+
+## Check the query
+
+```bash
+kilasflow workflow validate --file query.json
+kilasflow workflow create --file query.json --quiet
+kilasflow credential test <chatCredentialId>
+kilasflow run <workflowId> --wait --input '{"chatInput":"What is the refund window?","sessionId":"s1"}'
+kilasflow exec trace <executionId>
+```
+
+`validate` proves the graph compiles, and on SQLite it also reports the vector
+store's missing pgvector as a diagnostic (see "What it needs"). The trace shows
+the agent's tool call and the answer the tool returned; a tool result of "No
+stored document matches this question." means the collection is empty or the
+embeddings do not match the ones the ingest used. The question and the retrieved
+chunks leave the installation for both providers, so each credential's
+`allowedDomains` should name only its own provider.

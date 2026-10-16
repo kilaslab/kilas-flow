@@ -33,6 +33,7 @@ kilasflow_nodes:
   - kilasflow.textSplitter
   - kilasflow.embeddings
   - kilasflow.vectorStore
+  - kilasflow.vectorStoreTool
 kilasflow_expression_roots:
   - $json
 kilasflow_not_shipped: []
@@ -58,7 +59,7 @@ kilasflow_not_shipped: []
 - Use `kilasflow.outputParser` when the answer must be JSON of a known shape: give it a `jsonSchema` or an `exampleJson` and wire it to the agent's or chain's `outputParser` input. It retries a malformed answer up to `maxRetries` times.
 - Give every tool a name and a description the model can act on, as the example's `kilasflow.calculatorTool` does. `toolDescription` is the only thing the model reads about a tool, and a tool whose description is vague is a tool the model uses wrongly.
 - Bound the loop. The agent's `maxIterations` caps the model-and-tool rounds, and its output item carries `output`, `iterations`, `toolCalls` and `usage`, so a cost question is answered from the run rather than guessed. `returnIntermediateSteps` adds the whole message list, tool turns included, for debugging.
-- The vector store needs PostgreSQL with pgvector. `kilasflow.vectorStore` is unavailable on SQLite, and `workflow validate` says so as a diagnostic on that node; `kilasflow.embeddings` calls an OpenAI-compatible HTTP API and runs on either database; read references/RAG.md for the ingest graph (a `kilasflow.documentLoader` fed by a `kilasflow.textSplitter`, and `kilasflow.embeddings`, into the store) and ask the node itself for the query side with `kilasflow node describe kilasflow.vectorStore`.
+- The vector store needs PostgreSQL with pgvector. `kilasflow.vectorStore` is unavailable on SQLite, and `workflow validate` says so as a diagnostic on that node; `kilasflow.embeddings` calls an OpenAI-compatible HTTP API and runs on either database; read references/RAG.md for both validated graphs: the ingest graph (a `kilasflow.documentLoader` fed by a `kilasflow.textSplitter`, and `kilasflow.embeddings`, into the store) and the query graph (a `kilasflow.vectorStoreTool` on the agent's `tools` input, with its own chat model and a `kilasflow.vectorStore` in `retrieve` mode over the same embeddings), and re-read `kilasflow node describe kilasflow.vectorStore` after any mode change, because the store's ports follow its mode.
 - A workflow offered to an agent as a tool, and every other tool variant, is found through the discovery in the last non-negotiable and read with `node describe`, not written from a remembered parameter list.
 
 ## Decision tree
@@ -83,7 +84,7 @@ what should the model do?
 |
 +-- answer from the customer's own documents (RAG)
 |     -> ingest: documentLoader + textSplitter + embeddings + vectorStore (references/RAG.md)
-|        query: kilasflow node describe kilasflow.vectorStore
+|        query: vectorStoreTool on the agent + its chat model + vectorStore in retrieve mode + embeddings (references/RAG.md)
 |
 +-- which model, which credential, a local server?
 |     -> references/MODELS.md, then kilasflow credential create --file cred.json --yes
@@ -110,5 +111,5 @@ what should the model do?
 | File | Read when |
 | --- | --- |
 | EXAMPLE.md | you are building a chat agent and want a validated document with a model, a memory and a tool wired by the right connection kinds |
-| RAG.md | the agent must answer from documents: the ingest graph, the ports each node shows, and where to read the query side |
+| RAG.md | the agent must answer from documents: the validated ingest graph, the validated query graph (an agent with a Vector Store Tool) and the ports each node shows |
 | MODELS.md | you are choosing a model node, creating its credential, pointing at a local or OpenAI-compatible server, or tuning reasoning effort, tokens and timeouts |
