@@ -127,14 +127,11 @@ func checkSheetsToolColumns(raw any) error {
 	if raw == nil {
 		return nil
 	}
-	if expression.IsExpression(raw) {
-		return fmt.Errorf("columns decides which columns the tool writes and which one finds the row, so the workflow author " +
-			"sets it: it cannot call $fromAI or be an expression. Map each column in the list instead, using $fromAI " +
-			"for the values the model supplies")
-	}
-	columns, ok := raw.(map[string]any)
+	columns, ok := plainSheetsMap(raw)
 	if !ok {
-		return nil
+		return fmt.Errorf("columns decides which columns the tool writes and which one finds the row, so the workflow author " +
+			"sets it: it must be the mapping itself, not an expression, text or a list. Map each column in the list " +
+			"instead, using $fromAI for the values the model supplies")
 	}
 	for _, key := range []string{"mappingMode", "matchingColumns", "schema"} {
 		if value, present := columns[key]; present && authorChoiceIsOpen(value) {
@@ -194,7 +191,10 @@ func refuseSheetsToolRun(operation string, authored map[string]any, resolved []w
 		judged[key] = value
 	}
 	judged["operation"] = operation
-	if err := validateGoogleSheetsTool(workflow.Node{Parameters: judged}); err != nil {
+	// The form's own rule, then the generic one every tool form has: the
+	// author-only keys, and no $fromAI in plain text.
+	form, _ := toolFormFor(GoogleSheetsToolNodeType)
+	if err := checkToolFormParameters(form, judged); err != nil {
 		return err
 	}
 	for _, node := range resolved {
