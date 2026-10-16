@@ -425,8 +425,9 @@ the one port matching its event, and anything unrecognised goes to the
 the raw body before an execution exists (the implemented algorithm is
 `sha512`), with the secret from a node parameter (`secretParameter`) or from a
 value the registration captured (`secretCapture`, covered below).
-`lifecycle.set` PUTs the minted webhook URL to the remote service
-on activation when the `autoRegister` parameter is on; `check` and `remove`
+`lifecycle.set` sends the minted webhook URL to the remote service with the
+method the pack declares (`PUT` in this example, `POST` in the one below) on
+activation when the `autoRegister` parameter is on; `check` and `remove`
 are optional requests that ask whether it is registered and take the
 registration down, and `set` can `capture` values from the answer for them to
 use, as the section after this one describes. `media`, not shown
@@ -435,12 +436,15 @@ the run owns it instead of referencing a URL that expires. And `notice` covers
 the activation-notice case: when the URL still has to be pasted into the
 remote service by hand, the editor shows this text with `{{ url }}` filled in.
 
-One honest caveat about checking a trigger pack: file-level `validate` runs
-against a throwaway registry without the trigger executor installed, so it
-reports `bound to executor "core.packTrigger", which this server has not
-installed` — the shipped WAHA trigger pack produces the identical line. That
-line is a harness gap, not a pack defect; the authoritative check for a
-trigger pack is loading it through the server.
+`kilasflow pack validate` checks a trigger pack the way the server would load
+it, including the trigger rules: the event list and catch-all, the webhook
+declaration, `hmac.algorithm`, and the lifecycle. It refuses a lifecycle
+`check` or `remove` that declares `capture` or reads a `{{ .Captured.<key> }}`
+that `set` does not capture, and an `hmac.secretCapture` that names no captured
+key or sits beside a `secretParameter`. Both trigger examples in this guide
+pass it with no issues, as does the shipped WAHA trigger pack. What it cannot
+check is the run-time side: that the credential named by `credentialType` is
+bound on the node, or that the remote service accepts the request.
 
 ### Keeping what the service answers
 

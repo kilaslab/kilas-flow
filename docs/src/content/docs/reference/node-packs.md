@@ -65,7 +65,9 @@ does not identify an operation, because names repeat across resources.
 A trigger accepts `events`, `catchAll`, `eventPath`, `shape`, `webhook`,
 `hmac`, `lifecycle`, `media`, `notice`. Events are in output-index order with
 the catch-all last; `hmac.algorithm` is `sha512`; `lifecycle.set` is the
-method/URL/headers/body/credentialType the server PUTs on activation.
+method/URL/headers/body/credentialType request the server sends on
+activation, with the method the pack declares (`check` and `remove` are
+declared the same way).
 `hmac` takes the secret from `secretParameter` or from `secretCapture`, never
 both; `lifecycle.set.capture` keeps values from the service's answer for
 `check` and `remove` to read as `{{ .Captured.<key> }}`, and a lifecycle body
