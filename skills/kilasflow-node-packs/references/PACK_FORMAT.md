@@ -76,6 +76,17 @@ connection names an output index), `catchAll` (where an unrecognised event goes)
 routing description — a trigger makes no outbound request — and its executor is
 the fan-out `core.packTrigger`. A pack never names its own executor.
 
+A lifecycle is up to three requests: `check`, `set` and `remove`. Only `set` may
+declare `capture`, a map from a key to a dotted path into its JSON answer
+(`"capture": {"id": "data.id", "secret": "data.secret"}`); `check` and `remove`
+read the kept values as `{{ .Captured.<key> }}`, and every key they read must be
+one `set` captures. A node parameter is `{{ .Parameter.<key> }}` as text and
+`{{ .ParameterJSON.<key> }}` as JSON, which is the one to use for a list or an
+object in a JSON body (`"events": {{ .ParameterJSON.events }}`). `hmac` takes its
+secret from `secretParameter` or from `secretCapture`, never both, and
+`secretCapture` must name a key the lifecycle's `set` captures. A complete
+worked pack is in the node-authoring guide (docs: guides/node-authoring).
+
 ## Checksums and boot refusals
 
 `pack.sha256` holds the hex SHA-256 of `pack.json` in `sha256sum` shape — the
