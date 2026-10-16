@@ -404,6 +404,7 @@ jobs:
   e2e:
     name: End-to-end (Playwright)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     # The suite is environment-gated: PostgreSQL, the WAHA corpus, a local model
     # and a live n8n each make their specs skip when absent, and a skip reads as
@@ -490,7 +491,6 @@ jobs:
         run: make test-visual
         env:
           KILASFLOW_E2E_PREBUILT: '1'
-        continue-on-error: ${{ hashFiles('e2e/visual/__screenshots__/linux/**') == '' }}
 
       - name: Upload visual results
         if: always()
