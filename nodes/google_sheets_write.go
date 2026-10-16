@@ -50,6 +50,12 @@ func (run *sheetsRun) writeContext(parameters map[string]any, tab sheetsTab) (*w
 	default:
 		return nil, run.errorf("handling extra fields %q is not supported: use insertInNewColumn, ignoreIt or error", context.extraData)
 	}
+	if run.isToolCall() {
+		// A model's value that starts with "=" would be a formula under
+		// USER_ENTERED (IMPORTRANGE, IMAGE with a URL carrying other cells).
+		// Whatever cell format the author chose, a tool writes text.
+		context.valueInput = "RAW"
+	}
 	existing, err := run.values(sheetsa1.Quote(tab.title), "FORMATTED_VALUE", "")
 	if err != nil {
 		return nil, err
@@ -324,6 +330,10 @@ func mappedOutput(items []workflow.Item, data []itemData) []workflow.Item {
 	return out
 }
 
+// isToolCall reports a run made by an agent's tool form, whose item is the
+// agent's input and whose model-supplied values arrive through $fromAI.
+func (run *sheetsRun) isToolCall() bool { return run.request.FromAIArguments != nil }
+
 // --- Append --------------------------------------------------------------------
 
 func (run *sheetsRun) appendRows(items []workflow.Item, resolved []workflow.IRNode, tab sheetsTab) ([]workflow.Item, error) {
@@ -332,7 +342,8 @@ func (run *sheetsRun) appendRows(items []workflow.Item, resolved []workflow.IRNo
 		return nil, err
 	}
 	// An empty sheet has no columns to map by hand, so its first rows define them.
-	forceAuto := len(context.existing) == 0
+	// A tool's item is the agent's input, which defines nothing.
+	forceAuto := len(context.existing) == 0 && !run.isToolCall()
 	data := make([]itemData, len(items))
 	for index, item := range items {
 		data[index], err = run.itemValues(index, item, mappingOf(resolved[index].Parameters), forceAuto)
@@ -373,7 +384,7 @@ func (run *sheetsRun) updateRows(items []workflow.Item, resolved []workflow.IRNo
 		return nil, run.errorf("a matching column is required to find the row: set one in Columns")
 	}
 	match := mapping.MatchingColumns[0]
-	forceAuto := upsert && len(context.existing) == 0
+	forceAuto := upsert && len(context.existing) == 0 && !run.isToolCall()
 	if !forceAuto && len(context.header) == 0 {
 		return nil, run.errorf("row %d of %q holds no column names, so there is nothing to map the values by", context.headerRow, tab.title)
 	}
@@ -434,6 +445,10 @@ func (run *sheetsRun) updateRows(items []workflow.Item, resolved []workflow.IRNo
 			number, ok := wholeNumber(matchValue)
 			if !ok || number < 1 {
 				return nil, run.errorf("item %d: row_number %v is not a row of the sheet", index, matchValue)
+			}
+			if run.isToolCall() && number < context.firstDataRow {
+				return nil, run.errorf("item %d: row %d is not a data row. The rows before row %d hold the sheet's column names, "+
+					"and a tool call does not rewrite them", index, number, context.firstDataRow)
 			}
 			rowNumber = number
 		default:
@@ -524,6 +539,9 @@ func (run *sheetsRun) deleteSpans(items []workflow.Item, resolved []workflow.IRN
 			start = intOr(parameters["startIndex"], 2) - 1
 			if start < 0 {
 				return nil, run.errorf("item %d: the start row must be at least 1", index)
+			}
+			if start == 0 && run.isToolCall() {
+				return nil, run.errorf("item %d: row 1 holds the sheet's column names, and a tool call does not delete them", index)
 			}
 		case "columns":
 			dimension = "COLUMNS"

@@ -792,6 +792,8 @@ var toolVariants = map[string]toolVariant{
 		publishedVersions: []float64{2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7},
 	},
 	TelegramNodeType: {kilasType: TelegramToolNodeType},
+	// The Google Sheets tool has the base node's versions (4 to 4.7).
+	GoogleSheetsNodeType: {kilasType: GoogleSheetsToolNodeType, toKilas: googleSheetsToolToKilas},
 }
 
 // toolVariantMapping derives the import mapping of an n8n <type>Tool from
