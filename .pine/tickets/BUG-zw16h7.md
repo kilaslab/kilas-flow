@@ -1,7 +1,7 @@
 ---
 id: BUG-zw16h7
 title: 'CI: smoke-docker failed on cleanup of container-written files, and the JS worker spec missed workers named /proc/self/exe'
-status: todo
+status: done
 priority: medium
 parent: EPIC-8rbys7
 created: "2026-10-16T15:36:34Z"
@@ -20,3 +20,11 @@ Not fixed here, still red in CI (need investigation with the CI environment): `e
 # Acceptance Criteria
 - [x] smoke-docker's cleanup removes the container-written files from a throwaway root container when the host user cannot, and never fails the run (`sh -n` ok; the script's checks are unchanged).
 - [x] The worker spec accepts the server's own binary under either name; `pnpm exec playwright test tests/js-code.spec.ts -g "worker processes"` passes locally.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-10-16.
+
+- Base: `7f9fd34e` (last commit at or before ticket created 2026-10-16)
+- Commits (1):
+  - `7f9fd34e` — BUG-zw16h7: smoke-docker's cleanup cannot fail the run on files the container wrote, and the worker spec recognises a worker re-executed through /proc/self/exe
