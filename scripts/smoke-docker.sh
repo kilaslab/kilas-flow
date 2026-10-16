@@ -18,7 +18,14 @@ image=${KILASFLOW_SMOKE_IMAGE:-kilasflow:latest}
 
 cleanup() {
 	docker rm -f "$container" >/dev/null 2>&1 || true
-	rm -rf "$work_dir"
+	# The non-root container writes files under the bind mount (the code cache)
+	# that the host user may not be allowed to delete; remove those from a
+	# throwaway container as root, and never let cleanup fail the smoke test.
+	if ! rm -rf "$work_dir" 2>/dev/null; then
+		docker run --rm --user 0 -v "$work_dir:/work" --entrypoint /busybox/rm "$image" -rf /work/data >/dev/null 2>&1 ||
+			docker run --rm -v "$work_dir:/work" busybox:1.37 rm -rf /work/data >/dev/null 2>&1 || true
+		rm -rf "$work_dir" 2>/dev/null || echo "smoke-docker: could not remove $work_dir" >&2
+	fi
 }
 trap cleanup EXIT INT TERM
 

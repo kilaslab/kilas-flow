@@ -602,7 +602,10 @@ test('code runs in worker processes of the server, never in Node.js, and the wor
 	expect(items(await runToSuccess(server.baseURL, workflowId), 'js')).toEqual([{ process: 'undefined', require: 'function', pid: 'undefined' }]);
 
 	const spawned = descendants(await processTable(), server.pid);
-	const workers = spawned.filter((row) => row.ppid === server.pid && /kilasflow/.test(row.command));
+	// On Linux a worker re-executes the server's own binary through
+	// /proc/self/exe (internal/jsworker/limits_linux.go), so its command line
+	// names that path rather than kilasflow.
+	const workers = spawned.filter((row) => row.ppid === server.pid && /kilasflow|^\/proc\/self\/exe/.test(row.command));
 	expect(workers.length, `the server's children: ${JSON.stringify(spawned)}`).toBeGreaterThanOrEqual(1);
 	expect(spawned.filter((row) => isNodeJS(row.command)), 'no Node.js process under the server').toEqual([]);
 
