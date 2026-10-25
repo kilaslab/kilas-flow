@@ -23,7 +23,11 @@ const (
 	// channel delivered anything — the untaken arm of a branch. It is neither a
 	// success nor a failure, and recording it as either would misread a pruned
 	// branch as one that ran.
-	StatusSkipped   Status = "skipped"
+	StatusSkipped Status = "skipped"
+	// StatusPinned is a node the runner never invoked because the workflow
+	// pins its data: the pinned items were fed as its output. A success the
+	// node did not earn would hide that it never ran at all.
+	StatusPinned    Status = "pinned"
 	StatusFailed    Status = "failed"
 	StatusCancelled Status = "cancelled"
 )

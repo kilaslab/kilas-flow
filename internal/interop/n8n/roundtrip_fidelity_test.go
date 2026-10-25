@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/kilaslab/kilas-flow/internal/interop/n8n"
+	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
 // exportedNode finds a node of an exported n8n document by its name.
@@ -19,6 +20,104 @@ func exportedNode(t *testing.T, document n8n.Document, name string) n8n.Node {
 	}
 	t.Fatalf("the export has no node named %q", name)
 	return n8n.Node{}
+}
+
+// TestPinDataSurvivesImportAndExport is FEAT-jrrqs2's interop half: a pin
+// names a node, and both sides key it by name, so it crosses as itself. An
+// import used to drop it with a diagnostic saying the nodes that had it
+// pinned would run for real — which they then did.
+func TestPinDataSurvivesImportAndExport(t *testing.T) {
+	t.Parallel()
+
+	imported := importFixture(t, `{
+	  "name": "Pinned",
+	  "pinData": {"Edit": [{"json":{"pinned":true}},{"json":{"second":2}}]},
+	  "nodes": [
+	    {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
+	    {"id":"b","name":"Edit","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[220,0],
+	     "parameters":{"mode":"manual","assignments":{"assignments":[{"id":"1","name":"a","value":"b","type":"string"}]}}}
+	  ],
+	  "connections": {"Manual": {"main": [[{"node":"Edit","type":"main","index":0}]]}}
+	}`)
+
+	// Carried, not reported: a pin naming a node of the workflow is data the
+	// run replays, and nothing about it was lost.
+	pinned := imported.Document.PinData["Edit"]
+	if len(pinned) != 2 || pinned[0].JSON["pinned"] != true || pinned[1].JSON["second"] != float64(2) {
+		t.Errorf("Document.PinData[Edit] = %#v, want both pinned items", pinned)
+	}
+	for _, issue := range imported.Unsupported {
+		if issue.Field == "pinData" {
+			t.Errorf("import reported %#v, want the pin carried without a diagnostic", issue)
+		}
+	}
+
+	exported, err := n8n.Export(imported.Document, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	// n8n's own shape: a list of {json: …} items under the node's name.
+	encoded, err := json.Marshal(exported.Document.PinData["Edit"])
+	if err != nil {
+		t.Fatalf("marshal the exported pin: %v", err)
+	}
+	if string(encoded) != `[{"json":{"pinned":true}},{"json":{"second":2}}]` {
+		t.Errorf("exported pinData = %s, want n8n's item shape", encoded)
+	}
+
+	// Export then import is a fixed point for the pin, and reports nothing.
+	exportedJSON, err := json.Marshal(exported.Document)
+	if err != nil {
+		t.Fatalf("marshal the export: %v", err)
+	}
+	reimported, err := n8n.Import(exportedJSON, registry(t))
+	if err != nil {
+		t.Fatalf("Import(export) error = %v", err)
+	}
+	if again := reimported.Document.PinData["Edit"]; len(again) != 2 || again[0].JSON["pinned"] != true {
+		t.Errorf("re-imported pinData = %#v, want the exported items", again)
+	}
+	for _, issue := range reimported.Unsupported {
+		if issue.Field == "pinData" {
+			t.Errorf("importing the export reported %#v, want the pin carried without a diagnostic", issue)
+		}
+	}
+
+	// A workflow authored here, pinned from the editor, exports its pin too.
+	authored := imported.Document
+	authored.PinData = map[string][]workflow.Item{"Edit": {{JSON: map[string]any{"pinned": true}}}}
+	pinnedExport, err := n8n.Export(authored, registry(t))
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	if encoded, _ := json.Marshal(pinnedExport.Document.PinData["Edit"]); string(encoded) != `[{"json":{"pinned":true}}]` {
+		t.Errorf("exported authored pinData = %s, want n8n's item shape", encoded)
+	}
+
+	// A paste still drops the pin and says so: it lands under names the
+	// workflow it joins may already use, and a pin keyed by the old name
+	// would point at nothing.
+	fragment, err := n8n.ImportFragment([]byte(`{
+	  "nodes": [{"id":"b","name":"Edit","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[0,0],
+	    "parameters":{"mode":"manual","assignments":{"assignments":[{"id":"1","name":"a","value":"b","type":"string"}]}}}],
+	  "connections": {},
+	  "pinData": {"Edit": [{"json":{"pinned":true}}]}
+	}`), registry(t))
+	if err != nil {
+		t.Fatalf("ImportFragment() error = %v", err)
+	}
+	if fragment.Document.PinData != nil {
+		t.Errorf("a paste carried pinData = %#v, want it dropped", fragment.Document.PinData)
+	}
+	var dropped bool
+	for _, issue := range fragment.Unsupported {
+		if issue.Field == "pinData" && issue.Severity == n8n.SeverityDropped {
+			dropped = true
+		}
+	}
+	if !dropped {
+		t.Errorf("a paste dropped pinData without a diagnostic: %#v", fragment.Unsupported)
+	}
 }
 
 // TestAnExportedWorkflowDeclaresTheExecutionOrderItRunsIn is TPL-12's settings

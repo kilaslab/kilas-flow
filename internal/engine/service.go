@@ -648,6 +648,10 @@ func (service *Service) traceRows(record execution.Record, nodeTypes map[string]
 			// happened to produce nothing.
 			status = execution.StatusSkipped
 		}
+		if run.Pinned {
+			// A pinned node never ran; its pinned items were fed as its output.
+			status = execution.StatusPinned
+		}
 		var errorPayload json.RawMessage
 		if run.Error != nil {
 			status = execution.StatusFailed
@@ -665,8 +669,9 @@ func (service *Service) traceRows(record execution.Record, nodeTypes map[string]
 		// A skipped node reached a terminal state without failing. Publishing
 		// node.failed for it would light a pruned branch up as an error on the
 		// live canvas; the node-run record carries the skipped status, which is
-		// what a reader needs to tell the two apart.
-		if status != execution.StatusSucceeded && status != execution.StatusSkipped {
+		// what a reader needs to tell the two apart. A pinned node never ran
+		// either, and is not a failure for the same reason.
+		if status != execution.StatusSucceeded && status != execution.StatusSkipped && status != execution.StatusPinned {
 			eventType = events.NodeFailed
 		}
 		rows = append(rows, traceRow{
@@ -1467,6 +1472,9 @@ func (service *Service) persistChild(ctx context.Context, tenant repository.Tena
 		status := execution.StatusSucceeded
 		if run.Skipped {
 			status = execution.StatusSkipped
+		}
+		if run.Pinned {
+			status = execution.StatusPinned
 		}
 		var errorPayload json.RawMessage
 		if run.Error != nil {

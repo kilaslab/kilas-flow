@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Handle, NodeResizer, NodeToolbar, Position, useNodeConnections, type NodeProps } from '@xyflow/svelte';
 	import Pencil from '@lucide/svelte/icons/pencil';
+	import Pin from '@lucide/svelte/icons/pin';
 	import Plus from '@lucide/svelte/icons/plus';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
@@ -180,6 +181,7 @@
 		ondblclick={() => actions?.open(node.id)}
 		data-selected={selected ? 'true' : undefined}
 		data-disabled={node.disabled ? 'true' : undefined}
+		data-pinned={data.pinned ? 'true' : undefined}
 		data-invalid={invalid ? 'true' : undefined}
 		data-run-status={runStatus ?? undefined}
 	>
@@ -254,6 +256,19 @@
 				{#if importSeverity === 'lossy'}<TriangleAlert aria-hidden="true" class="size-2" strokeWidth={3} />{/if}
 				{importIssues.length}
 			</button>
+		{/if}
+
+		{#if data.pinned}
+			<!-- The document pins this node's output, so a run feeds the pinned
+			     items instead of executing it. One marker is the whole cue; the P
+			     key toggles it. -->
+			<span
+				aria-hidden="true"
+				class="absolute -left-1 -top-1 grid size-4 place-items-center rounded-full border-2 border-background bg-primary text-primary-foreground"
+				title={m.canvas_node_pinned_title()}
+			>
+				<Pin aria-hidden="true" class="size-2.5" strokeWidth={3} />
+			</span>
 		{/if}
 
 		<!-- Name and the one parameter worth reading at a glance. The hub carries its

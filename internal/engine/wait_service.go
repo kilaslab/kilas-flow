@@ -639,6 +639,9 @@ func (service *Service) persistTraceRow(ctx context.Context, tenant repository.T
 	if run.Skipped {
 		status = execution.StatusSkipped
 	}
+	if run.Pinned {
+		status = execution.StatusPinned
+	}
 	var errorPayload json.RawMessage
 	if run.Error != nil {
 		status = execution.StatusFailed
@@ -667,11 +670,14 @@ func (service *Service) publishTraceEvent(record execution.Record, run NodeRun, 
 	if run.Skipped {
 		status = execution.StatusSkipped
 	}
+	if run.Pinned {
+		status = execution.StatusPinned
+	}
 	if run.Error != nil {
 		status = execution.StatusFailed
 	}
 	eventType := events.NodeCompleted
-	if status != execution.StatusSucceeded && status != execution.StatusSkipped {
+	if status != execution.StatusSucceeded && status != execution.StatusSkipped && status != execution.StatusPinned {
 		eventType = events.NodeFailed
 	}
 	output, _ := json.Marshal(run.Output)

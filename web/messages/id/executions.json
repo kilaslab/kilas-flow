@@ -80,6 +80,7 @@
   "executions_status_failed": "Gagal",
   "executions_status_cancelled": "Dibatalkan",
   "executions_status_skipped": "Tidak tercapai",
+  "executions_status_pinned": "Disematkan",
   "executions_duration_milliseconds": "{value} ms",
   "executions_duration_seconds": "{value} detik",
   "executions_duration_minutes_seconds": "{minutes} menit {seconds} detik",

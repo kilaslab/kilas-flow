@@ -182,6 +182,68 @@ func TestCompileRefusesACredentialTypeTheNodeDoesNotDeclare(t *testing.T) {
 	}
 }
 
+// TestCompileCarriesPinDataByName is FEAT-jrrqs2's compiler half. pinData is
+// keyed by node name, exactly as n8n keys it, and a node whose name carries a
+// pin compiles with it — including a node that would not otherwise compile,
+// because it never runs: its pinned items are its output. A pin naming no
+// node is no pin at all.
+func TestCompileCarriesPinDataByName(t *testing.T) {
+	t.Parallel()
+
+	catalog := stubCatalog{definitions: map[string]workflow.NodeDefinition{
+		"test.trigger": {
+			Type: "test.trigger", Version: workflow.V(1),
+			Outputs: []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+		},
+		"test.http": {
+			Type: "test.http", Version: workflow.V(1),
+			Inputs:              []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			Outputs:             []workflow.Port{{Name: "main", Kind: workflow.ConnectionMain}},
+			RequiredCredentials: []string{"someApi"},
+		},
+	}}
+	document := func(pinData map[string][]workflow.Item) workflow.Document {
+		return workflow.Document{
+			SchemaVersion: workflow.CurrentSchemaVersion,
+			ID:            "wf_pinned", Name: "Pinned",
+			Nodes: []workflow.Node{
+				{ID: "trigger", Name: "Trigger", Type: "test.trigger", TypeVersion: workflow.V(1)},
+				// No credential: unpinned, this document is refused.
+				{ID: "call", Name: "Call", Type: "test.http", TypeVersion: workflow.V(1)},
+			},
+			Connections: []workflow.Connection{{
+				ID: "c1", Kind: workflow.ConnectionMain,
+				Source: workflow.Endpoint{NodeID: "trigger", Port: "main"},
+				Target: workflow.Endpoint{NodeID: "call", Port: "main"},
+			}},
+			Settings: map[string]any{},
+			PinData:  pinData,
+		}
+	}
+
+	pins := map[string][]workflow.Item{"Call": {{JSON: map[string]any{"pinned": true}}}}
+	ir, err := workflow.Compile(document(pins), catalog)
+	if err != nil {
+		t.Fatalf("Compile() of a pinned node = %v, want accepted", err)
+	}
+	for _, node := range ir.Nodes {
+		if node.ID != "call" {
+			continue
+		}
+		if len(node.Pinned) != 1 || node.Pinned[0].JSON["pinned"] != true {
+			t.Errorf("IRNode.Pinned = %#v, want the pinned item", node.Pinned)
+		}
+	}
+	if _, err := workflow.Compile(document(nil), catalog); err == nil {
+		t.Error("Compile() accepted the same node unpinned, want the missing credential named")
+	}
+	// A pin for a name the workflow does not have pins nothing, so the node is
+	// held to every rule an unpinned one is.
+	if _, err := workflow.Compile(document(map[string][]workflow.Item{"Nobody": {}}), catalog); err == nil {
+		t.Error("Compile() accepted the node under a pin naming no node, want the missing credential named")
+	}
+}
+
 // Two tools claiming one model-facing name must fail compilation naming both
 // nodes, not fail mid-run on a workflow the compiler already accepted.
 //

@@ -85,6 +85,7 @@
 		renameNode,
 		resolveDefinition,
 		toggleNodesDisabled,
+		toggleNodesPinned,
 		toWorkflowInput,
 		uniqueNodeName,
 		updateNodeCredential,
@@ -825,6 +826,18 @@
 		return true;
 	}
 
+	/** n8n's P. Sticky notes take no part in a run, so there is nothing to pin. */
+	function toggleSelectionPinned() {
+		const steps = selectedNodeIDs.filter((id) => {
+			const node = (draft.nodes ?? []).find((candidate) => candidate.id === id);
+			const definition = node ? resolveDefinition(node.type, node.typeVersion, definitions) : undefined;
+			return node !== undefined && !(definition && isAnnotation(definition));
+		});
+		if (steps.length === 0) return false;
+		replaceDraft(toggleNodesPinned(draft, steps));
+		return true;
+	}
+
 	/** n8n's Shift+S: a sticky note in the middle of the view. */
 	function addSticky(): boolean {
 		const sticky = definitions.find((definition) => isAnnotation(definition));
@@ -1200,6 +1213,9 @@
 			case 'toggle-disabled':
 				if (locked) return false;
 				return toggleSelectionDisabled();
+			case 'toggle-pinned':
+				if (locked) return false;
+				return toggleSelectionPinned();
 			case 'add-sticky':
 				if (locked) return false;
 				return addSticky();

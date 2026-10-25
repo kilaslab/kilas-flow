@@ -80,6 +80,7 @@
   "executions_status_failed": "Failed",
   "executions_status_cancelled": "Cancelled",
   "executions_status_skipped": "Not reached",
+  "executions_status_pinned": "Pinned",
   "executions_duration_milliseconds": "{value} ms",
   "executions_duration_seconds": "{value} s",
   "executions_duration_minutes_seconds": "{minutes} m {seconds} s",

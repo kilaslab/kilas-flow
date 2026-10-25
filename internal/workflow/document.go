@@ -64,6 +64,12 @@ type Document struct {
 	// keeps a per-tenant index of the latest revision's tags so a listing never
 	// has to load documents. See ValidateDraft for what a tag may be.
 	Tags []string `json:"tags,omitempty"`
+	// PinData is node output the author pinned, keyed by node name exactly as
+	// n8n keys it: the editor's P writes and removes entries, an n8n import
+	// carries them, and a run feeds a pinned node's items as its output
+	// instead of executing the node. Optional, so every already-persisted
+	// document decodes unchanged.
+	PinData map[string][]Item `json:"pinData,omitempty"`
 }
 
 // Node is a user-configured instance of a registered node definition.

@@ -231,6 +231,34 @@ export interface Node {
   typeVersion: number;
 }
 
+export interface BinaryRef {
+  fileName?: string;
+  id: string;
+  mediaType?: string;
+  size?: number;
+}
+
+export interface PairedItem {
+  itemIndex: number;
+  lost?: boolean;
+  parent?: PairedItem;
+  runIndex: number;
+  sourceNodeId: string;
+  sourcePort?: string;
+}
+
+export type ItemBinary = {[key: string]: BinaryRef};
+
+export type ItemJson = {[key: string]: unknown};
+
+export interface Item {
+  binary?: ItemBinary;
+  json: ItemJson;
+  pairedItem?: PairedItem;
+}
+
+export type DocumentPinData = {[key: string]: Item[] | null};
+
 export type DocumentSettings = {[key: string]: unknown};
 
 export interface Document {
@@ -240,6 +268,7 @@ export interface Document {
   name: string;
   /** @nullable */
   nodes: Node[] | null;
+  pinData?: DocumentPinData;
   schemaVersion: number;
   settings: DocumentSettings;
   /** @nullable */
@@ -1778,6 +1807,11 @@ export interface WorkflowDiagnosticsResource {
   workflowId: string;
 }
 
+/**
+ * Node output the author pinned, keyed by node name: a run feeds a node's pinned items as its output instead of executing the node
+ */
+export type WorkflowDocumentInputPinData = {[key: string]: Item[] | null};
+
 export type WorkflowDocumentInputSettings = {[key: string]: unknown};
 
 export interface WorkflowDocumentInput {
@@ -1790,6 +1824,8 @@ export interface WorkflowDocumentInput {
   name: string;
   /** @nullable */
   nodes: Node[] | null;
+  /** Node output the author pinned, keyed by node name: a run feeds a node's pinned items as its output instead of executing the node */
+  pinData?: WorkflowDocumentInputPinData;
   schemaVersion: number;
   settings: WorkflowDocumentInputSettings;
   /**

@@ -17,7 +17,11 @@ export function toWorkflowInput(document: Document): WorkflowDocumentInput {
 		connections: clone(document.connections ?? []),
 		settings: clone(document.settings ?? {}),
 		// A save replaces the stored tags with these, so they are always sent.
-		tags: clone(document.tags ?? [])
+		tags: clone(document.tags ?? []),
+		// Pinned data too — a save replaces what each pinned node replays —
+		// but only when there is any: an empty pin map is no pin at all, and
+		// sending one would make every previously-clean save body grow a field.
+		...(document.pinData && Object.keys(document.pinData).length > 0 ? { pinData: clone(document.pinData) } : {})
 	};
 }
 

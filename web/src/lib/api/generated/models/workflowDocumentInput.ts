@@ -7,6 +7,7 @@
  */
 import type { Connection } from './connection';
 import type { Node } from './node';
+import type { WorkflowDocumentInputPinData } from './workflowDocumentInputPinData';
 import type { WorkflowDocumentInputSettings } from './workflowDocumentInputSettings';
 
 export interface WorkflowDocumentInput {
@@ -19,6 +20,8 @@ export interface WorkflowDocumentInput {
   name: string;
   /** @nullable */
   nodes: Node[] | null;
+  /** Node output the author pinned, keyed by node name: a run feeds a node's pinned items as its output instead of executing the node */
+  pinData?: WorkflowDocumentInputPinData;
   schemaVersion: number;
   settings: WorkflowDocumentInputSettings;
   /**

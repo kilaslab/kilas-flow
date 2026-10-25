@@ -13,6 +13,7 @@
 	"canvas_node_attachment_add_aria": "Add a {port} to {name}",
 	"canvas_node_attachment_provides_aria": "{name} provides {port}",
 	"canvas_node_port_required_title": "{port} (required)",
+	"canvas_node_pinned_title": "Pinned: a run replays this node's pinned data instead of executing it (P to unpin)",
 	"canvas_edge_insert_aria": "Insert a step into this connection",
 	"canvas_edge_delete_aria": "Delete this connection",
 	"canvas_tidy": "Tidy up",

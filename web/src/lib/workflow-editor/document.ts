@@ -11,6 +11,9 @@ export type EditorNodeData = {
 	definition: Definition;
 	workflowNode: WorkflowNode;
 	validationMessage?: string;
+	// Whether the document pins this node's output, by its name: a run feeds
+	// the pinned items instead of executing the node. The P key writes it.
+	pinned?: boolean;
 	// Set only by the read-only execution replay, which annotates the same
 	// projection with each node's recorded outcome.
 	runStatus?: string;
@@ -129,7 +132,8 @@ export function resolveDefinition(
 export function documentFromCanvas(document: Document, definitions: Definition[], validationIssues: CanvasValidationIssue[] = []): CanvasDocument {
 	const { nodeIssues, edgeIssues } = issuesByTarget(validationIssues);
 	const labels = nodeLabels(document);
-	const nodes = (document.nodes ?? []).map((workflowNode) => projectNode(workflowNode, document, definitions, nodeIssues.get(workflowNode.id)));
+	const pinned = pinnedNames(document);
+	const nodes = (document.nodes ?? []).map((workflowNode) => projectNode(workflowNode, document, definitions, nodeIssues.get(workflowNode.id), pinned.has(workflowNode.name)));
 	const edges = (document.connections ?? []).map((connection) => projectEdge(connection, labels, edgeIssues.get(connection.id)));
 
 	return {
@@ -137,6 +141,11 @@ export function documentFromCanvas(document: Document, definitions: Definition[]
 		edges,
 		toDocument: (base) => documentFromFlow(base, nodes, edges)
 	};
+}
+
+/** The node names the document pins data for. An empty pin (`[]`) is a pin. */
+export function pinnedNames(document: Document): Set<string> {
+	return new Set(Object.keys(document.pinData ?? {}));
 }
 
 /**
@@ -169,15 +178,17 @@ export function reconcileCanvas(
 	selection: { nodeIDs: ReadonlySet<string>; edgeIDs: ReadonlySet<string> }
 ): { nodes: EditorFlowNode[]; edges: EditorFlowEdge[] } {
 	const { nodeIssues, edgeIssues } = issuesByTarget(validationIssues);
+	const pinned = pinnedNames(document);
 	const heldNodes = new Map(held.nodes.map((node) => [node.id, node]));
 	const nodes = (document.nodes ?? []).map((workflowNode) => {
 		const message = nodeIssues.get(workflowNode.id);
+		const isPinned = pinned.has(workflowNode.name);
 		const current = heldNodes.get(workflowNode.id);
 		const origin = current ? projectedFrom.get(current.data) : undefined;
 		const fresh =
-			current && origin && origin.source === workflowNode && origin.definitions === definitions && current.data.validationMessage === message
+			current && origin && origin.source === workflowNode && origin.definitions === definitions && current.data.validationMessage === message && (current.data.pinned ?? false) === isPinned
 				? current
-				: projectNode(workflowNode, document, definitions, message);
+				: projectNode(workflowNode, document, definitions, message, isPinned);
 		return withSelected(fresh, selection.nodeIDs.has(workflowNode.id));
 	});
 
@@ -213,7 +224,13 @@ function nodeLabels(document: Document): Map<string, string> {
 	return new Map((document.nodes ?? []).map((node) => [node.id, node.name]));
 }
 
-function projectNode(workflowNode: WorkflowNode, document: Document, definitions: Definition[], validationMessage: string | undefined): EditorFlowNode {
+function projectNode(
+	workflowNode: WorkflowNode,
+	document: Document,
+	definitions: Definition[],
+	validationMessage: string | undefined,
+	pinned = false
+): EditorFlowNode {
 	const resolved = resolveDefinition(workflowNode.type, workflowNode.typeVersion, definitions);
 	const definition = resolved ?? unavailableDefinition(workflowNode, document.connections ?? []);
 	// The workflow node is shared, not cloned: the draft is immutable at
@@ -223,6 +240,7 @@ function projectNode(workflowNode: WorkflowNode, document: Document, definitions
 	// geometry below is derived, and it is derived from the parameters.
 	const annotation = isAnnotation(definition);
 	const data: EditorNodeData = { definition, workflowNode, validationMessage };
+	if (pinned) data.pinned = true;
 	// A placeholder's ports are read off the document's connections, so it is
 	// never reused: a new wire can change them without touching the node.
 	projectedFrom.set(data, { source: workflowNode, definitions: resolved ? definitions : null });
@@ -409,8 +427,17 @@ export function renameNode(document: Document, nodeID: string, rawName: string):
 	const target = (document.nodes ?? []).find((node) => node.id === nodeID);
 	if (!target || name === '' || name === target.name) return document;
 
+	// The node's pin is keyed by its name, so the rename carries it — a pin
+	// left under the old name would pin nothing.
+	let { pinData } = document;
+	if (pinData && pinData[target.name] !== undefined) {
+		pinData = { ...pinData, [name]: pinData[target.name] };
+		delete pinData[target.name];
+	}
+
 	return {
 		...document,
+		...(pinData === document.pinData ? {} : { pinData }),
 		nodes: (document.nodes ?? []).map((node) => {
 			if (node.id === nodeID) return { ...node, name };
 			return rewriteNodeReferences(node, target.name, name);
@@ -524,6 +551,32 @@ export function toggleNodesDisabled(document: Document, nodeIDs: readonly string
 			return enabled;
 		})
 	};
+}
+
+/**
+ * n8n's P: pins the named nodes' output, or unpins them when every one of
+ * them is already pinned. A pin is the node's entry in the document's
+ * pinData, keyed by name; the editor has no run data of its own to record,
+ * so a node pinned here pins an empty output — a run replays no items for it
+ * instead of executing it, which is also what n8n's editor pins for a node
+ * that has not produced data. Unpinning drops the entry, so a node toggled
+ * twice saves exactly as it was; a map left empty is dropped whole.
+ */
+export function toggleNodesPinned(document: Document, nodeIDs: readonly string[]): Document {
+	const named = new Set(nodeIDs);
+	const targets = (document.nodes ?? []).filter((node) => named.has(node.id));
+	if (targets.length === 0) return document;
+	const pins = document.pinData ?? {};
+	const pin = targets.some((node) => pins[node.name] === undefined);
+	// eslint-disable-next-line @typescript-eslint/no-unused-vars
+	const { pinData: _previous, ...rest } = document;
+	const entries = { ...pins };
+	for (const node of targets) {
+		if (pin) entries[node.name] = entries[node.name] ?? [];
+		else delete entries[node.name];
+	}
+	if (Object.keys(entries).length === 0) return rest;
+	return { ...document, pinData: entries };
 }
 
 function rewriteNodeReferences(node: WorkflowNode, from: string, to: string): WorkflowNode {

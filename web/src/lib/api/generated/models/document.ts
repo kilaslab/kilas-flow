@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 import type { Connection } from './connection';
+import type { DocumentPinData } from './documentPinData';
 import type { DocumentSettings } from './documentSettings';
 import type { Node } from './node';
 
@@ -16,6 +17,7 @@ export interface Document {
   name: string;
   /** @nullable */
   nodes: Node[] | null;
+  pinData?: DocumentPinData;
   schemaVersion: number;
   settings: DocumentSettings;
   /** @nullable */

@@ -309,7 +309,7 @@ in part — each reported as a **dropped** diagnostic:
 | Field | Why it is not carried |
 | --- | --- |
 | `settings` | Everything except the timezone, the workflow's own `executionTimeout` and `errorWorkflow`, and the execution order (KilasFlow always runs `v1`, which every export writes and which imports without an issue; any other value is reported as lossy, and a file that names none stays silent). The save-data flags and the other globals have no KilasFlow equivalent yet. The three carried keys matter: a scheduled workflow whose zone was dropped runs at the wrong hour every day, the timeout is the workflow's run budget, and an error workflow is started from its own error trigger when a run of this one fails. A zone this server cannot resolve is reported as lossy rather than silently falling back to UTC; so are n8n's `-1` "no timeout" (this server always applies the instance's budget) and an `errorWorkflow` id, because n8n's ids survive the trip only if that workflow was imported too. |
-| `pinData` | Pinned test data is an n8n editor feature. It is dropped rather than parked under a reserved key, because carrying data nothing reads would create a second silent-drop problem a release later. The nodes that had data pinned will run for real. |
+| `pinData` | **Kept.** A pin naming a node of the workflow is carried onto the document's `pinData`, and a run feeds the pinned items as that node's output instead of executing it — the editor's `P` toggles the same pin. Only the `json` payload of each pinned item crosses; n8n also pins binary attachments, which a document has no shape for. A pin naming a node the workflow does not have is reported dropped rather than parked. A *paste* drops pins and says so, because a paste lands under renamed nodes. |
 | `meta` | n8n instance metadata describing where the workflow came from. It has no meaning in another installation. |
 | `staticData` | n8n's per-workflow scratch space that its nodes persist between runs. KilasFlow keeps its own for each workflow (see [Helpers and static data](/guides/code-javascript/#helpers-and-static-data)), but the values n8n had are not carried: the imported workflow starts from empty static data. |
 
@@ -393,7 +393,7 @@ than being curated away.
 
 Use n8n's own workflow export. The importer reads the standard document — `name`,
 `nodes`, `connections`, `tags`, plus `settings`, `pinData`, `meta` and
-`staticData`, which it reports on rather than carrying (the tags are kept; see
+`staticData` (the tags and `pinData` are kept; see
 [Document-level elements](#document-level-elements)). There is no KilasFlow-specific export
 format and nothing to install on the n8n side.
 
@@ -435,7 +435,8 @@ back as `422` with the exact reason. Anything else comes back as `201` with a
     {
       "severity": "dropped",
       "field": "pinData",
-      "reason": "pinned test data is an n8n editor feature with no KilasFlow equivalent; it was not carried, so the nodes that had it pinned will run for real"
+      "nodeName": "Renamed in this workflow",
+      "reason": "the workflow pins data for \"Renamed in this workflow\", which is not a node in this workflow; the pin was not carried"
     }
   ],
   "webhooks": [

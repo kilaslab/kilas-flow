@@ -91,7 +91,7 @@ in part:
 | Field | What happens |
 | --- | --- |
 | `settings` | beyond the timezone, the workflow's own `executionTimeout`, `errorWorkflow` and `executionOrder`, reported **dropped**: the save-data flags and the rest have no equivalent yet |
-| `pinData` | reported **dropped**: pinned test data is an editor feature, and the nodes that had it pinned will run for real |
+| `pinData` | **kept** (FEAT-jrrqs2): a pin naming a node is carried onto the document's `pinData` and a run replays it instead of executing the node; a pin naming no node is reported **dropped**, and a paste drops pins (its nodes are renamed on landing) |
 | `meta` | reported **dropped**: instance metadata about where the workflow came from means nothing in another installation |
 | `staticData` | reported **dropped**: per-workflow scratch space its nodes persist between runs, with no equivalent here |
 

@@ -148,7 +148,12 @@ type IRNode struct {
 	// Disabled is the author's switch. The runtime never invokes such a node;
 	// it passes its first item input through, and a disabled trigger is never
 	// started.
-	Disabled   bool
+	Disabled bool
+	// Pinned is the node's pinned output, from the document's pinData, or nil
+	// when none is pinned. The runtime never invokes a pinned node either: it
+	// feeds these items as the node's output, which is what n8n's P key
+	// promises — the data the author recorded replays instead of the call.
+	Pinned     []Item
 	Definition NodeDefinition
 }
 
@@ -251,6 +256,9 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 	// the connection pass can leave their wires to the issue that explains
 	// them.
 	refused := make(map[string]bool, len(document.Nodes))
+	// pinnedByName resolves the document's pinData once, by the node name it
+	// is keyed by.
+	pinnedByName := document.PinData
 	ir := IR{
 		WorkflowID: document.ID,
 		Name:       document.Name,
@@ -290,6 +298,7 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 		}
 		definitions[node.ID] = definition
 		nodes[node.ID] = node
+		pinned := pinnedItems(pinnedByName, node)
 		ir.Nodes = append(ir.Nodes, IRNode{
 			ID:          node.ID,
 			Name:        node.Name,
@@ -300,13 +309,16 @@ func Compile(document Document, catalog Catalog) (IR, error) {
 			Credentials: cloneStringMap(node.Credentials),
 			Settings:    cloneAnyMap(node.Settings),
 			Disabled:    node.Disabled,
+			Pinned:      pinned,
 			Definition:  cloneNodeDefinition(definition),
 		})
 		// A disabled node is never invoked, so what it would need in order to
 		// run is not a reason to refuse the workflow: n8n imports routinely
 		// carry a switched-off Gmail or HTTP node whose credential is long
 		// gone, and refusing those would make the workflow unactivatable.
-		if node.Disabled {
+		// A pinned node never runs either — its pinned items are its output —
+		// so the same holds for it.
+		if node.Disabled || pinned != nil {
 			continue
 		}
 		required := definition.RequiredParameters
@@ -756,6 +768,24 @@ func cloneAnyMap(source map[string]any) map[string]any {
 	for key, value := range source {
 		cloned[key] = cloneJSONValue(value)
 	}
+	return cloned
+}
+
+// pinnedItems is the pinned output one node's name carries, copied so a later
+// mutation of the canonical document cannot change a compiled execution plan.
+// Nil means nothing is pinned for that name; an empty, non-nil slice means
+// pinned at no items, which is a pin n8n's own editor writes when it pins a
+// node that has not produced data.
+func pinnedItems(pinnedByName map[string][]Item, node Node) []Item {
+	if len(pinnedByName) == 0 {
+		return nil
+	}
+	items, found := pinnedByName[node.Name]
+	if !found || items == nil {
+		return nil
+	}
+	cloned := make([]Item, len(items))
+	copy(cloned, items)
 	return cloned
 }
 
