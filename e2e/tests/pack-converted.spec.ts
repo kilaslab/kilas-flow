@@ -192,28 +192,33 @@ test('an n8n workflow referencing the converted node imports and binds to it', a
 			}
 		}, 201);
 
-		// No mapping claims the source type, so it arrives as the blocking
-		// placeholder — visible, preserved, and refusing to run until it is
-		// replaced. The import-report vocabulary (FEAT-0556ck): blocking
-		// stops the workflow running.
-		const issues = imported.unsupported as Array<{ severity: string; nodeName?: string; type?: string; reason: string }>;
-		const placeholder = issues.find((issue) => issue.type === CONVERTED_SOURCE_TYPE);
-		expect(placeholder, 'the import names the unmapped source node').toBeDefined();
-		expect(placeholder?.severity).toBe('blocking');
-		expect(placeholder?.reason).toContain(CONVERTED_SOURCE_TYPE);
+		// The converted pack records the source n8n identity (FEAT-mq412g),
+		// so the import resolves the community type onto the pack node
+		// directly: no blocking placeholder, no manual retype. What the report
+		// does still name is the document's own shape — it arrives with one
+		// node and no trigger — and that refusal is the compiler's own words,
+		// carried through rather than restated by the importer.
+		const issues = imported.unsupported as Array<{ severity: string; nodeName?: string; type?: string; field?: string; reason: string }>;
+		expect(
+			issues.find((issue) => issue.type === CONVERTED_SOURCE_TYPE && issue.field !== 'topology'),
+			'the source node resolved onto the converted pack, so nothing calls it unmapped'
+		).toBeUndefined();
 
-		// The capsule keeps the whole source node, so the values the operator
-		// rebinds are the values the author wrote — byte for byte.
+		// The resolved node carries the values the author wrote — byte for
+		// byte — under the converted pack's own type.
 		const document = await fetchDocument(server.baseURL, imported.workflow.id);
-		const capsule = document.nodes.find((node) => node.name === 'Acme Mail');
-		expect(capsule?.type).toBe('kilasflow.unsupported');
-		const original = (capsule?.parameters?.original as { parameters?: Record<string, unknown> } | undefined)?.parameters;
-		expect(original?.resource).toBe('message');
-		expect(original?.operation).toBe('send');
+		const resolved = document.nodes.find((node) => node.name === 'Acme Mail');
+		expect(resolved, 'the imported node is in the draft').toBeDefined();
+		expect(resolved?.type).toBe(CONVERTED_PACK_TYPE);
+		const carried = resolved?.parameters as Record<string, unknown> | undefined;
+		expect(carried?.resource).toBe('message');
+		expect(carried?.operation).toBe('send');
+		expect(carried?.to).toBe('a@example.com');
 
-		// Binding: the placeholder is replaced by the converted pack node
-		// carrying the preserved values, plus a trigger and a real
-		// credential — the same rebind step the WAHA migration performs.
+		// Binding: the import carries no credential (an n8n reference is
+		// instance-local) and the document had no trigger, so the rebind
+		// supplies both — the type is already the converted pack's, and the
+		// values are the ones the resolution preserved.
 		const credential = await createCredential(server.baseURL, {
 			name: 'E2E Import WAHA',
 			type: 'wahaApi',
@@ -222,17 +227,17 @@ test('an n8n workflow referencing the converted node imports and binds to it', a
 		document.nodes = [
 			{ id: 'manual', name: 'Manual Trigger', type: 'kilasflow.manual', typeVersion: 1, position: { x: 0, y: 0 } },
 			{
-				id: capsule?.id ?? 'acme-1',
+				id: resolved?.id ?? 'acme-1',
 				name: 'Acme Mail',
 				type: CONVERTED_PACK_TYPE,
 				typeVersion: 1,
 				position: { x: 240, y: 0 },
-				parameters: { resource: 'message', operation: 'send', to: 'a@example.com', subject: 'hi' },
+				parameters: carried,
 				credentials: { wahaApi: credential.id }
 			}
 		];
 		document.connections = [
-			{ id: 'c1', kind: 'main', source: { nodeId: 'manual', port: 'main' }, target: { nodeId: capsule?.id ?? 'acme-1', port: 'main' } }
+			{ id: 'c1', kind: 'main', source: { nodeId: 'manual', port: 'main' }, target: { nodeId: resolved?.id ?? 'acme-1', port: 'main' } }
 		] as unknown[];
 		await saveDocument(server.baseURL, imported.workflow.id, document);
 
