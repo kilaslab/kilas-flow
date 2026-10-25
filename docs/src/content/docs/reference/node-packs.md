@@ -64,12 +64,17 @@ does not identify an operation, because names repeat across resources.
 
 A trigger accepts `events`, `catchAll`, `eventPath`, `shape`, `webhook`,
 `hmac`, `lifecycle`, `media`, `notice`. Events are in output-index order with
-the catch-all last; `hmac.algorithm` is `sha512`; `lifecycle.set` is the
+the catch-all last; `hmac` names a signature scheme (`algorithm` `sha256` or
+`sha512`, `encoding` `hex` or `base64`, `prefix`, a `signingString` template
+over `{{ .body }}`, `{{ .timestamp }}` and `{{ .header.<name> }}`,
+`timestampHeader` with `toleranceSeconds`, or the `standardWebhooks` preset in
+one word); `lifecycle.set` is the
 method/URL/headers/body/credentialType request the server sends on
 activation, with the method the pack declares (`check` and `remove` are
 declared the same way).
-`hmac` takes the secret from `secretParameter` or from `secretCapture`, never
-both; `lifecycle.set.capture` keeps values from the service's answer for
+`hmac` takes the secret from `secretParameter`, from `secretCapture`, or from
+a `secretCredential` field, never more than one;
+`lifecycle.set.capture` keeps values from the service's answer for
 `check` and `remove` to read as `{{ .Captured.<key> }}`, and a lifecycle body
 sends a list or an object as `{{ .ParameterJSON.<key> }}` (guide:
 `guides/node-authoring`).

@@ -321,7 +321,7 @@ func TestHMACVerificationUsesTheExactBytes(t *testing.T) {
 	mac.Write([]byte(body))
 	signature := hex.EncodeToString(mac.Sum(nil))
 
-	verify := webhook.HMACVerifier("X-Webhook-Hmac", sha512.New, func(webhook.Delivery) (string, error) {
+	verify := webhook.HMACSchemeVerifier(webhook.HMACScheme{Header: "X-Webhook-Hmac", Algorithm: "sha512", Encoding: "hex"}, func(webhook.Delivery) (string, error) {
 		return secret, nil
 	})
 
