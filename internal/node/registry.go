@@ -149,6 +149,29 @@ type Definition struct {
 	// registered before its base or with a different scope, refuses an
 	// operator grant naming it, and rescopes it whenever its base is scoped.
 	ToolFormOf string `json:"-"`
+	// N8NSource records the community n8n node this definition is installed
+	// from: the npm package and the node name inside it, which an n8n
+	// workflow references as "<package>.<node>".
+	//
+	// It is what lets the n8n importer resolve a community type onto the node
+	// this installation runs for it, without a hand-written mapping entry per
+	// package: the sidecar records it for every node it converts, and a pack
+	// declares it in its manifest when the pack covers a community package.
+	// Nil for built-ins and for packs that mirror one of n8n's own nodes —
+	// those are mapped by name in the adapter's table instead.
+	//
+	// Tagged json:"-" deliberately: it is importer plumbing, and serving it
+	// would change the public node-types response for no reader yet.
+	N8NSource *N8NSource `json:"-"`
+}
+
+// N8NSource identifies the community n8n node a definition was installed from.
+type N8NSource struct {
+	// Package is the npm package name, scoped or not ("@apify/n8n-nodes-apify").
+	Package string
+	// Node is the node name inside the package an n8n workflow pairs with it
+	// ("apify", making the n8n type "@apify/n8n-nodes-apify.apify").
+	Node string
 }
 
 // WebhookDeclaration is how a node type says it answers an inbound request.
@@ -542,6 +565,53 @@ func (registry *Registry) HasType(nodeType string) bool {
 	return false
 }
 
+// ResolveN8NType finds the definition this installation runs for a community
+// n8n node type: the one whose recorded source package and node name pair up
+// with the "<package>.<node>" string an n8n workflow references. The highest
+// registered version of the matching type wins, mirroring Resolve.
+//
+// It is the importer's half of community-node resolution (FEAT-mq412g): an
+// installed package makes the import runnable without a mapping entry, and a
+// missing one is what the placeholder's "install this package" reason names.
+// A type this registry has but the caller's tenant may not see is filtered by
+// the TenantView wrapper, not here — the registry itself is tenant-blind.
+func (registry *Registry) ResolveN8NType(packageName, nodeName string) (Definition, bool) {
+	if registry == nil {
+		return Definition{}, false
+	}
+	packageName, nodeName = strings.TrimSpace(packageName), strings.TrimSpace(nodeName)
+	if packageName == "" || nodeName == "" {
+		return Definition{}, false
+	}
+	var best Definition
+	var chosen bool
+	for key, candidate := range registry.definitions {
+		if candidate.N8NSource == nil || candidate.N8NSource.Package != packageName || candidate.N8NSource.Node != nodeName {
+			continue
+		}
+		if chosen && best.Version.Compare(key.version) >= 0 {
+			continue
+		}
+		best, chosen = candidate, true
+	}
+	if !chosen {
+		return Definition{}, false
+	}
+	return cloneDefinition(best), true
+}
+
+// N8NIdentity names the community n8n node type ("<package>.<node>") the given
+// registered node type was installed from, so an export can write the type the
+// workflow came with instead of this server's own. Empty when the type is not
+// from a community package at all.
+func (registry *Registry) N8NIdentity(nodeType string) (string, string, bool) {
+	definition, found := registry.Resolve(nodeType, workflow.TypeVersion{})
+	if !found || definition.N8NSource == nil {
+		return "", "", false
+	}
+	return definition.N8NSource.Package, definition.N8NSource.Node, true
+}
+
 func validateDefinition(definition Definition) error {
 	if definition.Type == "" || definition.Version.IsZero() {
 		return fmt.Errorf("node definition type and positive version are required")
@@ -764,6 +834,10 @@ func cloneDefinition(definition Definition) Definition {
 			}
 		}
 		definition.Codex = &codex
+	}
+	if definition.N8NSource != nil {
+		source := *definition.N8NSource
+		definition.N8NSource = &source
 	}
 	return definition
 }

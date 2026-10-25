@@ -21,10 +21,11 @@ fix, and reading that list is the actual work of migrating.
 
 The advertised subset is a hand-written list rather than a pattern match,
 because an interoperability claim is only meaningful if the exact set is
-written down and testable. Sixty-eight pairs are advertised today, from
-sixty-seven n8n node types onto fifty-seven KilasFlow node types — two n8n type
-strings map onto each WAHA node, for reasons given below, and the n8n Code node
-maps onto one of two KilasFlow nodes depending on its language.
+written down and testable. Seventy-three pairs are advertised today, from
+seventy-two n8n node types onto fifty-seven KilasFlow node types — two n8n type
+strings map onto each WAHA node, for reasons given below, the n8n Code node
+maps onto one of two KilasFlow nodes depending on its language, and the Item
+Lists node maps per operation onto the native node that does that work.
 
 :::note[Get the list from your own instance rather than from this page]
 Every export response carries the live list in its `supportedMappings` field,
@@ -46,10 +47,20 @@ curl -s -H "Authorization: Bearer $KILASFLOW_API_KEY" \
 | `n8n-nodes-base.manualTrigger` | `kilasflow.manual` |
 | `n8n-nodes-base.webhook` | `kilasflow.webhook` |
 | `n8n-nodes-base.scheduleTrigger` | `kilasflow.schedule` |
+| `n8n-nodes-base.cron` (legacy) | `kilasflow.schedule` |
+| `n8n-nodes-base.interval` (legacy) | `kilasflow.schedule` |
 | `n8n-nodes-base.executeWorkflowTrigger` | `kilasflow.executeWorkflowTrigger` |
 | `n8n-nodes-base.telegramTrigger` | `kilasflow.telegramTrigger` |
 | `@devlikeapro/n8n-nodes-waha.wahaTrigger` | `pack.wahaTrigger` |
 | `n8n-nodes-waha.wahaTrigger` | `pack.wahaTrigger` |
+
+The legacy Cron and Interval triggers map onto Schedule Trigger, which is what
+n8n replaced them with. A Cron node's trigger times translate one mode to one
+rule interval, applying n8n's own defaults; a custom expression crosses as
+itself, seconds field included. One difference is named on import: n8n offset
+each non-custom time by a randomly chosen second, where the imported schedule
+fires exactly on the calendar. Both import only — the trigger exports back as
+a Schedule Trigger.
 
 ### Core and flow control
 
@@ -77,6 +88,14 @@ curl -s -H "Authorization: Bearer $KILASFLOW_API_KEY" \
 | `n8n-nodes-base.sort` | `kilasflow.sort` |
 | `n8n-nodes-base.summarize` | `kilasflow.summarize` |
 | `n8n-nodes-base.removeDuplicates` | `kilasflow.removeDuplicates` |
+| `n8n-nodes-base.itemLists` (legacy) | per operation: `kilasflow.aggregate`, `kilasflow.splitOut`, `kilasflow.sort`, `kilasflow.limit`, `kilasflow.removeDuplicates`, `kilasflow.summarize` |
+
+The Item Lists node's selector decides: its concatenate operation (spelled
+`aggregateItems` in v1 and `concatenateItems` from v3) is Aggregate, split out
+is Split Out, and sort, limit, remove duplicates and summarize are themselves.
+An operation with no mapping — the old append family — imports as a placeholder
+whose reason names the closest native node. The node imports only: it exports
+as the standalone node it became.
 
 ### Integrations
 
@@ -195,14 +214,22 @@ allowed, because every identifier is quoted when the statement is built.
 | --- | --- |
 | `n8n-nodes-base.code` (JavaScript) | `kilasflow.jsCode` |
 | `n8n-nodes-base.code` (Python) | `kilasflow.foreignCode` |
+| `n8n-nodes-base.function` (legacy) | `kilasflow.foreignCode` |
+| `n8n-nodes-base.functionItem` (legacy) | `kilasflow.foreignCode` |
 
 The language decides. A JavaScript Code node — `language: "javaScript"`, or no
 `language` at all, which is what n8n's first Code node version wrote — imports
 as Code (JavaScript) and runs. A Python one imports as the Code placeholder and
-does not. Both export back as n8n's Code node. This node has its own section:
+does not. Both export back as n8n's Code node. The legacy Function and Function
+Item nodes land on the same placeholder: their JavaScript is real JavaScript,
+but written against that node's own sandbox (`$items`, `$node`,
+`getWorkflowStaticData`), which the Code node here does not provide, so the
+body is kept and refused with a suggested replacement rather than run as
+something its author never wrote. A Function placeholder exports back as the
+Function node it came from. This node has its own section:
 see [The Code node](#the-code-node) below.
 
-### Two things about this table worth knowing
+### Three things about this table worth knowing
 
 **The two unscoped WAHA entries are import-only.** The published package is
 `@devlikeapro/n8n-nodes-waha` and an older one was unscoped, so a workflow
@@ -218,6 +245,16 @@ sides genuinely share a version numbering, a version this installation does not
 have registered is a **blocking** diagnostic rather than a silent resolve-down:
 a workflow authored at WAHA 202409 that quietly landed on 202502 would be wired
 against a different event order.
+
+**Community node types resolve onto installed nodes.** A type from a community
+package — `@apify/n8n-nodes-apify.apify`, `n8n-nodes-waha.WAHA`'s neighbours,
+any `<npm package>.<node>` — is not in the advertised list, because the list is
+written down in this repository and the packages are on npm. When this
+installation runs the node already — through the Node sidecar, or through a pack
+that declares its source package — the import resolves onto it, version-checked,
+with the node's parameters carried as themselves, and an export writes the
+community type back. When nothing here runs it, the placeholder's reason names
+the package: install that npm package in the sidecar and import again.
 
 ## What does not carry
 

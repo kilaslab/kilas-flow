@@ -363,6 +363,7 @@
         "kilasflow workflow diagnostics",
         "kilasflow workflow export",
         "kilasflow workflow get",
+        "kilasflow workflow import",
         "kilasflow workflow versions"
       ],
       "operations": [
@@ -382,7 +383,7 @@
         "$json"
       ],
       "notShipped": [
-        "No workflow update, import or restore verb: those operations are served and reached through the escape hatch"
+        "No workflow update or restore verb: those operations are served and reached through the escape hatch"
       ],
       "references": [
         "references/EXAMPLE.md",

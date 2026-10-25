@@ -253,10 +253,19 @@ func guardedInvocations(t *testing.T) map[string]guardedInvocation {
 		t.Fatalf("could not write the credential document: %v", err)
 	}
 
+	n8nDocument := filepath.Join(t.TempDir(), "n8n.json")
+	if err := os.WriteFile(n8nDocument, []byte(`{"name":"Imported","nodes":[],"connections":{}}`), 0o600); err != nil {
+		t.Fatalf("could not write the n8n document: %v", err)
+	}
+
 	return map[string]guardedInvocation{
 		"workflow activate": {
 			operation: "activate-workflow", args: []string{"wf_1"},
 			method: http.MethodPost, path: apiPrefix + "/workflows/wf_1/activate",
+		},
+		"workflow import": {
+			operation: "import-workflow", args: []string{"--file", n8nDocument},
+			method: http.MethodPost, path: apiPrefix + "/workflows/import",
 		},
 		"workflow deactivate": {
 			operation: "deactivate-workflow", args: []string{"wf_1"},

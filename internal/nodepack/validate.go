@@ -298,7 +298,7 @@ func checkStructure(pack *Pack, filename string) []Issue {
 }
 
 var (
-	packKeys       = []string{"type", "version", "displayName", "description", "category", "icon", "iconColor", "subtitle", "documentationUrl", "credentialType", "visibleTo", "requestDefaults", "trigger", "parameters", "resources", "generator", "module"}
+	packKeys       = []string{"type", "version", "displayName", "description", "category", "icon", "iconColor", "subtitle", "documentationUrl", "credentialType", "visibleTo", "requestDefaults", "trigger", "parameters", "resources", "generator", "module", "sourcePackage", "sourceNode"}
 	moduleKeys     = []string{"file", "sha256", "abi", "mode", "outputs", "capabilities", "credentials", "limits"}
 	moduleOutKeys  = []string{"name", "displayName"}
 	moduleCredKeys = []string{"type", "required"}
@@ -307,7 +307,7 @@ var (
 	operationKeys  = []string{"name", "description", "method", "url", "sends", "output", "pagination"}
 	parameterKeys  = []string{"key", "label", "description", "kind", "required", "default", "options", "typeOptions", "resources", "operations"}
 	provenanceKeys = []string{"tool", "source", "sourceTitle", "sourceVersion", "sourceDigest"}
-	triggerKeys    = []string{"events", "catchAll", "eventPath", "shape", "webhook", "hmac", "lifecycle", "media", "notice"}
+	triggerKeys    = []string{"events", "catchAll", "eventPath", "shape", "webhook", "hmac", "lifecycle", "media", "notice", "sourceNode"}
 )
 
 // checkUnknownFields lists every field the strict decoder would refuse, with

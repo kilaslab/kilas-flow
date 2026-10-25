@@ -210,6 +210,12 @@ func convertNode(pkg PackageInfo, declared PackageNode, packageCredentials map[s
 		Parameters:  parameters,
 		ExecutorID:  ExecutorID,
 		Credentials: requirements,
+		// The npm identity the type was slugged from, recorded so the n8n
+		// importer can resolve "<package>.<node>" onto this definition without
+		// a mapping entry (FEAT-mq412g). The slug is not invertible — an
+		// "@scope" and a "/" are both lost — so it has to be carried beside
+		// the type rather than reconstructed from it.
+		N8NSource: &node.N8NSource{Package: pkg.Name, Node: name},
 	}
 
 	converted := make([]Converted, 0, len(versions))

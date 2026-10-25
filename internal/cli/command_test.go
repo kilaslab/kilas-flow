@@ -214,6 +214,7 @@ func TestPhaseOneCommandTree(t *testing.T) {
 		"workflow list":            "list-workflows",
 		"workflow get":             "get-workflow",
 		"workflow create":          "create-workflow",
+		"workflow import":          "import-workflow",
 		"workflow validate":        "validate-workflow-document",
 		"workflow duplicate":       "duplicate-workflow",
 		"workflow versions":        "list-workflow-versions",

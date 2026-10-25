@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
@@ -307,6 +308,20 @@ var mappings = []mapping{
 		n8nType: "n8n-nodes-base.scheduleTrigger", kilasType: "kilasflow.schedule", kilasVersion: workflow.V(1),
 		exportTypeVersion: 1.2, toKilas: scheduleToKilas, toN8N: scheduleToN8N,
 	},
+	// The legacy Cron and Interval triggers. n8n hides both — the Schedule
+	// Trigger replaced them — but the workflows that use them are still among
+	// the most-viewed templates, and kilasflow.schedule runs every schedule
+	// either of them could express. importOnly: an imported trigger exports as
+	// a Schedule Trigger, which is n8n's own replacement and the node a
+	// re-import there shows.
+	{
+		n8nType: "n8n-nodes-base.cron", kilasType: "kilasflow.schedule", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: cronToKilas, importOnly: true,
+	},
+	{
+		n8nType: "n8n-nodes-base.interval", kilasType: "kilasflow.schedule", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: intervalToKilas, importOnly: true,
+	},
 	{
 		// Version 2, which is where the operation set lives. Every Postgres
 		// node n8n exports carries a typeVersion of 2.4 or higher, and the
@@ -365,6 +380,16 @@ var mappings = []mapping{
 		n8nType: "n8n-nodes-base.removeDuplicates", kilasType: RemoveDuplicatesNodeType, kilasVersion: workflow.V(1),
 		exportTypeVersion: 2, toKilas: removeDuplicatesToKilas, toN8N: removeDuplicatesToN8N,
 	},
+	// The Item Lists node: one selector, six operations, each a native node.
+	// kilasTypeFor picks the target from the selector the way it does for the
+	// Code node's languages; the advertised pair names the default operation's
+	// target, because a type-to-type list can only name one. importOnly: the
+	// imported node exports as the standalone node it became.
+	{
+		n8nType: "n8n-nodes-base.itemLists", kilasType: SplitOutNodeType, kilasVersion: workflow.V(1),
+		kilasTypeFor: itemListsKilasType, toKilas: itemListsToKilas,
+		refuseKilas: refuseUnknownItemListsOperation, importOnly: true,
+	},
 
 	// Code. JavaScript runs, as JavaScript, on the embedded engine; Python is
 	// kept as a first-class placeholder that refuses to run. The second entry
@@ -376,6 +401,20 @@ var mappings = []mapping{
 	{
 		n8nType: "n8n-nodes-base.code", kilasType: ForeignCodeNodeType, kilasVersion: workflow.V(1),
 		exportTypeVersion: 2, toN8N: codeToN8N, exportOnly: true,
+	},
+	// The legacy Function nodes. Their JavaScript is real JavaScript written
+	// against a sandbox the Code node does not provide, so they land on the
+	// same placeholder a Python Code node does: source preserved, one refusal,
+	// named replacement. importOnly: the export side finds them through
+	// legacyFunctionMapping, because the placeholder type is shared with the
+	// Code node.
+	{
+		n8nType: "n8n-nodes-base.function", kilasType: ForeignCodeNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: functionToKilas, importOnly: true,
+	},
+	{
+		n8nType: "n8n-nodes-base.functionItem", kilasType: ForeignCodeNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: functionItemToKilas, importOnly: true,
 	},
 
 	// Workflow composition. Every corpus workflow that factored shared logic
@@ -748,13 +787,101 @@ const (
 	DatastoreToolNodeType = "kilasflow.datastoreTool"
 )
 
-func byN8NType(nodeType string) (mapping, bool) {
+func byN8NType(nodeType string, catalog workflow.Catalog) (mapping, bool) {
 	for _, entry := range mappings {
 		if entry.n8nType == nodeType && !entry.exportOnly {
 			return entry, true
 		}
 	}
-	return toolVariantMapping(nodeType)
+	if entry, ok := toolVariantMapping(nodeType); ok {
+		return entry, true
+	}
+	// Last, and only for a type the table does not know: a community package
+	// this installation runs through the sidecar or a covering pack. The
+	// static table stays the authority for everything with a native
+	// equivalent, so a package can never override a mapping written here.
+	return communityMapping(nodeType, catalog)
+}
+
+// n8nSourceCatalog is implemented by a catalogue whose definitions record the
+// community n8n node they were installed from — every sidecar node, and a pack
+// that declares its source package. It is an optional extension for the same
+// reason TypeCatalog is: a stub catalogue a test passes need not answer.
+type n8nSourceCatalog interface {
+	ResolveN8NType(packageName, nodeName string) (node.Definition, bool)
+	N8NIdentity(nodeType string) (packageName, nodeName string, ok bool)
+}
+
+// communityMapping resolves a community n8n node type — "<npm package>.<node>"
+// — onto the definition this installation runs for it, when the catalogue has
+// one (FEAT-mq412g). The definition's parameters are the package's own, under
+// the names the n8n node reads, so the import carries them as themselves; the
+// mapping is shared-version, because the sidecar registers the package's own
+// node versions and a workflow asking for one it does not have is named rather
+// than silently resolved onto a different node.
+func communityMapping(nodeType string, catalog workflow.Catalog) (mapping, bool) {
+	packageName, nodeName, community := communityTypeParts(nodeType)
+	if !community || catalog == nil {
+		return mapping{}, false
+	}
+	resolver, answers := catalog.(n8nSourceCatalog)
+	if !answers {
+		return mapping{}, false
+	}
+	definition, found := resolver.ResolveN8NType(packageName, nodeName)
+	if !found {
+		return mapping{}, false
+	}
+	return mapping{
+		n8nType: nodeType, kilasType: definition.Type, kilasVersion: definition.Version,
+		toKilas: packToKilas, sharedVersion: true, importOnly: true,
+	}, true
+}
+
+// communityTypeParts splits a community n8n node type into its npm package and
+// node name — "@apify/n8n-nodes-apify.apify" into "@apify/n8n-nodes-apify" and
+// "apify" — and reports whether the type is a community one at all. n8n's own
+// packages are not: there is no sidecar to install n8n-nodes-base into, and a
+// placeholder for one of those is a gap in this server, not a missing package.
+//
+// The split is at the last dot, because a package name may contain dots while
+// a node name inside it may not.
+func communityTypeParts(nodeType string) (packageName, nodeName string, community bool) {
+	index := strings.LastIndex(nodeType, ".")
+	if index <= 0 || index == len(nodeType)-1 {
+		return "", "", false
+	}
+	packageName, nodeName = nodeType[:index], nodeType[index+1:]
+	switch {
+	case packageName == "n8n-nodes-base":
+		return "", "", false
+	case strings.HasPrefix(packageName, "@n8n/"):
+		return "", "", false
+	}
+	return packageName, nodeName, true
+}
+
+// communityExportMapping is the export half of community resolution: a node
+// the import resolved onto a sidecar or pack definition goes back out as the
+// community n8n node it came from, with its parameters carried as themselves.
+// Without this the fallback would write the server's own type — a string n8n
+// shows as an unrecognised node — for a workflow n8n itself authored.
+func communityExportMapping(node workflow.Node, catalog workflow.Catalog) (mapping, bool) {
+	if catalog == nil {
+		return mapping{}, false
+	}
+	resolver, answers := catalog.(n8nSourceCatalog)
+	if !answers {
+		return mapping{}, false
+	}
+	packageName, nodeName, ok := resolver.N8NIdentity(node.Type)
+	if !ok {
+		return mapping{}, false
+	}
+	return mapping{
+		n8nType: packageName + "." + nodeName, kilasType: node.Type,
+		exportTypeVersion: 1, sharedVersion: true, toN8N: packToN8N,
+	}, true
 }
 
 // toolVariant is the KilasFlow tool a mapped node's agent-tool form becomes.
@@ -874,7 +1001,28 @@ func unmappedReason(nodeType string) string {
 			"It was imported as an unsupported placeholder: the workflow can be edited, but it cannot run until this tool is replaced.",
 			base.n8nType, nodeType, base.kilasType)
 	}
-	return fmt.Sprintf("KilasFlow has no equivalent of the n8n node %q. It was imported as an unsupported placeholder: the workflow can be edited, but it cannot run until this node is replaced.", nodeType)
+	reason := fmt.Sprintf("KilasFlow has no equivalent of the n8n node %q. It was imported as an unsupported placeholder: the workflow can be edited, but it cannot run until this node is replaced.", nodeType)
+	if hint, ok := replacementHints[nodeType]; ok {
+		reason += " " + hint
+	}
+	// A community package this installation does not run is not a gap in this
+	// server — it is an install the operator can make, and the reason says
+	// which one rather than leaving the author to guess.
+	if packageName, _, community := communityTypeParts(nodeType); community {
+		reason += fmt.Sprintf(" Install npm package %s in the sidecar and import the workflow again to run it here.", packageName)
+	}
+	return reason
+}
+
+// replacementHints names the closest native node for an n8n type with no
+// mapping of its own. A hint is a pointer for the author, never a
+// translation: the node still imports as the placeholder, and the sentence
+// says what the named node actually covers. Only types whose work a native
+// node genuinely does belong here — a hint that names a node that cannot do
+// the job would send the author somewhere worse than the honest absence.
+var replacementHints = map[string]string{
+	"n8n-nodes-base.readBinaryFile":  "The closest native node is Extract From File (kilasflow.extractFromFile), which parses every format this node read once the bytes are in the workflow; the path-reading half needs an HTTP Request node beside it.",
+	"n8n-nodes-base.spreadsheetFile": "The closest native node is Extract From File (kilasflow.extractFromFile), which reads CSV, XLSX and the other spreadsheet formats from workflow binary data; its write half has no equivalent here.",
 }
 
 func byKilasType(nodeType string) (mapping, bool) {
@@ -1029,7 +1177,7 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 		// could not be read is not in it either.
 		unsupported = append(unsupported, unreadableIssues(name, id, node)...)
 
-		entry, supported := byN8NType(node.Type)
+		entry, supported := byN8NType(node.Type, catalog)
 		if !supported {
 			// Preserved rather than dropped: the node stays visible with its
 			// original identity, and the placeholder refuses to compile.
@@ -1973,6 +2121,19 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 		if !supported {
 			// An imported provider model goes back as its provider's node.
 			entry, supported = providerModelMapping(node)
+		}
+		if supported && node.Type == ForeignCodeNodeType {
+			// A Function node's placeholder is the same type as a Code node's;
+			// only the parameters say which n8n node it must go back to.
+			if legacy, ok := legacyFunctionMapping(node); ok {
+				entry = legacy
+			}
+		}
+		if !supported {
+			// A node this installation runs for a community n8n package goes
+			// back as the n8n node it came from, not under this server's own
+			// type: the type string is what the instance it returns to reads.
+			entry, supported = communityExportMapping(node, catalog)
 		}
 		if !supported {
 			// Emitted under its own type rather than omitted. n8n does not

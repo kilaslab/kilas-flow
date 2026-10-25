@@ -74,6 +74,14 @@ type Pack struct {
 	// Generator records where this file came from, so a reviewer can tell a
 	// regeneration from a hand edit.
 	Generator Provenance `json:"generator"`
+	// SourcePackage and SourceNode, when the pack covers a community n8n
+	// package, record the npm package and the node name inside it that an n8n
+	// workflow references as "<package>.<node>". The importer resolves such a
+	// type onto this pack without a mapping entry (FEAT-mq412g). Absent for a
+	// pack that mirrors one of n8n's own nodes — those map by name in the
+	// adapter's table.
+	SourcePackage string `json:"sourcePackage,omitempty"`
+	SourceNode    string `json:"sourceNode,omitempty"`
 	// Module, when set, makes this a WebAssembly pack: the manifest names a
 	// wasip1 module beside it and declares what that module may do. It is the
 	// third kind of pack beside a resource pack and a trigger pack, and the
@@ -193,6 +201,11 @@ func Load(pack *Pack) (node.Definition, *routing.Node, error) {
 		// able to claim any binding the server has registered.
 		ExecutorID: routing.ExecutorID,
 	}
+	// The community n8n identity, recorded on the definition for the importer
+	// when the pack covers a community package.
+	if strings.TrimSpace(pack.SourcePackage) != "" && strings.TrimSpace(pack.SourceNode) != "" {
+		definition.N8NSource = &node.N8NSource{Package: pack.SourcePackage, Node: pack.SourceNode}
+	}
 	if pack.Icon != "" {
 		definition.Icon = &node.NodeIcon{Light: pack.Icon}
 	}
@@ -309,6 +322,14 @@ func loadTrigger(pack *Pack, definition node.Definition) (node.Definition, *rout
 	definition.ExecutorID = TriggerExecutorID
 	if trigger.Lifecycle != nil {
 		definition.LifecycleID = trigger.Lifecycle.ID
+	}
+	// A trigger is its own node type with its own n8n identity: the pack's
+	// source package paired with the trigger's source node name, replacing the
+	// action node's identity the outer Load already wrote.
+	if strings.TrimSpace(pack.SourcePackage) != "" && strings.TrimSpace(trigger.SourceNode) != "" {
+		definition.N8NSource = &node.N8NSource{Package: pack.SourcePackage, Node: trigger.SourceNode}
+	} else {
+		definition.N8NSource = nil
 	}
 
 	seen := map[string]bool{}

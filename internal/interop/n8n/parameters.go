@@ -2889,6 +2889,193 @@ func scheduleToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	}, nil
 }
 
+// --- The legacy Cron and Interval triggers -----------------------------------
+//
+// n8n hides both — the Schedule Trigger replaced them — but the workflows
+// that still use them are among the most-viewed templates there are, and the
+// Schedule Trigger runs every schedule either of them could express. The
+// translators below read each node's own parameter shape from n8n's Cron and
+// Interval node definitions; the mapped node is the same kilasflow.schedule a
+// Schedule Trigger imports as, so everything downstream — validation, the
+// editor, export — is the one path that already exists.
+
+// cronToKilas carries the legacy Cron node's trigger times onto a Schedule
+// rule.
+//
+// The Cron node stores its times as a list of items, each a mode plus that
+// mode's fields (`{mode: "everyDay", hour: 9, minute: 30}`, `{mode: "custom",
+// cronExpression: "0 12 * * *"}`), where the Schedule Trigger stores one rule
+// of intervals. The translation is one mode to one interval, validated by the
+// scheduler's own ranges exactly as a Schedule Trigger's rule is, so an entry
+// this server cannot schedule is dropped and named rather than silently
+// mis-scheduled.
+//
+// Every default is n8n's own, transcribed from cronNodeOptions: a mode the
+// item leaves out is everyDay, an hour left out is 14, and an everyX without
+// a unit or value means every 2 hours. Applying them here is what makes the
+// import match what n8n actually ran, because n8n omits a parameter held at
+// its default when it saves the workflow.
+func cronToKilas(node Node) (map[string]any, []Unsupported) {
+	wrapper, _ := node.Parameters["triggerTimes"].(map[string]any)
+	entries, _ := wrapper["item"].([]any)
+	if len(entries) == 0 {
+		// The parameter's default is one everyDay item at 14:00; a workflow
+		// with no items at all is that untouched default.
+		entries = []any{map[string]any{"mode": "everyDay"}}
+	}
+
+	issues := make([]Unsupported, 0)
+	intervals := make([]any, 0, len(entries))
+	for index, entry := range entries {
+		fields, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		interval, note := cronInterval(fields)
+		if err := interval.Validate(); err != nil {
+			issues = append(issues, Unsupported{
+				Field:  "triggerTimes",
+				Reason: fmt.Sprintf("trigger time %d is out of range and was dropped: %v", index+1, err),
+			})
+			continue
+		}
+		intervals = append(intervals, intervalToMap(interval))
+		if note != "" {
+			issues = append(issues, Unsupported{
+				Field:  "triggerTimes",
+				Reason: fmt.Sprintf("trigger time %d: %s", index+1, note),
+			})
+		}
+	}
+	return map[string]any{"rule": map[string]any{"interval": intervals}}, issues
+}
+
+// cronInterval decodes one Cron trigger time into a schedule interval,
+// applying n8n's own defaults, and reports how the two schedulers differ.
+func cronInterval(fields map[string]any) (scheduler.Interval, string) {
+	// The values may arrive as strings or numbers; the scheduler reads both,
+	// so they are passed through exactly as the file wrote them.
+	hour := fields["hour"]
+	minute := fields["minute"]
+	interval := scheduler.Interval{TriggerAtHour: schedulerWhole(hour), TriggerAtMinute: schedulerWhole(minute)}
+	switch mode := strings.TrimSpace(stringText(fields["mode"])); mode {
+	case "everyMinute":
+		interval.Field = scheduler.FieldMinutes
+		interval.MinutesInterval = 1
+	case "everyHour":
+		interval.Field = scheduler.FieldHours
+		interval.HoursInterval = 1
+	case "everyX":
+		unit := defaultString(stringText(fields["unit"]), "hours")
+		value := schedulerWhole(fields["value"])
+		// Absent means n8n's default of 2; a value the file does name is kept
+		// as written, so the scheduler's ranges can judge it below.
+		if fields["value"] == nil && value <= 0 {
+			value = 2
+		}
+		if unit == "minutes" {
+			interval.Field = scheduler.FieldMinutes
+			interval.MinutesInterval = value
+		} else {
+			interval.Field = scheduler.FieldHours
+			interval.HoursInterval = value
+		}
+	case "everyWeek":
+		interval.Field = scheduler.FieldWeeks
+		interval.WeeksInterval = 1
+		// n8n's editor stores the weekday as its option's string and defaults
+		// to Monday; the scheduler reads either spelling.
+		day := 1
+		if weekday := fields["weekday"]; weekday != nil {
+			day = schedulerWhole(weekday)
+		}
+		interval.TriggerAtDay = []int{day}
+	case "everyMonth":
+		interval.Field = scheduler.FieldMonths
+		interval.MonthsInterval = 1
+		interval.TriggerAtDayOfMonth = schedulerWhole(fields["dayOfMonth"])
+		if interval.TriggerAtDayOfMonth <= 0 {
+			interval.TriggerAtDayOfMonth = 1
+		}
+	case "custom":
+		interval.Field = scheduler.FieldCronExpression
+		interval.Expression = strings.TrimSpace(stringText(fields["cronExpression"]))
+		// n8n's cron expressions carry a seconds field; this server's parser
+		// accepts five- and six-field expressions alike, so it crosses as-is.
+	default:
+		// n8n's own default mode, including the one an item with no mode at
+		// all means: every day.
+		interval.Field = scheduler.FieldDays
+		interval.DaysInterval = 1
+		if interval.TriggerAtHour == 0 && hour == nil {
+			interval.TriggerAtHour = 14
+		}
+	}
+
+	// Every non-custom cron n8n builds from these items starts at a randomly
+	// chosen second, so two workflows with the same time do not fire together.
+	// Cron has no such offset: the imported schedule fires exactly on the
+	// calendar, which is a difference the author should hear about once
+	// rather than never.
+	note := ""
+	if interval.Field != scheduler.FieldCronExpression {
+		note = "n8n offset this time by a randomly chosen second so instances do not fire together; the imported schedule fires exactly on the calendar instead"
+	}
+	return interval, note
+}
+
+// intervalToKilas carries the legacy Interval node onto a Schedule rule.
+//
+// The node is one interval and one unit, which is exactly what a seconds,
+// minutes or hours interval is. The scheduler's own ranges decide whether the
+// value can run: the Interval node accepted any positive number (every 90
+// minutes, every 2 hours), and a value outside the range would otherwise be
+// scheduled as something its author never wrote.
+func intervalToKilas(node Node) (map[string]any, []Unsupported) {
+	value := schedulerWhole(node.Parameters["interval"])
+	if value <= 0 {
+		value = 1
+	}
+	unit := defaultString(stringParameter(node.Parameters, "unit"), "seconds")
+	interval := scheduler.Interval{}
+	switch unit {
+	case "minutes":
+		interval = scheduler.Interval{Field: scheduler.FieldMinutes, MinutesInterval: value}
+	case "hours":
+		interval = scheduler.Interval{Field: scheduler.FieldHours, HoursInterval: value}
+	default:
+		interval = scheduler.Interval{Field: scheduler.FieldSeconds, SecondsInterval: value}
+	}
+	if err := interval.Validate(); err != nil {
+		return map[string]any{"rule": map[string]any{"interval": []any{}}}, []Unsupported{{
+			Severity: SeverityBlocking, Field: "interval",
+			Reason: fmt.Sprintf("this node triggered every %d %s, which the scheduler cannot express (each unit runs up to one below the next one: %v); "+
+				"the rule was imported empty and the workflow cannot run until it is rescheduled", value, unit, err),
+		}}
+	}
+	return map[string]any{"rule": map[string]any{"interval": []any{intervalToMap(interval)}}}, nil
+}
+
+// schedulerWhole reads a number the file may have written as a number or a
+// string, yielding zero when it is neither. The scheduler's own whole() is
+// unexported, and the cron node's fields cross as either spelling.
+func schedulerWhole(value any) int {
+	switch typed := value.(type) {
+	case float64:
+		return int(typed)
+	case int:
+		return typed
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err != nil {
+			return 0
+		}
+		return parsed
+	default:
+		return 0
+	}
+}
+
 // --- Date & Time and Wait ---------------------------------------------------
 //
 // The vendored reference checkout carries only four node sources — HttpRequest,
@@ -3454,6 +3641,74 @@ func codeLanguageName(language string) string {
 	default:
 		return language
 	}
+}
+
+// --- The legacy Function nodes -----------------------------------------------
+//
+// n8n's Function and Function Item nodes are the Code node's ancestors: real
+// JavaScript, written against that node's own sandbox ($items, $node,
+// getWorkflowStaticData and friends), which the Code node here does not
+// provide. They therefore land on the Code path's placeholder —
+// kilasflow.foreignCode — with the source preserved and one refusal, exactly
+// as a Python Code node does, rather than running as a Code node and
+// executing code the author never wrote (FEAT-8qyfh1's mechanism, extended to
+// the escape hatch it had not reached).
+
+// functionToKilas preserves a Function node's body and refuses it.
+func functionToKilas(node Node) (map[string]any, []Unsupported) {
+	return legacyFunctionToKilas(node, nodes.CodeModeAllItems)
+}
+
+// functionItemToKilas preserves a Function Item node's body and refuses it.
+// The Function Item node ran once per item, which is the mode its body is
+// written for and the mode it goes back out as.
+func functionItemToKilas(node Node) (map[string]any, []Unsupported) {
+	return legacyFunctionToKilas(node, nodes.CodeModeEachItem)
+}
+
+func legacyFunctionToKilas(node Node, mode string) (map[string]any, []Unsupported) {
+	source := stringParameter(node.Parameters, "functionCode")
+	suggestion := nodes.SuggestReplacement(source)
+	parameters := map[string]any{
+		"language":     "javaScript",
+		"mode":         mode,
+		"functionCode": source,
+		"replacement":  suggestion,
+	}
+	return parameters, []Unsupported{{
+		Severity: SeverityBlocking, Field: "functionCode",
+		Reason: nodes.FunctionNodeRefusal(source),
+	}}
+}
+
+// functionToN8N writes the Function nodes' one parameter back, exactly as it
+// arrived — the round trip must not cost a user their code.
+func functionToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	written := map[string]any{}
+	if source, present := node.Parameters["functionCode"]; present {
+		written["functionCode"] = toN8NValue(source)
+	}
+	return written, nil
+}
+
+// legacyFunctionMapping sends a foreignCode node that came from a legacy
+// Function node back out as that node, chosen by the parameters its import
+// wrote. providerModelMapping is the precedent: the export table is keyed by
+// type alone, and two n8n nodes share this one target — a Code node's
+// placeholder and a Function node's are the same type, so the entry the table
+// finds would speak for both and only the parameters say which.
+func legacyFunctionMapping(node workflow.Node) (mapping, bool) {
+	if strings.TrimSpace(stringParameter(node.Parameters, "functionCode")) == "" {
+		return mapping{}, false
+	}
+	entry := mapping{
+		n8nType: "n8n-nodes-base.function", kilasType: ForeignCodeNodeType,
+		kilasVersion: workflow.V(1), exportTypeVersion: 1, toN8N: functionToN8N,
+	}
+	if mode, _ := node.Parameters["mode"].(string); mode == nodes.CodeModeEachItem {
+		entry.n8nType = "n8n-nodes-base.functionItem"
+	}
+	return entry, true
 }
 
 // --- SQL --------------------------------------------------------------------
@@ -4791,6 +5046,139 @@ func removeDuplicatesToN8N(node workflow.Node) (map[string]any, []Lossy) {
 		}
 	}
 	return written, nil
+}
+
+// --- The Item Lists node ------------------------------------------------------
+//
+// n8n's Item Lists node is six operations behind one selector, and every one
+// of them is a native node here: the aggregate half is Aggregate, the split
+// half is Split Out, and Sort, Limit, Remove Duplicates and Summarize are
+// themselves. The v1 node spells the concatenate operation `aggregateItems`
+// and v3 `concatenateItems`; both are listed rather than normalised, the way
+// the WAHA spellings are, so a workflow authored against either finds its
+// node. The v1 node also stores its field lists as fixed collections where
+// the standalone nodes store comma-separated strings, so the translators
+// below rewrite those two shapes and hand the rest to the mapped node's own
+// translator.
+
+// itemListsOperation reads the operation selector, applying n8n's own default
+// (splitOutItems) the way its editor does when the file omits it.
+func itemListsOperation(node Node) string {
+	if operation := strings.TrimSpace(stringParameter(node.Parameters, "operation")); operation != "" {
+		return operation
+	}
+	return "splitOutItems"
+}
+
+// itemListsKilasType picks the native node an Item Lists operation maps onto,
+// the same role kilasTypeFor plays for the Code node's languages.
+func itemListsKilasType(node Node) string {
+	switch itemListsOperation(node) {
+	case "aggregateItems", "concatenateItems":
+		return AggregateNodeType
+	case "sort":
+		return SortNodeType
+	case "limit":
+		return LimitNodeType
+	case "removeDuplicates":
+		return RemoveDuplicatesNodeType
+	case "summarize":
+		return SummarizeNodeType
+	default: // splitOutItems and its older splitOut spelling
+		return SplitOutNodeType
+	}
+}
+
+// refuseUnknownItemListsOperation names the operations this server does not
+// map, and the closest native node where one exists. The mapped operations
+// are checked in one place with the type selector so the two can never name a
+// different set.
+func refuseUnknownItemListsOperation(node Node) string {
+	operation := itemListsOperation(node)
+	switch operation {
+	case "aggregateItems", "concatenateItems", "splitOutItems", "splitOut", "sort", "limit", "removeDuplicates", "summarize":
+		return ""
+	case "append", "concatItems", "appendAttribute", "itemIndexOf":
+		closest := "Aggregate (kilasflow.aggregate), which combines items into one"
+		if operation == "append" {
+			closest = "Merge (kilasflow.merge) in append mode"
+		}
+		return fmt.Sprintf("this Item Lists node uses the %q operation, which KilasFlow does not map; the closest native node is %s. "+
+			"It was kept as an unsupported placeholder: the workflow can be edited, but it cannot run until this node is replaced.",
+			operation, closest)
+	default:
+		return fmt.Sprintf("this Item Lists node uses the %q operation, which KilasFlow does not map. The operations that map are "+
+			"aggregate, split out, sort, limit, remove duplicates and summarize; this one is not among them. "+
+			"It was kept as an unsupported placeholder: the workflow can be edited, but it cannot run until this node is replaced.", operation)
+	}
+}
+
+// itemListsToKilas hands an operation to its native node's own translator,
+// after rewriting the v1 fixed-collection field lists into the strings those
+// translators read.
+func itemListsToKilas(node Node) (map[string]any, []Unsupported) {
+	switch itemListsOperation(node) {
+	case "aggregateItems", "concatenateItems":
+		return aggregateToKilas(itemListsWithFieldLists(node))
+	case "splitOutItems", "splitOut":
+		return splitOutToKilas(itemListsWithFieldLists(node))
+	case "sort":
+		return sortToKilas(node)
+	case "limit":
+		return limitToKilas(node)
+	case "removeDuplicates":
+		deduplicated := itemListsWithFieldLists(node)
+		// The selector keys must not reach this translator: the standalone
+		// node has an `operation` of its own, and the itemLists selector's
+		// value would read as its cross-execution mode.
+		delete(deduplicated.Parameters, "operation")
+		delete(deduplicated.Parameters, "resource")
+		return removeDuplicatesToKilas(deduplicated)
+	default: // summarize; refuseUnknownItemListsOperation gates the rest
+		return summarizeToKilas(node)
+	}
+}
+
+// itemListsWithFieldLists rewrites the v1 Item Lists node's fixed-collection
+// field lists ({fields: [{fieldName: …}]}) into the comma-separated strings
+// the standalone nodes store, leaving every other parameter as it arrived.
+func itemListsWithFieldLists(node Node) Node {
+	replacement := make(map[string]any, len(node.Parameters))
+	for key, value := range node.Parameters {
+		if list, ok := itemListFieldList(value); ok {
+			replacement[key] = list
+			continue
+		}
+		replacement[key] = value
+	}
+	node.Parameters = replacement
+	return node
+}
+
+// itemListFieldList reads one v1 fixed-collection field list, reporting
+// whether it found one. A value that is already a string is left alone: it is
+// the v3 and standalone-node spelling, and reading it here keeps the two
+// version's shapes from needing separate translators.
+func itemListFieldList(value any) (string, bool) {
+	switch typed := value.(type) {
+	case string:
+		return "", false
+	case map[string]any:
+		entries, _ := typed["fields"].([]any)
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			row, _ := entry.(map[string]any)
+			if name := strings.TrimSpace(stringText(row["fieldName"])); name != "" {
+				names = append(names, name)
+			}
+		}
+		if len(names) == 0 {
+			return "", false
+		}
+		return strings.Join(names, ","), true
+	default:
+		return "", false
+	}
 }
 
 func stringText(value any) string {
