@@ -1400,9 +1400,11 @@ func topologyIssues(document workflow.Document, catalog workflow.Catalog, source
 			Reason: reason + ". Run and activate refuse this workflow until it is fixed.",
 		}
 		if refusal.NodeID != "" {
-			source := sourceByID[refusal.NodeID]
+			// The report's type field is how a consumer finds the issue a
+			// node's own type produced (an unmapped node's placeholder). A
+			// topology refusal is about the wiring, not the node's type, so
+			// it names the node and stays off the type field.
 			issue.NodeName, issue.NodeID = nameByID[refusal.NodeID], refusal.NodeID
-			issue.Type, issue.TypeVersion = source.Type, sourceTypeVersion(source.TypeVersion)
 		}
 		issues = append(issues, issue)
 	}

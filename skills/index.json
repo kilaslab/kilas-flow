@@ -584,7 +584,7 @@
       "expressionRoots": [],
       "notShipped": [
         "No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet",
-        "No update, import or restore verb: `update-workflow`, `import-workflow` and `restore-workflow-version` are served and reached with kilasflow api"
+        "No update or restore verb: `update-workflow` and `restore-workflow-version` are served and reached with kilasflow api"
       ],
       "references": [
         "references/EXAMPLE.md",

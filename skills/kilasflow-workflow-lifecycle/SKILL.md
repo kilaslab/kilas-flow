@@ -39,7 +39,7 @@ kilasflow_operations:
 kilasflow_nodes: []
 kilasflow_expression_roots: []
 kilasflow_not_shipped:
-  - 'No update, import or restore verb: `update-workflow`, `import-workflow` and `restore-workflow-version` are served and reached with kilasflow api'
+  - 'No update or restore verb: `update-workflow` and `restore-workflow-version` are served and reached with kilasflow api'
   - 'No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet'
 ---
 
@@ -99,7 +99,7 @@ what are you doing?
 
 ## Not shipped yet
 
-- No update, import or restore verb: `update-workflow`, `import-workflow` and `restore-workflow-version` are served and reached with kilasflow api. Call them with `<operation-id>`, `--path` and `--body @file.json`; the other lifecycle calls have verbs.
+- No update or restore verb: `update-workflow` and `restore-workflow-version` are served and reached with kilasflow api. Call them with `<operation-id>`, `--path` and `--body @file.json`; importing is `kilasflow workflow import --file wf.json --yes`, and the other lifecycle calls have verbs.
 - No idempotency flag: the server honours Idempotency-Key on a run and on a row write, but no verb carries the key yet. A retry-safe run goes through `kilasflow api run-workflow --path id=<workflowId> --header Idempotency-Key=<key> --body @input.json`. The same key with a different request is refused `409`; a replayed answer is marked `Idempotent-Replayed: true`.
 
 ## Anti-patterns
