@@ -420,6 +420,75 @@ func TestLegacyItemsReadsOneOutputOfTheLatestRun(t *testing.T) {
 	}
 }
 
+// TestNodeAccessorsReadOneOutputOfTheLatestRun: `$('Name').all(branch, run)`,
+// `.first(branch, run)` and `.last(branch, run)` name an output and a run the
+// way n8n and the Code node take them. With no branch the connected output is
+// read (the behaviour BUG-fthahg shipped); an output the node does not have
+// and an earlier run are refused in the words `$items(name, output, run)` and
+// the Code node use, and -1 is the latest run. On a plain list the same
+// methods keep taking no arguments.
+func TestNodeAccessorsReadOneOutputOfTheLatestRun(t *testing.T) {
+	t.Parallel()
+
+	ctx := parityContext()
+	ctx.RunIndex = 2
+	ctx.NodeItems = map[string]expression.NodeItem{
+		// An IF node: two items went out on true, one on false.
+		"IF": {JSON: map[string]any{"v": "t1"}, Items: []map[string]any{{"v": "t1"}, {"v": "t2"}, {"v": "f1"}}, OutputLengths: []int{2, 1}, RunIndex: 2},
+		// A Switch whose first output got nothing.
+		"Switch": {Items: []map[string]any{{"v": "b"}}, OutputLengths: []int{0, 1}},
+		// Recorded before output lengths were: one output.
+		"Old": {JSON: map[string]any{"v": "a"}, Items: []map[string]any{{"v": "a"}, {"v": "b"}}},
+	}
+	// This node is connected to the IF's false branch, so a read that names no
+	// branch reads that one.
+	ctx.NodeBranches = map[string]int{"IF": 1}
+	for template, want := range map[string]any{
+		// No branch: the connected output, as BUG-fthahg shipped.
+		"{{ $('IF').all().map(i => i.json.v) }}":     []any{"f1"},
+		"{{ $('IF').first().json.v }}":               "f1",
+		"{{ $('IF').last().json.v }}":                "f1",
+		"{{ $('Switch').all().length }}":             float64(0),
+		"{{ $('Old').all().map(i => i.json.v) }}":    []any{"a", "b"},
+		"{{ $('IF').all(0).map(i => i.json.v) }}":    []any{"t1", "t2"},
+		"{{ $('IF').first(0).json.v }}":              "t1",
+		"{{ $('IF').all(1).map(i => i.json.v) }}":    []any{"f1"},
+		"{{ $('Switch').first(1).json.v }}":          "b",
+		"{{ $('Old').all(0).map(i => i.json.v) }}":   []any{"a", "b"},
+		"{{ $('IF').first(1, -1).json.v }}":          "f1",
+		"{{ $('IF').last(0, -1).json.v }}":           "t2",
+		"{{ $('IF').all(0, 2).map(i => i.json.v) }}": []any{"t1", "t2"},
+		"{{ $('IF').all(1, $runIndex).length }}":     float64(1),
+		// The read state a node view carries for these methods is its own
+		// bookkeeping, not a member: neither the keys nor the JSON of a view
+		// list it.
+		"{{ Object.keys($('Old')) }}": []any{"all", "binary", "isExecuted", "item", "json", "v"},
+	} {
+		if got := evaluateOne(t, template, ctx); !sameValue(got, want) {
+			t.Errorf("Evaluate(%s) = %#v, want %#v", template, got, want)
+		}
+	}
+	for template, want := range map[string]string{
+		"{{ $('IF').all(2) }}":        `$("IF").all() names output 2 of node "IF", which has no such output`,
+		"{{ $('IF').all(-1) }}":       `$("IF").all() names output -1 of node "IF", which has no such output`,
+		"{{ $('Old').first(1) }}":     `$("Old").first() names output 1 of node "Old", which has no such output`,
+		"{{ $('IF').first(0, 0) }}":   `$("IF").first() reads run 0 of node "IF", but only its latest run, 2, is kept`,
+		"{{ $('IF').last(1, 3) }}":    `$("IF").last() names run 3 of node "IF", which has no such run`,
+		"{{ $('IF').last(1, null) }}": `$("IF").last() names run null of node "IF", which has no such run`,
+		// A plain list and an input port keep taking no arguments.
+		"{{ $json.tags.first(1) }}": `first() takes at most 0 argument(s), got 1`,
+		"{{ $input.all(0) }}":       `all() takes at most 0 argument(s), got 1`,
+	} {
+		_, err := expression.Evaluate(template, ctx)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Evaluate(%s) error = %v, want %q", template, err, want)
+		}
+	}
+	if got := evaluateOne(t, `{{ $('Old').toJsonString() }}`, ctx); strings.Contains(got.(string), "u0000") {
+		t.Errorf("toJsonString of a node view lists its runtime bookkeeping: %s", got)
+	}
+}
+
 // TestUndefinedSemanticsMatchJavaScript: an index past the end, or a field read
 // on a scalar, used to abort the whole run.
 func TestUndefinedSemanticsMatchJavaScript(t *testing.T) {

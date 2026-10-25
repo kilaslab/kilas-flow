@@ -930,7 +930,7 @@ func normalizeJSON(value any) any {
 // left out of the object rather than written as null.
 func dropped(value any) bool {
 	switch value.(type) {
-	case undefinedValue, lineageError, closure:
+	case undefinedValue, lineageError, closure, nodeRead:
 		return true
 	default:
 		return false

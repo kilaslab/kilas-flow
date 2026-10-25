@@ -73,9 +73,9 @@ same list at `GET /api/v1/expression-grammar`.
 | `$input` | every item on each input port, plus `.item`, `.first()`, `.last()`, `.all()` and `.isExecuted` |
 | `$node["Name"].json.field` | that node's item corresponding to the current one (the paired item, else the same position) |
 | `$('Name').item` | that node's single item, when its provenance is intact |
-| `$('Name').first()` | its first item, on the output this node is connected to |
-| `$('Name').last()` | its last item, on the output this node is connected to |
-| `$('Name').all()` | all of its items on the output this node is connected to |
+| `$('Name').first(branch?, run?)` | its first item, on the output this node is connected to unless `branch` names another |
+| `$('Name').last(branch?, run?)` | its last item, read the same way |
+| `$('Name').all(branch?, run?)` | all of its items, read the same way |
 | `$env.KEY` | the allowlisted environment |
 | `$execution.id` | this execution's identity |
 | `$workflow.name` | this workflow's identity |
@@ -94,8 +94,15 @@ each one supports.
 For a node with several outputs, `.all()`, `.first()` and `.last()` read the
 one this node is connected to, as n8n does, however many nodes sit in between:
 a node after an IF's `false` branch reads the false items, never both branches
-joined. A node this one is not connected to is read at its first output.
-`$items('Name', output)` names the output instead, and starts from 0.
+joined. A node this one is not connected to is read at its first output. A
+branch can be named instead, with an optional run:
+`.all(branch, run)`, `.first(branch, run)` and `.last(branch, run)` read that
+output — `.all(1)` reads an IF's `false` branch from anywhere — of the node's
+latest run, which `run` may name by its number or as `-1`, exactly as
+`$items('Name', output, run)` and the Code node read them: an output the node
+does not have and a run earlier than the latest are errors naming the node,
+never another output's items or the latest run passed off as an earlier one.
+On a plain list — `$json.tags.first()` — the same methods take no arguments.
 
 `$fromAI` is gated: it is only meaningful in a parameter an AI agent fills, and
 anywhere else it is a clear error rather than a value. Without that gate an

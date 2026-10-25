@@ -283,6 +283,9 @@ func plainValue(value any) (any, error) {
 			if _, refused := entry.(lineageError); refused {
 				continue
 			}
+			if _, bookkeeping := entry.(nodeRead); bookkeeping {
+				continue
+			}
 			converted, err := plainValue(entry)
 			if err != nil {
 				return nil, err

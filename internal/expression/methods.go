@@ -73,11 +73,16 @@ func registerE(name string, bounds arity, call func(*evaluator, any, []any) (any
 func fixed(count int) arity { return arity{min: count, max: count} }
 
 var (
-	spaces        = arity{min: 0, max: 2}
-	oneOrTwo      = arity{min: 1, max: 2}
-	noneOrOne     = arity{min: 0, max: 1}
-	listMethod    = arity{min: 1, max: 1}
-	anyArguments  = arity{min: 0, max: -1}
+	spaces       = arity{min: 0, max: 2}
+	oneOrTwo     = arity{min: 1, max: 2}
+	noneOrOne    = arity{min: 0, max: 1}
+	listMethod   = arity{min: 1, max: 1}
+	anyArguments = arity{min: 0, max: -1}
+	// nodeReadArity is what all, first and last accept at parse time: the
+	// receiver decides how many they really take, and only a parse-time check
+	// runs before the receiver is known. A node view takes (branch, run); a
+	// plain list takes none, refused at evaluation in the same words.
+	nodeReadArity = arity{min: 0, max: 2}
 	emailPattern  = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
 	domainPattern = regexp.MustCompile(`(?:https?://)?([A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+)`)
 	urlPattern    = regexp.MustCompile(`(?:https?://|www\.)[^\s"'<>]+`)
@@ -499,33 +504,26 @@ func registerLists() {
 		}
 		return sorted, nil
 	})
-	register("first", fixed(0), func(receiver any, _ []any) (any, error) {
-		list, ok := listFrom(receiver)
-		if !ok {
-			return nil, fmt.Errorf("first() needs a list or a node")
-		}
+	// all, first and last take (branchIndex, runIndex) on a node view —
+	// `$('IF').all(1)`, `$('IF').first(0, -1)` — as n8n and the Code node take
+	// them. On a plain list, `$json.tags.first()` and `$input.all()`, they
+	// still take no arguments, which the method itself enforces with the same
+	// words the parse-time check refused by.
+	register("first", nodeReadArity, nodeReadMethod("first", func(list []any) any {
 		if len(list) == 0 {
-			return Undefined, nil
+			return Undefined
 		}
-		return list[0], nil
-	})
-	register("last", fixed(0), func(receiver any, _ []any) (any, error) {
-		list, ok := listFrom(receiver)
-		if !ok {
-			return nil, fmt.Errorf("last() needs a list or a node")
-		}
+		return list[0]
+	}))
+	register("last", nodeReadArity, nodeReadMethod("last", func(list []any) any {
 		if len(list) == 0 {
-			return Undefined, nil
+			return Undefined
 		}
-		return list[len(list)-1], nil
-	})
-	register("all", fixed(0), func(receiver any, _ []any) (any, error) {
-		list, ok := listFrom(receiver)
-		if !ok {
-			return nil, fmt.Errorf("all() needs a list or a node")
-		}
-		return list, nil
-	})
+		return list[len(list)-1]
+	}))
+	register("all", nodeReadArity, nodeReadMethod("all", func(list []any) any {
+		return list
+	}))
 	register("sum", fixed(0), func(receiver any, _ []any) (any, error) {
 		list, err := needList(receiver, "sum")
 		if err != nil {
@@ -590,6 +588,31 @@ func listPredicate(want bool) func(*evaluator, any, []any) (any, error) {
 			}
 		}
 		return !want, nil
+	}
+}
+
+// nodeReadMethod is all, first or last: one read of a list, whichever list the
+// receiver is. On a node view the arguments name an output and a run of that
+// node, read as the Code node reads them (nodeRead.list); on a plain list —
+// `$json.tags.first()`, `$input.all()` — there are no arguments to give, so
+// the first one is refused exactly as the fixed zero-arity check refused it.
+func nodeReadMethod(name string, pick func([]any) any) func(any, []any) (any, error) {
+	return func(receiver any, args []any) (any, error) {
+		if read, ok := nodeReadOf(receiver); ok {
+			list, err := read.list(fmt.Sprintf(`$("%s").%s()`, read.name, name), args)
+			if err != nil {
+				return nil, err
+			}
+			return pick(list), nil
+		}
+		if len(args) > 0 {
+			return nil, fixed(0).check(name, len(args))
+		}
+		list, ok := listFrom(receiver)
+		if !ok {
+			return nil, fmt.Errorf("%s() needs a list or a node", name)
+		}
+		return pick(list), nil
 	}
 }
 

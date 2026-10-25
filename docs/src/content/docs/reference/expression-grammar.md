@@ -88,7 +88,7 @@ An expression body must begin with one of these. Anything else is a parse error.
 | `$json` | the current item's fields |
 | `$input` | the n8n input API, and the port map underneath it (see below) |
 | `$node["Name"]` | the named node's output (see below) |
-| `$('Name')` | the named node, as a receiver for `.item`, `.first()`, `.last()`, `.all()`, `.params` |
+| `$('Name')` | the named node, as a receiver for `.item`, `.first()`, `.last()`, `.all()`, `.params` — the item methods take an optional `(branch, run)` |
 | `$items('Name', output?, run?)` | that node's items on one output as a list, output 0 unless `output` names another (an IF's `false` branch is 1); `$items()` is this node's own input items. Only the node's latest run is kept: `run` may name it by its number (`$runIndex` in a loop that runs in step) or as `-1`, and an earlier run is an error rather than the latest run's items |
 | `$env` | the allowlisted environment (see below) |
 | `$execution` | `.id`, `.mode`, `.resumeUrl` and `.approvalUrl` |
@@ -125,11 +125,21 @@ port, the n8n accessors read the first port in name order.
 | `$node["Name"].field` | the same value, unwrapped |
 | `$node["Name"].binary` | its attachments |
 | `$('Name').item` | the item this one descends from, or a refusal |
-| `$('Name').first()` | its first item on the output this node is connected to |
-| `$('Name').last()` | its last item on the output this node is connected to |
-| `$('Name').all()` | all of its items on the output this node is connected to (found upstream through any nodes in between, as n8n finds it; the first output when this node is not connected to it) |
+| `$('Name').first(branch?, run?)` | its first item on the output this node is connected to |
+| `$('Name').last(branch?, run?)` | its last item on the output this node is connected to |
+| `$('Name').all(branch?, run?)` | all of its items on the output this node is connected to (found upstream through any nodes in between, as n8n finds it; the first output when this node is not connected to it) |
 | `$('Name').params` | that node's own resolved configuration |
 | `$('Name').isExecuted` | boolean |
+
+`branch` and `run` name another output and run of the node, as n8n and the
+Code node take them: `.all(1)` reads an IF's `false` branch from anywhere,
+`.first(0, -1)` the first item of its `true` branch in the latest run. The run
+may be the node's latest by its number (`$runIndex` in a loop that runs in
+step) or as `-1`; an earlier run is an error rather than the latest run's
+items, and an output the node does not have is an error naming it — the same
+reads and the same refusals as `$items('Name', output, run)`. Without `branch`
+the connected output is read, and on a plain list — `$json.tags.first()` —
+these methods take no arguments at all.
 
 `$node["Name"].json` is the item that **corresponds to the current one**: the
 paired item when the runtime established lineage, and otherwise the item at the
