@@ -323,6 +323,28 @@ func (view TenantView) Restricted(nodeType string) bool {
 	return !view.registry.VisibleTo(nodeType, view.tenantID)
 }
 
+// ResolveN8NType is the tenant-narrowed half of Registry.ResolveN8NType: a
+// community node this tenant may not see does not resolve, at any version, so
+// the importer falls to its placeholder rather than onto a node the tenant
+// cannot run.
+func (view TenantView) ResolveN8NType(packageName, nodeName string) (Definition, bool) {
+	definition, found := view.registry.ResolveN8NType(packageName, nodeName)
+	if !found || !view.registry.VisibleTo(definition.Type, view.tenantID) {
+		return Definition{}, false
+	}
+	return definition, true
+}
+
+// N8NIdentity is the tenant-narrowed half of Registry.N8NIdentity, for the
+// same reason as ResolveN8NType: a type scoped away from this tenant is not
+// this tenant's to export.
+func (view TenantView) N8NIdentity(nodeType string) (string, string, bool) {
+	if !view.registry.VisibleTo(nodeType, view.tenantID) {
+		return "", "", false
+	}
+	return view.registry.N8NIdentity(nodeType)
+}
+
 // ScopeTo replaces the visibility scope of one registered type. It is the
 // operator's override of what a pack's manifest declared: the set REPLACES the
 // manifest's, so an operator can narrow it or widen it. There is no wildcard.

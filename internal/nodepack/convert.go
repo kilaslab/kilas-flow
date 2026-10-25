@@ -47,9 +47,11 @@ import (
 // property is shown wherever its resource and operation allow, because a
 // pack parameter can only be gated on those two.
 type DeclarativeNode struct {
-	// SourceType is the node's own type string, provenance only. The
-	// converted pack takes a KilasFlow-namespaced type instead, so imported
-	// workflows match through the importer's mapping table.
+	// SourceType is the node's own type string. The converted pack takes a
+	// KilasFlow-namespaced type instead; for a community package the source
+	// type is also recorded on the pack as its npm identity, so imported
+	// workflows resolve onto the pack through it (FEAT-mq412g) as well as
+	// through the importer's mapping table.
 	SourceType  string `json:"sourceType"`
 	DisplayName string `json:"displayName"`
 	Description string `json:"description,omitempty"`
@@ -251,6 +253,14 @@ func Convert(src *DeclarativeNode, digest string, opts ConvertOptions) (*Pack, *
 			SourceDigest:  digest,
 		},
 	}
+	// A transcription of a community package records the n8n identity it was
+	// transcribed from, which is what lets the n8n importer resolve the source
+	// type onto this pack without a mapping entry (FEAT-mq412g). n8n's own
+	// nodes are deliberately not recorded: those map by name in the adapter's
+	// table, and a pack covering one is not the community path.
+	if packageName, nodeName, community := n8nSourceIdentity(src.SourceType); community {
+		pack.SourcePackage, pack.SourceNode = packageName, nodeName
+	}
 	report.Converted = countOperations(pack.Resources)
 
 	// The pack that leaves here loads: the real structural conversion and
@@ -271,6 +281,24 @@ func excludedSummary(report *ConvertReport) string {
 		return ""
 	}
 	return ": " + strings.Join(report.Excluded, "; ")
+}
+
+// n8nSourceIdentity splits a transcribed source type into the npm package and
+// node name an n8n workflow pairs in it, for a community package. n8n's own
+// packages answer false: they map by name in the n8n adapter's table, and a
+// pack covering one of them is not the community path. The split is at the
+// last dot, because a package name may contain dots while a node name inside
+// it may not.
+func n8nSourceIdentity(sourceType string) (packageName, nodeName string, community bool) {
+	index := strings.LastIndex(sourceType, ".")
+	if index <= 0 || index == len(sourceType)-1 {
+		return "", "", false
+	}
+	packageName, nodeName = sourceType[:index], sourceType[index+1:]
+	if packageName == "n8n-nodes-base" || strings.HasPrefix(packageName, "@n8n/") {
+		return "", "", false
+	}
+	return packageName, nodeName, true
 }
 
 // convertResources reads the resource picker. The pack's cascade is keyed

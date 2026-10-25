@@ -76,6 +76,7 @@ token outright — see [Guardrails](#guardrails).
 | `kilasflow workflow list` | `list-workflows` | available |
 | `kilasflow workflow get` | `get-workflow` | available |
 | `kilasflow workflow create` | `create-workflow` | available |
+| `kilasflow workflow import` | `import-workflow` | available, *guarded* |
 | `kilasflow workflow validate` | `validate-workflow-document` | available |
 | `kilasflow workflow duplicate` | `duplicate-workflow` | available |
 | `kilasflow workflow versions` | `list-workflow-versions` | available |
@@ -281,8 +282,12 @@ should be one request.
 ```bash
 kilasflow workflow list --limit 20 --json
 kilasflow workflow list --tag billing --json             # only workflows carrying the tag
+kilasflow workflow list --name orders --json             # name contains "orders" (case is ignored)
+kilasflow workflow list --active false --quiet           # one inactive id per line
 kilasflow workflow get "$WORKFLOW_ID"
 kilasflow workflow create --file workflow.json --quiet   # the new id
+kilasflow workflow import --file n8n.json --yes --quiet  # the imported workflow's id
+kilasflow workflow import --dir exports/ --yes           # every .json in the directory
 kilasflow workflow validate --file patch.json            # exit 0, then read data.valid
 kilasflow workflow validate --file - --quiet < patch.json  # true / false
 kilasflow workflow duplicate "$WORKFLOW_ID" --name "Orders (copy)" --quiet  # the copy's id
@@ -290,9 +295,13 @@ kilasflow workflow versions "$WORKFLOW_ID" --limit 20 --cursor "$CURSOR"
 kilasflow workflow get-version "$WORKFLOW_ID" "$VERSION_ID"
 kilasflow workflow publish-events "$WORKFLOW_ID"
 kilasflow workflow export "$WORKFLOW_ID" --format n8n
+kilasflow workflow export "$WORKFLOW_ID" --out n8n.json  # the bare n8n document
+kilasflow workflow export --all --out-dir backup/        # one bare document per workflow
 kilasflow workflow diagnostics "$WORKFLOW_ID" --version-id "$VERSION_ID"
 kilasflow workflow activate "$WORKFLOW_ID" --yes      # publishes the endpoint
+kilasflow workflow activate --all --yes               # every inactive workflow
 kilasflow workflow deactivate "$WORKFLOW_ID" --yes
+kilasflow workflow deactivate --all --yes             # every active workflow
 kilasflow workflow delete "$WORKFLOW_ID" --yes
 kilasflow workflow get "$WORKFLOW_ID"                 # exit 4: it is gone
 ```
@@ -301,6 +310,11 @@ kilasflow workflow get "$WORKFLOW_ID"                 # exit 4: it is gone
   workflows answer with a bare array and a cursor in `X-Next-Cursor`, revisions
   with an object carrying both — and normalising that here is what lets one
   agent loop page every listing the same way.
+- `--name` and `--active` filter the workflow listing here rather than by the
+  server: `--name orders` keeps the workflows whose name contains `orders`
+  (case is ignored) and `--active true|false` keeps one state, paging through
+  as many pages as the filters need. `--limit` caps the matches, not the
+  pages. An `--active` value other than `true` or `false` is exit 2.
 - Every workflow summary carries `tags`, an array that is empty when the
   workflow has none, and `workflow list --tag <name>` keeps only the workflows
   whose latest revision carries that tag (case is ignored). The tags live in the
@@ -308,6 +322,30 @@ kilasflow workflow get "$WORKFLOW_ID"                 # exit 4: it is gone
   send back the tags it read: a save without `tags` clears them.
 - `workflow create --file <path>|-` sends the document **unchanged**. A document
   that is not valid JSON is refused with exit 2 before a request is made.
+- `workflow import --file <path>|-` sends the n8n export **under the envelope
+  the import operation reads** — `{format: "n8n", workflow: …}` — so the file
+  n8n wrote needs no editing by hand. `--dir <directory>` imports every `.json`
+  in the directory in name order; the first file the server refuses stops the
+  run with the file's name in the message, and its exit code is the server's
+  own. One file answers with the import's own response — the saved workflow,
+  the `unsupported` report, the webhook addresses — and `--quiet` prints the
+  new id; a directory answers with `{imported: [{file, id, name, unsupported,
+  webhooks}], count}` and `--quiet` prints one id per line. It is guarded, for
+  the same reason `create`'s siblings are not: it creates a workflow from a
+  document written outside this server.
+- `workflow export <id> --out <path>` writes the **bare n8n document** — the
+  file n8n's own "Import from File" reads, not this server's export envelope —
+  and the lossy report travels in the CLI's envelope. `--out -` streams the
+  document to stdout and the report to stderr, so the bytes being piped stay
+  pure n8n. `workflow export --all --out-dir <dir>` writes one bare document
+  per workflow, named by workflow id, following the listing's pages; files are
+  named by id because names repeat and ids do not.
+- **`activate` and `deactivate` take `--all`**: one POST per workflow whose
+  state would change — activate walks the inactive half of the listing,
+  deactivate the active one — under the same `--yes` and the same
+  tenant-wide-key rule the single form needs. `data` is
+  `{action, changed: [<id>…], count}` and `--quiet` prints one changed id per
+  line. A bulk run stops at the first refusal and names the workflow.
 - `workflow validate --file <path>|-` sends the same draft document and saves
   nothing. `data` is `{valid, diagnostics}` where each diagnostic is the import
   path's own resource — `{severity, nodeId?, nodeName?, field?, type?,
@@ -324,12 +362,15 @@ kilasflow workflow get "$WORKFLOW_ID"                 # exit 4: it is gone
   from the `Location` header the API set. It is not guarded: a copy publishes
   nothing and destroys nothing.
 - `--quiet` on a listing prints one id per line; on `workflow create` it prints
-  the id the API named in its `Location` header; on `workflow validate` the
-  verdict; on `workflow duplicate` the copy's id; on `activate`, `deactivate`
-  and `delete` the workflow id.
+  the id the API named in its `Location` header; on `workflow import` the
+  imported id — one per file for `--dir`; on `workflow validate` the
+  verdict; on `workflow duplicate` the copy's id; on `workflow export --out`
+  the path it wrote — one per workflow for `--all`; on `activate`,
+  `deactivate` and `delete` the workflow id — one per changed workflow for
+  `--all`.
 - `workflow diagnostics` wraps an operation the contract page does not list
   (`GET /workflows/{id}/diagnostics`); the generated reference does.
-- **`activate`, `deactivate` and `delete` are guarded.** Activating compiles the
+- **`activate`, `deactivate`, `delete` and `import` are guarded.** Activating compiles the
   latest revision and pins it as active, which is what publishes a public
   endpoint; deactivating takes it offline; deleting destroys the workflow. Each
   needs `--yes`, and each refuses a scoped agent token outright — see

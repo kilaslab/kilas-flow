@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
 
 // workflowVerbs are the workflow verbs this phase owns: the read surface,
-// `create`, and the three guarded lifecycle verbs.
+// `create`, the n8n import/export pair, and the three guarded lifecycle verbs.
 //
 // The paths are the stable ones documented in the API contract, not a lookup in
 // the served document: `workflow get` is one request, and an agent that has to
@@ -21,23 +23,24 @@ import (
 // hatch's flexibility on every call. `kilasflow api <operation-id>` remains the
 // verb that resolves against the running server.
 //
-// activate, deactivate and delete are the design's guarded verbs: each refuses
-// without --yes, and each refuses a scoped agent token outright (see
-// requireAuthority), because publishing an endpoint and destroying a workflow
-// are the tenant's own decisions rather than a scoped key's.
+// activate, deactivate, delete and import are the design's guarded verbs: each
+// refuses without --yes, and each refuses a scoped agent token outright (see
+// requireAuthority), because publishing an endpoint, destroying a workflow and
+// creating one from an outside document are the tenant's own decisions rather
+// than a scoped key's.
 //
 // `validate` and `duplicate` are ordinary verbs rather than guarded ones: one
 // answers a question about a document the caller already holds and saves
 // nothing, and the other copies a workflow the caller can already read.
 //
-// Deliberately absent: update, restore and import. They have no verb yet, and
+// Deliberately absent: update and restore. They have no verb yet, and
 // `kilasflow api <operation-id>` reaches them today.
 func workflowVerbs() []Verb {
 	return []Verb{
 		{
 			Path:      "workflow list",
 			Operation: "list-workflows",
-			Summary:   "list workflows, newest first (`--limit`, `--cursor`, `--tag`)",
+			Summary:   "list workflows, newest first (`--limit`, `--cursor`, `--tag`, `--name`, `--active`)",
 			Flags:     registerWorkflowListFlags,
 			Run:       runWorkflowList,
 			Human:     humanResourceList("id", "name", "active", "updatedAt"),
@@ -57,6 +60,17 @@ func workflowVerbs() []Verb {
 			Flags:     registerCreateFlags("workflow"),
 			Run:       runWorkflowCreate,
 			Human:     humanWorkflowResource,
+		},
+		{
+			Path:      "workflow import",
+			Operation: "import-workflow",
+			Summary:   "import n8n workflow JSON as a draft (`--file <path>|-`, or `--dir <directory>`) (guarded)",
+			Flags:     registerImportFlags,
+			Guarded:   true,
+			Refusal:   "creates a workflow from an imported n8n document",
+			Usage:     workflowImportUsage,
+			Run:       runWorkflowImport,
+			Human:     humanWorkflowImport,
 		},
 		{
 			Path:      "workflow validate",
@@ -103,11 +117,12 @@ func workflowVerbs() []Verb {
 		{
 			Path:      "workflow export",
 			Operation: "export-workflow",
-			Summary:   "export a workflow as n8n JSON, with what could not be carried",
-			Args:      []Arg{arg("workflow id")},
-			Flags:     registerExportFlags,
-			Run:       runWorkflowExport,
-			Human:     humanResourceResource,
+			Summary: "export a workflow as n8n JSON (`--out <file>` writes the bare n8n document; " +
+				"`--all --out-dir <dir>` writes every workflow to one)",
+			Args:  []Arg{optionalArg("workflow id")},
+			Flags: registerExportFlags,
+			Run:   runWorkflowExport,
+			Human: humanWorkflowExport,
 		},
 		{
 			Path:      "workflow diagnostics",
@@ -121,22 +136,24 @@ func workflowVerbs() []Verb {
 		{
 			Path:      "workflow activate",
 			Operation: "activate-workflow",
-			Summary:   "activate a workflow's latest revision, publishing its endpoint (guarded)",
-			Args:      []Arg{arg("workflow id")},
+			Summary:   "activate a workflow's latest revision, publishing its endpoint; `--all` activates every inactive workflow (guarded)",
+			Args:      []Arg{optionalArg("workflow id")},
+			Flags:     registerLifecycleFlags,
 			Guarded:   true,
 			Refusal:   "publishes a public endpoint",
 			Run:       runWorkflowActivate,
-			Human:     humanWorkflowResource,
+			Human:     humanWorkflowLifecycle,
 		},
 		{
 			Path:      "workflow deactivate",
 			Operation: "deactivate-workflow",
-			Summary:   "take a workflow's published endpoint offline (guarded)",
-			Args:      []Arg{arg("workflow id")},
+			Summary:   "take a workflow's published endpoint offline; `--all` deactivates every active workflow (guarded)",
+			Args:      []Arg{optionalArg("workflow id")},
+			Flags:     registerLifecycleFlags,
 			Guarded:   true,
 			Refusal:   "takes a public endpoint offline",
 			Run:       runWorkflowDeactivate,
-			Human:     humanWorkflowResource,
+			Human:     humanWorkflowLifecycle,
 		},
 		{
 			Path:      "workflow delete",
@@ -179,24 +196,34 @@ func (f *pageFlags) query() url.Values {
 	return query
 }
 
-// workflowListFlags are the page parameters plus the listing's one filter.
+// workflowListFlags are the page parameters plus the listing's filters.
 type workflowListFlags struct {
 	pageFlags
 	tag string
+	// name and active filter the listing here rather than by the server: the
+	// listing operation takes no such parameters, and the CLI pages until the
+	// filters are satisfied (FEAT-sc3qrq).
+	name   string
+	active string
 }
 
-// registerWorkflowListFlags attaches --limit, --cursor and --tag.
+// registerWorkflowListFlags attaches --limit, --cursor, --tag, --name and
+// --active.
 func registerWorkflowListFlags(fs *flag.FlagSet) any {
 	flags := &workflowListFlags{}
 	fs.IntVar(&flags.limit, "limit", 0, "maximum items to return (server default when 0)")
 	fs.StringVar(&flags.cursor, "cursor", "", "opaque cursor from a previous page")
 	fs.StringVar(&flags.tag, "tag", "", "only workflows carrying this tag (case is ignored)")
+	fs.StringVar(&flags.name, "name", "", "only workflows whose name contains this text (case is ignored)")
+	fs.StringVar(&flags.active, "active", "", "only workflows in this state: true or false")
 
 	return flags
 }
 
 // query renders the page parameters and the tag filter, omitting what the
-// caller did not set.
+// caller did not set. --name and --active are deliberately absent: they are
+// applied here, page by page, rather than sent as parameters the server does
+// not read.
 func (f *workflowListFlags) query() url.Values {
 	query := f.pageFlags.query()
 	if tag := strings.TrimSpace(f.tag); tag != "" {
@@ -250,15 +277,50 @@ func registerDuplicateFlags(fs *flag.FlagSet) any {
 	return flags
 }
 
-// exportFlags carry the one query the export operation accepts.
-type exportFlags struct {
-	format string
+// importFlags carry where the n8n documents come from: one file, or a
+// directory of them.
+type importFlags struct {
+	file string
+	dir  string
 }
 
-// registerExportFlags attaches --format.
+// registerImportFlags attaches --file and --dir.
+func registerImportFlags(fs *flag.FlagSet) any {
+	flags := &importFlags{}
+	fs.StringVar(&flags.file, "file", "", "n8n workflow JSON to import: a path, or - for stdin")
+	fs.StringVar(&flags.dir, "dir", "", "import every .json file in this directory, in name order")
+
+	return flags
+}
+
+// exportFlags carry the export's query and where the bare document goes.
+type exportFlags struct {
+	format string
+	out    string
+	outDir string
+	all    bool
+}
+
+// registerExportFlags attaches --format, --out, --out-dir and --all.
 func registerExportFlags(fs *flag.FlagSet) any {
 	flags := &exportFlags{}
 	fs.StringVar(&flags.format, "format", "", "export format; n8n is the only one the server supports")
+	fs.StringVar(&flags.out, "out", "", "write the bare n8n document to this file; - writes it to stdout, with the lossy report on stderr")
+	fs.StringVar(&flags.outDir, "out-dir", "", "with --all: write one bare n8n document per workflow into this directory")
+	fs.BoolVar(&flags.all, "all", false, "export every workflow (requires --out-dir)")
+
+	return flags
+}
+
+// lifecycleFlags carry the bulk form of the two lifecycle verbs.
+type lifecycleFlags struct {
+	all bool
+}
+
+// registerLifecycleFlags attaches --all.
+func registerLifecycleFlags(fs *flag.FlagSet) any {
+	flags := &lifecycleFlags{}
+	fs.BoolVar(&flags.all, "all", false, "apply to every workflow: activate the inactive ones, deactivate the active ones")
 
 	return flags
 }
@@ -288,7 +350,14 @@ type resourceList struct {
 	NextCursor string            `json:"nextCursor,omitempty"`
 }
 
-// runWorkflowList reads one page of workflows.
+// runWorkflowList reads one page of workflows, or — when --name or --active
+// was given — pages through the whole listing keeping only the matches.
+//
+// The filters are applied here because the listing operation has no such
+// parameters: the CLI walks the pages (following each page's cursor) and keeps
+// the workflows whose name contains --name and whose active flag is --active,
+// both compared without regard to case. --limit stops the walk after that many
+// matches; without it the walk reads every page the server has.
 func runWorkflowList(ctx *Context, args []string) error {
 	if err := refusePositional(args, "workflow list"); err != nil {
 		return err
@@ -299,12 +368,96 @@ func runWorkflowList(ctx *Context, args []string) error {
 		return usageError("the workflow list verb was registered without its flags")
 	}
 
-	list, err := ctx.listPage("/workflows", flags.query())
+	name := strings.TrimSpace(flags.name)
+	active, err := parseActiveFlag(flags.active)
+	if err != nil {
+		return err
+	}
+	if name == "" && !active.set {
+		list, err := ctx.listPage("/workflows", flags.query())
+		if err != nil {
+			return err
+		}
+
+		return listPageResult(ctx, list)
+	}
+
+	matched := []json.RawMessage{}
+	err = ctx.walkPages("/workflows", flags.query(), func(item json.RawMessage) bool {
+		if name != "" && !strings.Contains(strings.ToLower(fieldText(item, "name")), strings.ToLower(name)) {
+			return true
+		}
+		if active.set && fieldActive(item) != active.value {
+			return true
+		}
+		matched = append(matched, item)
+
+		return flags.limit <= 0 || len(matched) < flags.limit
+	})
 	if err != nil {
 		return err
 	}
 
-	return listPageResult(ctx, list)
+	return listPageResult(ctx, resourceList{Items: matched, Count: len(matched)})
+}
+
+// activeFilter is --active as a tri-state: unset means no filter, and
+// true/false are the only spellings.
+type activeFilter struct {
+	set   bool
+	value bool
+}
+
+// parseActiveFlag reads --active, refusing anything a caller might mean but
+// did not say: "1", "yes" and the empty string a shell left behind are usage
+// errors rather than guesses.
+func parseActiveFlag(raw string) (activeFilter, error) {
+	switch value := strings.TrimSpace(raw); value {
+	case "":
+		return activeFilter{}, nil
+	case "true":
+		return activeFilter{set: true, value: true}, nil
+	case "false":
+		return activeFilter{set: true, value: false}, nil
+	default:
+		return activeFilter{}, usageError("--active wants true or false; got %q", value)
+	}
+}
+
+// fieldText reads one string field out of a raw JSON item.
+func fieldText(item json.RawMessage, field string) string {
+	text, _ := fieldOf(item, field).(string)
+
+	return text
+}
+
+// fieldActive reads an item's active flag, answering false for an item that
+// carries none: a listing the server filtered to inactive workflows is the
+// only shape where the field can be missing, and false is what it means there.
+func fieldActive(item json.RawMessage) bool {
+	active, _ := fieldOf(item, "active").(bool)
+
+	return active
+}
+
+// walkPages reads a listing page by page, following each page's cursor, and
+// hands every item to visit until the pages end or visit says stop.
+func (ctx *Context) walkPages(path string, query url.Values, visit func(item json.RawMessage) bool) error {
+	for {
+		list, err := ctx.listPage(path, query)
+		if err != nil {
+			return err
+		}
+		for _, item := range list.Items {
+			if !visit(item) {
+				return nil
+			}
+		}
+		if list.NextCursor == "" {
+			return nil
+		}
+		query = url.Values{"cursor": []string{list.NextCursor}}
+	}
 }
 
 // runWorkflowGet reads one workflow.
@@ -357,8 +510,191 @@ func runWorkflowCreate(ctx *Context, args []string) error {
 	return nil
 }
 
-// runWorkflowValidate checks a draft document without saving it.
+// runWorkflowImport imports n8n workflow JSON through the import operation:
+// one document via --file (or - for stdin), or every .json in a directory via
+// --dir, n8n's `--separate` form.
 //
+// Each file is sent wrapped in the envelope the import operation reads —
+// {format, workflow} — so the n8n export goes in exactly as it came out of
+// n8n, which is the wrapper the audit found people building by hand. The
+// first file the server refuses stops the run with the file's name in the
+// message: a migration that silently skipped half its files is worse than one
+// that stopped and said which file it stopped on.
+// workflowImportUsage is the verb's local validation: it runs before any
+// network step, so a malformed invocation reports a usage error (exit 2)
+// even when no server is configured or reachable.
+func workflowImportUsage(ctx *Context, args []string) error {
+	if err := refusePositional(args, "workflow import"); err != nil {
+		return err
+	}
+
+	flags, ok := ctx.VerbFlags.(*importFlags)
+	if !ok {
+		return usageError("the workflow import verb was registered without its flags")
+	}
+	file, dir := strings.TrimSpace(flags.file), strings.TrimSpace(flags.dir)
+	switch {
+	case file != "" && dir != "":
+		return usageError("--file and --dir are mutually exclusive; pass one or the other")
+	case file == "" && dir == "":
+		return usageError("no document: pass --file <path> (or - for stdin), or --dir <directory>")
+	}
+	return nil
+}
+
+func runWorkflowImport(ctx *Context, args []string) error {
+	flags, ok := ctx.VerbFlags.(*importFlags)
+	if !ok {
+		return usageError("the workflow import verb was registered without its flags")
+	}
+	file, dir := strings.TrimSpace(flags.file), strings.TrimSpace(flags.dir)
+
+	files := []string{file}
+	if dir != "" {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return usageError("could not read the directory %s: %v", dir, err)
+		}
+		files = files[:0]
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".json") {
+				continue
+			}
+			files = append(files, filepath.Join(dir, entry.Name()))
+		}
+		sort.Strings(files)
+		if len(files) == 0 {
+			return usageError("the directory %s holds no .json workflow to import", dir)
+		}
+	}
+
+	imported := make([]importedDocument, 0, len(files))
+	for _, path := range files {
+		one, err := importDocument(ctx, path)
+		if err != nil {
+			return annotatePathError(path, err)
+		}
+		imported = append(imported, one)
+	}
+
+	if len(files) == 1 {
+		// One document answers with the import's own response: the saved
+		// workflow, everything the adapter reported, and the webhook
+		// addresses — the same payload `api import-workflow` returns.
+		ctx.Data = imported[0].response
+		ctx.Primary = imported[0].ID
+
+		return nil
+	}
+	ids := make([]string, 0, len(imported))
+	for _, one := range imported {
+		ids = append(ids, one.ID)
+	}
+	ctx.Data = importBatch{Imported: imported, Count: len(imported)}
+	ctx.Primary = strings.Join(ids, "\n")
+
+	return nil
+}
+
+// importedDocument is one file's outcome.
+type importedDocument struct {
+	// File is the path the document was read from, "." for stdin.
+	File string `json:"file,omitempty"`
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+	// Unsupported counts what the adapter reported for this document —
+	// carried differently, dropped, or blocking — and the report itself
+	// travels in the single-file response.
+	Unsupported int `json:"unsupported"`
+	Webhooks    int `json:"webhooks"`
+	// response is the import operation's whole answer, kept for the
+	// single-file case so its envelope is the API's own payload.
+	response json.RawMessage
+}
+
+// importBatch is the payload of a directory import.
+type importBatch struct {
+	Imported []importedDocument `json:"imported"`
+	Count    int                `json:"count"`
+}
+
+// importDocument reads one n8n document and imports it.
+func importDocument(ctx *Context, path string) (importedDocument, error) {
+	document, err := readDocument(path, ctx.Env.Stdin)
+	if err != nil {
+		return importedDocument{}, err
+	}
+	// The wrapper the audit's step 1 demanded: {format, workflow} around the
+	// bare n8n document, so the file an n8n export wrote needs no editing
+	// before it can be imported here.
+	body, err := json.Marshal(struct {
+		Format   string          `json:"format"`
+		Workflow json.RawMessage `json:"workflow"`
+	}{Format: "n8n", Workflow: document})
+	if err != nil {
+		return importedDocument{}, usageError("could not render the import request: %v", err)
+	}
+
+	resp, err := ctx.Client.Do(ctx.Ctx, http.MethodPost, apiPath("/workflows/import"), nil, nil, body)
+	if err != nil {
+		return importedDocument{}, err
+	}
+
+	var resource struct {
+		Workflow struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"workflow"`
+		Unsupported []json.RawMessage `json:"unsupported"`
+		Webhooks    []json.RawMessage `json:"webhooks"`
+	}
+	if err := json.Unmarshal(resp.Body, &resource); err != nil {
+		return importedDocument{}, &ExitError{
+			Code: ExitFailure, ErrCode: "unexpected_response",
+			Message: "the import is not the response this CLI expects: " + err.Error(),
+		}
+	}
+	one := importedDocument{
+		File: displayPath(path), ID: resource.Workflow.ID, Name: resource.Workflow.Name,
+		Unsupported: len(resource.Unsupported), Webhooks: len(resource.Webhooks),
+	}
+	if raw, ok := jsonOrText(resp.Body).(json.RawMessage); ok {
+		one.response = raw
+	} else {
+		encoded, _ := json.Marshal(string(resp.Body))
+		one.response = encoded
+	}
+	if one.ID == "" {
+		one.ID = locationID(resp.Header.Get("Location"))
+	}
+
+	return one, nil
+}
+
+// displayPath is the name a report prints for a document's source: "." for
+// stdin, the path as given for a file.
+func displayPath(path string) string {
+	if strings.TrimSpace(path) == "-" {
+		return "-"
+	}
+
+	return path
+}
+
+// annotatePathError names the file a batch stopped on, keeping the exit code
+// and error code the failure already carries: a caller branching on exit 3 or
+// exit 4 must not see exit 1 because a file name was prepended.
+func annotatePathError(path string, err error) error {
+	failure, ok := err.(*ExitError)
+	if !ok {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	annotated := *failure
+	annotated.Message = path + ": " + failure.Message
+
+	return &annotated
+}
+
 // The document is sent unchanged, the way `workflow create` sends one, and is
 // checked for being JSON before it is sent for the same reason: the API would
 // answer a malformed body with 422, which the exit contract maps to "fix the
@@ -367,6 +703,13 @@ func runWorkflowCreate(ctx *Context, args []string) error {
 // A document the API reports as invalid is an answer, not a failure: the
 // operation is 200 with valid:false and the diagnostics, so the verb exits 0
 // and --quiet prints the verdict, which is what a pipeline branches on.
+// runWorkflowValidate checks a draft document without saving it.
+// runWorkflowValidate checks a draft document without saving it.
+//
+// The document is sent unchanged, the way `workflow create` sends one, and is
+// checked for being JSON before it is sent for the same reason: the API would
+// answer a malformed body with 422, which the exit contract maps to "fix the
+// invocation" anyway.
 func runWorkflowValidate(ctx *Context, args []string) error {
 	if err := refusePositional(args, "workflow validate"); err != nil {
 		return err
@@ -493,23 +836,207 @@ func runWorkflowPublishEvents(ctx *Context, args []string) error {
 }
 
 // runWorkflowExport converts a workflow into n8n JSON.
+//
+// The default is the whole export response — the document, the lossy report
+// and the supported mappings — as the envelope's payload. --out writes the
+// bare n8n document instead, which is the file n8n's own "Import from File"
+// reads: the wrapper around it is this server's, and n8n refuses it. --all
+// with --out-dir writes every workflow to one bare document each, the backup
+// and migration form.
 func runWorkflowExport(ctx *Context, args []string) error {
-	id, err := requireOneID(args, "workflow id")
-	if err != nil {
-		return err
-	}
-
 	flags, ok := ctx.VerbFlags.(*exportFlags)
 	if !ok {
 		return usageError("the workflow export verb was registered without its flags")
+	}
+	out, outDir := strings.TrimSpace(flags.out), strings.TrimSpace(flags.outDir)
+
+	if flags.all {
+		if err := refusePositional(args, "workflow export --all"); err != nil {
+			return err
+		}
+		if outDir == "" {
+			return usageError("--all exports every workflow: pass --out-dir <directory> to say where")
+		}
+		if out != "" {
+			return usageError("--out writes one workflow and --all writes every one: pass --out-dir instead of --out")
+		}
+
+		return exportEveryWorkflow(ctx, outDir)
+	}
+
+	if outDir != "" {
+		return usageError("--out-dir is for --all; a single workflow wants --out <file>")
+	}
+
+	id, err := requireOneID(args, "workflow id")
+	if err != nil {
+		return err
 	}
 
 	query := url.Values{}
 	if format := strings.TrimSpace(flags.format); format != "" {
 		query.Set("format", format)
 	}
+	resp, err := ctx.Client.Do(ctx.Ctx, http.MethodGet,
+		apiPath("/workflows/"+url.PathEscape(id)+"/export"), query, nil, nil)
+	if err != nil {
+		return err
+	}
 
-	return ctx.readResource(http.MethodGet, "/workflows/"+url.PathEscape(id)+"/export", query, id)
+	if out == "" {
+		ctx.Data = jsonOrText(resp.Body)
+		ctx.Primary = id
+
+		return nil
+	}
+
+	var resource struct {
+		Workflow json.RawMessage `json:"workflow"`
+		Lossy    []exportNote    `json:"lossy"`
+	}
+	if err := json.Unmarshal(resp.Body, &resource); err != nil {
+		return &ExitError{
+			Code: ExitFailure, ErrCode: "unexpected_response",
+			Message: "the export of " + id + " is not the response this CLI expects: " + err.Error(),
+		}
+	}
+	if len(resource.Workflow) == 0 {
+		return &ExitError{
+			Code: ExitFailure, ErrCode: "unexpected_response",
+			Message: "the export of " + id + " carried no workflow document",
+		}
+	}
+	if resource.Lossy == nil {
+		resource.Lossy = []exportNote{}
+	}
+	if out == "-" {
+		// The bytes are the payload, so the lossy report goes to stderr: a
+		// note interleaved into the document stream would corrupt the file
+		// being piped.
+		for _, note := range resource.Lossy {
+			fmt.Fprintf(stderr(ctx.Env), "lossy: %s\n", note.line())
+		}
+		if _, err := stdout(ctx.Env).Write(resource.Workflow); err != nil {
+			return outputWriteError("could not write the export to stdout: %v", err)
+		}
+		ctx.Streamed = true
+
+		return nil
+	}
+	if err := os.WriteFile(out, resource.Workflow, 0o600); err != nil {
+		return outputWriteError("could not write %s: %v", out, err)
+	}
+	ctx.Data = exportWritten{Path: out, Bytes: len(resource.Workflow), Format: "n8n", Lossy: resource.Lossy}
+	ctx.Primary = out
+
+	return nil
+}
+
+// exportNote is one thing an export could not carry, as the API reports it.
+type exportNote struct {
+	Severity string `json:"severity,omitempty"`
+	NodeName string `json:"nodeName,omitempty"`
+	Field    string `json:"field,omitempty"`
+	Reason   string `json:"reason"`
+}
+
+// line renders the note the way a terminal reads it.
+func (note exportNote) line() string {
+	line := note.Reason
+	if note.NodeName != "" {
+		line = note.NodeName + ": " + line
+	} else if note.Field != "" {
+		line = note.Field + ": " + line
+	}
+
+	return line
+}
+
+// exportWritten is the payload of `workflow export --out`: where the bare n8n
+// document went, how big it is, and what the conversion could not carry.
+type exportWritten struct {
+	Path   string       `json:"path"`
+	Bytes  int          `json:"bytes"`
+	Format string       `json:"format"`
+	Lossy  []exportNote `json:"lossy"`
+}
+
+// exportedFile is one workflow's outcome in a --all export.
+type exportedFile struct {
+	ID    string `json:"id"`
+	File  string `json:"file"`
+	Lossy int    `json:"lossy"`
+}
+
+// exportBatch is the payload of `workflow export --all --out-dir`.
+type exportBatch struct {
+	Exported []exportedFile `json:"exported"`
+	Count    int            `json:"count"`
+}
+
+// exportEveryWorkflow writes one bare n8n document per workflow into a
+// directory, following the listing's pages to the end.
+//
+// Files are named by workflow id: names repeat across tenants and ids do not,
+// and a migration that overwrote one workflow with another's document would
+// be a quiet disaster.
+func exportEveryWorkflow(ctx *Context, dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return outputWriteError("could not create %s: %v", dir, err)
+	}
+
+	ids := make([]string, 0)
+	if err := ctx.walkPages("/workflows", url.Values{}, func(item json.RawMessage) bool {
+		if id := fieldText(item, "id"); id != "" {
+			ids = append(ids, id)
+		}
+
+		return true
+	}); err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return usageError("the server holds no workflow to export")
+	}
+
+	exported := make([]exportedFile, 0, len(ids))
+	for _, id := range ids {
+		resp, err := ctx.Client.Do(ctx.Ctx, http.MethodGet,
+			apiPath("/workflows/"+url.PathEscape(id)+"/export"), nil, nil, nil)
+		if err != nil {
+			return annotatePathError(id, err)
+		}
+		var resource struct {
+			Workflow json.RawMessage `json:"workflow"`
+			Lossy    []exportNote    `json:"lossy"`
+		}
+		if err := json.Unmarshal(resp.Body, &resource); err != nil {
+			return annotatePathError(id, &ExitError{
+				Code: ExitFailure, ErrCode: "unexpected_response",
+				Message: "the export is not the response this CLI expects: " + err.Error(),
+			})
+		}
+		if len(resource.Workflow) == 0 {
+			return annotatePathError(id, &ExitError{
+				Code: ExitFailure, ErrCode: "unexpected_response",
+				Message: "the export carried no workflow document",
+			})
+		}
+		path := filepath.Join(dir, id+".json")
+		if err := os.WriteFile(path, resource.Workflow, 0o600); err != nil {
+			return outputWriteError("could not write %s: %v", path, err)
+		}
+		exported = append(exported, exportedFile{ID: id, File: path, Lossy: len(resource.Lossy)})
+	}
+
+	files := make([]string, 0, len(exported))
+	for _, one := range exported {
+		files = append(files, one.File)
+	}
+	ctx.Data = exportBatch{Exported: exported, Count: len(exported)}
+	ctx.Primary = strings.Join(files, "\n")
+
+	return nil
 }
 
 // runWorkflowDiagnostics reads the import report stored with a revision.
@@ -536,25 +1063,91 @@ func runWorkflowDiagnostics(ctx *Context, args []string) error {
 // the active one, which is what publishes its endpoint.
 //
 // No body: the operation reads the workflow and its newest revision from the
-// server, and a document sent here would be ignored.
+// server, and a document sent here would be ignored. With --all the same
+// operation runs for every workflow that is not active, one POST each.
 func runWorkflowActivate(ctx *Context, args []string) error {
-	id, err := requireOneID(args, "workflow id")
-	if err != nil {
-		return err
-	}
-
-	return ctx.readResource(http.MethodPost, "/workflows/"+url.PathEscape(id)+"/activate", nil, id)
+	return runWorkflowLifecycle(ctx, args, "activate", false)
 }
 
 // runWorkflowDeactivate takes the workflow's endpoint offline. It keeps the
-// active revision on record, which is what makes activating again cheap.
+// active revision on record, which is what makes activating again cheap. With
+// --all it runs for every workflow that is active.
 func runWorkflowDeactivate(ctx *Context, args []string) error {
-	id, err := requireOneID(args, "workflow id")
-	if err != nil {
+	return runWorkflowLifecycle(ctx, args, "deactivate", true)
+}
+
+// runWorkflowLifecycle is the shared body of the two lifecycle verbs: one
+// workflow by id, or — with --all — every workflow whose active flag is
+// `currently`, in listing order. A bulk run stops at the first refusal and
+// names the workflow it stopped on, so a migration reports exactly where it
+// ended rather than skipping onward.
+func runWorkflowLifecycle(ctx *Context, args []string, action string, currently bool) error {
+	flags, ok := ctx.VerbFlags.(*lifecycleFlags)
+	if !ok {
+		return usageError("the workflow %s verb was registered without its flags", action)
+	}
+	if !flags.all {
+		id, err := requireOneID(args, "workflow id")
+		if err != nil {
+			return err
+		}
+
+		return ctx.readResource(http.MethodPost, "/workflows/"+url.PathEscape(id)+"/"+action, nil, id)
+	}
+	if err := refusePositional(args, "workflow "+action+" --all"); err != nil {
 		return err
 	}
 
-	return ctx.readResource(http.MethodPost, "/workflows/"+url.PathEscape(id)+"/deactivate", nil, id)
+	ids := make([]string, 0)
+	if err := ctx.walkPages("/workflows", url.Values{}, func(item json.RawMessage) bool {
+		if fieldActive(item) == currently {
+			if id := fieldText(item, "id"); id != "" {
+				ids = append(ids, id)
+			}
+		}
+
+		return true
+	}); err != nil {
+		return err
+	}
+
+	changed := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, err := ctx.Client.Do(ctx.Ctx, http.MethodPost,
+			apiPath("/workflows/"+url.PathEscape(id)+"/"+action), nil, nil, nil); err != nil {
+			return annotatePathError(id, err)
+		}
+		changed = append(changed, id)
+	}
+	ctx.Data = workflowBatch{Action: action, Changed: changed, Count: len(changed)}
+	ctx.Primary = strings.Join(changed, "\n")
+
+	return nil
+}
+
+// workflowBatch is the payload of a bulk lifecycle change.
+type workflowBatch struct {
+	Action  string   `json:"action"`
+	Changed []string `json:"changed"`
+	Count   int      `json:"count"`
+}
+
+// humanWorkflowLifecycle prints one workflow's resource, or the bulk form's
+// count and the ids it changed.
+func humanWorkflowLifecycle(w io.Writer, data any) {
+	if batch, ok := data.(workflowBatch); ok {
+		pairs := [][2]string{
+			{"action", batch.Action},
+			{"changed", strconv.Itoa(batch.Count)},
+		}
+		printKV(w, pairs)
+		for _, id := range batch.Changed {
+			fmt.Fprintln(w, id)
+		}
+
+		return
+	}
+	humanWorkflowResource(w, data)
 }
 
 // runWorkflowDelete soft-deletes a workflow. The API keeps the audit evidence,
@@ -996,6 +1589,91 @@ func humanResourceResource(w io.Writer, data any) {
 	}
 
 	printJSONValue(w, raw)
+}
+
+// humanWorkflowImport prints what an import saved and everything the adapter
+// reported, because the reason to run the verb by hand is to read the
+// refusals before opening the draft.
+func humanWorkflowImport(w io.Writer, data any) {
+	if batch, ok := data.(importBatch); ok {
+		rows := make([][]string, 0, len(batch.Imported))
+		for _, one := range batch.Imported {
+			rows = append(rows, []string{one.File, one.ID, one.Name, strconv.Itoa(one.Unsupported)})
+		}
+		printTable(w, []string{"file", "id", "name", "unsupported"}, rows)
+
+		return
+	}
+
+	raw, ok := data.(json.RawMessage)
+	if !ok {
+		printJSONValue(w, data)
+
+		return
+	}
+	var imported struct {
+		Workflow struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"workflow"`
+		Unsupported []struct {
+			Severity string `json:"severity"`
+			NodeName string `json:"nodeName"`
+			Field    string `json:"field"`
+			Reason   string `json:"reason"`
+		} `json:"unsupported"`
+		Webhooks []struct {
+			URL string `json:"url"`
+		} `json:"webhooks"`
+	}
+	if err := json.Unmarshal(raw, &imported); err != nil {
+		printJSONValue(w, raw)
+
+		return
+	}
+	printKV(w, [][2]string{
+		{"imported", imported.Workflow.ID},
+		{"name", imported.Workflow.Name},
+		{"unsupported", strconv.Itoa(len(imported.Unsupported))},
+	})
+	for _, issue := range imported.Unsupported {
+		line := issue.Severity + ": " + issue.Reason
+		switch {
+		case issue.NodeName != "":
+			line = issue.NodeName + ": " + line
+		case issue.Field != "":
+			line = issue.Field + ": " + line
+		}
+		fmt.Fprintln(w, line)
+	}
+	for _, webhook := range imported.Webhooks {
+		fmt.Fprintln(w, "webhook: "+webhook.URL)
+	}
+}
+
+// humanWorkflowExport prints where a bare document went and what the
+// conversion could not carry, or — for --all — one line per workflow written.
+func humanWorkflowExport(w io.Writer, data any) {
+	switch typed := data.(type) {
+	case exportWritten:
+		printKV(w, [][2]string{
+			{"written", typed.Path},
+			{"bytes", strconv.Itoa(typed.Bytes)},
+			{"format", typed.Format},
+			{"lossy", strconv.Itoa(len(typed.Lossy))},
+		})
+		for _, note := range typed.Lossy {
+			fmt.Fprintln(w, "lossy: "+note.line())
+		}
+	case exportBatch:
+		rows := make([][]string, 0, len(typed.Exported))
+		for _, one := range typed.Exported {
+			rows = append(rows, []string{one.ID, one.File, strconv.Itoa(one.Lossy)})
+		}
+		printTable(w, []string{"id", "file", "lossy"}, rows)
+	default:
+		printJSONValue(w, data)
+	}
 }
 
 // fieldOf reads one field out of a raw JSON item for display.

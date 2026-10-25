@@ -29,6 +29,13 @@ type Verb struct {
 	// Flags registers verb-specific flags on the FlagSet and returns whatever
 	// the verb's Run needs to read them.
 	Flags func(*flag.FlagSet) any
+	// Usage validates the invocation's own shape — positional arguments and
+	// flag combinations — without touching the network. It runs before the
+	// client is built and before requireAuthority's identity read, so a
+	// malformed invocation against an unreachable server still reports the
+	// usage error (exit 2) rather than a connection failure. Nil means the
+	// verb has no local validation beyond what Run itself does.
+	Usage func(*Context, []string) error
 	// Run executes the verb with the positional arguments that survived flag
 	// parsing, and stores its payload on the Context.
 	Run func(*Context, []string) error

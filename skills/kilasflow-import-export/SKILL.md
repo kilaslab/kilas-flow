@@ -3,6 +3,7 @@ name: kilasflow-import-export
 description: Use when migrating n8n workflows into KilasFlow, exporting a workflow back to n8n JSON, or reading the unsupported and Lossy[] report a translation produced. Triggers on "n8n", "migration", "import", "export", "lossy", "diagnostics".
 kilasflow_skills_version: 1
 kilasflow_commands:
+  - kilasflow workflow import
   - kilasflow workflow export
   - kilasflow workflow diagnostics
   - kilasflow workflow versions
@@ -22,7 +23,7 @@ kilasflow_nodes:
 kilasflow_expression_roots:
   - $json
 kilasflow_not_shipped:
-  - 'No workflow update, import or restore verb: those operations are served and reached through the escape hatch'
+  - 'No workflow update or restore verb: those operations are served and reached through the escape hatch'
 ---
 
 ## Non-negotiables
@@ -35,9 +36,8 @@ kilasflow_not_shipped:
 ## Strong defaults
 
 - Start from the validated example: `kilasflow skills show kilasflow-import-export --reference EXAMPLE.md` is a document built only from mapped node types, with what changes at the border spelled out. A test exports it, requires `lossy[]` to be empty and imports it again.
-- Export with `kilasflow workflow export <workflowId> --format n8n` (`export-workflow`). `--format` is the verb's only flag — there is no `--out` — and the response carries `format`, the n8n `workflow` document, `lossy[]` and `supportedMappings[]`.
-- When you need the file itself, take it through the escape hatch's own `--out`: `kilasflow api export-workflow --path id=<workflowId> --query format=n8n --out workflow.json` writes the body 0600, and `--out -` streams it. Any format other than `n8n` is a 422.
-- Import with `kilasflow api import-workflow --body @workflow.json` (`import-workflow`, `POST /workflows/import`). The body is `{"format": "n8n", "workflow": <the n8n JSON>, "name": "<optional override>"}`; the answer is 201 with a `Location`, the saved workflow, `unsupported[]` and `webhooks[]` — the public addresses its triggers will answer on once activated.
+- Export with `kilasflow workflow export <workflowId> --format n8n` (`export-workflow`). The response carries `format`, the n8n `workflow` document, `lossy[]` and `supportedMappings[]`. When you need the file n8n itself imports, `--out <path>` writes the **bare** n8n document — no format, no lossy, no supportedMappings around it — with `lossy[]` in the CLI's envelope; `--out -` streams the document to stdout and puts the report on stderr; and `--all --out-dir <dir>` writes one bare document per workflow, named by workflow id. Any format other than `n8n` is a 422.
+- Import with `kilasflow workflow import --file <workflow.json> --yes` (`import-workflow`, `POST /workflows/import`). The CLI wraps the file in `{"format": "n8n", "workflow": …}` itself, so the export goes in exactly as it came out of n8n; `--dir <directory>` imports every `.json` in it in name order, stopping at the first file the server refuses and naming it. The verb is guarded — `--yes` and a tenant-wide key. The answer is 201 with a `Location`, the saved workflow, `unsupported[]` and `webhooks[]` — the public addresses its triggers will answer on once activated.
 - Read the stored report with `kilasflow workflow diagnostics <workflowId>` (`workflow-diagnostics`) and `--version-id` for an older revision; a revision id comes from `kilasflow workflow versions <workflowId>` (`list-workflow-versions`). The report is per revision, and an empty `source` is what separates "never imported" from "imported cleanly".
 - Read `supportedMappings[]` from an export instead of recalling a table: it is the advertised subset, `n8n-nodes-base.x ↔ kilasflow.y`, written down and tested rather than derived.
 - Read every issue by its severity: `blocking` (the workflow cannot run as imported), `lossy` (carried differently, the workflow still activates) and `dropped` (not carried at all). references/MAPPING_LIMITS.md says what each severity costs you.
@@ -54,7 +54,8 @@ kilasflow_not_shipped:
 what are you doing?
 |
 +-- bringing an n8n workflow in
-|     -> kilasflow api import-workflow --body @workflow.json
+|     -> kilasflow workflow import --file workflow.json --yes
+|        (--dir <directory> for every .json in it)
 |        read unsupported[] in the response
 |        then kilasflow workflow get <workflowId> and check the graph
 |
@@ -66,9 +67,9 @@ what are you doing?
 |     -> kilasflow workflow export <workflowId> --format n8n
 |        read lossy[] before handing the file over
 |
-+-- the n8n JSON as a file
-|     -> kilasflow api export-workflow --path id=<workflowId> \
-|              --query format=n8n --out workflow.json
++-- the n8n JSON as a file n8n imports
+|     -> kilasflow workflow export <workflowId> --out workflow.json
+|        (--all --out-dir <dir> for every workflow, one file each)
 |
 +-- it will not activate or run
 |     -> a blocking issue survived: replace every kilasflow.unsupported
@@ -81,7 +82,7 @@ what are you doing?
 
 ## Not shipped yet
 
-- No workflow update, import or restore verb: those operations are served and reached through the escape hatch — `import-workflow`, `update-workflow` and `restore-workflow-version` are all served, so call them with `kilasflow api <operation-id>` and `--path`/`--body`; an import is how a workflow arrives as a new draft, and a new revision is what an edit produces.
+- No workflow update or restore verb: those operations are served and reached through the escape hatch — `update-workflow` and `restore-workflow-version` are both served, so call them with `kilasflow api <operation-id>` and `--path`/`--body`; a new revision is what an edit produces, and restoring an older one appends rather than rewinds.
 
 ## Anti-patterns
 

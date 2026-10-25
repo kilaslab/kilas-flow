@@ -268,8 +268,9 @@ func foreignCodeNode() node.Definition {
 		Type:        ForeignCodeNodeType,
 		Version:     workflow.V(1),
 		DisplayName: ForeignCodeDisplayName,
-		Description: "An imported n8n Code node. JavaScript runs as a Code (JavaScript) node does; " +
-			"Python is kept so you can port it, and the workflow cannot run until it is replaced.",
+		Description: "An imported n8n Code or Function node. JavaScript from a Code node runs as a " +
+			"Code (JavaScript) node does; Python and the legacy Function node's JavaScript are kept " +
+			"so you can port them, and the workflow cannot run until they are replaced.",
 		Category:  "Core",
 		Group:     []node.NodeGroup{node.GroupTransform},
 		Icon:      &node.NodeIcon{Light: "builtin:square-terminal"},
@@ -292,9 +293,18 @@ func foreignCodeNode() node.Definition {
 				Description: "The original JavaScript, kept exactly as it arrived. It runs.",
 			},
 			{
-				Key: "pythonCode", Label: "Python", Kind: node.PropertyString,
+				Key:         "pythonCode",
+				Label:       "Python",
+				Kind:        node.PropertyString,
 				TypeOptions: &node.TypeOptions{Rows: 12, Editor: node.EditorCode, EditorLanguage: node.EditorLanguagePython},
 				Description: "The original Python, kept exactly as it arrived. It is not run.",
+			},
+			{
+				Key:         "functionCode",
+				Label:       "n8n Function",
+				Kind:        node.PropertyString,
+				TypeOptions: &node.TypeOptions{Rows: 12, Editor: node.EditorCode, EditorLanguage: node.EditorLanguageJavaScript},
+				Description: "The original n8n Function or Function Item node body, kept exactly as it arrived. It is not run.",
 			},
 			{
 				Key: "replacement", Label: "Suggested replacement", Kind: node.PropertyNotice,
@@ -322,6 +332,9 @@ func isJavaScript(language string) bool {
 }
 
 func validateForeignCodeConfiguration(n workflow.Node) error {
+	if source := textParameter(n.Parameters, "functionCode"); strings.TrimSpace(source) != "" {
+		return errors.New(FunctionNodeRefusal(source))
+	}
 	language := textParameter(n.Parameters, "language")
 	if isJavaScript(language) {
 		return validateJSCodeConfiguration(n)
@@ -349,7 +362,24 @@ func foreignSource(parameters map[string]any) string {
 	if source := textParameter(parameters, "jsCode"); source != "" {
 		return source
 	}
-	return textParameter(parameters, "pythonCode")
+	if source := textParameter(parameters, "pythonCode"); source != "" {
+		return source
+	}
+	return textParameter(parameters, "functionCode")
+}
+
+// FunctionNodeRefusal is the one sentence for a body written against the
+// legacy n8n Function node's sandbox. The Function node's JavaScript is real
+// JavaScript, but it runs against an API this server's Code node does not
+// provide — $items, $node, getWorkflowStaticData and its other helpers exist
+// only inside that node — so running the source as a Code node would execute
+// code the author never wrote. Exported so the importer produces the same
+// sentence the node's own validator does, the arrangement FEAT-8qyfh1 set
+// for every JavaScript escape hatch.
+func FunctionNodeRefusal(source string) string {
+	return jsrun.Refusal(
+		"can only run inside the legacy n8n Function node's sandbox ($items, $node, getWorkflowStaticData)",
+		SuggestReplacement(source))
 }
 
 // foreignCodeExecutor runs a placeholder's JavaScript and refuses its Python,
@@ -359,6 +389,9 @@ type foreignCodeExecutor struct {
 }
 
 func (executor foreignCodeExecutor) Execute(ctx context.Context, ir workflow.IRNode, input workflow.NodeInput, request engine.Request) (workflow.NodeOutput, error) {
+	if strings.TrimSpace(textParameter(ir.Parameters, "functionCode")) != "" {
+		return nil, fmt.Errorf("node %q: %w", ir.Name, validateForeignCodeConfiguration(workflow.Node{Parameters: ir.Parameters}))
+	}
 	if isJavaScript(textParameter(ir.Parameters, "language")) {
 		return executor.javaScript.Execute(ctx, ir, input, request)
 	}

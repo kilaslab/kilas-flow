@@ -97,12 +97,13 @@ table leaves the export as itself and shows up in `lossy`.
 ```bash
 kilasflow workflow create --file fetch.json --quiet
 kilasflow workflow export <workflowId> --format n8n
-kilasflow api export-workflow --path id=<workflowId> --query format=n8n --out workflow.json
+kilasflow workflow export <workflowId> --out workflow.json --quiet
 ```
 
 The first export prints the n8n `workflow`, `lossy[]` and `supportedMappings[]`.
 An empty `lossy[]` is the claim this example makes; any entry in it names the
-node and what the file could not carry. Bringing a file in goes the other way:
-`kilasflow api import-workflow --body @import.json` with the body
-`{"format": "n8n", "workflow": <the file>}`, and read `unsupported[]` in the
-answer before trusting the draft.
+node and what the file could not carry. `--out` writes the bare n8n document —
+the file n8n itself imports — with the lossy report left in the CLI envelope.
+Bringing a file in goes the other way: `kilasflow workflow import --file
+import.json --yes` wraps the file in `{"format": "n8n", "workflow": <the file>}
+itself, and `unsupported[]` in the answer is read before trusting the draft.

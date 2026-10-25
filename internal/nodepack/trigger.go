@@ -55,6 +55,10 @@ type Trigger struct {
 	// `{{ url }}` replaced by the route the service must deliver to. Without
 	// it an imported workflow looks correct and receives nothing.
 	Notice string `json:"notice,omitempty"`
+	// SourceNode names the community n8n trigger node this trigger covers,
+	// paired with the pack-level sourcePackage, so the importer can resolve
+	// "<package>.<node>" onto it (FEAT-mq412g).
+	SourceNode string `json:"sourceNode,omitempty"`
 }
 
 // TriggerHMAC describes signature verification.

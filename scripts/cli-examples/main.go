@@ -226,6 +226,9 @@ func newRunner(ctx context.Context, binary, work, url string, out io.Writer) (*r
 	if err := writeDirectoryPack(filepath.Join(root, "packs", "telegram", "pack.json"), filepath.Join(scratch, "my-pack")); err != nil {
 		return nil, err
 	}
+	if err := writeExportDirectory(filepath.Join(scratch, "exports")); err != nil {
+		return nil, err
+	}
 	entries, err := fixtures.ReadDir("testdata")
 	if err != nil {
 		return nil, err
@@ -239,6 +242,21 @@ func newRunner(ctx context.Context, binary, work, url string, out io.Writer) (*r
 		if err := os.WriteFile(filepath.Join(scratch, entry.Name()), content, 0o644); err != nil {
 			return nil, err
 		}
+	}
+
+	// The reference page's directory example imports every .json under
+	// exports/, so the scratch tree carries one directory with a known-good
+	// n8n document in it rather than only the flat fixtures above.
+	exportsDir := filepath.Join(scratch, "exports")
+	if err := os.MkdirAll(exportsDir, 0o755); err != nil {
+		return nil, err
+	}
+	exported, err := os.ReadFile(filepath.Join(scratch, "n8n.json"))
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(exportsDir, "n8n.json"), exported, 0o644); err != nil {
+		return nil, err
 	}
 
 	return &runner{
@@ -265,6 +283,27 @@ func writeDirectoryPack(manifestPath, dir string) error {
 	digest := sha256.Sum256(manifest)
 
 	return os.WriteFile(filepath.Join(dir, "pack.sha256"), []byte(hex.EncodeToString(digest[:])+"\n"), 0o644)
+}
+
+// writeExportDirectory lays the n8n backup form out: a directory of bare n8n
+// documents, the shape `workflow import --dir` reads and the one
+// `workflow export --all --out-dir` writes. Both files come from the page's
+// own n8n fixture, so what the example imports is what the page shows.
+func writeExportDirectory(dir string) error {
+	document, err := fixtures.ReadFile("testdata/n8n.json")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	for _, name := range []string{"orders.json", "refunds.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name), document, 0o644); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (r *runner) fail(format string, args ...any) {
