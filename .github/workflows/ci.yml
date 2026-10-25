@@ -3,7 +3,7 @@ name: CI
 # Every check a change must pass, in one file.
 #
 #   lint            go vet, gofmt, svelte-check, and the web vitest suite
-#   test            go test ./... -race, against real PostgreSQL, MySQL and MariaDB
+#   test            go test ./... (cgo-free, like the production binary), against real PostgreSQL, MySQL and MariaDB
 #   drift           the committed API client, SDK types, docs reference, config reference, and docs facts (catalogue size, exit codes) still match the binary
 #   sdk             the host SDK typechecks, tests, compiles, and packs into a tarball a consumer can install
 #   smoke           the binary, the agent CLI (and every example in its reference page), the Vite proxy and the distroless image all serve
@@ -158,9 +158,14 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # CGO stays enabled here. A devbox shell exports CGO_ENABLED=0 for the
-      # distroless build, and copying that setting into this job would break
-      # `-race`, which needs cgo.
+      # CGO is off, exported by `make test` itself so a laptop and a runner
+      # run the same thing: the landlock confinement tests in internal/jsworker
+      # only pass in a cgo-free build (landlock must restrict every thread, and
+      # a build with cgo cannot restrict the threads libc creates one by one),
+      # and the production binary ships cgo-free anyway (Makefile build-all).
+      # `-race` needs cgo, so it is not part of the target; nothing under test
+      # needs cgo — SQLite is modernc.org/sqlite and the SQL drivers are pure
+      # Go, the service containers are reached over TCP.
       # `make test` turns package parallelism off when a PostgreSQL DSN is set:
       # these packages share the one database, and internal/database's migration
       # tests drop every table. See the comment on the test target in the
@@ -484,9 +489,11 @@ jobs:
 
       # The visual regression suite (VR-03) reuses the binary test-e2e built,
       # which global-setup builds with the /design/states harness. Until
-      # e2e/visual/__screenshots__/linux/ is committed the run can only write
-      # baselines (uploaded below, to be committed from the artefact), so it
-      # does not fail the job; from then on a changed screenshot does.
+      # e2e/visual/__screenshots__/linux/ is committed the specs skip with a
+      # recorded reason (a runner cannot record baselines: its font rendering
+      # is its own, so its screenshots would not match any other runner);
+      # once they are committed, a missing or changed screenshot fails. The
+      # upload below still ships whatever the run produced.
       - name: Visual regression
         run: make test-visual
         env:

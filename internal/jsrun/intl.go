@@ -6,10 +6,10 @@ package jsrun
 // toLocaleString takes its argument as a radix, Date's use en-GB layouts, and
 // localeCompare ignores its locales and options.
 //
-// The rule throughout is the package's: a result either matches what Node 24
-// prints, which the parity goldens in testdata/parity pin, or it is a named
-// error. Nothing here falls back to English, or to a default, when it was asked
-// for something it cannot do.
+// The rule throughout is the package's: a result either matches what Node
+// prints, which the parity goldens in testdata/parity pin (recorded with
+// Node 26), or it is a named error. Nothing here falls back to English, or to
+// a default, when it was asked for something it cannot do.
 //
 //   - Dates format in en-US, en-CA or en-GB only. Asking for another locale
 //     is a RangeError, never English text in place of German, or one
@@ -1203,23 +1203,27 @@ func newDateLocale(tag string, formats [][2]string) *dateLocale {
 	return locale
 }
 
-// enUS is en-US's date data, from CLDR as Node 24 (ICU 78) renders it.
+// enUS is en-US's date data, from CLDR as Node 26 renders it. The day-period
+// separator is a plain space: Node 26's format and formatToParts both print
+// "5:05 PM" (Node 24's formatToParts carried a narrow no-break space there,
+// which Luxon's own parts-join preserved into toLocaleString), and the
+// parity goldens follow Node.
 var enUS = sync.OnceValue(func() *dateLocale {
 	locale := newDateLocale("en-US", [][2]string{
 		{"G", "G"}, {"Gy", "y G"}, {"GyM", "M/y G"}, {"GyMd", "M/d/y G"}, {"GyMEd", "E, M/d/y G"}, {"GyMMM", "MMM y G"}, {"GyMMMd", "MMM d, y G"}, {"GyMMMEd", "E, MMM d, y G"},
 		{"y", "y"}, {"yM", "M/y"}, {"yMd", "M/d/y"}, {"yMEd", "E, M/d/y"}, {"yMMM", "MMM y"}, {"yMMMd", "MMM d, y"},
 		{"yMMMEd", "E, MMM d, y"}, {"yMMMM", "MMMM y"},
 		{"M", "L"}, {"Md", "M/d"}, {"MEd", "E, M/d"}, {"MMM", "LLL"}, {"MMMd", "MMM d"}, {"MMMEd", "E, MMM d"}, {"MMMMd", "MMMM d"},
-		{"E", "ccc"}, {"Ed", "d E"}, {"Eh", "E h\u202fa"}, {"EBh", "E h B"}, {"EBhm", "E h:mm B"}, {"EBhms", "E h:mm:ss B"},
-		{"Ehm", "E h:mm\u202fa"}, {"EHm", "E HH:mm"}, {"Ehms", "E h:mm:ss\u202fa"}, {"EHms", "E HH:mm:ss"},
+		{"E", "ccc"}, {"Ed", "d E"}, {"Eh", "E h a"}, {"EBh", "E h B"}, {"EBhm", "E h:mm B"}, {"EBhms", "E h:mm:ss B"},
+		{"Ehm", "E h:mm a"}, {"EHm", "E HH:mm"}, {"Ehms", "E h:mm:ss a"}, {"EHms", "E HH:mm:ss"},
 		{"d", "d"},
 		{"a", "a"}, {"Bh", "h B"}, {"Bhm", "h:mm B"}, {"Bhms", "h:mm:ss B"},
-		{"h", "h\u202fa"}, {"H", "HH"}, {"hm", "h:mm\u202fa"}, {"Hm", "HH:mm"}, {"hms", "h:mm:ss\u202fa"}, {"Hms", "HH:mm:ss"},
-		{"hmsv", "h:mm:ss\u202fa v"}, {"Hmsv", "HH:mm:ss v"}, {"hmv", "h:mm\u202fa v"}, {"Hmv", "HH:mm v"}, {"hv", "h\u202fa v"}, {"Hv", "HH v"},
+		{"h", "h a"}, {"H", "HH"}, {"hm", "h:mm a"}, {"Hm", "HH:mm"}, {"hms", "h:mm:ss a"}, {"Hms", "HH:mm:ss"},
+		{"hmsv", "h:mm:ss a v"}, {"Hmsv", "HH:mm:ss v"}, {"hmv", "h:mm a v"}, {"Hmv", "HH:mm v"}, {"hv", "h a v"}, {"Hv", "HH v"},
 		{"m", "m"}, {"ms", "mm:ss"}, {"s", "s"}, {"S", "S"}, {"v", "v"},
 	})
 	locale.dateStyles = [4]string{"EEEE, MMMM d, y", "MMMM d, y", "MMM d, y", "M/d/yy"}
-	locale.timeStyles = [4]string{"h:mm:ss\u202fa zzzz", "h:mm:ss\u202fa z", "h:mm:ss\u202fa", "h:mm\u202fa"}
+	locale.timeStyles = [4]string{"h:mm:ss a zzzz", "h:mm:ss a z", "h:mm:ss a", "h:mm a"}
 	locale.dateTimeStyles = [4]string{"{1} 'at' {0}", "{1} 'at' {0}", "{1}, {0}", "{1}, {0}"}
 	for field, item := range map[dateField]string{
 		fieldEra: "{0} {1}", fieldYear: "{0} {1}", fieldMonth: "{0} ({2}: {1})", fieldWeekday: "{0} {1}", fieldDay: "{0} ({2}: {1})",
@@ -1258,7 +1262,7 @@ var enUS = sync.OnceValue(func() *dateLocale {
 })
 
 // enCA and enGB (below) are en-CA's and en-GB's date data: Canadian and
-// British English, CLDR as Node 24 (ICU 78) renders it, derived from Node's
+// British English, CLDR as Node 26 renders it, derived from Node's
 // actual Intl output rather than transcribed from CLDR source or training
 // data — the same principle the rest of this package follows (see doc.go),
 // applied to data no clean-room script fully automates. What follows is the
@@ -1339,16 +1343,16 @@ var enCA = sync.OnceValue(func() *dateLocale {
 		{"y", "y"}, {"yM", "y-MM"}, {"yMd", "y-MM-dd"}, {"yMEd", "EEE, y-MM-dd"}, {"yMMM", "MMM y"}, {"yMMMd", "MMM d, y"},
 		{"yMMMEd", "EEE, MMM d, y"}, {"yMMMM", "MMMM y"},
 		{"M", "L"}, {"Md", "MM-dd"}, {"MEd", "EEE, MM-dd"}, {"MMM", "LLL"}, {"MMMd", "MMM d"}, {"MMMEd", "EEE, MMM d"}, {"MMMMd", "MMMM d"},
-		{"E", "ccc"}, {"Ed", "EEE d"}, {"Eh", "EEE h a"}, {"EBh", "EEE h B"}, {"EBhm", "EEE h:mm B"}, {"EBhms", "EEE h:mm:ss B"},
-		{"Ehm", "EEE h:mm a"}, {"EHm", "EEE HH:mm"}, {"Ehms", "EEE h:mm:ss a"}, {"EHms", "EEE HH:mm:ss"},
+		{"E", "ccc"}, {"Ed", "EEE d"}, {"Eh", "EEE h a"}, {"EBh", "EEE h B"}, {"EBhm", "EEE h:mm B"}, {"EBhms", "EEE h:mm:ss B"},
+		{"Ehm", "EEE h:mm a"}, {"EHm", "EEE HH:mm"}, {"Ehms", "EEE h:mm:ss a"}, {"EHms", "EEE HH:mm:ss"},
 		{"d", "d"},
 		{"a", "a"}, {"Bh", "h B"}, {"Bhm", "h:mm B"}, {"Bhms", "h:mm:ss B"},
-		{"h", "h a"}, {"H", "HH"}, {"hm", "h:mm a"}, {"Hm", "HH:mm"}, {"hms", "h:mm:ss a"}, {"Hms", "HH:mm:ss"},
-		{"hmsv", "h:mm:ss a v"}, {"Hmsv", "HH:mm:ss v"}, {"hmv", "h:mm a v"}, {"Hmv", "HH:mm v"}, {"hv", "h a v"}, {"Hv", "HH v"},
+		{"h", "h a"}, {"H", "HH"}, {"hm", "h:mm a"}, {"Hm", "HH:mm"}, {"hms", "h:mm:ss a"}, {"Hms", "HH:mm:ss"},
+		{"hmsv", "h:mm:ss a v"}, {"Hmsv", "HH:mm:ss v"}, {"hmv", "h:mm a v"}, {"Hmv", "HH:mm v"}, {"hv", "h a v"}, {"Hv", "HH v"},
 		{"m", "m"}, {"ms", "mm:ss"}, {"s", "s"}, {"S", "S"}, {"v", "v"},
 	}).available
 	locale.dateStyles = [4]string{"EEEE, MMMM d, y", "MMMM d, y", "MMM d, y", "y-MM-dd"}
-	locale.timeStyles = [4]string{"h:mm:ss a zzzz", "h:mm:ss a z", "h:mm:ss a", "h:mm a"}
+	locale.timeStyles = [4]string{"h:mm:ss a zzzz", "h:mm:ss a z", "h:mm:ss a", "h:mm a"}
 	locale.dateTimeStyles = [4]string{"{1} 'at' {0}", "{1} 'at' {0}", "{1}, {0}", "{1}, {0}"}
 	locale.amPM = [2]string{"a.m.", "p.m."}
 	// The generic "AM/PM" field name (used when a request appends
@@ -1367,7 +1371,7 @@ var enCA = sync.OnceValue(func() *dateLocale {
 })
 
 // enGB is en-GB's date data: British English, day-first and 24-hour by
-// default, derived from Node 24 the same way enCA was. It differs from
+// default, derived from Node 26 the same way enCA was. It differs from
 // en-US in its patterns, all four dateStyles (day before month, and a
 // 4-digit year even at "short"), all four timeStyles (24-hour, no AM/PM),
 // its AM/PM markers ("am", "pm", used only when a caller explicitly asks
@@ -1382,12 +1386,12 @@ var enGB = sync.OnceValue(func() *dateLocale {
 		{"y", "y"}, {"yM", "MM/y"}, {"yMd", "dd/MM/y"}, {"yMEd", "EEE, dd/MM/y"}, {"yMMM", "MMM y"}, {"yMMMd", "d MMM y"},
 		{"yMMMEd", "EEE, d MMM y"}, {"yMMMM", "MMMM y"},
 		{"M", "L"}, {"Md", "dd/MM"}, {"MEd", "EEE dd/MM"}, {"MMM", "LLL"}, {"MMMd", "d MMM"}, {"MMMEd", "EEE d MMM"}, {"MMMMd", "d MMMM"},
-		{"E", "ccc"}, {"Ed", "EEE d"}, {"Eh", "EEE h a"}, {"EBh", "EEE h B"}, {"EBhm", "EEE h:mm B"}, {"EBhms", "EEE h:mm:ss B"},
-		{"Ehm", "EEE h:mm a"}, {"EHm", "EEE HH:mm"}, {"Ehms", "EEE h:mm:ss a"}, {"EHms", "EEE HH:mm:ss"},
+		{"E", "ccc"}, {"Ed", "EEE d"}, {"Eh", "EEE h a"}, {"EBh", "EEE h B"}, {"EBhm", "EEE h:mm B"}, {"EBhms", "EEE h:mm:ss B"},
+		{"Ehm", "EEE h:mm a"}, {"EHm", "EEE HH:mm"}, {"Ehms", "EEE h:mm:ss a"}, {"EHms", "EEE HH:mm:ss"},
 		{"d", "d"},
 		{"a", "a"}, {"Bh", "h B"}, {"Bhm", "h:mm B"}, {"Bhms", "h:mm:ss B"},
-		{"h", "h a"}, {"H", "HH"}, {"hm", "h:mm a"}, {"Hm", "HH:mm"}, {"hms", "h:mm:ss a"}, {"Hms", "HH:mm:ss"},
-		{"hmsv", "h:mm:ss a v"}, {"Hmsv", "H:mm:ss v"}, {"hmv", "h:mm a v"}, {"Hmv", "HH:mm v"}, {"hv", "h a v"}, {"Hv", "HH v"},
+		{"h", "h a"}, {"H", "HH"}, {"hm", "h:mm a"}, {"Hm", "HH:mm"}, {"hms", "h:mm:ss a"}, {"Hms", "HH:mm:ss"},
+		{"hmsv", "h:mm:ss a v"}, {"Hmsv", "H:mm:ss v"}, {"hmv", "h:mm a v"}, {"Hmv", "HH:mm v"}, {"hv", "h a v"}, {"Hv", "HH v"},
 		{"m", "m"}, {"ms", "mm:ss"}, {"s", "s"}, {"S", "S"}, {"v", "v"},
 		// en-GB's own extra entries (Node 24; en-US and en-CA do not need
 		// them). A bare "H" pads to "HH", but "H" combined with an
@@ -2411,11 +2415,13 @@ func nativeFormatDate(args []any) (any, error) {
 		return nil, err
 	}
 	if !asParts {
-		// CLDR puts a narrow no-break space before AM and PM. Node keeps it in
-		// formatToParts and prints a plain space from format().
+		// Defense for the Date#toLocale* join: if a locale's pattern ever
+		// carries a narrow no-break space again (Node 24's formatToParts did,
+		// before the day-period separator became a plain space), the joined
+		// string still prints the plain space Node's format does.
 		var text strings.Builder
 		for index := 1; index < len(parts); index += 2 {
-			text.WriteString(strings.ReplaceAll(parts[index].(string), " ", " "))
+			text.WriteString(strings.ReplaceAll(parts[index].(string), "\u202f", " "))
 		}
 		return text.String(), nil
 	}

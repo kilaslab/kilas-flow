@@ -1,5 +1,4 @@
-import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { defineConfig } from '@playwright/test';
@@ -17,14 +16,12 @@ import type { VisualOptions } from './visual/fixtures';
 // flaky screenshot fails instead of passing on a second try.
 //
 // Baselines are per platform. darwin ones are generated locally and
-// gitignored; linux ones are what CI compares against. CI bootstraps itself:
-// while visual/__screenshots__/linux/ does not exist the run writes the
-// missing baselines (uploaded as an artefact, to be committed) and passes —
-// 'changed' writes a missing snapshot without failing, whereas 'missing' writes
-// it and still fails the test — while every plain expect() keeps gating; once
-// they are committed, a missing or different screenshot fails.
+// gitignored; linux ones are what CI compares against. Until a platform's
+// baseline directory is committed the specs skip with a recorded reason (see
+// visual/fixtures.ts) — a runner cannot record baselines for anyone else,
+// because its font rendering is its own — and every plain expect() keeps
+// gating; once they are committed, a missing or different screenshot fails.
 const here = dirname(fileURLToPath(import.meta.url));
-const linuxBaselines = existsSync(join(here, 'visual', '__screenshots__', 'linux'));
 
 export default defineConfig<VisualOptions>({
 	testDir: './visual',
@@ -36,7 +33,7 @@ export default defineConfig<VisualOptions>({
 	retries: 0,
 	fullyParallel: true,
 	workers: process.env.CI ? 2 : undefined,
-	updateSnapshots: process.env.CI ? (linuxBaselines ? 'none' : 'changed') : 'missing',
+	updateSnapshots: process.env.CI ? 'none' : 'missing',
 	expect: {
 		timeout: 15_000,
 		toHaveScreenshot: {

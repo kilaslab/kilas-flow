@@ -3,8 +3,10 @@
  *
  * DEV-ONLY. CI never runs Node: it compares internal/jsrun against the JSON
  * files this script writes under internal/jsrun/testdata/parity/, which are
- * committed. Run it by hand, with Node 24, only when a probe is added or the
- * vendored Luxon changes, and review the diff like any other code change:
+ * committed. Run it by hand, with Node 24 or 26, only when a probe is added,
+ * the vendored Luxon changes, or a newer ICU/tzdata has moved a golden (a new
+ * DST rule reads as drift here), and review the diff like any other code
+ * change:
  *
  *   node scripts/js-parity/record.mjs            # rewrite the goldens
  *   node scripts/js-parity/record.mjs --check    # report drift, write nothing
@@ -34,8 +36,9 @@ const intlGo = path.join(root, 'internal/jsrun/intl.go');
 const luxonSource = fs.readFileSync(path.join(root, 'third_party/luxon/luxon.min.js'), 'utf8');
 const check = process.argv.includes('--check');
 
-if (!process.versions.node.startsWith('24.')) {
-	throw new Error(`record.mjs: run this with Node 24 (found ${process.versions.node})`);
+const major = Number(process.versions.node.split('.')[0]);
+if (major !== 24 && major !== 26) {
+	throw new Error(`record.mjs: run this with Node 24 or 26 (found ${process.versions.node})`);
 }
 
 // ---- Running a probe --------------------------------------------------------

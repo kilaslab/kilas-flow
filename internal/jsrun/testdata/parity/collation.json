@@ -1,5 +1,5 @@
 {
-	"meta": {"recordedWith":"node 24.16.0, icu 78.3, cldr 48.0, tz 2026b","luxon":"3.7.2 (third_party/luxon/luxon.min.js)","note":"Recorded by scripts/js-parity/record.mjs. CI compares against this file and never runs Node."},
+	"meta": {"recordedWith":"node 26.7.0, icu 78.3, cldr 48.0, tz 2026c","luxon":"3.7.2 (third_party/luxon/luxon.min.js)","note":"Recorded by scripts/js-parity/record.mjs. CI compares against this file and never runs Node."},
 	"probes": [
 		{"name":"the default order","zone":"","code":"return ['b', 'A', 'a', 'B', 'ä', 'z', 'Z', '10', '9', '2', 'é', 'e', 'E', '_x', ' y', 'ß', 'ss'].sort((x, y) => x.localeCompare(y))","want":[" y","_x","10","2","9","a","A","ä","b","B","e","E","é","ss","ß","z","Z"]},
 		{"name":"numeric","zone":"","code":"const items = ['item10', 'item9', 'item1', 'Item2', 'item02']\nreturn [items.slice().sort((x, y) => x.localeCompare(y, undefined, { numeric: true })), items.slice().sort((x, y) => x.localeCompare(y)), 'a10'.localeCompare('a9', 'en', { numeric: true }), 'a10'.localeCompare('a9')]","want":[["item1","item02","Item2","item9","item10"],["item02","item1","item10","Item2","item9"],1,-1]},
