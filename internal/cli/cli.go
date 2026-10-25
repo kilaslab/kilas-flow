@@ -162,6 +162,14 @@ func run(verbs []Verb, env Env) (code int, handled bool) {
 		return renderResult(env, ctx, err), true
 	}
 
+	// Local usage validation precedes every network step: a malformed
+	// invocation reports its own usage error even when no server answers.
+	if verb.Usage != nil {
+		if err := verb.Usage(ctx, positional); err != nil {
+			return renderResult(env, ctx, err), true
+		}
+	}
+
 	client, clientErr := buildClient(ctx)
 	ctx.Client = client
 

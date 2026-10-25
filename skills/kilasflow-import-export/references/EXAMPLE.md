@@ -103,6 +103,6 @@ kilasflow api export-workflow --path id=<workflowId> --query format=n8n --out wo
 The first export prints the n8n `workflow`, `lossy[]` and `supportedMappings[]`.
 An empty `lossy[]` is the claim this example makes; any entry in it names the
 node and what the file could not carry. Bringing a file in goes the other way:
-`kilasflow api import-workflow --body @import.json` with the body
+`kilasflow api import-workflow --yes --body @import.json` with the body
 `{"format": "n8n", "workflow": <the file>}`, and read `unsupported[]` in the
 answer before trusting the draft.

@@ -68,6 +68,7 @@ func workflowVerbs() []Verb {
 			Flags:     registerImportFlags,
 			Guarded:   true,
 			Refusal:   "creates a workflow from an imported n8n document",
+			Usage:     workflowImportUsage,
 			Run:       runWorkflowImport,
 			Human:     humanWorkflowImport,
 		},
@@ -519,7 +520,10 @@ func runWorkflowCreate(ctx *Context, args []string) error {
 // first file the server refuses stops the run with the file's name in the
 // message: a migration that silently skipped half its files is worse than one
 // that stopped and said which file it stopped on.
-func runWorkflowImport(ctx *Context, args []string) error {
+// workflowImportUsage is the verb's local validation: it runs before any
+// network step, so a malformed invocation reports a usage error (exit 2)
+// even when no server is configured or reachable.
+func workflowImportUsage(ctx *Context, args []string) error {
 	if err := refusePositional(args, "workflow import"); err != nil {
 		return err
 	}
@@ -535,6 +539,15 @@ func runWorkflowImport(ctx *Context, args []string) error {
 	case file == "" && dir == "":
 		return usageError("no document: pass --file <path> (or - for stdin), or --dir <directory>")
 	}
+	return nil
+}
+
+func runWorkflowImport(ctx *Context, args []string) error {
+	flags, ok := ctx.VerbFlags.(*importFlags)
+	if !ok {
+		return usageError("the workflow import verb was registered without its flags")
+	}
+	file, dir := strings.TrimSpace(flags.file), strings.TrimSpace(flags.dir)
 
 	files := []string{file}
 	if dir != "" {

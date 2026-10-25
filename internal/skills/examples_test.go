@@ -479,7 +479,7 @@ func TestImportExportExampleRoundTripsThroughN8n(t *testing.T) {
 				} `json:"workflow"`
 			} `json:"data"`
 		}
-		server.decode(t, &imported, "api", "import-workflow", "--body", "@"+importBody)
+		server.decode(t, &imported, "api", "import-workflow", "--yes", "--body", "@"+importBody)
 		// The exporter's `settings.executionOrder: "v1"` is the order this server
 		// runs, so the way back reports nothing for it: any issue is a node or a
 		// value that did not survive.
