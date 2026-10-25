@@ -23,6 +23,7 @@ export type CanvasShortcut =
 	| 'duplicate'
 	| 'execute'
 	| 'toggle-disabled'
+	| 'toggle-pinned'
 	| 'add-sticky'
 	| 'rename'
 	| 'open-selection'
@@ -61,6 +62,7 @@ export const SHORTCUT_REFERENCE: { keys: string; action: CanvasShortcut; label: 
 	{ keys: 'Mod+V', action: 'paste', label: m.editor_shortcut_paste },
 	{ keys: 'Mod+D', action: 'duplicate', label: m.editor_shortcut_duplicate },
 	{ keys: 'D', action: 'toggle-disabled', label: m.editor_shortcut_toggle_disabled },
+	{ keys: 'P', action: 'toggle-pinned', label: m.editor_shortcut_toggle_pinned },
 	{ keys: 'F2', action: 'rename', label: m.editor_shortcut_rename },
 	{ keys: 'Enter', action: 'open-selection', label: m.editor_shortcut_open },
 	{ keys: 'Mod+A', action: 'select-all', label: m.editor_shortcut_select_all },
@@ -154,6 +156,7 @@ export function canvasShortcut(event: ShortcutEvent): CanvasShortcut | null {
 	if (key === '?') return 'help';
 	if (lower === 'n') return 'add-step';
 	if (lower === 'd') return 'toggle-disabled';
+	if (lower === 'p') return 'toggle-pinned';
 
 	return null;
 }

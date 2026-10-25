@@ -135,13 +135,14 @@ type WorkflowValidationIssue struct {
 // identity is deliberately absent: POST assigns it and PUT takes it from the
 // path, so a request can never choose a workflow ID or contradict its URL.
 type workflowDocumentInput struct {
-	SchemaVersion int                   `json:"schemaVersion"`
-	Name          string                `json:"name"`
-	Nodes         []workflow.Node       `json:"nodes"`
-	Connections   []workflow.Connection `json:"connections"`
-	Settings      map[string]any        `json:"settings"`
-	Tags          []string              `json:"tags,omitempty" maxItems:"20" doc:"Optional labels that group workflows. At most 20; each 1 to 24 characters with no leading or trailing whitespace, no comma and no control character; unique ignoring case. Order and case are kept. The list filters by one with ?tag="`
-	BaseVersionID string                `json:"baseVersionId,omitempty" doc:"Latest version ID the editor saved from; a save from a stale revision is refused with 409"`
+	SchemaVersion int                        `json:"schemaVersion"`
+	Name          string                     `json:"name"`
+	Nodes         []workflow.Node            `json:"nodes"`
+	Connections   []workflow.Connection      `json:"connections"`
+	Settings      map[string]any             `json:"settings"`
+	Tags          []string                   `json:"tags,omitempty" maxItems:"20" doc:"Optional labels that group workflows. At most 20; each 1 to 24 characters with no leading or trailing whitespace, no comma and no control character; unique ignoring case. Order and case are kept. The list filters by one with ?tag="`
+	PinData       map[string][]workflow.Item `json:"pinData,omitempty" doc:"Node output the author pinned, keyed by node name: a run feeds a node's pinned items as its output instead of executing the node"`
+	BaseVersionID string                     `json:"baseVersionId,omitempty" doc:"Latest version ID the editor saved from; a save from a stale revision is refused with 409"`
 }
 
 func (input workflowDocumentInput) document(id string) workflow.Document {
@@ -153,6 +154,7 @@ func (input workflowDocumentInput) document(id string) workflow.Document {
 		Connections:   input.Connections,
 		Settings:      input.Settings,
 		Tags:          input.Tags,
+		PinData:       input.PinData,
 	}
 }
 

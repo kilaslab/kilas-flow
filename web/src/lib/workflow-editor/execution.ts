@@ -333,6 +333,8 @@ export function statusTone(status: string): string {
 			return 'bg-violet-500/15 text-violet-600 border-violet-500/30 dark:text-violet-400';
 		case 'skipped':
 			return 'bg-muted text-muted-foreground border-border';
+		case 'pinned':
+			return 'bg-primary/15 text-primary border-primary/30';
 		default:
 			return 'bg-secondary text-secondary-foreground border-border';
 	}
@@ -353,7 +355,8 @@ const STATUS_LABELS: Partial<Record<string, () => string>> = {
 	succeeded: m.executions_status_succeeded,
 	failed: m.executions_status_failed,
 	cancelled: m.executions_status_cancelled,
-	skipped: m.executions_status_skipped
+	skipped: m.executions_status_skipped,
+	pinned: m.executions_status_pinned
 };
 
 /** Human label for a status, including the client-only `skipped`. */

@@ -895,16 +895,19 @@ func byKilasType(nodeType string) (mapping, bool) {
 // of them learned a node. What differs is the report. n8n's clipboard carries
 // its instance metadata, and a paste lands in a workflow that keeps its own
 // settings and static data, so the document-level entries saying those were
-// not carried describe nothing the user did. Pinned data stays reported: the
-// nodes it was pinned to will run for real. So does a loop, which the paste
-// brings with it whole; the rest of the fragment's shape — no trigger, an
-// input nothing feeds yet — is the shape of a piece of a workflow, and is not.
+// not carried describe nothing the user did. Pinned data stays reported: a
+// paste lands under names the workflow it joins may already use — the editor
+// renames a colliding node — and a pin keyed by the old name would point at
+// nothing. So does a loop, which the paste brings with it whole; the rest of
+// the fragment's shape — no trigger, an input nothing feeds yet — is the shape
+// of a piece of a workflow, and is not.
 func ImportFragment(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 	result, err := Import(payload, catalog)
 	if err != nil {
 		return ImportResult{}, err
 	}
 	kept := make([]ImportIssue, 0, len(result.Unsupported))
+	pinDropped := len(result.Document.PinData) > 0
 	for _, issue := range result.Unsupported {
 		if issue.NodeID == "" && issue.NodeName == "" && workflowOnlyField(issue.Field) {
 			continue
@@ -912,9 +915,23 @@ func ImportFragment(payload []byte, catalog workflow.Catalog) (ImportResult, err
 		if issue.Field == "topology" {
 			continue
 		}
+		// Replaced by one paste-level entry below: whatever the pin was, a
+		// paste cannot carry it.
+		if issue.Field == "pinData" {
+			pinDropped = true
+			continue
+		}
 		kept = append(kept, issue)
 	}
 	result.Unsupported = kept
+	if pinDropped {
+		result.Unsupported = append(result.Unsupported, ImportIssue{
+			Severity: SeverityDropped, Field: "pinData",
+			Reason: "pinned data is keyed by node name, and a paste renames its nodes to the names the workflow it lands in has room for; " +
+				"it was not carried, so the nodes that had it pinned will run for real",
+		})
+		result.Document.PinData = nil
+	}
 	return result, nil
 }
 
@@ -1117,6 +1134,12 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 	unsupported = append(unsupported, settingIssues...)
 	tags, tagIssues := importTags(source.Tags)
 	unsupported = append(unsupported, tagIssues...)
+	names := make(map[string]bool, len(nodes))
+	for _, converted := range nodes {
+		names[converted.Name] = true
+	}
+	pinData, pinIssues := importPinData(source.PinData, names)
+	unsupported = append(unsupported, pinIssues...)
 	unsupported = append(unsupported, documentIssues(source)...)
 
 	document := workflow.Document{
@@ -1126,6 +1149,7 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 		Connections:   connections,
 		Settings:      settings,
 		Tags:          tags,
+		PinData:       pinData,
 	}
 	if catalog != nil {
 		unsupported = append(unsupported, cycleIssues(document, catalog, sourceByID)...)
@@ -1291,12 +1315,11 @@ func withDefaultExportSeverity(issues []ExportIssue) []ExportIssue {
 //
 // FEAT-chxkvq shipped on the principle that an unsupported element is named
 // rather than silently applied. The node-level mapping honoured it; these did
-// not — `settings`, `pinData` and `meta` were read into the struct and then
-// discarded without a word, and `staticData` was not even a field.
-//
-// `pinData` is dropped rather than parked under a reserved key. Carrying data
-// nothing reads would create a second silent-drop problem one release later,
-// and the diagnostic is what the user actually needs.
+// not — `settings` and `meta` were read into the struct and then discarded
+// without a word, and `staticData` was not even a field. `pinData` left this
+// list when the document grew a pinData of its own: it is carried by
+// importPinData, and a run feeds a pinned node's items as its output instead
+// of executing the node.
 // importSettings carries the workflow settings this product understands: the
 // timezone, the workflow's own run budget, and the error workflow.
 //
@@ -1397,8 +1420,6 @@ func documentIssues(source Document) []ImportIssue {
 		{"settings", hasUncarriedSettings(source.Settings),
 			"n8n workflow settings beyond the timezone, the execution timeout, the error workflow and the execution order — " +
 				"the save-data flags and the rest — have no KilasFlow equivalent yet and were not carried"},
-		{"pinData", len(source.PinData) > 0,
-			"pinned test data is an n8n editor feature with no KilasFlow equivalent; it was not carried, so the nodes that had it pinned will run for real"},
 		{"meta", len(source.Meta) > 0,
 			"n8n instance metadata describes where the workflow came from and has no meaning here; it was not carried"},
 		{"staticData", len(source.StaticData) > 0,
@@ -1412,6 +1433,68 @@ func documentIssues(source Document) []ImportIssue {
 		})
 	}
 	return issues
+}
+
+// importPinData carries n8n's pinData into the document's, by node name.
+//
+// An entry is carried when it reads as a list of items n8n would recognize —
+// objects with a `json` payload — and names a node the import kept. Anything
+// else is dropped and named rather than parked: data nothing reads is the
+// silent-drop problem the dropped-element report exists to prevent. Only each
+// item's `json` payload is carried; n8n also pins binary attachments, which
+// have no shape in a document (a BinaryRef is a runtime store key, not data).
+func importPinData(source map[string]any, known map[string]bool) (map[string][]workflow.Item, []ImportIssue) {
+	if len(source) == 0 {
+		return nil, nil
+	}
+	var issues []ImportIssue
+	pinned := make(map[string][]workflow.Item, len(source))
+	for name, value := range source {
+		if !known[name] {
+			issues = append(issues, ImportIssue{
+				Severity: SeverityDropped, Field: "pinData", NodeName: name,
+				Reason: fmt.Sprintf("the workflow pins data for %q, which is not a node in this workflow; the pin was not carried", name),
+			})
+			continue
+		}
+		items, err := pinnedItems(value)
+		if err != nil {
+			issues = append(issues, ImportIssue{
+				Severity: SeverityDropped, Field: "pinData", NodeName: name,
+				Reason: fmt.Sprintf("the data pinned to node %q could not be read as a list of items and was not carried", name),
+			})
+			continue
+		}
+		pinned[name] = items
+	}
+	if len(pinned) == 0 {
+		// Nothing was carried, so the document gets no pinData at all — an
+		// empty map would claim the field belongs in the saved JSON.
+		return nil, issues
+	}
+	return pinned, issues
+}
+
+// pinnedItems reads one node's pinned data as n8n writes it: a list of
+// `{json: …}` items, binary attachments aside.
+func pinnedItems(value any) ([]workflow.Item, error) {
+	list, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("not a list")
+	}
+	items := make([]workflow.Item, 0, len(list))
+	for _, entry := range list {
+		object, ok := entry.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("not a list of items")
+		}
+		item := workflow.Item{}
+		if payload, ok := object["json"].(map[string]any); ok {
+			item.JSON = payload
+		}
+		items = append(items, item)
+	}
+	return items, nil
 }
 
 // importConnections converts n8n's name-keyed connection map into canonical
@@ -1823,6 +1906,16 @@ type ExportResult struct {
 // workflow to the same wire. A nil catalogue falls back to the positional
 // names, which is what this did before it could ask.
 func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult, error) {
+	// Pinned data is keyed by node name on both sides, so it crosses as
+	// itself: a workflow exported to n8n keeps its pins, and one brought back
+	// keeps them too.
+	pinData := make(map[string]any, len(document.PinData))
+	for name, items := range document.PinData {
+		pinData[name] = items
+	}
+	if len(pinData) == 0 {
+		pinData = nil
+	}
 	result := ExportResult{
 		Document: Document{
 			Name:        document.Name,
@@ -1830,6 +1923,7 @@ func Export(document workflow.Document, catalog workflow.Catalog) (ExportResult,
 			Connections: Connections{},
 			Settings:    exportSettings(document.Settings),
 			Tags:        exportTags(document.Tags),
+			PinData:     pinData,
 		},
 		Lossy: make([]Lossy, 0),
 	}

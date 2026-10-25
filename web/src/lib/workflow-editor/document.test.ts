@@ -15,6 +15,7 @@ import {
 	uniqueNodeName,
 	toWorkflowInput,
 	toggleNodesDisabled,
+	toggleNodesPinned,
 	updateNodeProperty,
 	workflowDocumentEquals
 } from './document';
@@ -459,5 +460,57 @@ describe('toggleNodesDisabled', () => {
 		expect(next.nodes?.[1]).toBe(start.nodes?.[1]);
 		expect(toggleNodesDisabled(start, [])).toBe(start);
 		expect(toggleNodesDisabled(start, ['missing'])).toBe(start);
+	});
+});
+
+// FEAT-jrrqs2: P pins the selection, the way n8n's P does. A pin is the
+// node's entry in the document's pinData, keyed by name; a run feeds the
+// pinned items instead of executing the node.
+describe('toggleNodesPinned', () => {
+	const node = (id: string) => ({ id, name: id, type: 'kilasflow.set', typeVersion: 1, position: { x: 0, y: 0 } });
+	const doc = (...nodes: ReturnType<typeof node>[]): Document => ({ schemaVersion: 1, name: 'w', nodes, connections: [], settings: {} }) as unknown as Document;
+
+	it('pins every named node when any of them is unpinned', () => {
+		const next = toggleNodesPinned(doc(node('a'), node('b')), ['a', 'b']);
+		expect(next.pinData).toEqual({ a: [], b: [] });
+	});
+
+	it('keeps a pin the document already carried, next to a new empty one', () => {
+		const start = { ...doc(node('a'), node('b')), pinData: { b: [{ json: { kept: true } }] } } as Document;
+		const next = toggleNodesPinned(start, ['a', 'b']);
+		expect(next.pinData).toEqual({ a: [], b: [{ json: { kept: true } }] });
+	});
+
+	it('unpins them again when all of them are pinned, dropping the field', () => {
+		const start = { ...doc(node('a'), node('b')), pinData: { a: [], b: [] } } as Document;
+		const next = toggleNodesPinned(start, ['a', 'b']);
+		expect('pinData' in next).toBe(false);
+		// Twice-toggled is byte-identical: no empty map is left behind.
+		expect(next).toEqual(doc(node('a'), node('b')));
+	});
+
+	it('unpins only the named nodes', () => {
+		const start = { ...doc(node('a'), node('b')), pinData: { a: [], b: [] } } as Document;
+		const next = toggleNodesPinned(start, ['a']);
+		expect(next.pinData).toEqual({ b: [] });
+	});
+
+	it('leaves an empty selection alone, and unknown names', () => {
+		const start = doc(node('a'));
+		expect(toggleNodesPinned(start, [])).toBe(start);
+		expect(toggleNodesPinned(start, ['missing'])).toBe(start);
+	});
+
+	it('carries a pin with a rename, the key pinData is keyed by', () => {
+		const start = { ...doc(node('a')), pinData: { a: [{ json: { kept: true } }] } } as Document;
+		const next = renameNode(start, 'a', 'Renamed');
+		expect(next.pinData).toEqual({ Renamed: [{ json: { kept: true } }] });
+	});
+
+	it('shows the pin on the canvas projection, and only there', () => {
+		const start = { ...doc(node('a'), node('b')), pinData: { a: [] } } as unknown as Document;
+		const canvas = documentFromCanvas(start, []);
+		expect(canvas.nodes[0].data.pinned).toBe(true);
+		expect(canvas.nodes[1].data.pinned).toBeUndefined();
 	});
 });

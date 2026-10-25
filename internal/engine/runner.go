@@ -440,7 +440,12 @@ type NodeRun struct {
 	// trace would make an execution look as though the branch never existed,
 	// and the difference between "did not run" and "ran and produced nothing"
 	// is exactly what someone reading a branch needs to see.
-	Skipped   bool
+	Skipped bool
+	// Pinned marks a node the runner did not invoke because the workflow pins
+	// its data: the pinned items were fed as its output. Like Skipped, it is
+	// recorded rather than omitted, so a trace reader can tell a node that
+	// never ran from one that did.
+	Pinned    bool
 	ErrorCode string
 	// Response is the HTTP answer this node produced for a caller waiting on
 	// the run, captured from the node's own ResponseEventName event so it can
@@ -1367,6 +1372,17 @@ func (runner *Runner) runNode(ctx context.Context, graph preparedGraph, request 
 		}, request)
 		return nil, nil
 	}
+	// A pinned node is never invoked either. Its pinned items are its output,
+	// which is what n8n's P key promises: the data the author recorded replays
+	// instead of the call, on the first output and nothing on the others. The
+	// trace row is marked, because a node that never ran must not read as one
+	// that did.
+	if node.Pinned != nil {
+		state.complete(graph, node, invocation.input, pinnedOutput(node, node.Pinned), NodeRun{
+			NodeID: node.ID, Input: cloneInput(invocation.input), Pinned: true,
+		}, request)
+		return nil, nil
+	}
 	if _, found := runner.executors.Lookup(node.Definition.ExecutorID); !found {
 		return nil, fmt.Errorf("node %q executor %q is not registered", node.ID, node.Definition.ExecutorID)
 	}
@@ -1707,6 +1723,21 @@ func passThrough(node workflow.IRNode, input workflow.NodeInput) workflow.NodeOu
 		output[0] = cloneItems(input[port.Name])
 		break
 	}
+	return output
+}
+
+// pinnedOutput is what a pinned node emits: its pinned items on the first
+// output, nothing on the others — the same shape passThrough gives a disabled
+// node, so every downstream delivery sees a whole output either way.
+func pinnedOutput(node workflow.IRNode, items []workflow.Item) workflow.NodeOutput {
+	output := make(workflow.NodeOutput, len(node.Definition.Outputs))
+	for index := range output {
+		output[index] = []workflow.Item{}
+	}
+	if len(output) == 0 {
+		return output
+	}
+	output[0] = cloneItems(items)
 	return output
 }
 

@@ -1,7 +1,7 @@
 ---
 id: FEAT-83rcve
 title: Expressions take $('X').all/.first/.last(branch, run) as n8n and the Code node do
-status: todo
+status: done
 priority: low
 created: "2026-09-25T10:25:28Z"
 updated: "2026-09-25T10:25:28Z"
@@ -29,8 +29,12 @@ connected output is read (BUG-fthahg). The same methods on a plain list keep
 taking no arguments.
 
 # Acceptance Criteria
-- [ ] `.all/.first/.last(branch, run)` on a `$('X')` receiver read that output
+- [x] `.all/.first/.last(branch, run)` on a `$('X')` receiver read that output
       and run, in expressions, as Code reads them.
-- [ ] Wrong output and earlier run are refused in the words Code and `$items`
+- [x] Wrong output and earlier run are refused in the words Code and `$items`
       use.
-- [ ] Docs (concepts/expressions, reference/expression-grammar) say so.
+- [x] Docs (concepts/expressions, reference/expression-grammar) say so.
+
+# Progress
+
+Implemented 2026-10-25: methods registered with (branch, run) arity on $('X') receivers, Code-node semantics and wording; plain-list receivers stay zero-arg; docs updated. Gates: go test expression+interop ok, build ok, make lint ok.

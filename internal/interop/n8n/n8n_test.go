@@ -1638,10 +1638,13 @@ func TestWebhookResponseModeRoundTripsExactly(t *testing.T) {
 // annotatedFixture carries every workflow-level and node-level element the
 // importer does not keep. It exists to prove the negative: nothing gets into
 // the canonical document, or fails to, without a diagnostic saying so.
+// pinData is the exception this fixture also proves the positive side of: a
+// pin naming a node of the workflow ("Edit") is carried, and one naming
+// nothing ("Ghost") is dropped and named.
 const annotatedFixture = `{
   "name": "Maximally annotated",
   "settings": {"executionOrder":"v1","timezone":"Asia/Jakarta","errorWorkflow":"wf_other","saveDataSuccessExecution":"none"},
-  "pinData": {"Edit": [{"json":{"pinned":true}}]},
+  "pinData": {"Edit": [{"json":{"pinned":true}}], "Ghost": [{"json":{"stale":true}}]},
   "meta": {"instanceId":"abc123","templateId":"42"},
   "staticData": {"lastRunToken":"xyz"},
   "nodes": [
@@ -1668,7 +1671,9 @@ const annotatedFixture = `{
 // rather than silently applied. The node-level *mapping* honoured that; the
 // document and node metadata did not — settings, pinData and meta were read
 // into the struct and discarded without a word, staticData was not even a
-// field, and notes was parsed and never used.
+// field, and notes was parsed and never used. pinData left the list when the
+// document grew a pinData of its own (FEAT-jrrqs2): a pin naming a node is
+// carried, and only one naming nothing is dropped.
 func TestImportReportsEveryDroppedElement(t *testing.T) {
 	t.Parallel()
 
@@ -1682,7 +1687,8 @@ func TestImportReportsEveryDroppedElement(t *testing.T) {
 	}
 
 	for _, field := range []string{
-		// Workflow level.
+		// Workflow level. pinData is here for the stale "Ghost" entry only;
+		// the pin on a real node is carried, which the assertions below prove.
 		"settings", "pinData", "meta", "staticData",
 		// Node level. Everything else a node carries — the error-handling set,
 		// the disabled flag and the notes — is carried onto the canonical node,
@@ -1705,15 +1711,28 @@ func TestImportReportsEveryDroppedElement(t *testing.T) {
 	}
 
 	// A node-level diagnostic names its node; a workflow-level one does not.
+	// A dropped pin names the node it was pinned to, which is not a node of
+	// this workflow — that is what dropping it means.
 	for _, field := range []string{"webhookId"} {
 		if reported[field].NodeName != "Edit" {
 			t.Errorf("%q did not name the node it came from: %#v", field, reported[field])
 		}
 	}
-	for _, field := range []string{"settings", "pinData"} {
+	for _, field := range []string{"settings"} {
 		if reported[field].NodeName != "" {
 			t.Errorf("%q named a node, but it is a workflow-level element: %#v", field, reported[field])
 		}
+	}
+	if reported["pinData"].NodeName != "Ghost" {
+		t.Errorf("pinData did not name the node it was pinned to: %#v", reported["pinData"])
+	}
+
+	// The pin a real node carried survived, items and all.
+	if got := result.Document.PinData["Edit"]; len(got) != 1 || got[0].JSON["pinned"] != true {
+		t.Errorf("Document.PinData[Edit] = %#v, want the pinned item", got)
+	}
+	if _, carried := result.Document.PinData["Ghost"]; carried {
+		t.Error("Document.PinData carried a pin for a node the workflow does not have")
 	}
 }
 

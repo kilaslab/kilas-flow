@@ -436,7 +436,7 @@ func isDigitInRadix(char byte, radix int) bool {
 func needObject(value any, name string) (map[string]any, error) {
 	switch typed := value.(type) {
 	case map[string]any:
-		return typed, nil
+		return withoutRuntimeKeys(typed), nil
 	case []any:
 		// Object.keys of an array is its indices, which is what JavaScript
 		// does and what a workflow walking `Object.keys($json.rows)` expects.
@@ -462,6 +462,26 @@ func sortedMapKeys(object map[string]any) []string {
 		keys = append(keys, key)
 	}
 	return sortedStrings(keys)
+}
+
+// withoutRuntimeKeys drops the bookkeeping a node view carries for its own
+// methods (nodeRead), which the grammar cannot spell and Object.keys does not
+// list. The same map comes back when there is nothing to drop.
+func withoutRuntimeKeys(object map[string]any) map[string]any {
+	for _, entry := range object {
+		if _, ok := entry.(nodeRead); !ok {
+			continue
+		}
+		cleaned := make(map[string]any, len(object))
+		for key, value := range object {
+			if _, ok := value.(nodeRead); ok {
+				continue
+			}
+			cleaned[key] = value
+		}
+		return cleaned
+	}
+	return object
 }
 
 // objectKeys is the key order Object.keys/values/entries read a receiver in.

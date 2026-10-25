@@ -27,16 +27,23 @@ describe('canvas keymap', () => {
 	});
 
 	// n8n's own map (UXE-10): the keys an n8n user presses without looking.
-	it('maps the n8n keys for running, cutting, disabling and annotating', () => {
+	// P joined them with FEAT-jrrqs2, when pinning became a thing the key
+	// could toggle.
+	it('maps the n8n keys for running, cutting, disabling, pinning and annotating', () => {
 		expect(canvasShortcut(press('Enter', { metaKey: true }))).toBe('execute');
 		expect(canvasShortcut(press('Enter', { ctrlKey: true }))).toBe('execute');
 		expect(canvasShortcut(press('x', { metaKey: true }))).toBe('cut');
 		expect(canvasShortcut(press('x', { ctrlKey: true }))).toBe('cut');
 		expect(canvasShortcut(press('d'))).toBe('toggle-disabled');
 		expect(canvasShortcut(press('D'))).toBe('toggle-disabled');
+		expect(canvasShortcut(press('p'))).toBe('toggle-pinned');
+		expect(canvasShortcut(press('P'))).toBe('toggle-pinned');
 		expect(canvasShortcut(press('S', { shiftKey: true, code: 'KeyS' }))).toBe('add-sticky');
 		// A plain S is not a sticky: only the shifted key is.
 		expect(canvasShortcut(press('s'))).toBeNull();
+		// A pinned selection is not a print dialog either: Cmd+P stays the
+		// browser's, like Cmd+N.
+		expect(canvasShortcut(press('p', { metaKey: true }))).toBeNull();
 	});
 
 	// Cmd+Shift+T is Chrome's "reopen closed tab" and never reaches the page.
@@ -69,6 +76,10 @@ describe('canvas keymap', () => {
 		}
 		expect(claimed.undo).toBe(true);
 		expect(claimed.help).toBe(true);
+		// P is listed for the overlay, so the overlay test of BUG-3k12ky covers
+		// it by construction — but the claim is asserted here too, because a
+		// pin key that is bound and not listed is the help overlay lying.
+		expect(claimed['toggle-pinned']).toBe(true);
 
 		// A Cmd combination the canvas does not handle must not fall through to
 		// the plain-letter meaning: Cmd+N is the browser's new window.

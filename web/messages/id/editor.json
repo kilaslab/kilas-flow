@@ -144,6 +144,7 @@
 	"editor_shortcut_help": "Pintasan papan tik",
 	"editor_shortcut_cut": "Potong pilihan",
 	"editor_shortcut_toggle_disabled": "Nonaktifkan / aktifkan node terpilih",
+	"editor_shortcut_toggle_pinned": "Sematkan / lepas sematan data node terpilih",
 	"editor_shortcut_execute": "Jalankan alur kerja",
 	"editor_shortcut_add_sticky": "Tambah catatan tempel",
 	"editor_activation_notices_aria": "Pemberitahuan aktivasi",

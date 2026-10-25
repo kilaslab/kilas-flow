@@ -13,6 +13,7 @@
 	"canvas_node_attachment_add_aria": "Tambah {port} ke {name}",
 	"canvas_node_attachment_provides_aria": "{name} menyediakan {port}",
 	"canvas_node_port_required_title": "{port} (wajib)",
+	"canvas_node_pinned_title": "Disematkan: alur kerja memutar ulang data sematan node ini alih-alih mengeksekusinya (P untuk mepas)",
 	"canvas_edge_insert_aria": "Sisipkan langkah ke sambungan ini",
 	"canvas_edge_delete_aria": "Hapus sambungan ini",
 	"canvas_tidy": "Rapikan",

@@ -124,6 +124,7 @@
 	"editor_shortcut_help": "Keyboard shortcuts",
 	"editor_shortcut_cut": "Cut selection",
 	"editor_shortcut_toggle_disabled": "Disable / enable selected nodes",
+	"editor_shortcut_toggle_pinned": "Pin / unpin data of selected nodes",
 	"editor_shortcut_execute": "Execute workflow",
 	"editor_shortcut_add_sticky": "Add a sticky note",
 	"editor_activation_notices_aria": "Activation notices",

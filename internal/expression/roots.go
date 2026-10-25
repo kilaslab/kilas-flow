@@ -21,6 +21,75 @@ const fromAIRoot = "$fromAI"
 // `$('X').all` read the same thing.
 const nodeItemsKey = "all"
 
+// nodeReadKey is where a node view carries the state `.all()`, `.first()` and
+// `.last()` read a branch and a run from. The grammar cannot spell a name with
+// a NUL in it, so it cannot collide with a field, and JSON, the parameter
+// conversion and Object.keys leave it out: it is the runtime's own
+// bookkeeping, not a member of the view.
+const nodeReadKey = "node\x00read"
+
+// nodeRead is one node's output as `$('Name').all(branch, run)` reads it: the
+// node's name, every item it produced (each output's items in order), how many
+// each output produced, the number of its latest run and the output the node
+// being evaluated is connected to. It mirrors the Code node's `read` helper
+// (internal/jsrun/js/runtime.js), so both spellings make the same reads and
+// refuse in the same words.
+type nodeRead struct {
+	name    string
+	items   []map[string]any
+	lengths []int
+	latest  int
+	branch  int
+}
+
+// list is one read of the node's output as all, first and last spell it.
+//
+// With no branch, the output the node being evaluated is connected to is read,
+// as BUG-fthahg shipped and as n8n reads it; a node recorded without its
+// output lengths (a checkpoint written before they existed) is read whole, as
+// it always was. With a branch, that output, refused by name when the node
+// does not have it. The run may be the node's latest by its number or as
+// n8n's -1; an earlier one is refused rather than answered with the latest —
+// the same words the Code node's read and `$items(name, output, run)` use.
+func (read nodeRead) list(label string, args []any) ([]any, error) {
+	output := -1
+	if len(args) > 0 && !isNullish(args[0]) {
+		index, ok := wholeIndex(args[0])
+		if !ok {
+			return nil, fmt.Errorf("%s %s", label, noOutputMessage(read.name, jsString(args[0])))
+		}
+		output = index
+	}
+	if len(args) > 1 && !IsUndefined(args[1]) {
+		if message := runMessage(read.name, args[1], read.latest); message != "" {
+			return nil, fmt.Errorf("%s %s", label, message)
+		}
+	}
+	if output < 0 {
+		if start, count, ok := outputSlice(read.lengths, len(read.items), read.branch); ok {
+			return wrapItems(read.items[start : start+count]), nil
+		}
+		return wrapItems(read.items), nil
+	}
+	start, count, ok := outputSlice(read.lengths, len(read.items), output)
+	if !ok {
+		return nil, fmt.Errorf("%s %s", label, noOutputMessage(read.name, strconv.Itoa(output)))
+	}
+	return wrapItems(read.items[start : start+count]), nil
+}
+
+// nodeReadOf reads the state a node view carries for `.all()`, `.first()` and
+// `.last()`. Only the value `$('Name')` (and `$node["Name"]`) resolves to has
+// it; a plain list or an input port does not.
+func nodeReadOf(receiver any) (nodeRead, bool) {
+	wrapper, ok := receiver.(map[string]any)
+	if !ok {
+		return nodeRead{}, false
+	}
+	read, ok := wrapper[nodeReadKey].(nodeRead)
+	return read, ok
+}
+
 // NodeItem is one node's output as an expression sees it.
 //
 // The `json` wrapper is what n8n workflows are written against:
@@ -370,7 +439,7 @@ func nodeRootValue(name string, ctx Context) (any, error) {
 		// what the author meant, so it fails rather than resolving to nothing.
 		return nil, fmt.Errorf("$('%s') names a node that has not produced output in this run", name)
 	}
-	return nodeWrapper(item, ctx, ctx.NodeBranches[name]), nil
+	return nodeWrapper(name, item, ctx, ctx.NodeBranches[name]), nil
 }
 
 // legacyItems resolves `$items(name?, outputIndex?, runIndex?)`: the current
@@ -474,7 +543,7 @@ func runMessage(name string, run any, latest int) string {
 func nodeRootMap(ctx Context) map[string]any {
 	nodes := make(map[string]any, len(ctx.NodeItems)+len(ctx.Nodes))
 	for name, item := range ctx.NodeItems {
-		nodes[name] = nodeWrapper(item, ctx, ctx.NodeBranches[name])
+		nodes[name] = nodeWrapper(name, item, ctx, ctx.NodeBranches[name])
 	}
 	for name, item := range ctx.Nodes {
 		if _, already := nodes[name]; already {
@@ -503,7 +572,9 @@ func nodeRootMap(ctx Context) map[string]any {
 // output joined, so after an IF `.last()` could answer with the other branch's
 // item. A node recorded without its output lengths (a checkpoint written
 // before they existed) cannot be split, and is read whole as it always was.
-func nodeWrapper(item NodeItem, ctx Context, branch int) map[string]any {
+// A branch and a run can be named instead — `.all(1)`, `.first(0, -1)` —
+// which nodeRead serves, as the Code node's read does.
+func nodeWrapper(name string, item NodeItem, ctx Context, branch int) map[string]any {
 	current := item.JSON
 	switch {
 	case item.Paired != nil:
@@ -518,6 +589,13 @@ func nodeWrapper(item NodeItem, ctx Context, branch int) map[string]any {
 	value := itemWrapper(anyMap(current), nil)
 	value["binary"] = item.Binary
 	value[nodeItemsKey] = wrapItems(read)
+	value[nodeReadKey] = nodeRead{
+		name:    name,
+		items:   item.Items,
+		lengths: item.OutputLengths,
+		latest:  item.LatestRun(),
+		branch:  branch,
+	}
 	if item.Paired != nil {
 		value["item"] = itemWrapper(item.Paired, nil)
 	} else {
