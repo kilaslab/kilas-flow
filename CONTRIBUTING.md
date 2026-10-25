@@ -57,7 +57,7 @@ checks only matter if your change reaches the API surface or the configuration.
 | Command | What it proves |
 | --- | --- |
 | `make lint` | `go vet`, `gofmt`, `svelte-check`, and the web test suite |
-| `make test` | `go test ./... -race`; the PostgreSQL and MySQL packages skip without a DSN |
+| `make test` | `go test ./...`, cgo-free like the production binary (landlock confinement needs a cgo-free build, so `-race` cannot stay); the PostgreSQL and MySQL packages skip without a DSN |
 | `make docs-build` | the documentation site builds and every internal link resolves |
 | `make generate-api-check` | the committed web API client matches the served OpenAPI document |
 | `make generate-types-check` | the committed SDK types match the served OpenAPI document |

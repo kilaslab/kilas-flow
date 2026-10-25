@@ -9,16 +9,14 @@
 // version failed: it matched one exact `comm` string and walked only direct
 // children, while its comment claimed a subtree check.
 import { test, expect } from '@playwright/test';
-import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { scaffoldExternalSource } from '../fixtures/epic-external';
+import { packSdk, scaffoldExternalSource } from '../fixtures/epic-external';
 import { readCapstoneConfig } from '../fixtures/epic-config';
 import {
 	classifyFailure,
@@ -37,7 +35,6 @@ import {
 } from '../scripts/capstone-lib.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const execFileAsync = promisify(execFile);
 
 // A process table in the shape `ps -eo pid,ppid,comm` prints it, header
 // included, so parsePsTable is exercised by every case rather than stubbed.
@@ -496,17 +493,10 @@ test('docs coverage: the operator page names exactly the capstone knobs the suit
 // which is byte-identical to what publish would upload.
 test('registry mode: the scratch project installs from a fake registry and resolves all subpaths', async () => {
 	// The bytes the registry would serve, produced the way the release job
-	// produces them (npm pack runs the SDK's prepack build).
+	// produces them (npm pack runs the SDK's prepack build). packSdk
+	// serialises this against the other proofs' packs of the same tree.
 	const packDir = await mkdtemp(join(tmpdir(), 'epic-registry-'));
-	const { stdout: packOut } = await execFileAsync('npm', ['pack', resolve(repoRoot, 'sdk'), '--pack-destination', packDir], {
-		timeout: 300_000
-	});
-	const tarballName = packOut
-		.split('\n')
-		.map((line) => line.trim())
-		.find((line) => line.endsWith('.tgz'));
-	expect(tarballName, `npm pack printed a tarball name (${packOut})`).toBeDefined();
-	const tarballPath = join(packDir, tarballName!);
+	const tarballPath = await packSdk(packDir);
 	const tarballBytes = await readFile(tarballPath);
 	const integrity = `sha512-${createHash('sha512').update(tarballBytes).digest('base64')}`;
 

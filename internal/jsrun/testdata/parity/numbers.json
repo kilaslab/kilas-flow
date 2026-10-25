@@ -1,5 +1,5 @@
 {
-	"meta": {"recordedWith":"node 24.16.0, icu 78.3, cldr 48.0, tz 2026b","luxon":"3.7.2 (third_party/luxon/luxon.min.js)","note":"Recorded by scripts/js-parity/record.mjs. CI compares against this file and never runs Node."},
+	"meta": {"recordedWith":"node 26.7.0, icu 78.3, cldr 48.0, tz 2026c","luxon":"3.7.2 (third_party/luxon/luxon.min.js)","note":"Recorded by scripts/js-parity/record.mjs. CI compares against this file and never runs Node."},
 	"probes": [
 		{"name":"toLocaleString without arguments is en-US","zone":"Europe/Berlin","code":"return [1234567.891, -1234.5, 0.000123, 1e21, 123456789012, -0, NaN, Infinity].map(value => value.toLocaleString())","want":["1,234,567.891","-1,234.5","0","1,000,000,000,000,000,000,000","123,456,789,012","-0","NaN","∞"]},
 		{"name":"toLocaleString with locales","zone":"","code":"return [\"en-US\",\"de-DE\",\"id-ID\",\"fr-FR\",\"ja-JP\",\"en-IN\",\"es-ES\",\"pt-BR\",\"de-CH\",\"ar-EG\",\"hi-IN\",\"zh-CN\"].map(locale => (1234567.891).toLocaleString(locale))","want":["1,234,567.891","1.234.567,891","1.234.567,891","1 234 567,891","1,234,567.891","12,34,567.891","1.234.567,891","1.234.567,891","1'234'567.891","١٬٢٣٤٬٥٦٧٫٨٩١","12,34,567.891","1,234,567.891"]},

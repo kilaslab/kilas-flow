@@ -162,9 +162,17 @@ run: build ## Build and run the binary
 # the race. A DSN therefore turns package parallelism off (see
 # .pine/memory/persistence.md); with no DSN every one of those tests skips and
 # the default is kept.
+#
+# CGO_ENABLED=0, the same build as the production binary (see the build
+# target): the landlock confinement tests only pass in a cgo-free build,
+# because landlock must restrict every thread and a build with cgo cannot
+# restrict the threads libc creates one by one — internal/jsworker logs those
+# as "only partly confined", and its confinement tests refuse that verdict.
+# `-race` needs cgo, so it cannot stay; nothing under test needs cgo (SQLite
+# is modernc.org/sqlite, and the PostgreSQL and MySQL drivers are pure Go).
 .PHONY: test
-test: ## Run Go tests
-	$(GO) test ./... -race $(if $(KILASFLOW_TEST_POSTGRES_DSN),-p 1)
+test: ## Run Go tests (cgo-free, like the production binary)
+	CGO_ENABLED=0 $(GO) test ./... $(if $(KILASFLOW_TEST_POSTGRES_DSN),-p 1)
 
 .PHONY: web-test
 web-test: ## Run the frontend test suite

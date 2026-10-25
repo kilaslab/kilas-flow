@@ -1,5 +1,5 @@
 {
-	"meta": {"recordedWith":"node 24.16.0, icu 78.3, cldr 48.0, tz 2026b","luxon":"3.7.2 (third_party/luxon/luxon.min.js)","note":"Recorded by scripts/js-parity/record.mjs. CI compares against this file and never runs Node."},
+	"meta": {"recordedWith":"node 26.7.0, icu 78.3, cldr 48.0, tz 2026c","luxon":"3.7.2 (third_party/luxon/luxon.min.js)","note":"Recorded by scripts/js-parity/record.mjs. CI compares against this file and never runs Node."},
 	"january": 1768478400000,
 	"july": 1784116800000,
 	"zones": {

@@ -34,7 +34,8 @@
 //   checks the server's own process subtree mechanically; the stub and host
 //   doubles are test fixtures, never server sidecars.
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -142,6 +143,64 @@ export async function scaffoldExternalSource(source: ExternalSource = { kind: 't
 	return scaffoldExternalApp(source);
 }
 
+// Every pack of this repository's SDK goes through here. `npm pack` runs the
+// SDK's prepack, which rebuilds sdk/dist from scratch (clean, then tsc), and
+// two packs racing — proof 4's tarball and the registry rehearsal's pack run
+// on parallel workers — let one pack's tar step read the dist the other's
+// prepack just deleted: the tarball ships a half-written dist (CI has seen
+// dist/server.js packed without the dist/http.js it imports, and the scratch
+// install die resolving it). The lock serialises the packs of this checkout,
+// so each tarball sees one complete build. It is a directory (mkdir is
+// atomic) under the OS temp dir, keyed by the repository path, and stolen
+// when a dead holder left it behind.
+const packLockDir = join(
+	tmpdir(),
+	`kilasflow-sdk-pack-${createHash('sha256').update(repoRoot).digest('hex').slice(0, 16)}.lock`
+);
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withPackLock<T>(fn: () => Promise<T>): Promise<T> {
+	const stealAfterMs = 600_000;
+	for (;;) {
+		try {
+			await mkdir(packLockDir);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+			const stats = await stat(packLockDir).catch(() => undefined);
+			if (stats && Date.now() - stats.mtimeMs > stealAfterMs) {
+				await rm(packLockDir, { recursive: true, force: true });
+			} else {
+				await delay(200);
+			}
+			continue;
+		}
+		try {
+			return await fn();
+		} finally {
+			await rm(packLockDir, { recursive: true, force: true });
+		}
+	}
+}
+
+// Packs the SDK the way the release job does — `npm pack` over sdk/, prepack
+// build included — into packDir, and returns the tarball's path.
+export async function packSdk(packDir: string): Promise<string> {
+	return withPackLock(async () => {
+		const { stdout } = await execFileAsync('npm', ['pack', join(repoRoot, 'sdk'), '--pack-destination', packDir], {
+			timeout: 300_000
+		});
+		const tarballName = stdout
+			.split('\n')
+			.map((line) => line.trim())
+			.find((line) => line.endsWith('.tgz'));
+		if (!tarballName) throw new Error(`npm pack printed no tarball name: ${stdout}`);
+		return join(packDir, tarballName);
+	});
+}
+
 async function tarballEntries(tarball: string): Promise<string[]> {
 	const { stdout } = await execFileAsync('tar', ['-tzf', tarball]);
 	return stdout.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -170,16 +229,7 @@ export async function scaffoldExternalApp(source: ExternalSource = { kind: 'tarb
 	}
 	let tarball: string | null = null;
 	if (source.kind === 'tarball') {
-		const sdkDir = join(repoRoot, 'sdk');
-		const { stdout: packOut } = await execFileAsync('npm', ['pack', sdkDir, '--pack-destination', dir], {
-			timeout: 120_000
-		});
-		const tarballName = packOut
-			.split('\n')
-			.map((line) => line.trim())
-			.find((line) => line.endsWith('.tgz'));
-		if (!tarballName) throw new Error(`npm pack printed no tarball name: ${packOut}`);
-		tarball = join(dir, tarballName);
+		tarball = await packSdk(dir);
 
 		// The published tarball contains dist and README (plus CHANGELOG and the
 		// manifest) and nothing else — no source, no tests. Assert the shape
