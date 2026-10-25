@@ -3,7 +3,7 @@
 
 	import { useQueryClient } from '@tanstack/svelte-query';
 
-	import { message } from '$lib/api/http';
+	import { message, setEmbedUnauthorizedListener } from '$lib/api/http';
 	import * as m from '$lib/paraglide/messages.js';
 	import { listCredentials } from '$lib/api/generated/credentials/credentials';
 	import { createListNodeTypes } from '$lib/api/generated/nodes/nodes';
@@ -14,6 +14,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import WorkflowEditor, { type RunSelection, type WorkflowHistoryHost } from '$lib/components/workflow-editor/workflow-editor.svelte';
 	import { embedControls, type EmbedSession } from './session.svelte';
+	import { parseHostCommand, type CommandReply, type ParsedCommand } from './commands';
 	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage } from '$lib/dashboard/cursor-page';
 	import { activationFailure, activationNotices, dismissNotice, type ActivationNoticeView } from '$lib/workflow-editor/activation';
 	import { cacheWorkflow } from '$lib/workflow-editor/workflow-cache';
@@ -121,9 +122,127 @@
 		canvasFrom = `${incoming.id}:${incoming.latestVersion.id}`;
 	});
 
+	// A workflow that cannot load at all is the one failure the canvas never
+	// gets to show: the host's `error` event is where it lands, so the host
+	// can tell its user the embed is not coming up. Fires on the transition —
+	// the reads below are the query's own settled state.
+	$effect(() => {
+		if ((workflow.isError || nodeTypes.isError) && !currentWorkflow) {
+			notifyHost('error', { code: 'load-failed', message: message(workflow.isError ? workflow.error : nodeTypes.error) });
+		}
+	});
+
 	/** Tells the host what happened, always to its exact origin, never '*'. */
 	function notifyHost(type: string, detail: Record<string, unknown> = {}) {
 		window.parent.postMessage({ type: `kilasflow:${type}`, workflowId: session.workflowId, ...detail }, session.origin);
+	}
+
+	// The canvas itself, for the host's protocol-v2 commands. Commands act on
+	// the editor's own draft (save), its Execute semantics (run) and its
+	// selection (focusNode), which only the mounted component can do.
+	let editorInstance = $state<ReturnType<typeof WorkflowEditor>>();
+
+	// The 401 latch: every request the frame makes shares one token, so the
+	// first refusal says everything later ones would repeat. A refreshed
+	// session (a new token over the same channel) re-arms it.
+	let unauthorizedAnnounced = false;
+	$effect(() => {
+		void session.token;
+		unauthorizedAnnounced = false;
+	});
+
+	onMount(() => {
+		setEmbedUnauthorizedListener(() => {
+			if (unauthorizedAnnounced) return;
+			unauthorizedAnnounced = true;
+			notifyHost('unauthorized');
+		});
+
+		// Host commands, protocol v2. Both checks are load-bearing: the origin
+		// is the same browser-verified parent the session came from, and
+		// `window.parent` is the only window whose commands this frame takes.
+		function onMessage(event: MessageEvent) {
+			if (event.origin !== session.origin || event.source !== window.parent) return;
+			const command = parseHostCommand(event.data);
+			if (!command) return;
+			void answerHostCommand(command);
+		}
+		window.addEventListener('message', onMessage);
+
+		return () => {
+			setEmbedUnauthorizedListener(null);
+			window.removeEventListener('message', onMessage);
+		};
+	});
+
+	function replyHostCommand(reply: CommandReply) {
+		notifyHost('command-result', { ...reply });
+	}
+
+	/** Runs one host command and answers it, whatever happened. */
+	async function answerHostCommand(command: ParsedCommand): Promise<void> {
+		if (command.command === 'unknown') {
+			replyHostCommand({ requestId: command.requestId, ok: false, code: 'unknown-command', message: `The editor carries no '${command.name}' command.` });
+			return;
+		}
+		if (!editorInstance) {
+			replyHostCommand({ requestId: command.requestId, ok: false, code: 'not-ready', message: 'The editor is still loading.' });
+			return;
+		}
+		switch (command.command) {
+			case 'save': {
+				// A read-only session's host has no business saving, and the
+				// editor would only drop the call; answering 'forbidden' tells
+				// the host which end the refusal came from.
+				if (!canWrite) {
+					replyHostCommand({ requestId: command.requestId, ok: false, code: 'forbidden', message: 'This session carries no workflow:write scope.' });
+					return;
+				}
+				await editorInstance.saveDraft();
+				replyHostCommand(
+					saveError || saveConflict
+						? {
+								requestId: command.requestId,
+								ok: false,
+								code: saveConflict ? 'conflict' : 'save-failed',
+								message: saveError ?? undefined,
+								dirty: editorDirty
+							}
+						: { requestId: command.requestId, ok: true, saved: !editorDirty, dirty: editorDirty, revision: currentWorkflow?.latestVersion.revision }
+				);
+				return;
+			}
+			case 'run': {
+				if (!canRun) {
+					replyHostCommand({ requestId: command.requestId, ok: false, code: 'forbidden', message: 'This session carries no workflow:run scope.' });
+					return;
+				}
+				// Exactly the toolbar's Execute: a dirty canvas is saved first,
+				// and the reply settles at the run's terminal state. Hosts that
+				// want progress while it runs already have execution-started
+				// and execution-finished.
+				const execution = await editorInstance.runDraft();
+				if (editorDirty) {
+					replyHostCommand({ requestId: command.requestId, ok: false, code: 'save-failed', message: saveError ?? undefined, dirty: true });
+					return;
+				}
+				if (runError) {
+					replyHostCommand({ requestId: command.requestId, ok: false, code: 'run-failed', message: runError, executionId: lastExecutionId });
+					return;
+				}
+				replyHostCommand({ requestId: command.requestId, ok: true, executionId: execution?.id ?? null, status: execution?.status });
+				return;
+			}
+			case 'focusNode': {
+				const focused = editorInstance.focusNode(command.nodeId);
+				replyHostCommand(
+					focused
+						? { requestId: command.requestId, ok: true }
+						: { requestId: command.requestId, ok: false, code: 'unknown-node', message: `No node '${command.nodeId}' on the canvas.` }
+				);
+				return;
+			}
+		}
 	}
 
 	function adoptFromServer(workflow: WorkflowResource) {
@@ -179,6 +298,9 @@
 			saveError = message(error);
 			saveIssues = withNodeNames(validationIssuesFromApiError(error), currentWorkflow.latestVersion.document.nodes);
 			saveConflict = isConflictError(error);
+			// The host's own save button (protocol v2's `save` command aside)
+			// deserves the same failure it would get from the canvas's.
+			notifyHost('error', { code: saveConflict ? 'conflict' : 'save-failed', message: saveError });
 		} finally {
 			saving = false;
 		}
@@ -186,6 +308,18 @@
 
 	function isConflictError(error: unknown): boolean {
 		return typeof error === 'object' && error !== null && 'status' in error && (error as { status?: unknown }).status === 409;
+	}
+
+	/**
+	 * The canvas became clean or dirty, and the host cares as much as this
+	 * page does: protocol v2's `dirty-changed` is what lets a host warn before
+	 * navigating its own page away from a user's unsaved work. The editor
+	 * reports the settled state, so the host also hears `dirty: false` after a
+	 * save — the signal its guard can come down.
+	 */
+	function onDirtyChanged(value: boolean) {
+		editorDirty = value;
+		notifyHost('dirty-changed', { dirty: value });
 	}
 
 	/**
@@ -315,6 +449,7 @@
 		} catch (error) {
 			runError = message(error);
 			runIssues = withNodeNames(validationIssuesFromApiError(error), currentWorkflow.latestVersion.document.nodes);
+			notifyHost('error', { code: 'run-failed', message: runError });
 			throw error;
 		} finally {
 			if (token === pollingRun) running = false;
@@ -364,6 +499,7 @@
 	{/if}
 	{#key canvasFrom}
 		<WorkflowEditor
+			bind:this={editorInstance}
 			document={currentWorkflow.latestVersion.document}
 			definitions={nodeTypes.data ?? []}
 			credentials={credentials}
@@ -381,7 +517,7 @@
 			{lastExecutionId}
 			{history}
 			hostIssues={[...runIssues, ...activationIssues]}
-			onDirtyChange={(value) => (editorDirty = value)}
+			onDirtyChange={onDirtyChanged}
 			onReloadConflict={() => void reloadTheirs()}
 			onOverwriteConflict={() => void overwriteTheirs()}
 			active={currentWorkflow.active}

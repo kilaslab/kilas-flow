@@ -43,6 +43,21 @@ let embedToken: string | null = null;
 let embedParent: string | null = null;
 
 /**
+ * Called once when an API request is refused with 401 while an embed token is
+ * attached — the token has expired or been revoked, and no retry with it can
+ * succeed.
+ *
+ * The embedded editor registers this to tell its host (`kilasflow:unauthorized`),
+ * which is the only party that can mint a fresh session. Set and cleared with
+ * the embed editor's lifetime, never the request's.
+ */
+let embedUnauthorizedListener: (() => void) | null = null;
+
+export function setEmbedUnauthorizedListener(listener: (() => void) | null): void {
+	embedUnauthorizedListener = listener;
+}
+
+/**
  * Sets the embed token attached to every subsequent API request, and the
  * origin of the host page it was handed over by.
  *
@@ -104,9 +119,15 @@ export async function apiFetch<T>(url: string, options: ApiFetchOptions = {}): P
 	// Auth-enabled deployments answer 401 to every unauthenticated call.
 	// The SPA owns a sign-in route, so a 401 redirects there with the
 	// current location as `next` and the existing error block still throws.
-	// Skipped for auth calls themselves, the login page, embeds (which
-	// emit session-expired instead of navigating the iframe), and while an
-	// embed token is attached — approved shape per WebEditorCore.
+	// Skipped for auth calls themselves, the login page, embeds (which tell
+	// the host the token is dead instead of navigating the iframe), and
+	// while an embed token is attached — approved shape per WebEditorCore.
+	if (response.status === 401 && currentEmbedToken()) {
+		// A 401 on the frame's own identity is not a navigation problem: the
+		// host is the only party that can mint a replacement session, so the
+		// listener says so once per token and the error still throws below.
+		embedUnauthorizedListener?.();
+	}
 	if (response.status === 401 && typeof window !== 'undefined' && !currentEmbedToken()) {
 		const pathname = window.location.pathname;
 		const onLoginPage = pathname === '/login' || pathname.startsWith('/login/');
@@ -151,6 +172,7 @@ export async function apiDownload(url: string, headers?: HeadersInit): Promise<A
 
 	const response = await fetch(url, { headers: requestHeaders });
 
+	if (response.status === 401 && currentEmbedToken()) embedUnauthorizedListener?.();
 	if (!response.ok) {
 		const problem = await readProblem(response);
 		throw new ApiError(response.status, problem?.detail ?? problem?.title ?? response.statusText, problem);

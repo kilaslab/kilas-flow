@@ -288,6 +288,39 @@ it came from before its payload is read. `locale` rides along in that same
 message: the editor checks it against the catalogs it ships and ignores one it
 does not carry.
 
+### Keeping a long session alive (protocol v2)
+
+Embed tokens live minutes, not hours. The frame warns you sixty seconds
+before expiry and tells you when the server has refused the one it holds; in
+both cases mint a replacement on your backend and hand it over — the editor
+is not reloaded, and the user's canvas, selection and viewport survive:
+
+```ts
+onEvent(event) {
+  if (event.type === 'session-expiring' || event.type === 'unauthorized') {
+    const session = await fetch('/api/embed-session').then((r) => r.json());
+    editor.setSession(session); // swaps the token in place, no reload
+  }
+  if (event.type === 'dirty-changed') {
+    leaveGuard = event.dirty; // warn before navigating your page away
+  }
+}
+```
+
+The frame announces its protocol version with `embed-ready`; `EMBED_PROTOCOL_VERSION`
+in this package is the version the SDK itself speaks. Commands are refused up
+front (not left hanging) when the frame is older than version 2:
+
+```ts
+const save = await editor.save();   // { ok: true, saved, dirty, revision? }
+const run = await editor.run();     // resolves at the run's terminal state
+await editor.focusNode('webhook');  // selects the node and opens its inspector
+```
+
+`run()` resolves only when the run settles — however long the workflow takes —
+so watch `execution-started` / `execution-finished` for progress. Replies are
+origin-checked exactly like every other message.
+
 ### Watching a run on an authenticated server
 
 `EventSource` cannot send an `Authorization` header, so the backend exchanges

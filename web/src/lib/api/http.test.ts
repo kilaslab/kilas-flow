@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ApiError, apiFetch, message } from './http';
+import { ApiError, apiDownload, apiFetch, message, setEmbedToken, setEmbedUnauthorizedListener } from './http';
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -90,6 +90,47 @@ describe('apiFetch', () => {
 			'KilasFlow API URLs must be same-origin paths'
 		);
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('tells the embed listener about a 401 on the frame\'s own identity, once per refusal', async () => {
+		// An embedded frame has no sign-in route to land on: its token is the
+		// whole identity, and only its host can mint a replacement. The
+		// listener is the frame's route to the `kilasflow:unauthorized` event.
+		setEmbedToken('tok-401', 'https://host.example');
+		const refused = new Response(JSON.stringify({ title: 'Unauthorized', status: 401 }), {
+			status: 401,
+			headers: { 'Content-Type': 'application/problem+json' }
+		});
+		fetchMock.mockResolvedValueOnce(refused).mockResolvedValueOnce(refused);
+
+		const unauthorized = vi.fn();
+		setEmbedUnauthorizedListener(unauthorized);
+		try {
+			await expect(apiFetch('/api/v1/workflows/wf-1')).rejects.toMatchObject({ status: 401 });
+			await expect(apiDownload('/api/v1/datastores/ds-1/rows/export')).rejects.toMatchObject({ status: 401 });
+			expect(unauthorized).toHaveBeenCalledTimes(2);
+		} finally {
+			setEmbedUnauthorizedListener(null);
+			setEmbedToken(null);
+		}
+	});
+
+	it('stays silent on a 401 the dashboard, not an embed, received', async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response(JSON.stringify({ title: 'Unauthorized', status: 401 }), {
+				status: 401,
+				headers: { 'Content-Type': 'application/problem+json' }
+			})
+		);
+
+		const unauthorized = vi.fn();
+		setEmbedUnauthorizedListener(unauthorized);
+		try {
+			await expect(apiFetch('/api/v1/workflows/wf-1')).rejects.toMatchObject({ status: 401 });
+			expect(unauthorized).not.toHaveBeenCalled();
+		} finally {
+			setEmbedUnauthorizedListener(null);
+		}
 	});
 });
 
