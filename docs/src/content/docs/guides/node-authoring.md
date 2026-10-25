@@ -336,6 +336,67 @@ outbound request without ever passing through a template. Second, a pack names
 a credential type and the operator binds a real credential of that type after
 installation — the pack never sees credential values.
 
+## Loading options from the customer's service
+
+A static `options` list cannot offer the customer's own channels, agents, tags
+or team members: those live behind their API, and no binary can know them. A
+parameter can declare a `loadOptions` block instead, and the editor fills the
+picker at edit time — the request the server makes is the same governed one
+every other outbound call is:
+
+```json
+{
+  "key": "channel",
+  "label": "Channel",
+  "kind": "options",
+  "required": true,
+  "loadOptions": {
+    "source": "http",
+    "method": "GET",
+    "endpoint": "/api/channels",
+    "credentialType": "acmeApi",
+    "itemsPath": "data",
+    "labelTemplate": "{{ name }} ({{ provider }})",
+    "valueField": "id",
+    "dependsOn": []
+  }
+}
+```
+
+- `endpoint` may carry `{{ key }}` placeholders naming the parameters in
+  `dependsOn`; every substituted value is URL-escaped, never concatenated, and
+  a change to a listed parameter refetches the list. `baseUrlParameter` names
+  the parameter holding the service's own base URL, prepended without being
+  escaped.
+- `credentialType` must be the pack's own `credentialType`: the request is
+  signed with the credential the node attached, under the egress policy and
+  the credential's allowed domains. Omit it for an unsigned public list.
+- `itemsPath` walks the response to the list (dot-separated, empty means the
+  response is the list), `valueField` reads each option's value, and
+  `labelTemplate` renders its label from the item's fields.
+- `loadOptions` is allowed on `options` and `multiOptions` parameters. A
+  `resourceLocator` declares modes instead, and carries the loader on its list
+  mode — a typed "by ID" mode has no list to load:
+
+```json
+{
+  "key": "agent",
+  "label": "Agent",
+  "kind": "resourceLocator",
+  "required": true,
+  "modes": [
+    {"name": "id", "label": "By ID", "kind": "string", "pattern": "^a_[0-9]+$", "patternHint": "an agent id, a_<digits>"},
+    {"name": "list", "label": "From list", "kind": "options", "placeholder": "Search agents…",
+     "loadOptions": {"source": "http", "method": "GET", "endpoint": "/api/agents", "credentialType": "acmeApi", "itemsPath": "data", "valueField": "id", "labelTemplate": "{{ name }}"}}
+  ]
+}
+```
+
+A load failure shows inline in the picker, as the reason the server reports —
+a missing credential, a host the policy refuses, a service answering 4xx —
+rather than as an empty list. Internal loaders (`source: "internal"`) are the
+server's own and cannot be named by a pack.
+
 ## Step 5: triggers
 
 A trigger pack declares events instead of resources: one output per event, in

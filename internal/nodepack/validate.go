@@ -305,7 +305,7 @@ var (
 	moduleLimKeys  = []string{"timeoutSeconds", "memoryPages", "maxOutputBytes", "maxHostCalls"}
 	resourceKeys   = []string{"name", "description", "operations"}
 	operationKeys  = []string{"name", "description", "method", "url", "sends", "output", "pagination"}
-	parameterKeys  = []string{"key", "label", "description", "kind", "required", "default", "options", "typeOptions", "resources", "operations"}
+	parameterKeys  = []string{"key", "label", "description", "kind", "required", "default", "options", "typeOptions", "loadOptions", "modes", "resources", "operations"}
 	provenanceKeys = []string{"tool", "source", "sourceTitle", "sourceVersion", "sourceDigest"}
 	triggerKeys    = []string{"events", "catchAll", "eventPath", "shape", "webhook", "hmac", "lifecycle", "media", "notice"}
 )
@@ -418,6 +418,23 @@ func checkUnknownFields(raw map[string]json.RawMessage, filename string) []Issue
 					var parsed property.TypeOptions
 					if err := strictDecode(typeOptions, &parsed); err != nil {
 						fail(at+".typeOptions", "%v", err)
+					}
+				}
+				if loader, ok := parameter["loadOptions"]; ok {
+					var parsed property.OptionsLoader
+					if err := strictDecode(loader, &parsed); err != nil {
+						fail(at+".loadOptions", "%v", err)
+					}
+				}
+				if modes, ok := parameter["modes"]; ok {
+					var list []json.RawMessage
+					if json.Unmarshal(modes, &list) == nil {
+						for k, mode := range list {
+							var parsed property.PropertyMode
+							if err := strictDecode(mode, &parsed); err != nil {
+								fail(fmt.Sprintf("%s.modes[%d]", at, k), "%v", err)
+							}
+						}
 					}
 				}
 			}

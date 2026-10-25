@@ -56,11 +56,17 @@ A resource accepts `name`, `description`, `operations`. An operation accepts
 filled from `path` parameters, one escaped segment each.
 
 A parameter accepts `key`, `label`, `description`, `kind`, `required`,
-`default`, `options`, `typeOptions`, `resources`, `operations`. Both
-`resources` and `operations` are required scoping: an operation name alone
-does not identify an operation, because names repeat across resources.
-`options` entries are `value`/`label` pairs. `key` must not be `resource` or
-`operation` — those are reserved for the pack's own cascade.
+`default`, `options`, `typeOptions`, `loadOptions`, `modes`, `resources`,
+`operations`. Both `resources` and `operations` are required scoping: an
+operation name alone does not identify an operation, because names repeat
+across resources. `options` entries are `value`/`label` pairs. `key` must not
+be `resource` or `operation` — those are reserved for the pack's own cascade.
+`loadOptions` fills the picker from the customer's own service at edit time
+(an `http` source: `method`, `endpoint`, `baseUrlParameter`,
+`credentialType`, `itemsPath`, `labelTemplate`, `valueField`, `dependsOn`),
+on `options` and `multiOptions` parameters; a `resourceLocator` declares its
+loader on the list mode of its `modes` instead (guide:
+`guides/node-authoring`).
 
 A trigger accepts `events`, `catchAll`, `eventPath`, `shape`, `webhook`,
 `hmac`, `lifecycle`, `media`, `notice`. Events are in output-index order with
