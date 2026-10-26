@@ -63,6 +63,10 @@ const RUN_COVERAGE = [
 	'kilasflow.wait@1',
 	'kilasflow.executeWorkflow@1',
 	'kilasflow.executeWorkflowTrigger@1',
+	// The RSS pair runs against the loopback stub's real feed document: the
+	// read node parses it into items, and the trigger fires on a manual run.
+	'kilasflow.rssFeedRead@1',
+	'kilasflow.rssFeedReadTrigger@1',
 	'kilasflow.datastore@1',
 	'kilasflow.documentLoader@1',
 	'kilasflow.textSplitter@1',
@@ -111,6 +115,7 @@ const VALIDATION_COVERAGE = [
 	'kilasflow.gmailTool@1',
 	'kilasflow.postgresTool@2',
 	'kilasflow.googleSheetsTool@1',
+	'kilasflow.rssFeedReadTool@1',
 	'pack.telegramTool@1',
 	'kilasflow.postgres@1',
 	'kilasflow.postgres@2',
@@ -139,6 +144,12 @@ const EXCLUDED: Record<string, string> = {
 	'kilasflow.chainSummarization@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
 	'kilasflow.chainRetrievalQa@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
 	'kilasflow.sentimentAnalysis@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
+	// The email pair dials a mail server, which no HTTP stub can stand in
+	// for: covered at the unit level in nodes/email_test.go and
+	// internal/mail, where fake SMTP and IMAP servers prove the handshake,
+	// the MIME assembly and the UID watermark.
+	'kilasflow.emailSend@1': 'needs a live SMTP server; unit-covered in nodes/email_test.go and internal/mail',
+	'kilasflow.emailReadImap@1': 'needs a live IMAP server; unit-covered in nodes/email_test.go and internal/mail',
 };
 
 interface CatalogueEntry {
@@ -663,6 +674,42 @@ test('trigger nodes fire on a manual run', async ({ server, stub }) => {
 test('the error workflow pair and the hosted form run against the binary', async ({ server }) => {
 	await exerciseErrorWorkflow(server.baseURL, 'Coverage');
 	await exerciseFormTrigger(server.baseURL, 'Coverage');
+});
+
+test('rss read parses the stub feed and the feed trigger fires on a manual run', async ({ server, stub }) => {
+	// The read node fetches the stub's real RSS document and answers one item
+	// per feed entry, with n8n's reader's shape.
+	const readId = await createWorkflow(
+		server.baseURL,
+		'Coverage RSS Read',
+		[manual(), node('rss', 'RSS Read', 'kilasflow.rssFeedRead', 1, { url: stub.url('/feed') })],
+		[conn('c1', 'manual', 'main', 'rss', 'main')]
+	);
+	const record = await runToSuccess(server.baseURL, readId);
+	const entries = nodeRun(record, 'rss').output[0];
+	expect(entries).toHaveLength(2);
+	expect(entries[0].json).toMatchObject({
+		title: 'First dispatch',
+		link: 'http://127.0.0.1/feed/1',
+		guid: 'stub-1',
+		creator: 'Stub'
+	});
+	expect(entries[0].json.isoDate).toContain('2026-10-26T08:00:00');
+	const snippet = entries[0].json.contentSnippet as string;
+	expect(snippet.length).toBe(120);
+	expect(snippet).not.toContain('<');
+
+	// The trigger fires on a manual run like every other poll trigger; its
+	// polling delivery is the leased cursor framework's, proven in
+	// nodes/rss_test.go against the same document shape.
+	const triggerId = await createWorkflow(
+		server.baseURL,
+		'Coverage RSS Trigger',
+		[node('trigger', 'RSS Feed Trigger', 'kilasflow.rssFeedReadTrigger', 1, { feedUrl: stub.url('/feed') }), setter('out', 'rss-ok')],
+		[conn('c1', 'trigger', 'main', 'out', 'main')]
+	);
+	const triggerRecord = await runToSuccess(server.baseURL, triggerId);
+	expect(itemJson(triggerRecord, 'out')).toMatchObject({ v: 'rss-ok' });
 });
 
 test('a loop iterates its body and collects on done', async ({ server }) => {

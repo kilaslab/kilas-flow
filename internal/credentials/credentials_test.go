@@ -400,6 +400,8 @@ func TestEveryStoredCredentialTypeStillResolves(t *testing.T) {
 		"openAiApi":            {"apiKey", "url"},
 		"openRouterApi":        {"apiKey"},
 		"googleGeminiApi":      {"apiKey"},
+		"smtp":                 {"user", "password", "host", "port", "secure", "disableStartTls"},
+		"imap":                 {"user", "password", "host", "port", "secure", "allowUnauthorizedCerts"},
 		"googleDriveOAuth2Api": {"clientId", "clientSecret", "access_token", "refresh_token", "expiry", "scope"},
 		"gmailOAuth2":          {"clientId", "clientSecret", "access_token", "refresh_token", "expiry", "scope"},
 	}

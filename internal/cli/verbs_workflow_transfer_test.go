@@ -16,7 +16,7 @@ import (
 
 // importResponse is the import operation's answer, as the stub serves it.
 const importResponse = `{"workflow":{"id":"wf_9","name":"Imported","active":false},` +
-	`"unsupported":[{"severity":"blocking","nodeName":"Legacy","reason":"KilasFlow has no equivalent of the n8n node \"n8n-nodes-base.emailSend\"."}],` +
+	`"unsupported":[{"severity":"blocking","nodeName":"Legacy","reason":"KilasFlow has no equivalent of the n8n node \"n8n-nodes-base.microsoftOutlook\"."}],` +
 	`"webhooks":[{"nodeId":"t","method":"POST","path":"hook","url":"/webhook/r_1"}]}`
 
 // exportResponse is the export operation's answer, as the stub serves it: the

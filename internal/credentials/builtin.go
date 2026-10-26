@@ -301,6 +301,60 @@ func RegisterAll(registry *Registry) error {
 			Test:           &TestRequest{URL: "https://openrouter.ai/api/v1/key"},
 			DefaultDomains: []string{"openrouter.ai"},
 		},
+		{
+			ID: "smtp", DisplayName: "SMTP",
+			Description: "Sends email through an SMTP server. The field keys are n8n's own, so an imported workflow's credential shape survives the mapping.",
+			Properties: []property.PropertyDefinition{
+				{Key: "user", Label: "User", Kind: property.KindString},
+				{
+					Key: "password", Label: "Password", Kind: property.KindString,
+					TypeOptions: &property.TypeOptions{Password: true},
+					Description: "Leave user and password empty for an internal relay that does not authenticate.",
+				},
+				{Key: "host", Label: "Host", Kind: property.KindString, Required: true},
+				{Key: "port", Label: "Port", Kind: property.KindString, Default: "465",
+					Description: "Defaults to 465, the implicit-TLS port."},
+				{
+					Key: "secure", Label: "SSL/TLS", Kind: property.KindBoolean, Default: "true",
+					Description: "On (the default) connects with TLS from the start, usually port 465. Off connects in clear and upgrades with STARTTLS when the server offers it, usually port 587.",
+				},
+				{
+					Key: "disableStartTls", Label: "Disable STARTTLS", Kind: property.KindBoolean, Default: "false",
+					Description: "Leave the connection unencrypted when the credential's SSL/TLS is off. Only for a relay you know is reachable in the clear.",
+				},
+			},
+			Secrets: []string{"password"},
+			// No Authenticate descriptor and no HTTP probe: this credential
+			// dials the host its own fields name and speaks SMTP, which no
+			// header or query placement expresses. The connection test is the
+			// dial kind (RunDialTest), which is what a send itself does.
+			NeverSentOverHTTP: true,
+			Dial:              &DialTest{Protocol: "smtp"},
+		},
+		{
+			ID: "imap", DisplayName: "IMAP",
+			Description: "Reads a mailbox over IMAP. The field keys are n8n's own, so an imported workflow's credential shape survives the mapping.",
+			Properties: []property.PropertyDefinition{
+				{Key: "user", Label: "User", Kind: property.KindString, Required: true},
+				{
+					Key: "password", Label: "Password", Kind: property.KindString, Required: true,
+					TypeOptions: &property.TypeOptions{Password: true},
+				},
+				{Key: "host", Label: "Host", Kind: property.KindString, Required: true},
+				{Key: "port", Label: "Port", Kind: property.KindString, Default: "993"},
+				{
+					Key: "secure", Label: "SSL/TLS", Kind: property.KindBoolean, Default: "true",
+					Description: "On (the default) connects with TLS from the start. Off connects in clear and upgrades with STARTTLS when the server offers it.",
+				},
+				{
+					Key: "allowUnauthorizedCerts", Label: "Allow Self-Signed Certificates", Kind: property.KindBoolean, Default: "false",
+					Description: "Connect even when the server's certificate cannot be verified.",
+				},
+			},
+			Secrets:           []string{"password"},
+			NeverSentOverHTTP: true,
+			Dial:              &DialTest{Protocol: "imap"},
+		},
 		googleOAuthType("googleDriveOAuth2Api", "Google Drive OAuth2",
 			"Connects to Google Drive. Client ID and secret can be from your Google Cloud project or the platform app.",
 			"https://www.googleapis.com/auth/drive"),

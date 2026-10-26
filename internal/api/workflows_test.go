@@ -969,9 +969,9 @@ const n8nUnsupported = `{
   "name": "Imported with gap",
   "nodes": [
     {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0]},
-    {"id":"b","name":"Send Email","type":"n8n-nodes-base.emailSend","typeVersion":2.1,"position":[220,0]}
+    {"id":"b","name":"Run Command","type":"n8n-nodes-base.executeCommand","typeVersion":1,"position":[220,0]}
   ],
-  "connections": {"Manual": {"main": [[{"node":"Send Email","type":"main","index":0}]]}}
+  "connections": {"Manual": {"main": [[{"node":"Run Command","type":"main","index":0}]]}}
 }`
 
 func TestWorkflowAPIImportsAnN8NWorkflowAsAnOrdinaryDraft(t *testing.T) {
@@ -1001,7 +1001,7 @@ func TestWorkflowAPIImportsAnUnsupportedNodeWithoutMakingItRunnable(t *testing.T
 	if len(imported.Unsupported) == 0 {
 		t.Fatal("an unsupported node was imported without being reported")
 	}
-	if imported.Unsupported[0].Type != "n8n-nodes-base.emailSend" {
+	if imported.Unsupported[0].Type != "n8n-nodes-base.executeCommand" {
 		t.Errorf("unsupported = %#v, want the exact n8n type named", imported.Unsupported[0])
 	}
 

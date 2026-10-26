@@ -16,7 +16,7 @@
     {
       "id": "b",
       "name": "Send Email",
-      "type": "n8n-nodes-base.emailSend",
+      "type": "n8n-nodes-base.microsoftOutlook",
       "typeVersion": 2.1,
       "position": [220, 0],
       "parameters": { "toEmail": "ops@example.test", "subject": "Report" }

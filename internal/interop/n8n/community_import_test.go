@@ -173,7 +173,7 @@ func TestAnUnresolvedCommunityNodeNamesThePackageToInstall(t *testing.T) {
 
 	t.Run("an n8n-nodes-base type is not a missing package", func(t *testing.T) {
 		t.Parallel()
-		result, err := n8n.Import([]byte(communityFixture("n8n-nodes-base.emailSend", 2, `{}`)), communityRegistry(t))
+		result, err := n8n.Import([]byte(communityFixture("n8n-nodes-base.microsoftOutlook", 2, `{}`)), communityRegistry(t))
 		if err != nil {
 			t.Fatalf("Import() error = %v", err)
 		}

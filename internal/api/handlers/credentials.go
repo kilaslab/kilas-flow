@@ -283,7 +283,7 @@ func testable(typeID string) bool {
 		return true
 	}
 	credentialType, known := credentials.Default().Get(typeID)
-	return known && credentialType.Test != nil
+	return known && (credentialType.Test != nil || credentialType.Dial != nil)
 }
 
 // List returns every credential in the tenant.
@@ -911,6 +911,19 @@ func (handler *Credentials) probe(ctx context.Context, tenant repository.TenantS
 			return answer(TestCredentialResource{Detail: err.Error()})
 		}
 		return answer(TestCredentialResource{OK: true, Detail: "the database accepted the connection"})
+	}
+
+	if credentialType.Dial != nil {
+		// A dial credential (SMTP, IMAP) is tested by the same handshake its
+		// node's send performs: the type declares the protocol and the host
+		// fields, and RunDialTest speaks it. The credential's own scope
+		// applies, exactly as it does for the send.
+		detail, err := credentials.RunDialTest(ctx, credentialType, record, fields, handler.policy)
+		if err != nil {
+			// The message is the probe's own diagnosis, never the remote body.
+			return answer(TestCredentialResource{Detail: err.Error()})
+		}
+		return answer(TestCredentialResource{OK: true, Detail: detail})
 	}
 
 	if credentialType.Test == nil {
