@@ -43,9 +43,11 @@ alone.
 
 A customer signs up in your product. Your operator has already provisioned
 their KilasFlow tenant (tenant rows are operator-managed — there is no
-self-service signup endpoint — and the first key per tenant is minted at
-the store layer, because key creation is scoped to the caller's own
-tenant). Your backend holds that key; the end user never sees it.
+self-service signup endpoint — and the first key per tenant is minted by the
+operator through `POST /api/v1/tenants/{id}/api-keys`, because key creation
+is scoped to the caller's own tenant; see
+[Tenants, provisioning and identity](/operate/tenants/)). Your backend holds
+that key; the end user never sees it.
 
 ### 1. Provision the workflow server-side
 
@@ -195,8 +197,8 @@ with them — publishing and activation stay with the tenant-wide key.
 
 The SDK is not on npm yet, so the import below resolves only after building it
 from the checkout: `cd sdk && pnpm install && pnpm build`, then
-`pnpm add file:/path/to/kilas-flow/sdk` in the host. See the
-[SDK README](https://github.com/kilaslab/kilas-flow/blob/main/sdk/README.md).
+`pnpm add file:/path/to/kilas-flow/sdk` in the host. The pre-release install
+path, entry points and protocol are [Using the host SDK](/guides/sdk/).
 
 ```js
 import { mountWorkflowEditor, subscribeExecutionEvents } from '@kilasflow/sdk/browser';
@@ -503,8 +505,13 @@ datastore the backend provisioned.
 ## Operator checklist
 
 - `KILASFLOW_AUTH_ENABLED=true` with a 32-byte auth signing key, or
-  every request resolves to the shared `default` tenant and the two
-  keys below are theatre.
+  every request resolves to the shared `default` tenant and the keys below
+  are theatre.
+- `KILASFLOW_AUTH_OPERATOR_KEY` set to a `kfa1_<hex>_<secret>` key, if your
+  product provisions tenants itself — tenant rows, their users and their
+  first API keys are minted through it, and without it there is no API path
+  to any of the three ([provisioning](/operate/tenants/)). Registration
+  happens at boot and the log names it.
 - `KILASFLOW_EMBED_SIGNING_KEY` exactly 32 bytes (base64, hex, or raw),
   or embedding answers 503.
 - `KILASFLOW_EMBED_ALLOWED_ORIGINS` listing every origin that frames

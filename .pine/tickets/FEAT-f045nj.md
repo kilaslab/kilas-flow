@@ -1,7 +1,7 @@
 ---
 id: FEAT-f045nj
 title: 'Tenants, provisioning and identity: operator key, tenant/user/key via SDK and curl, scoped keys, auth modes, SSO stance'
-status: todo
+status: done
 priority: medium
 labels:
     - docs
@@ -129,3 +129,7 @@ Related tickets: FEAT-frvez8
 # Related Files
 
 # Attachments
+
+# Progress
+
+Implemented 2026-10-26: operate tenants/provisioning/identity guide grounded in the real tenant handlers + operator credential model; embedding.md 'store layer' claim corrected; operator checklist added. Facts verified against the API.

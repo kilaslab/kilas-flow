@@ -1,7 +1,7 @@
 ---
 id: FEAT-5yd3y0
 title: API reference with request/response fields, examples and curl/TS/Go tabs; OpenAPI download; pagination guide
-status: todo
+status: done
 priority: medium
 labels:
     - docs
@@ -97,3 +97,7 @@ Related tickets: FEAT-za118x
 # Related Files
 
 # Attachments
+
+# Progress
+
+Implemented 2026-10-26: reference/api/ restructured (15 generated files, 82 operations) with hand-written companions (pagination), code tabs, /openapi.json asset linked. Drift-gated via generate-api-reference-check (fresh at 0.1.0-dev/82 ops).

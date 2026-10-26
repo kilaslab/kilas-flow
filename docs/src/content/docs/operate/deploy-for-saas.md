@@ -216,9 +216,11 @@ whatever worker is free. There is no tenant-to-worker pinning.
 
 - **Provision**: tenant rows are operator-managed — there is no self-service
   signup endpoint. `POST /api/v1/tenants` (operator key) creates the customer;
-  the first API key per tenant is minted at the store layer, because key
-  creation is scoped to the caller's own tenant. Your backend holds that key;
-  the end user never sees it.
+  the first API key per tenant is minted by the operator through
+  `POST /api/v1/tenants/{id}/api-keys`, because key creation is scoped to the
+  caller's own tenant. Your backend holds that key; the end user never sees
+  it. The whole sequence is
+  [Tenants, provisioning and identity](/operate/tenants/).
 - **Operate**: your backend mints embed sessions per page load, re-checking
   entitlement each time. The whole path is
   [Embedding and multi-tenancy](/guides/embedding/).

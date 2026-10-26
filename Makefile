@@ -312,6 +312,35 @@ generate-api-reference: ## Regenerate the docs API reference from a freshly buil
 generate-api-reference-check: ## Fail if the committed docs API reference is stale
 	node scripts/generate-api-reference.mjs --check
 
+# The host SDK's reference page is generated from the SDK's own source —
+# sdk/package.json for the entry points and version, sdk/src for every export
+# with the JSDoc that documents it. TypeDoc is not a dependency of any project
+# in this repository, so this script does what the other generated references
+# do instead: read the source of truth, emit committed Markdown, and fail the
+# check below when the two disagree. Node only; no pnpm, no build.
+.PHONY: generate-sdk-reference
+generate-sdk-reference: ## Regenerate the docs' host SDK reference from sdk/src
+	node scripts/generate-sdk-reference.mjs
+
+.PHONY: generate-sdk-reference-check
+generate-sdk-reference-check: ## Fail if the docs' host SDK reference is stale
+	node scripts/generate-sdk-reference.mjs --check
+
+# The node catalogue and the credential-type reference are generated from the
+# catalogues a real binary serves — GET /api/v1/node-types and
+# /api/v1/credential-types — plus the n8n mapping table read from
+# internal/interop/n8n/n8n.go's source, so a node added, a parameter changed
+# or a type re-scoped cannot leave the docs stating the old catalogue. Like
+# generate-api-reference this boots a server via scripts/openapi-spec.mjs, so
+# it needs go and node and nothing else.
+.PHONY: generate-node-catalogue
+generate-node-catalogue: ## Regenerate the docs' node catalogue and credential-type pages from a freshly built binary
+	node scripts/generate-node-catalogue.mjs
+
+.PHONY: generate-node-catalogue-check
+generate-node-catalogue-check: ## Fail if the docs' node catalogue or credential-type pages are stale
+	node scripts/generate-node-catalogue.mjs --check
+
 # The configuration reference and the example YAML are generated from the
 # Config structs, not written by hand. Unlike the targets above this one needs
 # no binary: it reads source and defaults only, so a struct change with no

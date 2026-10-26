@@ -25,12 +25,127 @@ Parameters:
 
 Request body: `application/json` — `ImportWorkflowInputBody` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `format` | no | `string` | Only "n8n" is supported |
+| `name` | no | `string` | Overrides the imported workflow's name |
+| `workflow` | yes |  | An n8n workflow JSON document |
+
 Responses:
 
 | Status | Description | Body |
 | --- | --- | --- |
 | `201` | Created | `application/json` — `ImportedWorkflowResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `ImportedWorkflowResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `unsupported` | yes | `array or null` | — |
+| `webhooks` | yes | `array or null` | — |
+| `workflow` | yes | `WorkflowResource` | — |
+| `workflow.active` | yes | `boolean` | — |
+| `workflow.activeVersion` | no | `WorkflowVersionResource` | — |
+| `workflow.activeVersion.createdAt` | yes | `string` | — |
+| `workflow.activeVersion.document` | yes | `Document` | — |
+| `workflow.activeVersion.document.connections` | yes | `array or null` | — |
+| `workflow.activeVersion.document.id` | yes | `string` | — |
+| `workflow.activeVersion.document.name` | yes | `string` | — |
+| `workflow.activeVersion.document.nodes` | yes | `array or null` | — |
+| `workflow.activeVersion.document.pinData` | no | `object` | — |
+| `workflow.activeVersion.document.schemaVersion` | yes | `integer` | — |
+| `workflow.activeVersion.document.settings` | yes | `object` | — |
+| `workflow.activeVersion.document.tags` | no | `array or null` | — |
+| `workflow.activeVersion.id` | yes | `string` | — |
+| `workflow.activeVersion.revision` | yes | `integer` | — |
+| `workflow.activeVersion.schemaVersion` | yes | `integer` | — |
+| `workflow.activeVersion.workflowId` | yes | `string` | — |
+| `workflow.createdAt` | yes | `string` | — |
+| `workflow.id` | yes | `string` | — |
+| `workflow.latestVersion` | yes | `WorkflowVersionResource` | — |
+| `workflow.latestVersion.createdAt` | yes | `string` | — |
+| `workflow.latestVersion.document` | yes | `Document` | — |
+| `workflow.latestVersion.document.connections` | yes | `array or null` | — |
+| `workflow.latestVersion.document.id` | yes | `string` | — |
+| `workflow.latestVersion.document.name` | yes | `string` | — |
+| `workflow.latestVersion.document.nodes` | yes | `array or null` | — |
+| `workflow.latestVersion.document.pinData` | no | `object` | — |
+| `workflow.latestVersion.document.schemaVersion` | yes | `integer` | — |
+| `workflow.latestVersion.document.settings` | yes | `object` | — |
+| `workflow.latestVersion.document.tags` | no | `array or null` | — |
+| `workflow.latestVersion.id` | yes | `string` | — |
+| `workflow.latestVersion.revision` | yes | `integer` | — |
+| `workflow.latestVersion.schemaVersion` | yes | `integer` | — |
+| `workflow.latestVersion.workflowId` | yes | `string` | — |
+| `workflow.name` | yes | `string` | — |
+| `workflow.updatedAt` | yes | `string` | — |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "workflow": null
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "unsupported": [
+    {
+      "field": "string",
+      "nodeId": "string",
+      "nodeName": "string",
+      "reason": "string",
+      "severity": "blocking",
+      "type": "string",
+      "typeVersion": 1
+    }
+  ],
+  "webhooks": [
+    {
+      "method": "string",
+      "nodeId": "string",
+      "path": "string",
+      "url": "https://flows.example"
+    }
+  ],
+  "workflow": {
+    "active": false,
+    "activeVersion": {
+      "createdAt": "2026-01-02T15:04:05Z",
+      "document": {},
+      "id": "string",
+      "revision": 0,
+      "schemaVersion": 0,
+      "workflowId": "string"
+    },
+    "createdAt": "2026-01-02T15:04:05Z",
+    "id": "string",
+    "latestVersion": {
+      "createdAt": "2026-01-02T15:04:05Z",
+      "document": {},
+      "id": "string",
+      "revision": 0,
+      "schemaVersion": 0,
+      "workflowId": "string"
+    },
+    "name": "string",
+    "updatedAt": "2026-01-02T15:04:05Z"
+  }
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/workflows/import" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"workflow":null}'
+```
 
 Embed: Deny — importing creates a new workflow, outside any session’s single-workflow authority.
 
@@ -42,12 +157,90 @@ Translates n8n JSON — nodes copied from an n8n canvas, or a whole export — i
 
 Request body: `application/json` — `ConvertFragmentInputBody` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `format` | no | `string` | Only "n8n" is supported |
+| `workflow` | yes |  | n8n JSON copied from an n8n canvas, or an n8n workflow export |
+
 Responses:
 
 | Status | Description | Body |
 | --- | --- | --- |
 | `200` | OK | `application/json` — `ConvertedFragmentResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `ConvertedFragmentResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `connections` | yes | `array or null` | — |
+| `nodes` | yes | `array or null` | — |
+| `unsupported` | yes | `array or null` | — |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "workflow": null
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "connections": [
+    {
+      "id": "string",
+      "kind": "string",
+      "source": {
+        "nodeId": "string",
+        "port": "string"
+      },
+      "target": {
+        "nodeId": "string",
+        "port": "string"
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "credentials": {},
+      "disabled": false,
+      "id": "string",
+      "name": "string",
+      "parameters": {},
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "settings": {},
+      "type": "string",
+      "typeVersion": 1
+    }
+  ],
+  "unsupported": [
+    {
+      "field": "string",
+      "nodeId": "string",
+      "nodeName": "string",
+      "reason": "string",
+      "severity": "blocking",
+      "type": "string",
+      "typeVersion": 1
+    }
+  ]
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/workflows/convert" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"workflow":null}'
+```
 
 Embed: Allow with `workflow:read` — it translates pasted n8n JSON and saves nothing; the paste reaches the workflow only through a save the session’s scopes govern.
 
@@ -70,5 +263,39 @@ Responses:
 | --- | --- | --- |
 | `200` | OK | `application/json` — `ExportedWorkflowResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `ExportedWorkflowResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `format` | yes | `string` | — |
+| `lossy` | yes | `array or null` | — |
+| `supportedMappings` | yes | `array or null` | — |
+| `workflow` | yes |  | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "format": "string",
+  "lossy": [
+    {
+      "field": "string",
+      "nodeName": "string",
+      "reason": "string",
+      "severity": "blocking"
+    }
+  ],
+  "supportedMappings": [
+    "string"
+  ],
+  "workflow": null
+}
+```
+
+```sh
+curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}/export" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
 
 Embed: Allow with `workflow:read` — on the session’s workflow only.
