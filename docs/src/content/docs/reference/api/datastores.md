@@ -31,7 +31,37 @@ Responses:
 | `200` | OK | `application/json` — `DatastoreListOutputBody` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Fields of the `DatastoreListOutputBody` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `items` | yes | `array or null` | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "items": [
+    {
+      "columns": [
+        {
+          "name": "string",
+          "type": "string"
+        }
+      ],
+      "id": "string",
+      "name": "string"
+    }
+  ]
+}
+```
+
+```sh
+curl -X GET "$KILASFLOW_HOST/api/v1/datastores" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+Embed: Deny — the listing names every table in the tenant, and a datastore session is confined to one.
 
 ## Create a datastore (`create-datastore`)
 
@@ -41,6 +71,13 @@ Creates a data table; columns are added afterwards.
 
 Request body: `application/json` — `CreateDatastoreInputBody` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `columns` | no | `array or null` | User columns; empty means system columns only |
+| `name` | yes | `string` | Display name |
+
 Responses:
 
 | Status | Description | Body |
@@ -48,7 +85,62 @@ Responses:
 | `201` | Created | `application/json` — `DatastoreResource` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Fields of the `DatastoreResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `columns` | yes | `array or null` | — |
+| `id` | yes | `string` | — |
+| `name` | yes | `string` | — |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "name": "string"
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "columns": [
+    {
+      "name": "string",
+      "type": "string"
+    }
+  ],
+  "id": "string",
+  "name": "string"
+}
+```
+
+:::code
+
+```sh title="curl"
+curl -X POST "$KILASFLOW_HOST/api/v1/datastores" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"name":"string"}'
+```
+
+```ts title="TypeScript"
+// import { KilasFlowClient } from "@kilasflow/sdk/server";
+const datastore = await client.createDatastore({
+  name: "orders",
+  columns: [{ name: "email", type: "string" }],
+});
+```
+
+```go title="Go"
+payload, _ := json.Marshal(map[string]any{"name": "orders", "columns": []map[string]string{{"name": "email", "type": "string"}}})
+resp, err := http.Post(baseURL+"/api/v1/datastores", "application/json", bytes.NewReader(payload))
+```
+
+:::
+
+Embed: Deny — creating a table is schema work, outside any session’s authority.
 
 ## Get a datastore (`get-datastore`)
 
@@ -69,7 +161,35 @@ Responses:
 | `200` | OK | `application/json` — `DatastoreResource` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Fields of the `DatastoreResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `columns` | yes | `array or null` | — |
+| `id` | yes | `string` | — |
+| `name` | yes | `string` | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "columns": [
+    {
+      "name": "string",
+      "type": "string"
+    }
+  ],
+  "id": "string",
+  "name": "string"
+}
+```
+
+```sh
+curl -X GET "$KILASFLOW_HOST/api/v1/datastores/{id}" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+Embed: Allow with `datastore:read` — on the session’s own datastore only; another datastore’s id reads as `404`, not `403`, so a session cannot probe ids.
 
 ## Rename a datastore (`rename-datastore`)
 
@@ -85,6 +205,12 @@ Parameters:
 
 Request body: `application/json` — `RenameDatastoreInputBody` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `name` | yes | `string` | New display name |
+
 Responses:
 
 | Status | Description | Body |
@@ -92,7 +218,45 @@ Responses:
 | `200` | OK | `application/json` — `DatastoreResource` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Fields of the `DatastoreResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `columns` | yes | `array or null` | — |
+| `id` | yes | `string` | — |
+| `name` | yes | `string` | — |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "name": "string"
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "columns": [
+    {
+      "name": "string",
+      "type": "string"
+    }
+  ],
+  "id": "string",
+  "name": "string"
+}
+```
+
+```sh
+curl -X PUT "$KILASFLOW_HOST/api/v1/datastores/{id}" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"name":"string"}'
+```
+
+Embed: Deny — renaming or dropping a table is schema work, not contents.
 
 ## Delete a datastore (`delete-datastore`)
 
@@ -113,7 +277,12 @@ Responses:
 | `204` | No Content |  |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+```sh
+curl -X DELETE "$KILASFLOW_HOST/api/v1/datastores/{id}" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+Embed: Deny — renaming or dropping a table is schema work, not contents.
 
 ## Add a column (`add-datastore-column`)
 
@@ -129,6 +298,13 @@ Parameters:
 
 Request body: `application/json` — `DatastoreColumnInput` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `name` | yes | `string` | Column name |
+| `type` | yes | `string` | Column type: string, number, boolean or date |
+
 Responses:
 
 | Status | Description | Body |
@@ -136,7 +312,39 @@ Responses:
 | `200` | OK | `application/json` — `DatastoreColumnResource` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Fields of the `DatastoreColumnResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `name` | yes | `string` | — |
+| `type` | yes | `string` | — |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "name": "string",
+  "type": "string"
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "name": "string",
+  "type": "string"
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/datastores/{id}/columns" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"name":"string","type":"string"}'
+```
+
+Embed: Deny — clearing every row and editing columns reshape the table itself, not its contents.
 
 ## Rename a column (`rename-datastore-column`)
 
@@ -153,6 +361,12 @@ Parameters:
 
 Request body: `application/json` — `RenameDatastoreColumnInputBody` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `name` | yes | `string` | New column name |
+
 Responses:
 
 | Status | Description | Body |
@@ -160,7 +374,38 @@ Responses:
 | `200` | OK | `application/json` — `DatastoreColumnResource` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Fields of the `DatastoreColumnResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `name` | yes | `string` | — |
+| `type` | yes | `string` | — |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "name": "string"
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "name": "string",
+  "type": "string"
+}
+```
+
+```sh
+curl -X PUT "$KILASFLOW_HOST/api/v1/datastores/{id}/columns/{name}" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"name":"string"}'
+```
+
+Embed: Deny — clearing every row and editing columns reshape the table itself, not its contents.
 
 ## Delete a column (`delete-datastore-column`)
 
@@ -182,7 +427,12 @@ Responses:
 | `204` | No Content |  |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+```sh
+curl -X DELETE "$KILASFLOW_HOST/api/v1/datastores/{id}/columns/{name}" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+Embed: Deny — clearing every row and editing columns reshape the table itself, not its contents.
 
 ## Insert a row (`insert-datastore-row`)
 
@@ -199,6 +449,12 @@ Parameters:
 
 Request body: `application/json` — `InsertRowInputBody` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `values` | yes | `object` | User column values keyed by column name |
+
 Responses:
 
 | Status | Description | Body |
@@ -206,7 +462,39 @@ Responses:
 | `201` | Created | `application/json` — `object` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Request (minimal — required fields only):
+
+```json
+{
+  "values": {}
+}
+```
+
+:::code
+
+```sh title="curl"
+curl -X POST "$KILASFLOW_HOST/api/v1/datastores/{id}/rows" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"values":{}}'
+```
+
+```ts title="TypeScript"
+// import { KilasFlowClient } from "@kilasflow/sdk/server";
+const row = await client.insertDatastoreRow(datastoreId, { email: "user@example.com" },
+  { idempotencyKey: crypto.randomUUID() });
+```
+
+```go title="Go"
+payload, _ := json.Marshal(map[string]string{"email": "user@example.com"})
+req, _ := http.NewRequest(http.MethodPost, baseURL+"/api/v1/datastores/"+url.PathEscape(datastoreId)+"/rows", bytes.NewReader(payload))
+req.Header.Set("Idempotency-Key", idempotencyKey)
+resp, err := http.DefaultClient.Do(req)
+```
+
+:::
+
+Embed: Allow with `datastore:write` — contents of the session’s own datastore: insert, upsert, increment, filtered update and delete, and the CSV import.
 
 ## Get a row (`get-datastore-row`)
 
@@ -228,7 +516,12 @@ Responses:
 | `200` | OK | `application/json` — `object` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+```sh
+curl -X GET "$KILASFLOW_HOST/api/v1/datastores/{id}/rows/{rowId}" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+Embed: Allow with `datastore:read` — rows of the session’s own datastore; the CSV export included.
 
 ## List rows (`list-datastore-rows`)
 
@@ -255,7 +548,45 @@ Responses:
 | `200` | OK | `application/json` — `RowListOutputBody` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Fields of the `RowListOutputBody` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `items` | yes | `array or null` | — |
+| `nextCursor` | no | `string` | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "items": [
+    {}
+  ],
+  "nextCursor": "string"
+}
+```
+
+:::code
+
+```sh title="curl"
+curl -X GET "$KILASFLOW_HOST/api/v1/datastores/{id}/rows" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+```ts title="TypeScript"
+// import { KilasFlowClient } from "@kilasflow/sdk/server";
+for await (const row of client.iterateDatastoreRows(datastoreId)) {
+  console.log(row);
+}
+```
+
+```go title="Go"
+resp, err := http.Get(baseURL + "/api/v1/datastores/" + url.PathEscape(datastoreId) + "/rows?limit=100")
+```
+
+:::
+
+Embed: Allow with `datastore:read` — rows of the session’s own datastore; the CSV export included.
 
 ## Update rows (`update-datastore-rows`)
 
@@ -271,6 +602,16 @@ Parameters:
 
 Request body: `application/json` — `UpdateRowsInputBody` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `filter` | yes | `Filter` | Rows to update; an empty filter is refused |
+| `filter.filters` | yes | `array or null` | — |
+| `filter.type` | yes | `string` | — |
+| `ifUpdatedAt` | no | `string` | A row's updatedAt exactly as a previous read returned it; when present the filter must match exactly one row and the write lands only if that row is unchanged |
+| `values` | yes | `object` | Columns to set |
+
 Responses:
 
 | Status | Description | Body |
@@ -278,7 +619,50 @@ Responses:
 | `200` | OK | `application/json` — `UpdateRowsOutputBody` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Fields of the `UpdateRowsOutputBody` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `matched` | yes | `integer` | — |
+| `rows` | yes | `array or null` | — |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "filter": {
+    "filters": [
+      {
+        "columnName": "string",
+        "condition": "string",
+        "value": null
+      }
+    ],
+    "type": "string"
+  },
+  "values": {}
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "matched": 0,
+  "rows": [
+    {}
+  ]
+}
+```
+
+```sh
+curl -X PUT "$KILASFLOW_HOST/api/v1/datastores/{id}/rows" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"filter":{"filters":[{"columnName":"string","condition":"string","value":null}],"type":"string"},"values":{}}'
+```
+
+Embed: Allow with `datastore:write` — contents of the session’s own datastore: insert, upsert, increment, filtered update and delete, and the CSV import.
 
 ## Upsert rows (`upsert-datastore-row`)
 
@@ -295,6 +679,15 @@ Parameters:
 
 Request body: `application/json` — `UpsertRowInputBody` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `filter` | yes | `Filter` | Rows to match; on no match one row is inserted |
+| `filter.filters` | yes | `array or null` | — |
+| `filter.type` | yes | `string` | — |
+| `values` | yes | `object` | Columns to set or to insert with |
+
 Responses:
 
 | Status | Description | Body |
@@ -302,7 +695,71 @@ Responses:
 | `200` | OK | `application/json` — `UpsertRowOutputBody` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Fields of the `UpsertRowOutputBody` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `inserted` | yes | `boolean` | — |
+| `matched` | yes | `integer` | — |
+| `rows` | yes | `array or null` | — |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "filter": {
+    "filters": [
+      {
+        "columnName": "string",
+        "condition": "string",
+        "value": null
+      }
+    ],
+    "type": "string"
+  },
+  "values": {}
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "inserted": false,
+  "matched": 0,
+  "rows": [
+    {}
+  ]
+}
+```
+
+:::code
+
+```sh title="curl"
+curl -X POST "$KILASFLOW_HOST/api/v1/datastores/{id}/rows/upsert" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"filter":{"filters":[{"columnName":"string","condition":"string","value":null}],"type":"string"},"values":{}}'
+```
+
+```ts title="TypeScript"
+// import { KilasFlowClient } from "@kilasflow/sdk/server";
+const result = await client.upsertDatastoreRow(datastoreId,
+  datastoreFilter("and", [{ column: "email", operator: "eq", value: "user@example.com" }]),
+  { email: "user@example.com", plan: "pro" },
+  { idempotencyKey: crypto.randomUUID() });
+```
+
+```go title="Go"
+payload, _ := json.Marshal(map[string]any{"filter": map[string]any{"type": "and", "filters": []any{map[string]any{"column": "email", "operator": "eq", "value": "user@example.com"}}}, "values": map[string]string{"email": "user@example.com", "plan": "pro"}})
+req, _ := http.NewRequest(http.MethodPost, baseURL+"/api/v1/datastores/"+url.PathEscape(datastoreId)+"/rows/upsert", bytes.NewReader(payload))
+req.Header.Set("Idempotency-Key", idempotencyKey)
+resp, err := http.DefaultClient.Do(req)
+```
+
+:::
+
+Embed: Allow with `datastore:write` — contents of the session’s own datastore: insert, upsert, increment, filtered update and delete, and the CSV import.
 
 ## Increment rows (`increment-datastore-rows`)
 
@@ -318,6 +775,16 @@ Parameters:
 
 Request body: `application/json` — `IncrementRowsInputBody` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `amount` | no | `number` | Added to the column in one statement; negative subtracts; absent means 1 |
+| `column` | yes | `string` | The number column to add to |
+| `filter` | yes | `Filter` | Rows to increment; an empty filter is refused |
+| `filter.filters` | yes | `array or null` | — |
+| `filter.type` | yes | `string` | — |
+
 Responses:
 
 | Status | Description | Body |
@@ -325,7 +792,50 @@ Responses:
 | `200` | OK | `application/json` — `IncrementRowsOutputBody` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Fields of the `IncrementRowsOutputBody` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `matched` | yes | `integer` | — |
+| `rows` | yes | `array or null` | — |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "column": "string",
+  "filter": {
+    "filters": [
+      {
+        "columnName": "string",
+        "condition": "string",
+        "value": null
+      }
+    ],
+    "type": "string"
+  }
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "matched": 0,
+  "rows": [
+    {}
+  ]
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/datastores/{id}/rows/increment" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"column":"string","filter":{"filters":[{"columnName":"string","condition":"string","value":null}],"type":"string"}}'
+```
+
+Embed: Allow with `datastore:write` — contents of the session’s own datastore: insert, upsert, increment, filtered update and delete, and the CSV import.
 
 ## Delete rows (`delete-datastore-rows`)
 
@@ -341,6 +851,15 @@ Parameters:
 
 Request body: `application/json` — `DeleteRowsInputBody` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `filter` | yes | `Filter` | Rows to delete; an empty filter is refused and removes nothing |
+| `filter.filters` | yes | `array or null` | — |
+| `filter.type` | yes | `string` | — |
+| `ifUpdatedAt` | no | `string` | A row's updatedAt exactly as a previous read returned it; when present the filter must match exactly one row and the delete lands only if that row is unchanged |
+
 Responses:
 
 | Status | Description | Body |
@@ -348,7 +867,49 @@ Responses:
 | `200` | OK | `application/json` — `DeleteRowsOutputBody` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Fields of the `DeleteRowsOutputBody` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `deleted` | yes | `integer` | — |
+| `rows` | yes | `array or null` | — |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "filter": {
+    "filters": [
+      {
+        "columnName": "string",
+        "condition": "string",
+        "value": null
+      }
+    ],
+    "type": "string"
+  }
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "deleted": 0,
+  "rows": [
+    {}
+  ]
+}
+```
+
+```sh
+curl -X DELETE "$KILASFLOW_HOST/api/v1/datastores/{id}/rows" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"filter":{"filters":[{"columnName":"string","condition":"string","value":null}],"type":"string"}}'
+```
+
+Embed: Allow with `datastore:write` — contents of the session’s own datastore: insert, upsert, increment, filtered update and delete, and the CSV import.
 
 ## Clear a datastore (`clear-datastore`)
 
@@ -369,7 +930,26 @@ Responses:
 | `200` | OK | `application/json` — `ClearedDatastoreOutputBody` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Fields of the `ClearedDatastoreOutputBody` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `deleted` | yes | `integer` | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "deleted": 0
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/datastores/{id}/clear" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+Embed: Deny — clearing every row and editing columns reshape the table itself, not its contents.
 
 ## Import rows from CSV (`import-datastore-rows`)
 
@@ -383,7 +963,7 @@ Parameters:
 | --- | --- | --- | --- | --- |
 | `id` | path | yes | string | Datastore identifier |
 
-Request body: `text/csv` — `string` (required)
+Request body: `text/csv` (required)
 
 Responses:
 
@@ -392,7 +972,37 @@ Responses:
 | `200` | OK | `application/json` — `CSVImportReport` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Fields of the `CSVImportReport` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `failed` | yes | `array or null` | — |
+| `inserted` | yes | `integer` | — |
+| `skipped` | yes | `integer` | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "failed": [
+    {
+      "column": "string",
+      "line": 0,
+      "reason": "string",
+      "severity": "string"
+    }
+  ],
+  "inserted": 0,
+  "skipped": 0
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/datastores/{id}/rows/import" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+Embed: Allow with `datastore:write` — contents of the session’s own datastore: insert, upsert, increment, filtered update and delete, and the CSV import.
 
 ## Export rows as CSV (`export-datastore-rows`)
 
@@ -414,4 +1024,9 @@ Responses:
 | `200` | The datastore's rows as RFC 4180 CSV. | `text/csv` |
 | `default` | Error | `application/problem+json` |
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+```sh
+curl -X GET "$KILASFLOW_HOST/api/v1/datastores/{id}/rows/export" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+Embed: Allow with `datastore:read` — rows of the session’s own datastore; the CSV export included.
