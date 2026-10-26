@@ -281,11 +281,11 @@ test('unsupported-node sample arrives as a capsule and refuses activation', asyn
 		(node) => node.name === 'Send Email'
 	);
 	expect(capsule?.type, 'capsule type').toBe('kilasflow.unsupported');
-	expect(capsule?.parameters?.['originalType'], 'capsule preserves the n8n type').toBe('n8n-nodes-base.emailSend');
+	expect(capsule?.parameters?.['originalType'], 'capsule preserves the n8n type').toBe('n8n-nodes-base.microsoftOutlook');
 
 	const activation = await tryActivate(server.baseURL, imported.workflow.id);
 	expect(activation.status, `activation refused (body: ${activation.text})`).toBe(422);
-	expect(activation.text, 'refusal names the unmapped node').toContain('n8n-nodes-base.emailSend');
+	expect(activation.text, 'refusal names the unmapped node').toContain('n8n-nodes-base.microsoftOutlook');
 });
 
 test('a sampled workflow opens in the editor with icons and no capsule', async ({ page, server }) => {
