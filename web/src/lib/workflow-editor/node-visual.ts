@@ -57,6 +57,8 @@ import Webhook from '@lucide/svelte/icons/webhook';
 import Workflow from '@lucide/svelte/icons/workflow';
 import Wrench from '@lucide/svelte/icons/wrench';
 
+import { hueDistance, parseCssColor } from '$lib/design-system/color';
+
 import type { Definition, Node as WorkflowNode, Port } from '$lib/api/generated/models';
 import { isExpression } from './parameter';
 
@@ -76,11 +78,108 @@ import { isExpression } from './parameter';
  */
 export type NodeShape = 'trigger' | 'step' | 'hub' | 'attachment';
 
+/**
+ * The six canvas colour categories (FEAT-xj5tv6): jade trigger, sky AI, leaf
+ * flow, steel data, and the two neutral ones, app and utility.
+ *
+ * Category colour lives on the glyph and its chip only — never on a border, a
+ * port, the selection ring or a hover affordance — so a nine-node canvas paints
+ * at most six glyph colours and one chrome.
+ */
+export type NodeCategory = 'trigger' | 'ai' | 'flow' | 'data' | 'app' | 'utility';
+
+/** Every category token the canvas can paint, for tests and the picker. */
+export const NODE_CATEGORIES: NodeCategory[] = ['trigger', 'ai', 'flow', 'data', 'app', 'utility'];
+
+/**
+ * Registry category names folded onto the six canvas categories.
+ *
+ * Derived from the registry's own vocabulary (nodes/*.go `Category:`), not from
+ * a colour: "Triggers" starts the flow, "AI" thinks, "Flow" routes, the data
+ * names shape and store items, the app names talk to a service, and everything
+ * else — Core, Test, Imported, Annotation — is editor utility.
+ */
+const CATEGORY_NAMES: Record<string, NodeCategory> = {
+	Triggers: 'trigger',
+	Trigger: 'trigger',
+	AI: 'ai',
+	Flow: 'flow',
+	Database: 'data',
+	Datastore: 'data',
+	Transform: 'data',
+	Communication: 'app',
+	Files: 'app'
+};
+
+/**
+ * A node's canvas category, read from the registry's behavioural signals — the
+ * group list first, then the category and codex names — never from iconColor,
+ * which is a free hex string with 24 values that say nothing about behaviour.
+ */
+export function nodeCategory(definition: Definition): NodeCategory {
+	const groups = definition.group ?? [];
+	// Behavioural groups outrank the display category: an annotation never
+	// executes, and a trigger group membership is what makes a trigger even
+	// when the category string drifts.
+	if (groups.includes('organization')) return 'utility';
+	if (groups.includes('trigger') || groups.includes('schedule')) return 'trigger';
+	const names = [definition.category, ...(definition.codex?.categories ?? [])];
+	for (const name of names) {
+		const mapped = CATEGORY_NAMES[name];
+		if (mapped) return mapped;
+	}
+	return 'utility';
+}
+
+/**
+ * The danger hue the glyph harmoniser steers brand colours away from. Errors
+ * own the red band; a glyph that shares it reads as a fault (FEAT-xj5tv6:
+ * "Gmail looks like an error").
+ */
+const DANGER_HUE = 25;
+const DANGER_HUE_BAND = 20;
+/** Where a brand hue inside the danger band is moved to: out of the red, into orange, clear of the band. */
+const DANGER_HUE_ESCAPE = 48;
+/** The chroma ceiling the harmoniser clamps a brand glyph to. */
+const GLYPH_CHROMA = 0.12;
+
+/**
+ * A brand glyph colour pushed into the palette's readable band
+ * (FEAT-xj5tv6): lightness comes from the theme token --kf-glyph-l, chroma is
+ * clamped to 0.12, and the hue is the brand's own — except a red within 20° of
+ * --kf-danger, which is moved off the error band because a brand is never a
+ * fault.
+ *
+ * The clamp is expressed as CSS relative colour syntax so it follows the theme
+ * (and an embed host's palette) at paint time; only the hue needs arithmetic,
+ * which CSS cannot express on the colour wheel.
+ */
+export function harmonisedGlyphColour(colour: string | null | undefined, category: NodeCategory): string {
+	const text = typeof colour === 'string' ? colour.trim() : '';
+	if (!/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(text)) return `var(--kf-cat-${category})`;
+	try {
+		const { c, h } = parseCssColor(text);
+		// An achromatic origin (black, white, grey) has a powerless hue: the
+		// lightness clamp already renders it a neutral, so the hue keyword
+		// passes through untouched.
+		if (Number.isNaN(h) || c < 0.005) return `oklch(from ${text} var(--kf-glyph-l) min(c, ${GLYPH_CHROMA}) h)`;
+		const hue = hueDistance(h, DANGER_HUE) <= DANGER_HUE_BAND ? DANGER_HUE_ESCAPE : Math.round(h * 10) / 10;
+		return `oklch(from ${text} var(--kf-glyph-l) min(c, ${GLYPH_CHROMA}) ${hue})`;
+	} catch {
+		return `var(--kf-cat-${category})`;
+	}
+}
+
 export type NodeVisual = {
 	icon: Component;
 	/** Set when the node ships its own artwork, which is rendered instead. */
 	iconURL: string | null;
-	/** A colour or CSS custom property reference, applied as `--node-accent`. */
+	/** The canvas colour category, for the glyph chip only. */
+	category: NodeCategory;
+	/**
+	 * The glyph and chip colour: a brand colour through the harmoniser, or the
+	 * category token. Never a tile border, a port or a ring.
+	 */
 	accent: string;
 	shape: NodeShape;
 };
@@ -180,21 +279,26 @@ export const FALLBACK_GLYPH = Box;
 
 /** Tile geometry per silhouette, shared by the editor and the replay canvas.
  *
- * Compact default (n8n-like density): a step/trigger tile is 4.25rem (68px)
- * square so long chains fit, with hub/attachment scaled proportionally. The
- * name band below stays wider than the tile; layout.ts accounts for it. */
+ * The Kunyit density pitch (FEAT-xj5tv6): a step/trigger tile is 64 px square
+ * (--kf-node-size) and an attachment sub-node a 44 px circle
+ * (--kf-node-sub-size), so long chains fit. The name band below stays wider
+ * than the tile; layout.ts accounts for it. */
 export const TILE: Record<NodeShape, string> = {
-	trigger: 'h-17 w-17 rounded-l-[2.125rem] rounded-r-lg',
-	step: 'h-17 w-17 rounded-lg',
-	hub: 'h-14 min-w-36 max-w-60 gap-2 rounded-xl px-3',
-	attachment: 'size-12 rounded-full'
+	trigger: 'h-16 w-16 rounded-l-[2rem] rounded-r-lg',
+	step: 'h-16 w-16 rounded-lg',
+	hub: 'h-16 min-w-36 max-w-60 gap-2 rounded-xl px-3',
+	attachment: 'size-11 rounded-full'
 };
 
 /** Glyph size per silhouette. A hub and an attachment carry a smaller icon. */
 
 /**
- * Selection / validation / run cues for a canvas tile. Shared by the editor and
+ * Selection / validation / run cues for a canvas tile, shared by the editor and
  * the replay node so both surfaces paint the same chrome from the same rules.
+ *
+ * The chrome itself is CSS on the tile's data-attributes (app.css, "Canvas node
+ * chrome"), so a state can never pick up a per-node colour and the editor and
+ * the replay cannot drift.
  */
 export type NodeChromeState = {
 	selected?: boolean;
@@ -202,37 +306,6 @@ export type NodeChromeState = {
 	/** Live or replayed run status when the surface knows one. */
 	runStatus?: string | null;
 };
-
-/** Border colour for the tile given selection, validation, and run state. */
-export function nodeChromeBorder(state: NodeChromeState): string {
-	// Run state speaks in the state hues (FEAT-r8ph93): running is info,
-	// cancelling and cancelled are warning, never the brand accent.
-	if (state.invalid || state.runStatus === 'failed') return 'var(--kf-run-error)';
-	if (state.runStatus === 'running') return 'var(--kf-run-running)';
-	if (state.runStatus === 'cancelling' || state.runStatus === 'cancelled') return 'var(--kf-run-warning)';
-	if (state.runStatus === 'succeeded') return 'var(--kf-run-success)';
-	// One selection colour on every tile, whatever its category or brand colour
-	// (BUG-ywbvfa); it follows an embed host's accent through --kf-accent-src.
-	if (state.selected) return 'var(--kf-selection)';
-	// Muted accent hue — readable at low zoom without competing with selection.
-	return 'oklch(from var(--node-accent) 0.42 0.045 h)';
-}
-
-/** Elevation and focus ring for the tile. */
-export function nodeChromeShadow(state: NodeChromeState): string {
-	if (state.invalid || state.runStatus === 'failed') {
-		return '0 0 0 2px color-mix(in oklch, var(--kf-run-error) 42%, transparent), 0 2px 8px oklch(0 0 0 / 40%)';
-	}
-	if (state.runStatus === 'running') {
-		return '0 0 0 2px color-mix(in oklch, var(--kf-run-running) 45%, transparent), 0 2px 10px oklch(0 0 0 / 42%)';
-	}
-	if (state.runStatus === 'cancelling' || state.runStatus === 'cancelled') {
-		return '0 0 0 2px color-mix(in oklch, var(--kf-run-warning) 45%, transparent), 0 2px 10px oklch(0 0 0 / 42%)';
-	}
-	if (state.selected) return '0 0 0 2px var(--kf-selection-halo), var(--kf-shadow-1)';
-	// Soft card lift so nodes read as tiles rather than flat glyphs when zoomed out.
-	return '0 1px 3px oklch(0 0 0 / 38%), 0 0 0 1px oklch(0 0 0 / 14%)';
-}
 
 /** Icon badge geometry inside a card-like tile. Compact with the tile. */
 export function nodeIconBadgeClass(shape: NodeShape): string {
@@ -307,10 +380,12 @@ export function friendlyOriginalType(originalType: string | null | undefined): s
  * embedding, document or vectorStore attachments.
  */
 export function nodeVisual(definition: Definition, ports?: ResolvedPorts): NodeVisual {
+	const category = nodeCategory(definition);
 	return {
 		icon: builtinGlyph(definition),
 		iconURL: servedIconURL(definition),
-		accent: definition.iconColor || 'var(--muted-foreground)',
+		category,
+		accent: harmonisedGlyphColour(definition.iconColor, category),
 		shape: nodeShape(definition, ports)
 	};
 }

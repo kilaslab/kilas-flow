@@ -75,6 +75,7 @@ function html(options: {
 	definition?: Definition;
 	credentials?: CredentialResource[];
 	credentialsLoaded?: boolean;
+	onDisabledChange?: (disabled: boolean) => void;
 }): string {
 	const node = options.node ?? webhookNode('orders');
 	const rendered = render(Harness, {
@@ -90,7 +91,8 @@ function html(options: {
 				savedNode: options.savedNode === undefined ? node : options.savedNode,
 				active: options.active ?? false,
 				readOnly: options.readOnly ?? false,
-				onChange() {}
+				onChange() {},
+				...(options.onDisabledChange ? { onDisabledChange: options.onDisabledChange } : {})
 			}
 		}
 	});
@@ -255,8 +257,80 @@ describe('a node whose credential the server deleted', () => {
 	});
 });
 
-describe('which credentials the panel asks the server about', () => {
-	/** The ids the panel keyed its probe by, read from the query it registered. */
+/**
+ * The Settings tab's node state (FEAT-ez6xtm): the disable switch n8n's D
+ * carries, and the note that can be shown on the canvas. A definition with no
+ * parameters opens on the Settings tab, which is where these live.
+ */
+const SETTINGLESS_DEFINITION: Definition = {
+	category: 'Core',
+	displayName: 'NoOp',
+	group: ['transform'],
+	inputs: [],
+	outputs: [],
+	parameters: [],
+	sharedSettings: [],
+	source: 'builtin',
+	type: 'kilasflow.noop',
+	version: 1
+};
+
+function noopNode(): Node {
+	return {
+		id: 'node-1',
+		name: 'NoOp',
+		type: 'kilasflow.noop',
+		typeVersion: 1,
+		position: { x: 0, y: 0 }
+	};
+}
+
+describe('the Settings tab node state', () => {
+	it('offers the disable switch and the notes editor on a step', () => {
+		const markup = html({
+			client: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+			definition: SETTINGLESS_DEFINITION,
+			node: noopNode(),
+			onDisabledChange() {}
+		});
+
+		expect(markup).toContain('node-disabled-node-1');
+		expect(markup).toContain('node-notes-node-1');
+		expect(markup).toContain('node-notes-in-flow-node-1');
+		expect(markup).toContain('Display note in flow');
+	});
+
+	it('shows the note the node carries, and never invents one', () => {
+		const withNote = html({
+			client: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+			definition: SETTINGLESS_DEFINITION,
+			node: { ...noopNode(), settings: { notes: 'Check the rate limit before enabling', notesInFlow: true } }
+		});
+
+		expect(withNote).toContain('Check the rate limit before enabling');
+
+		const without = html({
+			client: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+			definition: SETTINGLESS_DEFINITION,
+			node: noopNode()
+		});
+		expect(without).not.toContain('Check the rate limit');
+	});
+
+	it('keeps the switch inside the read-only inert block', () => {
+		const markup = html({
+			client: new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+			definition: SETTINGLESS_DEFINITION,
+			node: noopNode(),
+			readOnly: true,
+			onDisabledChange() {}
+		});
+
+		expect(markup.indexOf('node-disabled-node-1')).toBeGreaterThan(markup.indexOf('inert'));
+	});
+});
+
+describe('which credentials the panel asks the server about', () => {	/** The ids the panel keyed its probe by, read from the query it registered. */
 	function probedKeys(client: QueryClient): unknown[] {
 		return client
 			.getQueryCache()

@@ -445,3 +445,38 @@ const STATUS_LABELS: Partial<Record<string, () => string>> = {
 export function statusLabel(status: string): string {
 	return STATUS_LABELS[status]?.() ?? status.charAt(0).toUpperCase() + status.slice(1);
 }
+<<<<<<< Updated upstream
+=======
+
+/**
+ * The status as a colour the canvas can paint a node's border with.
+ *
+ * `statusTone` returns utility classes for badges; a node tile needs the raw
+ * value because it composes the colour into a ring with `color-mix`.
+ */
+/**
+ * The hue a replayed node's outcome speaks in.
+ *
+ * Always a state token, never the brand accent (FEAT-r8ph93): running is
+ * info-blue, cancelling and cancelled are the jingga warning, and nothing
+ * about a run is ever turmeric — turmeric is reserved for where the user
+ * acts.
+ */
+export function statusAccent(status: string): string {
+	switch (status) {
+		case 'succeeded':
+			return 'var(--kf-run-success)';
+		case 'failed':
+			return 'var(--kf-run-error)';
+		case 'cancelled':
+		case 'cancelling':
+			return 'var(--kf-run-warning)';
+		case 'running':
+			return 'var(--kf-run-running)';
+		case 'waiting':
+			return 'var(--kf-run-waiting)';
+		default:
+			return 'var(--kf-fg-muted)';
+	}
+}
+>>>>>>> Stashed changes

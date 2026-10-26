@@ -554,6 +554,25 @@ export function toggleNodesDisabled(document: Document, nodeIDs: readonly string
 }
 
 /**
+ * Sets one node's disabled flag from the Settings tab's switch, with the same
+ * write discipline as D: enabling drops the flag rather than writing `false`,
+ * so a node turned off and on again saves exactly as it was.
+ */
+export function setNodeDisabled(document: Document, nodeID: string, disabled: boolean): Document {
+	let found = false;
+	const nodes = (document.nodes ?? []).map((node) => {
+		if (node.id !== nodeID) return node;
+		found = true;
+		if (disabled) return { ...node, disabled: true };
+		// eslint-disable-next-line @typescript-eslint/no-unused-vars
+		const { disabled: _previous, ...enabled } = node;
+		return enabled;
+	});
+	if (!found) return document;
+	return { ...document, nodes };
+}
+
+/**
  * n8n's P: pins the named nodes' output, or unpins them when every one of
  * them is already pinned. A pin is the node's entry in the document's
  * pinData, keyed by name; the editor has no run data of its own to record,

@@ -83,6 +83,23 @@ describe('hue separation (FEAT-p75n7j criterion 3)', () => {
 		expect(off).toEqual([]);
 	});
 
+	// FEAT-xj5tv6: category colour is glyph-and-chip only, and it stays clear
+	// of the competitor exclusion zones (audit §6.1) in both themes — nothing
+	// a node is categorised with may sit in the red/orange band n8n owns
+	// (0–60) or the violet/magenta band qonflo.ai owns (270–360).
+	it.each(THEMES)('keeps every --kf-cat-* hue out of 0–60 and 270–360 in %s', (theme) => {
+		const env = tokenEnv(sheet, theme);
+		const off: string[] = [];
+		for (const category of ['trigger', 'ai', 'flow', 'data', 'app', 'utility']) {
+			const { c, h } = env.color(`--kf-cat-${category}`);
+			// The neutral categories carry a hue only nominally (C ≤ 0.012);
+			// what is checked is that no *chromatic* category enters a zone.
+			if (c <= 0.012) continue;
+			if (h < 60 || h >= 270) off.push(`--kf-cat-${category}: h ${h.toFixed(1)}`);
+		}
+		expect(off).toEqual([]);
+	});
+
 	it.each(THEMES)('caps chroma on every oklch() literal written on the neutral hue in %s', (theme) => {
 		const env = tokenEnv(sheet, theme);
 		const neutralLiteral = /oklch\(\s*([\d.]+)\s+([\d.]+)\s+(?:var\(--kf-neutral-h\)|235)\b/g;

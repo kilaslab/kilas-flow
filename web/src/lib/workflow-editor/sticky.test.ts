@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import { appTokenSheet } from '$lib/design-system/app-css';
+import { contrast } from '$lib/design-system/color';
+import { tokenEnv, type Theme } from '$lib/design-system/css-tokens';
+
 import { STICKY_SWATCHES, markdownRuns, stickyPalette } from './sticky';
 
 describe('stickyPalette', () => {
@@ -19,6 +23,44 @@ describe('stickyPalette', () => {
 
 	it('offers one swatch per palette index for the inspector control', () => {
 		expect(STICKY_SWATCHES).toHaveLength(7);
+		expect(STICKY_SWATCHES.every((swatch) => swatch.fill.startsWith('var(--kf-sticky-'))).toBe(true);
+	});
+});
+
+describe('the sticky token formula (FEAT-xj5tv6)', () => {
+	// The palette is hue indices painted through one formula, not hex: every
+	// fill resolves to oklch(--kf-sticky-l --kf-sticky-c <hue>) in the active
+	// theme, and a note's labels keep ≥4.5:1 on it in both themes.
+	const sheet = appTokenSheet();
+
+	it.each(['dark', 'light'] as Theme[])('derives every fill and border from the formula in %s', (theme) => {
+		const env = tokenEnv(sheet, theme);
+		const l = env.raw('--kf-sticky-l');
+		const c = env.raw('--kf-sticky-c');
+		const borderL = env.raw('--kf-sticky-border-l');
+		const borderC = env.raw('--kf-sticky-border-c');
+		for (let index = 1; index <= 7; index += 1) {
+			const hue = env.raw(`--kf-sticky-${index}-h`);
+			// Declared as the formula (theme parameters + hue index), resolved
+			// as the theme's numbers: the hue is the only per-index choice.
+			expect(env.raw(`--kf-sticky-${index}-fill`)).toBe(`oklch(var(--kf-sticky-l) var(--kf-sticky-c) var(--kf-sticky-${index}-h))`);
+			expect(env.resolve(`--kf-sticky-${index}-fill`)).toBe(`oklch(${l} ${c} ${hue})`);
+			expect(env.resolve(`--kf-sticky-${index}-border`)).toBe(`oklch(${borderL} ${borderC} ${hue})`);
+		}
+	});
+
+	it('keeps a note label readable on every fill, in both themes', () => {
+		// The near-white node labels that sit on an imported note are the ones
+		// the pastels lost in dark; the token text colour must hold AA on the
+		// formula's fills everywhere.
+		for (const theme of ['dark', 'light'] as Theme[]) {
+			const env = tokenEnv(sheet, theme);
+			const text = env.color('--kf-sticky-text');
+			for (let index = 1; index <= 7; index += 1) {
+				const ratio = contrast(text, env.color(`--kf-sticky-${index}-fill`));
+				expect(ratio, `${theme} sticky ${index}`).toBeGreaterThanOrEqual(4.5);
+			}
+		}
 	});
 });
 

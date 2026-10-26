@@ -1,8 +1,12 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import type { Definition, Node, Port } from '$lib/api/generated/models';
+import { hueDistance } from '$lib/design-system/color';
 
-import { BUILTIN_GLYPHS, FALLBACK_GLYPH, TILE, attachmentLabelRows, attachmentPorts, friendlyOriginalType, mainPorts, nodeChromeBorder, nodeChromeShadow, nodeIconBadgeClass, nodeShape, nodeSubtitle, nodeVisual, placeholderDefinition, portOffset } from './node-visual';
+import { BUILTIN_GLYPHS, FALLBACK_GLYPH, NODE_CATEGORIES, TILE, attachmentLabelRows, attachmentPorts, friendlyOriginalType, harmonisedGlyphColour, mainPorts, nodeCategory, nodeIconBadgeClass, nodeShape, nodeSubtitle, nodeVisual, placeholderDefinition, portOffset } from './node-visual';
 
 const MAIN: Port = { name: 'main', kind: 'main' };
 
@@ -76,7 +80,10 @@ describe('nodeShape', () => {
 		expect(nodeShape(unknown)).toBe('step');
 		const visual = nodeVisual(unknown);
 		expect(visual.icon).toBeTruthy();
-		expect(visual.accent).toBe('var(--muted-foreground)');
+		// An unknown node is a utility: the neutral category token, not a colour
+		// picked out of the air.
+		expect(visual.category).toBe('utility');
+		expect(visual.accent).toBe('var(--kf-cat-utility)');
 	});
 });
 
@@ -185,10 +192,106 @@ describe('nodeSubtitle', () => {
 	});
 });
 
+describe('nodeCategory', () => {
+	// FEAT-xj5tv6: six canvas categories, derived from the registry's
+	// behavioural signals rather than from iconColor — a colour says nothing
+	// about behaviour, and the 24 free hex values in nodes/*.go painted 25
+	// border colours on a nine-node canvas.
+	const shaped = (category: string, group: string[] = ['transform']): Definition => ({
+		...definition([MAIN], [MAIN], category),
+		group
+	});
+
+	it('reads the trigger from the group, before any category string', () => {
+		expect(nodeCategory(shaped('Triggers', ['trigger']))).toBe('trigger');
+		// A scheduled node fires the flow: it is a trigger even when the
+		// category string has drifted.
+		expect(nodeCategory(shaped('Core', ['schedule']))).toBe('trigger');
+		expect(nodeCategory(shaped('Triggers'))).toBe('trigger');
+	});
+
+	it('keeps the annotation in the utility ground, where nothing executes', () => {
+		expect(nodeCategory(shaped('Annotation', ['organization']))).toBe('utility');
+	});
+
+	it('folds the registry category names onto the six canvas categories', () => {
+		expect(nodeCategory(shaped('AI'))).toBe('ai');
+		expect(nodeCategory(shaped('Flow'))).toBe('flow');
+		expect(nodeCategory(shaped('Database'))).toBe('data');
+		expect(nodeCategory(shaped('Datastore'))).toBe('data');
+		expect(nodeCategory(shaped('Transform'))).toBe('data');
+		expect(nodeCategory(shaped('Communication'))).toBe('app');
+		expect(nodeCategory(shaped('Files'))).toBe('app');
+	});
+
+	it('treats Core, Test, Imported and anything unannounced as utility', () => {
+		for (const category of ['Core', 'Test', 'Imported', 'Whatever Comes Next']) {
+			expect(nodeCategory(shaped(category)), category).toBe('utility');
+		}
+	});
+
+	it('reads a codex category the registry did not repeat on the definition', () => {
+		expect(nodeCategory({ ...shaped('Core'), codex: { categories: ['AI'] } })).toBe('ai');
+	});
+
+	it('offers exactly the six categories the canvas can paint', () => {
+		expect(NODE_CATEGORIES).toEqual(['trigger', 'ai', 'flow', 'data', 'app', 'utility']);
+	});
+});
+
+describe('harmonisedGlyphColour', () => {
+	it('clamps a brand colour into the palette band as relative colour syntax', () => {
+		// Lightness comes from the theme token, chroma is capped, the hue is the
+		// brand's own: Gmail stays blue, whatever the canvas is wearing.
+		expect(harmonisedGlyphColour('#4285f4', 'app')).toBe('oklch(from #4285f4 var(--kf-glyph-l) min(c, 0.12) 260)');
+		expect(harmonisedGlyphColour('#25D366', 'app')).toBe('oklch(from #25D366 var(--kf-glyph-l) min(c, 0.12) 149.7)');
+	});
+
+	it('steers a red within 20° of the danger hue off the error band', () => {
+		// "Gmail looks like an error" was the finding: a brand glyph may not
+		// borrow the colour a fault owns.
+		for (const red of ['#ef4444', '#ea4335', '#ea580c']) {
+			const out = harmonisedGlyphColour(red, 'app');
+			expect(out, red).toBe(`oklch(from ${red} var(--kf-glyph-l) min(c, 0.12) 48)`);
+		}
+		// Just outside the band, the brand hue survives.
+		expect(harmonisedGlyphColour('#f97316', 'app')).toBe('oklch(from #f97316 var(--kf-glyph-l) min(c, 0.12) 47.6)');
+	});
+
+	it('renders a black or grey brand as a neutral, not as a red', () => {
+		// #000000's hue is powerless; the lightness clamp alone makes it a
+		// readable neutral, so the hue keyword passes through.
+		expect(harmonisedGlyphColour('#000000', 'utility')).toBe('oklch(from #000000 var(--kf-glyph-l) min(c, 0.12) h)');
+		expect(harmonisedGlyphColour('#64748b', 'app')).toBe('oklch(from #64748b var(--kf-glyph-l) min(c, 0.12) 257.4)');
+	});
+
+	it('falls back to the category token for anything that is not a hex colour', () => {
+		expect(harmonisedGlyphColour(undefined, 'ai')).toBe('var(--kf-cat-ai)');
+		expect(harmonisedGlyphColour('', 'trigger')).toBe('var(--kf-cat-trigger)');
+		expect(harmonisedGlyphColour('var(--primary)', 'data')).toBe('var(--kf-cat-data)');
+	});
+
+	it('keeps every brand hue it will emit out of the danger band', () => {
+		// The 24 values nodes/*.go actually declare, plus the WAHA pack's.
+		const declared = ['#000000','#0284c7','#0e7490','#0ea5e9','#0f766e','#0f9d58','#10b981','#14b8a6','#16a34a','#2aabee','#336791','#4285f4','#6366f1','#64748b','#8b5cf6','#94a3b8','#a855f7','#ea4335','#ea580c','#eab308','#ef4444','#f59e0b','#f97316','#25d366'];
+		for (const hex of declared) {
+			const out = harmonisedGlyphColour(hex, 'app');
+			const hue = /min\(c, 0\.12\) ([\d.]+|h)\)$/.exec(out)?.[1];
+			// A hue keyword (powerless origin) paints a neutral; any literal hue
+			// must sit more than 20° from --kf-danger's 25.
+			if (hue === 'h') continue;
+			expect(hueDistance(Number(hue), 25), hex).toBeGreaterThan(20);
+		}
+	});
+});
+
 describe('nodeVisual', () => {
-	it('takes the accent from the definition rather than from a category map', () => {
+	it('harmonises the accent from the definition and the category it derived', () => {
 		const [, d] = typed('pack.neverSeenBefore');
-		expect(nodeVisual({ ...d, iconColor: '#ff0000' }).accent).toBe('#ff0000');
+		const visual = nodeVisual({ ...d, iconColor: '#ff0000' });
+		expect(visual.category).toBe('utility');
+		// Pure red sits inside the danger band, so the harmoniser moves it off.
+		expect(visual.accent).toBe('oklch(from #ff0000 var(--kf-glyph-l) min(c, 0.12) 48)');
 	});
 
 	it('resolves a builtin glyph by the name the server chose', () => {
@@ -206,7 +309,8 @@ describe('nodeVisual', () => {
 		const visual = nodeVisual({ ...d, icon: { light: 'builtin:message-circle' }, iconColor: '#25d366' });
 		expect(visual.icon).not.toBe(FALLBACK_GLYPH);
 		expect(visual.iconURL).toBeNull();
-		expect(visual.accent).toBe('#25d366');
+		// A brand colour arrives through the harmoniser, keeping its own hue.
+		expect(visual.accent).toBe('oklch(from #25d366 var(--kf-glyph-l) min(c, 0.12) 149.7)');
 	});
 	it('ships the glyph the data-table node names, with its own accent', () => {
 		// kilasflow.datastore asks for `builtin:table`. The canvas must draw
@@ -216,7 +320,7 @@ describe('nodeVisual', () => {
 		const visual = nodeVisual({ ...d, icon: { light: 'builtin:table' }, iconColor: '#0e7490', subtitle: '{{ $parameter.resource }}/{{ $parameter.operation }}' });
 		expect(visual.icon).not.toBe(FALLBACK_GLYPH);
 		expect(visual.iconURL).toBeNull();
-		expect(visual.accent).toBe('#0e7490');
+		expect(visual.accent).toBe('oklch(from #0e7490 var(--kf-glyph-l) min(c, 0.12) 223.1)');
 		expect(nodeSubtitle(n, { ...d, subtitle: '{{ $parameter.resource }}/{{ $parameter.operation }}' })).toBe('row/insert');
 	});
 
@@ -236,6 +340,7 @@ describe('nodeVisual', () => {
 });
 
 
+<<<<<<< Updated upstream
 describe('nodeChrome', () => {
 	it('uses the error run token for invalid or failed tiles', () => {
 		expect(nodeChromeBorder({ invalid: true })).toBe('var(--kf-run-error)');
@@ -247,17 +352,45 @@ describe('nodeChrome', () => {
 		expect(nodeChromeBorder({ runStatus: 'cancelling' })).toBe('var(--kf-run-warning)');
 		expect(nodeChromeBorder({ runStatus: 'cancelled' })).toBe('var(--kf-run-warning)');
 		expect(nodeChromeBorder({ runStatus: 'succeeded' })).toBe('var(--kf-run-success)');
+=======
+describe('tile chrome (the shared decorator stylesheet)', () => {
+	// The border/shadow computation moved out of per-node inline styles into
+	// CSS on data-attributes (FEAT-xj5tv6), shared by canvas-node and
+	// execution-canvas-node. What the acceptance criteria pin is negative:
+	// no tile chrome rule may reference a per-node colour, so a selected node
+	// can never borrow its category's hue for the ring.
+	const css = readFileSync(fileURLToPath(new URL('../../app.css', import.meta.url)), 'utf8');
+	// The tile-chrome rules live between their banner and the glyph chip
+	// (which is allowed --node-accent: a category colour meets the surface
+	// there, and nowhere else).
+	const chromeBlock = css.slice(css.indexOf('/* Canvas node chrome'), css.indexOf('/* The glyph chip'));
+
+	it('paints the idle tile and every state from tokens, never from --node-accent', () => {
+		expect(chromeBlock).toContain('.kf-node-tile {\n\tborder-color: var(--kf-border-strong);\n\tbox-shadow: var(--kf-node-shadow);');
+		expect(chromeBlock).not.toContain('--node-accent');
 	});
 
-	// Selection is one colour on every node (BUG-ywbvfa): the accent's
-	// line-weight step, which follows an embed host's accent. A node's own
-	// colour selected an IF node in orange, which read as a warning.
-	it('selects in --kf-selection whatever the node colour, and idles in a muted accent hue', () => {
-		expect(nodeChromeBorder({ selected: true })).toBe('var(--kf-selection)');
-		expect(nodeChromeBorder({})).toContain('var(--node-accent)');
-		expect(nodeChromeBorder({})).not.toBe('var(--node-accent)');
+	it('draws the one selection ring and halo for every node', () => {
+		const selected = "[data-selected='true'] .kf-node-tile";
+		expect(chromeBlock).toContain(`${selected} {\n\tborder-color: var(--kf-selection);`);
+		expect(chromeBlock).toContain('var(--kf-selection-halo)');
+>>>>>>> Stashed changes
 	});
 
+	it('speaks run state in the state hues, not the brand accent', () => {
+		for (const [status, token] of [
+			['succeeded', '--kf-run-success'],
+			['running', '--kf-run-running'],
+			['failed', '--kf-run-error']
+		] as const) {
+			expect(chromeBlock, status).toMatch(new RegExp(`\\[data-run-status='${status}'\\] \\.kf-node-tile \\{\\n\\tborder-color: var\\(${token}\\)`));
+		}
+		// Cancelling and cancelled share one rule, and one warning hue.
+		expect(chromeBlock).toMatch(/\[data-run-status='cancelling'\] \.kf-node-tile,\n\[data-run-status='cancelled'\] \.kf-node-tile \{\n\tborder-color: var\(--kf-run-warning\)/);
+		expect(chromeBlock).not.toContain('--primary');
+	});
+
+<<<<<<< Updated upstream
 	it('elevates selected and running tiles more than the idle card shadow', () => {
 		const idle = nodeChromeShadow({});
 		const selected = nodeChromeShadow({ selected: true });
@@ -268,6 +401,12 @@ describe('nodeChrome', () => {
 		expect(nodeChromeShadow({ runStatus: 'failed' })).toContain('var(--kf-run-error)');
 		expect(selected).toBe('0 0 0 2px var(--kf-selection-halo), var(--kf-shadow-1)');
 		expect(selected).not.toContain('--node-accent');
+=======
+	it('keeps the fault outranking the run states in the stylesheet order', () => {
+		// Same specificity, so order is precedence: invalid/failed last.
+		expect(chromeBlock.indexOf("[data-run-status='failed']")).toBeGreaterThan(chromeBlock.indexOf("[data-run-status='running']"));
+		expect(chromeBlock.indexOf("[data-run-status='failed']")).toBeGreaterThan(chromeBlock.indexOf("[data-selected='true']"));
+>>>>>>> Stashed changes
 	});
 
 	it('sizes the icon badge per silhouette', () => {
@@ -279,10 +418,19 @@ describe('nodeChrome', () => {
 
 	it('keeps TILE silhouettes available for both editor and replay', () => {
 		expect(TILE.step).toContain('rounded-lg');
-		expect(TILE.step).toContain('h-17');
-		expect(TILE.step).toContain('w-17');
+		expect(TILE.step).toContain('h-16');
+		expect(TILE.step).toContain('w-16');
 		expect(TILE.trigger).toContain('rounded-l');
-		expect(TILE.attachment).toContain('size-12');
+		expect(TILE.attachment).toContain('size-11');
+	});
+});
+
+describe('tile geometry (the Kunyit density pitch)', () => {
+	it('cuts a 64px step and a 44px sub-node, as the density tokens declare', () => {
+		expect(TILE.step).toContain('h-16');
+		expect(TILE.step).toContain('w-16');
+		expect(TILE.hub).toContain('h-16');
+		expect(TILE.attachment).toContain('size-11');
 	});
 });
 

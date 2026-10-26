@@ -77,6 +77,7 @@
 		documentFromFlow,
 		duplicateNodes,
 		nextNodePosition,
+		setNodeDisabled,
 		BRANCH_COLUMN,
 		COLUMN,
 		positionAfter,
@@ -97,6 +98,7 @@
 		type EditorFlowNode,
 		type PropertyScope
 	} from '$lib/workflow-editor/document';
+	import { nodeMenuItems, paneMenuItems, type MenuItem } from '$lib/workflow-editor/canvas-menu';
 	import { convertN8n, copySelection, pasteInto, readClipboard, type PastePayload } from '$lib/workflow-editor/clipboard';
 	import { diagnosticSummaryLabel } from '$lib/workflow-editor/import-diagnostics';
 	import { message as apiMessage } from '$lib/api/http';
@@ -120,6 +122,7 @@
 
 	import ActivationNotices from './activation-notices.svelte';
 	import CanvasChatPanel from './canvas-chat-panel.svelte';
+	import CanvasContextMenu from './canvas-context-menu.svelte';
 	import EditorControls from './editor-controls.svelte';
 	import CanvasBridge, { type CanvasFlow } from './canvas-bridge.svelte';
 	import CanvasEdge from './canvas-edge.svelte';
@@ -291,6 +294,13 @@
 	let pasteSequence = 0;
 	let editorSection = $state<HTMLElement>();
 	let flow = $state<CanvasFlow | null>(null);
+	/**
+	 * The open context menu, at the pointer (FEAT-ez6xtm). One menu serves a
+	 * node and the pane: `nodeID` names the node it was opened on, or null for
+	 * the pane's own actions. Closed by any action, Escape, or a click
+	 * elsewhere (the menu component owns those); this is only where it opens.
+	 */
+	let contextMenu = $state<{ x: number; y: number; nodeID: string | null } | null>(null);
 
 	/**
 	 * SvelteFlow's own control chrome, in the runtime locale.
@@ -402,9 +412,9 @@
 	);
 	const showInspector = $derived(!narrow.current && Boolean(selectedNode && selectedDefinition));
 	// A surface that owns the keyboard while it is open. The canvas shortcuts
-	// must not act behind a dialog, and on a narrow screen the inspector *is* a
-	// modal.
-	const overlayOpen = $derived(shortcutsOpen || pickerOpen || historyOpen || (narrow.current && propertyPanelOpen));
+	// must not act behind a dialog or a context menu, and on a narrow screen
+	// the inspector *is* a modal.
+	const overlayOpen = $derived(shortcutsOpen || pickerOpen || historyOpen || contextMenu !== null || (narrow.current && propertyPanelOpen));
 
 	setCanvasActions({
 		readOnly: () => locked,
@@ -415,6 +425,10 @@
 		removeEdge: (edgeID) => removeConnection(edgeID),
 		rename: (nodeID) => startRename(nodeID),
 		open: (nodeID) => openNode(nodeID),
+		toggleDisabled: (nodeID) => {
+			if (locked) return;
+			replaceDraft(toggleNodesDisabled(draft, [nodeID]));
+		},
 		resize: (nodeID, width, height) => {
 			if (locked) return;
 			replaceDraft(updateNodeSize(draft, nodeID, width, height));
@@ -917,6 +931,12 @@
 		replaceDraft(updateNodeCredential(draft, selectedNode.id, typeID, credentialID));
 	}
 
+	/** The Settings tab's disable switch: same write discipline as the D key. */
+	function updateSelectedDisabled(disabled: boolean) {
+		if (locked || !selectedNode) return;
+		replaceDraft(setNodeDisabled(draft, selectedNode.id, disabled));
+	}
+
 	/**
 	 * The selection the editor asked for and the canvas has not confirmed yet.
 	 * Plain, not $state: it guards a callback and must not become a dependency.
@@ -988,8 +1008,8 @@
 		await flow?.fitView({ padding: 0.15, duration: 300 });
 	}
 
-	/** Half a 68px tile: the offset that centres a tile on a point. */
-	const TILE_CENTRE = 34;
+	/** Half a 64px tile: the offset that centres a tile on a point. */
+	const TILE_CENTRE = 32;
 
 	/** Where a node added with no source belongs: the middle of what the user can see. */
 	function viewportPlacement(index: number): { x: number; y: number } {
@@ -1124,6 +1144,94 @@
 		selectedNodeID = nodeIDs[0] ?? null;
 		selectedEdgeIDs = [];
 		canvasMessage = m.editor_nodes_duplicated({ count: nodeIDs.length });
+	}
+
+	/**
+	 * The node a right-click landed on, for the menu's labels and state.
+	 *
+	 * Read from `displayed` so the menu describes what is on screen in a
+	 * preview too — though a preview is locked and never opens one.
+	 */
+	const contextNode = $derived.by(() => {
+		const id = contextMenu?.nodeID;
+		if (!id) return null;
+		return (displayed.nodes ?? []).find((node) => node.id === id) ?? null;
+	});
+	const contextItems = $derived.by<MenuItem[]>(() => {
+		if (contextMenu === null) return [];
+		if (contextNode) {
+			const definition = resolveDefinition(contextNode.type, contextNode.typeVersion, definitions);
+			return nodeMenuItems({
+				disabled: Boolean(contextNode.disabled),
+				pinned: (draft.pinData ?? {})[contextNode.name] !== undefined,
+				annotation: Boolean(definition && isAnnotation(definition))
+			});
+		}
+		return paneMenuItems();
+	});
+
+	/** n8n's right-click on a node: select it, then offer the verbs (FEAT-ez6xtm). */
+	function openNodeContextMenu(nodeID: string, event: MouseEvent) {
+		if (locked) return;
+		event.preventDefault();
+		// Right-click selects, as in n8n — a node already in the selection
+		// keeps the whole selection (so D or copy acts on all of it), a node
+		// outside it starts a new one.
+		if (!selectedNodeIDs.includes(nodeID)) selectOnCanvas([nodeID]);
+		contextMenu = { x: event.clientX, y: event.clientY, nodeID };
+	}
+
+	/** The pane's own menu: adding and pasting, plus select-all. */
+	function openPaneContextMenu(event: MouseEvent) {
+		if (locked) return;
+		event.preventDefault();
+		contextMenu = { x: event.clientX, y: event.clientY, nodeID: null };
+	}
+
+	/**
+	 * Runs one context-menu entry. Every entry reuses the verb the keyboard
+	 * shortcut or the toolbar already owns — the menu is a second door into the
+	 * same room, never a second implementation.
+	 */
+	function runMenuAction(action: MenuItem['action'], nodeID: string | null) {
+		if (locked) return;
+		switch (action) {
+			case 'add-step':
+				openPicker(false);
+				return;
+			case 'add-sticky':
+				addSticky();
+				return;
+			case 'paste':
+				void pasteFromClipboard();
+				return;
+			case 'select-all':
+				selectAll();
+				return;
+			case 'open':
+				if (nodeID) openNode(nodeID);
+				return;
+			case 'rename':
+				if (nodeID) startRename(nodeID);
+				return;
+			case 'duplicate':
+				duplicateSelection();
+				return;
+			case 'toggle-disabled':
+				toggleSelectionDisabled();
+				return;
+			case 'toggle-pinned':
+				toggleSelectionPinned();
+				return;
+			case 'copy':
+				void copySelectionToClipboard();
+				return;
+			case 'delete':
+				// The selection the right-click established (which a click on a
+				// selected node kept), so it deletes what Backspace would.
+				removeNodes([...selectedNodeIDs]);
+				return;
+		}
 	}
 
 	function startRename(nodeID: string) {
@@ -1578,8 +1686,10 @@
 				onselectionchange={onSelectionChange}
 				ariaLabelConfig={ariaLabels}
 				onpaneclick={() => onSelectionChange({ nodes: [], edges: [] })}
+				onnodecontextmenu={({ node, event }) => openNodeContextMenu(node.id, event)}
+				onpanecontextmenu={({ event }) => openPaneContextMenu(event)}
 			>
-				<Background variant={BackgroundVariant.Dots} gap={16} size={1} patternColor="var(--border)" />
+				<Background variant={BackgroundVariant.Dots} gap={16} size={1} patternColor="var(--kf-grid-dot)" />
 				<EditorControls locked={locked} onTidy={tidyUp} />
 				<!-- Svelte Flow owns the viewport and only a component inside it can
 				     read that context; this hands the editor the handful of calls it
@@ -1692,7 +1802,11 @@
 			{#if (displayed.nodes?.length ?? 0) === 0 && !locked}
 				<div class="pointer-events-none absolute inset-0 grid place-items-center p-4">
 					<div class="pointer-events-auto text-center">
+<<<<<<< Updated upstream
 						<button type="button" class="mx-auto grid h-17 w-17 place-items-center rounded-l-[2.125rem] rounded-r-lg border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-(--kf-selection) hover:text-(--kf-accent-text) focus-visible:outline-2 focus-visible:outline-offset-4" aria-label={m.editor_add_first_step()} onclick={() => openPicker(true)}>
+=======
+						<button type="button" class="mx-auto grid h-16 w-16 place-items-center rounded-l-[2rem] rounded-r-lg border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-4" aria-label={m.editor_add_first_step()} onclick={() => openPicker(true)}>
+>>>>>>> Stashed changes
 							<Plus aria-hidden="true" class="size-5" />
 						</button>
 						<h2 class="mt-3 text-sm font-semibold">{m.editor_empty_title()}</h2>
@@ -1707,7 +1821,7 @@
 				<RailGrip />
 				<div class="flex h-full min-h-0 flex-col">
 					<div class="min-h-0 flex-1">
-						<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} {credentialsLoaded} readOnly={locked} workflowID={document.id} savedNode={selectedSavedNode} {active} upstreamNodeNames={selectedUpstreamNames} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} />
+						<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} {credentialsLoaded} readOnly={locked} workflowID={document.id} savedNode={selectedSavedNode} {active} upstreamNodeNames={selectedUpstreamNames} onChange={updateProperty} onRename={renameSelected} onDisabledChange={updateSelectedDisabled} onCredentialChange={updateCredential} />
 					</div>
 					{#if selectedResolvedVersion !== null && selectedResolvedVersion !== selectedNode.typeVersion}
 						<p class="shrink-0 border-t border-border px-3 py-1 text-[0.6875rem] leading-4 text-muted-foreground">{m.editor_resolved_version({ stored: selectedNode.typeVersion, resolved: selectedResolvedVersion })}</p>
@@ -1742,8 +1856,13 @@
 
 		{#if narrow.current && propertyPanelOpen && selectedNode && selectedDefinition}
 			<div bind:this={propertyDialog} class="focus-region absolute inset-x-2 bottom-2 z-30 max-h-[min(28rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={m.editor_node_properties_aria({ name: selectedNode.name })} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
+<<<<<<< Updated upstream
 				<div class="flex justify-end border-b border-border px-1 py-1"><button bind:this={propertyCloseButton} type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted" aria-label={m.editor_close_properties_aria()} onclick={closePropertyPanel}><X aria-hidden="true" class="size-3.5" /></button></div>
 				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} {credentialsLoaded} readOnly={locked} workflowID={document.id} savedNode={selectedSavedNode} {active} upstreamNodeNames={selectedUpstreamNames} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} />
+=======
+				<div class="flex justify-end border-b border-border px-1.5 py-1"><button bind:this={propertyCloseButton} type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted" aria-label={m.editor_close_properties_aria()} onclick={closePropertyPanel}><X aria-hidden="true" class="size-3.5" /></button></div>
+				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} {credentialsLoaded} readOnly={locked} workflowID={document.id} savedNode={selectedSavedNode} {active} upstreamNodeNames={selectedUpstreamNames} onChange={updateProperty} onRename={renameSelected} onDisabledChange={updateSelectedDisabled} onCredentialChange={updateCredential} />
+>>>>>>> Stashed changes
 				{#if selectedResolvedVersion !== null && selectedResolvedVersion !== selectedNode.typeVersion}
 					<p class="border-t border-border px-3 py-1 text-[0.6875rem] leading-4 text-muted-foreground">{m.editor_resolved_version({ stored: selectedNode.typeVersion, resolved: selectedResolvedVersion })}</p>
 				{/if}
@@ -1788,6 +1907,19 @@
 			pendingPosition = null;
 		}}
 	/>
+
+	{#if contextMenu}
+		{@const menuNodeID = contextMenu.nodeID}
+		{@const menuName = contextNode?.name}
+		<CanvasContextMenu
+			x={contextMenu.x}
+			y={contextMenu.y}
+			ariaLabel={menuName ? m.canvas_menu_node_aria({ name: menuName }) : m.canvas_menu_aria()}
+			items={contextItems}
+			onAction={(action) => runMenuAction(action, menuNodeID)}
+			onClose={() => (contextMenu = null)}
+		/>
+	{/if}
 
 	{#if shortcutsOpen}
 		<div class="absolute inset-0 z-50 grid place-items-center bg-background/60 p-4 backdrop-blur-sm" role="presentation">

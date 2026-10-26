@@ -34,19 +34,21 @@ const PALETTE: Record<number, { fill: string; border: string }> = {
 
 /**
  * The swatch colours the inspector's palette control shows, in palette order.
- * They are the light-theme pastels — read against the control's own surface
- * rather than against a sticky — because a swatch identifies the choice by
- * looking like what a light-theme note will become, which is the n8n mental
- * model the palette carries.
+ * The fill is the light-theme fill each index becomes — read against the
+ * control's own surface rather than against a sticky — because a swatch
+ * identifies the choice by looking like what a light-theme note will become,
+ * which is the n8n mental model the palette carries. The fill values are
+ * --kf-sticky-N-swatch tokens (app.css), not hex, so the palette owns them
+ * with the fills; the border is the control's own chrome.
  */
 export const STICKY_SWATCHES: { fill: string; border: string }[] = [
-	{ fill: '#fef3c7', border: '#eab308' },
-	{ fill: '#ffedd5', border: '#f97316' },
-	{ fill: '#fee2e2', border: '#ef4444' },
-	{ fill: '#dcfce7', border: '#22c55e' },
-	{ fill: '#dbeafe', border: '#3b82f6' },
-	{ fill: '#f3e8ff', border: '#a855f7' },
-	{ fill: '#f1f5f9', border: '#64748b' }
+	{ fill: 'var(--kf-sticky-1-swatch)', border: 'var(--kf-border)' },
+	{ fill: 'var(--kf-sticky-2-swatch)', border: 'var(--kf-border)' },
+	{ fill: 'var(--kf-sticky-3-swatch)', border: 'var(--kf-border)' },
+	{ fill: 'var(--kf-sticky-4-swatch)', border: 'var(--kf-border)' },
+	{ fill: 'var(--kf-sticky-5-swatch)', border: 'var(--kf-border)' },
+	{ fill: 'var(--kf-sticky-6-swatch)', border: 'var(--kf-border)' },
+	{ fill: 'var(--kf-sticky-7-swatch)', border: 'var(--kf-border)' }
 ];
 
 export function stickyPalette(color: unknown): { fill: string; border: string } {

@@ -3,6 +3,8 @@
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import Pin from '@lucide/svelte/icons/pin';
 	import Plus from '@lucide/svelte/icons/plus';
+	import Power from '@lucide/svelte/icons/power';
+	import PowerOff from '@lucide/svelte/icons/power-off';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 
@@ -23,10 +25,7 @@
 		glyphClass,
 		isAnnotation,
 		mainPorts,
-		nodeChromeBorder,
-		nodeChromeShadow,
 		nodeIconBadgeClass,
-		nodeShape,
 		nodeSubtitle,
 		nodeVisual,
 		placeholderDefinition,
@@ -88,6 +87,10 @@
 	const annotation = $derived(isAnnotation(data.definition));
 	const palette = $derived(stickyPalette(node.parameters?.color));
 	const runs = $derived(markdownRuns(node.parameters?.content));
+	// A note the Settings tab owns (settings.notes, the n8n importer's
+	// contract), shown on the canvas when its author asked for it.
+	const note = $derived(typeof node.settings?.notes === 'string' ? node.settings.notes : '');
+	const noteShown = $derived(Boolean(node.settings?.notesInFlow) && note.trim() !== '');
 
 	const mainInputs = $derived(mainPorts(ports.inputs));
 	const mainOutputs = $derived(mainPorts(ports.outputs));
@@ -106,9 +109,9 @@
 	// printing over the first one.
 	const attachmentRows = $derived(attachmentLabelRows(attachmentInputs.length));
 
-	const chrome = $derived({ selected: Boolean(selected), invalid, runStatus });
-	const border = $derived(nodeChromeBorder(chrome));
-	const shadow = $derived(nodeChromeShadow(chrome));
+	// Tile chrome (border, shadow, selection, run state) is painted by the
+	// shared decorator stylesheet from the data-attributes below, so no state
+	// can pick up a per-node colour (FEAT-xj5tv6).
 
 	// What the import could not carry for this node.
 	//
@@ -182,6 +185,7 @@
 		class="relative {node.disabled ? 'opacity-45 grayscale' : ''}"
 		style={`--node-accent: ${visual.accent}`}
 		ondblclick={() => actions?.open(node.id)}
+		data-category={visual.category}
 		data-selected={selected ? 'true' : undefined}
 		data-disabled={node.disabled ? 'true' : undefined}
 		data-pinned={data.pinned ? 'true' : undefined}
@@ -199,6 +203,19 @@
 					>
 						<Pencil aria-hidden="true" class="size-3.5" />
 					</button>
+					<!-- n8n's D, on the tile: the one state a node carries that the
+					     runner honours, so the tile is where it can be flipped. -->
+					<button
+						type="button"
+						data-toggle-disabled={node.id}
+						class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring {node.disabled ? 'text-warning' : ''}"
+						aria-label={node.disabled ? m.canvas_node_enable_aria({ name: node.name }) : m.canvas_node_disable_aria({ name: node.name })}
+						aria-pressed={node.disabled ? 'true' : 'false'}
+						title={node.disabled ? m.canvas_node_disabled_title() : m.canvas_node_disable_aria({ name: node.name })}
+						onclick={() => actions?.toggleDisabled(node.id)}
+					>
+						{#if node.disabled}<PowerOff aria-hidden="true" class="size-3.5" />{:else}<Power aria-hidden="true" class="size-3.5" />{/if}
+					</button>
 					<button
 						type="button"
 						class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
@@ -211,6 +228,7 @@
 			</NodeToolbar>
 		{/if}
 
+<<<<<<< Updated upstream
 		<!-- Card-like tile: accent icon badge on a raised surface so chrome reads at low zoom. -->
 		<div
 			class="kf-node-tile flex items-center justify-center gap-3 border bg-card transition-[border-color,box-shadow] {TILE[visual.shape]}"
@@ -220,15 +238,20 @@
 				class={nodeIconBadgeClass(visual.shape)}
 				style="border-color: color-mix(in oklch, var(--node-accent) 32%, transparent); background: color-mix(in oklch, var(--node-accent) 16%, transparent)"
 			>
+=======
+		<!-- Card-like tile: category glyph chip on a raised surface so chrome reads at low zoom. -->
+		<div class="kf-node-tile flex items-center justify-center gap-2.5 border bg-card transition-[border-color,box-shadow] {TILE[visual.shape]}">
+			<span class="kf-node-chip {nodeIconBadgeClass(visual.shape)}">
+>>>>>>> Stashed changes
 				{#if visual.iconURL}
 					<img src={visual.iconURL} alt="" loading="lazy" decoding="async" class={glyphClass(visual.shape)} />
 				{:else}
 					<visual.icon class={glyphClass(visual.shape)} style="color: var(--node-accent)" aria-hidden="true" />
 				{/if}
 			</span>
-			{#if visual.shape === 'hub'}
-				<span class="truncate text-xs font-semibold leading-tight">{node.name}</span>
-			{/if}
+		{#if visual.shape === 'hub'}
+			<span class="kf-node-name truncate text-xs font-semibold leading-tight">{node.name}</span>
+		{/if}
 		</div>
 
 		{#if invalid}
@@ -276,16 +299,23 @@
 
 		<!-- Name and the one parameter worth reading at a glance. The hub carries its
 		     name inside the tile, so it only needs the subtitle here. Compact band
-		     (w-32) matching the 68px tile pitch so long chains fit. -->
+		     (w-32) matching the 64px tile pitch so long chains fit. -->
 		<div class="pointer-events-none absolute left-1/2 top-full w-32 -translate-x-1/2 pt-1 text-center">
 			{#if visual.shape !== 'hub'}
-				<p class="truncate text-xs font-semibold leading-tight">{node.name}</p>
+				<p class="kf-node-name truncate text-xs font-semibold leading-tight">{node.name}</p>
 			{/if}
 			{#if capsuleType}
 				<p class="mx-auto mt-1 w-fit truncate rounded-full border border-destructive/30 bg-destructive/10 px-1 py-0 text-[0.625rem] font-medium leading-tight text-destructive" title={m.canvas_node_unsupported_note({ type: capsuleType })}>{m.canvas_node_unsupported()}</p>
 			{/if}
 			{#if subtitle}
 				<p class="truncate pt-0 font-mono text-[0.625rem] leading-tight text-muted-foreground">{subtitle}</p>
+			{/if}
+			{#if noteShown}
+				<!-- The Settings tab's note, shown on the canvas at its author's
+				     choice ("Display note in flow"): plain text lines, never
+				     markup, and pointer-transparent so it never catches the
+				     click that selects the node it belongs to. -->
+				<p class="kf-node-note mx-auto mt-1 max-w-44 whitespace-pre-wrap break-words text-left" data-node-note={node.id} title={note}>{note}</p>
 			{/if}
 		</div>
 
@@ -310,7 +340,11 @@
 				<!-- Above the wire, not centred on it: the edge leaves the handle at
 				     its own vertical centre, and a label sitting there reads as a
 				     strikethrough ("t̶r̶u̶e̶"). -->
+<<<<<<< Updated upstream
 				<span class="pointer-events-none absolute left-full ml-3 max-w-20 -translate-y-full truncate whitespace-nowrap font-mono text-[0.625rem] text-muted-foreground" style={`top: calc(${top} - 0.375rem)`}>
+=======
+				<span class="kf-edge-pill pointer-events-none absolute left-full ml-2.5 max-w-20 -translate-y-full truncate" style={`top: calc(${top} - 0.375rem)`}>
+>>>>>>> Stashed changes
 					{portLabel(port)}
 				</span>
 			{/if}
@@ -318,11 +352,12 @@
 				<!-- The shortest path to the next step: one click adds it already wired
 				     to this port, which is why the toolbar has no add button. On a
 				     labelled node it drops below the wire line, where the outgoing
-				     edge of a connected sibling used to run through it. -->
+				     edge of a connected sibling used to run through it. The hover
+				     colour is the acting colour, not the node's category. -->
 				<button
 					type="button"
 					data-add-step={node.id}
-					class="nodrag absolute grid size-6 place-items-center rounded-md border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-[var(--node-accent)] hover:text-[var(--node-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+					class="nodrag absolute grid size-6 place-items-center rounded-md border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-[var(--kf-selection)] hover:text-[var(--kf-selection)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 					style={`top: ${showOutputLabels ? `calc(${top} + 0.375rem)` : top}; left: calc(100% + ${showOutputLabels ? '3.25rem' : '1.5rem'}); ${showOutputLabels ? '' : 'transform: translateY(-50%);'}`}
 					aria-label={showOutputLabels ? m.canvas_node_add_after_port_aria({ name: node.name, port: portLabel(port) }) : m.canvas_node_add_after_aria({ name: node.name })}
 					onclick={() => actions?.addFrom(node.id, port.name)}
@@ -356,7 +391,11 @@
 				<button
 					type="button"
 					data-add-attachment={node.id}
+<<<<<<< Updated upstream
 					class="nodrag absolute -translate-x-1/2 grid size-6 place-items-center rounded-full border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-[var(--node-accent)] hover:text-[var(--node-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+=======
+					class="nodrag absolute -translate-x-1/2 grid size-5 place-items-center rounded-full border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-[var(--kf-selection)] hover:text-[var(--kf-selection)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+>>>>>>> Stashed changes
 					style={`left: ${left}; top: calc(100% + ${attachmentRows === null ? '1.25' : `${0.375 + attachmentRows * 1.25}`}rem)`}
 					aria-label={m.canvas_node_attachment_add_aria({ name: node.name, port: portLabel(port) })}
 					onclick={() => actions?.addAttached(node.id, port.name, port.kind)}
@@ -370,7 +409,7 @@
 			{#if attachmentRows !== null}
 				{@const row = index % attachmentRows}
 				<span
-					class="pointer-events-none absolute -translate-x-1/2 max-w-12 truncate font-mono text-[0.625rem] leading-tight text-muted-foreground"
+					class="kf-edge-pill pointer-events-none absolute -translate-x-1/2 max-w-12 truncate"
 					style={`left: ${left}; top: calc(100% + ${0.125 + row * 1.25}rem)`}
 					title={port.required && empty ? m.canvas_node_port_required_title({ port: portLabel(port) }) : portLabel(port)}
 				>

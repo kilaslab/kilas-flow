@@ -17,7 +17,6 @@
 		friendlyOriginalType,
 		glyphClass,
 		mainPorts,
-		nodeChromeShadow,
 		nodeIconBadgeClass,
 		nodeSubtitle,
 		nodeVisual,
@@ -83,16 +82,9 @@
 		cancelling: CircleDashed
 	};
 	const badge = $derived(BADGE[status] ?? Minus);
-
-	const shadow = $derived(
-		nodeChromeShadow({
-			selected: Boolean(selected),
-			invalid: status === 'failed',
-			runStatus: reached ? status : null
-		})
-	);
 </script>
 
+<<<<<<< Updated upstream
 <div class="relative" style={`--node-accent: ${accent}`} data-run-status={status} data-selected={selected ? 'true' : undefined}>
 	<div
 		class="kf-node-tile flex items-center justify-center gap-3 border bg-card {TILE[visual.shape]}"
@@ -105,6 +97,15 @@
 			class={nodeIconBadgeClass(visual.shape)}
 			style="border-color: color-mix(in oklch, var(--node-accent) 32%, transparent); background: color-mix(in oklch, var(--node-accent) {reached ? 16 : 8}%, transparent)"
 		>
+=======
+<div class="relative" style={`--node-accent: ${accent}`} data-run-status={status} data-selected={selected ? 'true' : undefined} data-disabled={node.disabled ? 'true' : undefined}>
+	<!-- The tile chrome (border, shadow, run state) is painted by the shared
+	     decorator stylesheet from the data-attributes above, exactly as the
+	     editor paints them; what stays here is what the replay alone knows —
+	     a node the run never reached is drawn quieter. -->
+	<div class="kf-node-tile flex items-center justify-center gap-2.5 border bg-card {TILE[visual.shape]}" class:opacity-60={!reached}>
+		<span class="kf-node-chip {nodeIconBadgeClass(visual.shape)}">
+>>>>>>> Stashed changes
 			<visual.icon
 				class={glyphClass(visual.shape)}
 				style={`color: ${reached ? 'var(--node-accent)' : 'var(--muted-foreground)'}`}
@@ -112,7 +113,7 @@
 			/>
 		</span>
 		{#if visual.shape === 'hub'}
-			<span class="truncate text-xs font-semibold leading-tight">{node.name}</span>
+			<span class="kf-node-name truncate text-xs font-semibold leading-tight">{node.name}</span>
 		{/if}
 	</div>
 
@@ -130,7 +131,7 @@
 
 	<div class="pointer-events-none absolute left-1/2 top-full w-32 -translate-x-1/2 pt-1 text-center">
 		{#if visual.shape !== 'hub'}
-			<p class="truncate text-xs font-semibold leading-tight" class:text-muted-foreground={!reached}>{node.name}</p>
+			<p class="kf-node-name truncate text-xs font-semibold leading-tight" class:text-muted-foreground={!reached}>{node.name}</p>
 		{/if}
 		{#if subtitle}
 			<p class="truncate pt-0 font-mono text-[0.625rem] leading-tight text-muted-foreground">{subtitle}</p>
@@ -151,7 +152,11 @@
 		{#if showOutputLabels}
 			<!-- Above the wire, as in the editor: centred on the handle the outgoing
 			     edge struck the label through. -->
+<<<<<<< Updated upstream
 			<span class="pointer-events-none absolute left-full ml-3 max-w-20 -translate-y-full truncate whitespace-nowrap font-mono text-[0.625rem] text-muted-foreground" style={`top: calc(${top} - 0.375rem)`}>{portLabel(port)}</span>
+=======
+			<span class="kf-edge-pill pointer-events-none absolute left-full ml-2.5 max-w-20 -translate-y-full truncate" style={`top: calc(${top} - 0.375rem)`}>{portLabel(port)}</span>
+>>>>>>> Stashed changes
 		{/if}
 	{/each}
 
@@ -160,7 +165,7 @@
 		<Handle type="target" id={port.name} position={Position.Bottom} isConnectable={false} style={`left: ${left}`} aria-label={m.executions_attachment_input_aria({ name: node.name, port: port.name })}>
 			<span class="kf-port kf-port-attachment"></span>
 		</Handle>
-		<span class="pointer-events-none absolute top-full -translate-x-1/2 pt-2 font-mono text-[0.625rem] text-muted-foreground" style={`left: ${left}`}>{port.name}</span>
+		<span class="kf-edge-pill pointer-events-none absolute top-full -translate-x-1/2 pt-2" style={`left: ${left}`}>{port.name}</span>
 	{/each}
 
 	{#each attachmentOutputs as port, index (port.name)}

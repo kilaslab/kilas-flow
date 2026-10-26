@@ -16,6 +16,7 @@ import {
 	toWorkflowInput,
 	toggleNodesDisabled,
 	toggleNodesPinned,
+	setNodeDisabled,
 	updateNodeProperty,
 	workflowDocumentEquals
 } from './document';
@@ -460,6 +461,30 @@ describe('toggleNodesDisabled', () => {
 		expect(next.nodes?.[1]).toBe(start.nodes?.[1]);
 		expect(toggleNodesDisabled(start, [])).toBe(start);
 		expect(toggleNodesDisabled(start, ['missing'])).toBe(start);
+	});
+});
+
+// FEAT-ez6xtm: the Settings tab's disable switch, with D's write discipline —
+// enabling drops the flag rather than writing false, so a node switched off
+// and on again saves exactly as it was.
+describe('setNodeDisabled', () => {
+	const node = (id: string, disabled?: boolean) => ({ id, name: id, type: 'kilasflow.set', typeVersion: 1, position: { x: 0, y: 0 }, ...(disabled === undefined ? {} : { disabled }) });
+	const doc = (...nodes: ReturnType<typeof node>[]): Document => ({ schemaVersion: 1, name: 'w', nodes, connections: [], settings: {} }) as unknown as Document;
+
+	it('sets and clears the flag by name, dropping it rather than writing false', () => {
+		const start = doc(node('a'), node('b'));
+		const off = setNodeDisabled(start, 'a', true);
+		expect(off.nodes?.map((n) => n.disabled)).toEqual([true, undefined]);
+		const on = setNodeDisabled(off, 'a', false);
+		expect(on.nodes?.map((n) => 'disabled' in n)).toEqual([false, false]);
+		// Toggled twice, the document is the JSON it was.
+		expect(JSON.stringify(on)).toBe(JSON.stringify(start));
+	});
+
+	it('leaves the other nodes as the same objects, and a missing one alone', () => {
+		const start = doc(node('a'), node('b'));
+		expect(setNodeDisabled(start, 'a', true).nodes?.[1]).toBe(start.nodes?.[1]);
+		expect(setNodeDisabled(start, 'missing', true)).toBe(start);
 	});
 });
 

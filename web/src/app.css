@@ -213,6 +213,29 @@
 	--kf-node-size: 64px;
 	--kf-node-sub-size: 44px;
 
+	/* Sticky notes: the seven n8n palette hues, as indices the token formula
+	   paints from (fill oklch(var(--kf-sticky-l) var(--kf-sticky-c) H), border
+	   oklch(var(--kf-sticky-border-l) var(--kf-sticky-border-c) H)). The index
+	   is the importer's data contract; the hue is the choice its author made.
+	   Amber, orange, red, green, blue, violet, slate — n8n's own order. */
+	--kf-sticky-1-h: 86;
+	--kf-sticky-2-h: 48;
+	--kf-sticky-3-h: 25;
+	--kf-sticky-4-h: 150;
+	--kf-sticky-5-h: 260;
+	--kf-sticky-6-h: 304;
+	--kf-sticky-7-h: 257;
+	/* What the inspector's swatch control shows: the light-theme fill each
+	   index becomes, so a swatch looks like the note it will paint (the n8n
+	   mental model the palette carries). */
+	--kf-sticky-1-swatch: #fef3c7;
+	--kf-sticky-2-swatch: #ffedd5;
+	--kf-sticky-3-swatch: #fee2e2;
+	--kf-sticky-4-swatch: #dcfce7;
+	--kf-sticky-5-swatch: #dbeafe;
+	--kf-sticky-6-swatch: #f3e8ff;
+	--kf-sticky-7-swatch: #f1f5f9;
+
 	/* motion (the reduced-motion block below is FEAT-zhdxc4's) */
 	--kf-dur-instant: 80ms; /* press feedback */
 	--kf-dur-fast: 120ms; /* hover, colour */
@@ -303,30 +326,15 @@
 	--kf-edge-attachment: oklch(0.5 0.01 var(--kf-neutral-h));
 	--kf-node-shadow: 0 1px 2px oklch(0 0 0 / 0.5), 0 0 0 1px oklch(0 0 0 / 0.25);
 
-	/* stickies: the formula BUG-rbask0's successor will use, fill
-	   oklch(l c h), border oklch(border-l border-c h), text --kf-fg. The
-	   seven --kf-sticky-N-* below are what sticky.ts consumes today. */
+	/* stickies: the formula FEAT-xj5tv6 paints from. Fill is
+	   oklch(var(--kf-sticky-l) var(--kf-sticky-c) <hue>), border
+	   oklch(var(--kf-sticky-border-l) var(--kf-sticky-border-c) <hue>), text
+	   --kf-fg. The per-index hues live on :root (--kf-sticky-N-h); the fills
+	   and borders are derived on the boundary list below. */
 	--kf-sticky-l: 0.27;
 	--kf-sticky-c: 0.04;
 	--kf-sticky-border-l: 0.45;
 	--kf-sticky-border-c: 0.08;
-	/* Sticky notes, dark: the same seven choices n8n offers, tinted dark so
-	   the near-white node labels that sit on a note keep their contrast. The
-	   pastel light fills under white labels read at ~1.2:1 — unreadable. */
-	--kf-sticky-1-fill: #3b2c10;
-	--kf-sticky-1-border: #b45309;
-	--kf-sticky-2-fill: #3c2410;
-	--kf-sticky-2-border: #c2410c;
-	--kf-sticky-3-fill: #411418;
-	--kf-sticky-3-border: #dc2626;
-	--kf-sticky-4-fill: #123320;
-	--kf-sticky-4-border: #15803d;
-	--kf-sticky-5-fill: #16283f;
-	--kf-sticky-5-border: #2563eb;
-	--kf-sticky-6-fill: #2c1a42;
-	--kf-sticky-6-border: #9333ea;
-	--kf-sticky-7-fill: #26303f;
-	--kf-sticky-7-border: #64748b;
 
 	/* data-viz, categorical (status charts use the status tokens) */
 	--kf-viz-1: oklch(0.82 0.14 95);
@@ -429,22 +437,6 @@
 	--kf-sticky-c: 0.03;
 	--kf-sticky-border-l: 0.8;
 	--kf-sticky-border-c: 0.1;
-	/* Sticky notes, light: n8n's pastels, with the dark note text the pastels
-	   were designed for. */
-	--kf-sticky-1-fill: #fef3c7;
-	--kf-sticky-1-border: #eab308;
-	--kf-sticky-2-fill: #ffedd5;
-	--kf-sticky-2-border: #f97316;
-	--kf-sticky-3-fill: #fee2e2;
-	--kf-sticky-3-border: #ef4444;
-	--kf-sticky-4-fill: #dcfce7;
-	--kf-sticky-4-border: #22c55e;
-	--kf-sticky-5-fill: #dbeafe;
-	--kf-sticky-5-border: #3b82f6;
-	--kf-sticky-6-fill: #f3e8ff;
-	--kf-sticky-6-border: #a855f7;
-	--kf-sticky-7-fill: #f1f5f9;
-	--kf-sticky-7-border: #64748b;
 
 	--kf-viz-1: oklch(0.66 0.13 88);
 	--kf-viz-2: oklch(0.52 0.12 245);
@@ -530,6 +522,24 @@
 
 	--kf-cat-chip: 16%; /* chip bg = color-mix(in oklch, var(--kf-cat-*) var(--kf-cat-chip), transparent) */
 	--kf-sticky-text: var(--kf-fg);
+
+	/* Sticky fills and borders, derived per theme from the hue indices so the
+	   one formula owns every note: dark tints the hue down (near-white labels
+	   keep their contrast on it), light keeps the pastel. */
+	--kf-sticky-1-fill: oklch(var(--kf-sticky-l) var(--kf-sticky-c) var(--kf-sticky-1-h));
+	--kf-sticky-1-border: oklch(var(--kf-sticky-border-l) var(--kf-sticky-border-c) var(--kf-sticky-1-h));
+	--kf-sticky-2-fill: oklch(var(--kf-sticky-l) var(--kf-sticky-c) var(--kf-sticky-2-h));
+	--kf-sticky-2-border: oklch(var(--kf-sticky-border-l) var(--kf-sticky-border-c) var(--kf-sticky-2-h));
+	--kf-sticky-3-fill: oklch(var(--kf-sticky-l) var(--kf-sticky-c) var(--kf-sticky-3-h));
+	--kf-sticky-3-border: oklch(var(--kf-sticky-border-l) var(--kf-sticky-border-c) var(--kf-sticky-3-h));
+	--kf-sticky-4-fill: oklch(var(--kf-sticky-l) var(--kf-sticky-c) var(--kf-sticky-4-h));
+	--kf-sticky-4-border: oklch(var(--kf-sticky-border-l) var(--kf-sticky-border-c) var(--kf-sticky-4-h));
+	--kf-sticky-5-fill: oklch(var(--kf-sticky-l) var(--kf-sticky-c) var(--kf-sticky-5-h));
+	--kf-sticky-5-border: oklch(var(--kf-sticky-border-l) var(--kf-sticky-border-c) var(--kf-sticky-5-h));
+	--kf-sticky-6-fill: oklch(var(--kf-sticky-l) var(--kf-sticky-c) var(--kf-sticky-6-h));
+	--kf-sticky-6-border: oklch(var(--kf-sticky-border-l) var(--kf-sticky-border-c) var(--kf-sticky-6-h));
+	--kf-sticky-7-fill: oklch(var(--kf-sticky-l) var(--kf-sticky-c) var(--kf-sticky-7-h));
+	--kf-sticky-7-border: oklch(var(--kf-sticky-border-l) var(--kf-sticky-border-c) var(--kf-sticky-7-h));
 
 	/* shadcn / Tailwind compatibility: existing utilities keep working */
 	--background: var(--kf-bg);
@@ -667,6 +677,88 @@
 	background-color: var(--kf-pressed);
 }
 
+/* Canvas node chrome (FEAT-xj5tv6): one decorator stylesheet, shared by the
+   editor tile and the replay tile, painted from data-attributes the
+   components stamp onto the wrapper — data-selected, data-invalid,
+   data-run-status. Tile chrome (border, shadow) uses no per-node colour:
+   category and brand colour live on the glyph and its chip alone, state
+   speaks in the state hues, and selection is the one --kf-selection ring and
+   halo on every node, whatever its category.
+
+   Same specificity, so the order is the precedence: a fault outranks a live
+   run, which outranks a settled one, which outranks selection, which outranks
+   the idle chrome. */
+.kf-node-tile {
+	border-color: var(--kf-border-strong);
+	box-shadow: var(--kf-node-shadow);
+}
+
+/* A replayed node the run never reached: quieter than an idle editor tile,
+   because on the replay canvas an untouched node is the ground state. */
+[data-run-status='skipped'] .kf-node-tile {
+	border-color: var(--kf-border);
+}
+
+[data-selected='true'] .kf-node-tile {
+	border-color: var(--kf-selection);
+	box-shadow: 0 0 0 2px var(--kf-selection-halo), var(--kf-shadow-1);
+}
+
+[data-run-status='succeeded'] .kf-node-tile {
+	border-color: var(--kf-run-success);
+}
+
+[data-run-status='running'] .kf-node-tile {
+	border-color: var(--kf-run-running);
+	box-shadow: 0 0 0 2px color-mix(in oklch, var(--kf-run-running) 45%, transparent), 0 2px 10px oklch(0 0 0 / 42%);
+}
+
+[data-run-status='cancelling'] .kf-node-tile,
+[data-run-status='cancelled'] .kf-node-tile {
+	border-color: var(--kf-run-warning);
+	box-shadow: 0 0 0 2px color-mix(in oklch, var(--kf-run-warning) 45%, transparent), 0 2px 10px oklch(0 0 0 / 42%);
+}
+
+[data-invalid='true'] .kf-node-tile,
+[data-run-status='failed'] .kf-node-tile {
+	border-color: var(--kf-run-error);
+	box-shadow: 0 0 0 2px color-mix(in oklch, var(--kf-run-error) 42%, transparent), 0 2px 8px oklch(0 0 0 / 40%);
+}
+
+/* The glyph chip: the one place a category colour meets a surface — a tint of
+   --node-accent (the category token, or a brand colour through the
+   harmoniser) on the tile, at the chip strength every category shares. */
+.kf-node-chip {
+	border-color: color-mix(in oklch, var(--node-accent) 32%, transparent);
+	background: color-mix(in oklch, var(--node-accent) var(--kf-cat-chip), transparent);
+}
+
+/* A disabled node is skipped by the runner (FEAT-ez6xtm): the tile is dimmed
+   by the component (opacity + grayscale) and its name is struck through, so
+   the state survives colour-blindness, zoom-out and greyscale printing. */
+[data-disabled='true'] .kf-node-name {
+	text-decoration: line-through;
+	text-decoration-thickness: 1px;
+	text-decoration-color: var(--kf-fg-muted);
+}
+
+/* A note shown on the canvas under its node ("Display note in flow"): a small
+   raised card that stays out of the pointer's way and never outshouts the
+   name band above it. */
+.kf-node-note {
+	font-size: var(--kf-text-2xs);
+	line-height: 1.4;
+	color: var(--kf-fg-muted);
+	background: var(--kf-raised);
+	border: 1px solid var(--kf-border-subtle);
+	border-radius: var(--kf-radius-xs);
+	padding: 0.25rem 0.375rem;
+	box-shadow: var(--kf-shadow-1);
+	max-height: 8rem;
+	overflow: hidden;
+	overflow-wrap: anywhere;
+}
+
 /* The canvas draws its own ports: the library's 6px dot is stripped back to an
    empty 8px box and refilled per connection kind — a circle for `main`, a
    diamond for the `ai_*` attachment kinds. Shape carries the kind, so a wrong
@@ -674,7 +766,12 @@
 
    Only the paint is overridden. Position and the translate that centres a
    handle on its edge stay with the library, because those are load-bearing for
-   where edges terminate. */
+   where edges terminate.
+
+   Ports are neutral chrome (FEAT-xj5tv6): the border is the strong border
+   token, the fill the raised surface, and only the pointer (or a connection
+   being dragged) lights a port — in the same turmeric every acting
+   affordance speaks, never in a per-node category colour. */
 .svelte-flow__handle {
 	/* 10px drawn disc — still small, but readable when the canvas is zoomed out. */
 	width: 0.625rem;
@@ -697,12 +794,10 @@
 	display: block;
 	width: 100%;
 	height: 100%;
-	border: 2px solid var(--node-accent, var(--primary));
-	background: var(--card);
+	border: 2px solid var(--kf-port);
+	background: var(--kf-port-fill);
 	border-radius: 9999px;
-	box-shadow:
-		0 0 0 1px oklch(0 0 0 / 35%),
-		0 1px 2px oklch(0 0 0 / 45%);
+	box-shadow: var(--kf-shadow-1);
 	transition:
 		background-color 120ms ease,
 		border-color 120ms ease,
@@ -718,16 +813,11 @@
 .svelte-flow__handle.connectingfrom .kf-port,
 .svelte-flow__handle.connectingto .kf-port,
 .svelte-flow__handle:hover .kf-port {
-	background: var(--node-accent, var(--primary));
+	background: var(--kf-port-hover);
 	scale: 1.35;
 	box-shadow:
-		0 0 0 2px color-mix(in oklch, var(--node-accent, var(--primary)) 35%, transparent),
+		0 0 0 2px color-mix(in oklch, var(--kf-port-hover) 35%, transparent),
 		0 1px 3px oklch(0 0 0 / 50%);
-}
-
-/* Selected / invalid tiles get a slightly stronger card lift beyond inline shadow. */
-.svelte-flow__node.selected .kf-node-tile {
-	filter: brightness(1.04);
 }
 
 /* An attachment edge is drawn as a dashed line because it carries configuration
@@ -755,14 +845,30 @@
 	height: 0.625rem;
 }
 
-/* v1.6 renders an edge label as an HTML element, not SVG text. */
+/* Edge labels (FEAT-xj5tv6): sans 11 px on a --kf-raised pill, offset from the
+   line they name — a label sitting on the wire reads as a strikethrough, and
+   mono 10 px read as chrome rather than as words. Where a label sits relative
+   to its wire is BUG-15st2k's; what it looks like is here. The pill itself is
+   a class (.kf-edge-pill) the branch and port labels wear; the library's own
+   edge-label element (which also hosts the hover toolbar's buttons) keeps the
+   typography only, so the toolbar's own surface is not boxed twice. */
 .svelte-flow__edge-label {
-	font-family: var(--font-mono);
-	font-size: 0.625rem;
-	color: var(--muted-foreground);
-	background: var(--card);
-	padding: 0 0.25rem;
-	border-radius: 0.25rem;
+	font-family: var(--kf-font-sans);
+	font-size: var(--kf-text-2xs);
+	font-weight: var(--kf-weight-medium);
+	line-height: 1.2;
+	color: var(--kf-fg-muted);
+}
+
+.kf-edge-pill {
+	background: var(--kf-raised);
+	border: 1px solid var(--kf-border-subtle);
+	border-radius: var(--kf-radius-full);
+	padding: 0 0.375rem;
+	/* Branch and port labels sit beside the wire, not on it, and must never
+	   catch the pointer: the edge beneath is the target. */
+	pointer-events: none;
+	white-space: nowrap;
 }
 
 @media (prefers-reduced-motion: reduce) {

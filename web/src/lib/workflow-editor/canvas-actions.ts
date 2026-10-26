@@ -31,6 +31,8 @@ export type CanvasActions = {
 	rename: (nodeID: string) => void;
 	/** Selects the node and opens its inspector (a double click, as in n8n). */
 	open: (nodeID: string) => void;
+	/** n8n's D on one node: disables it, or enables it again. */
+	toggleDisabled: (nodeID: string) => void;
 	/** Writes back the size a sticky note was dragged to. */
 	resize: (nodeID: string, width: number, height: number) => void;
 };

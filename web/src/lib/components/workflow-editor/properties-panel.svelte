@@ -33,6 +33,7 @@
 		upstreamNodeNames = [],
 		onChange,
 		onRename,
+		onDisabledChange,
 		onCredentialChange
 	}: {
 		node: Node;
@@ -52,6 +53,8 @@
 		onChange: (scope: PropertyScope, key: string, value: unknown) => void;
 		/** Renames the node and rewrites the expressions that address it. */
 		onRename?: (name: string) => void;
+		/** Sets the node's disabled flag (the Settings tab's switch, n8n's D). */
+		onDisabledChange?: (disabled: boolean) => void;
 		onCredentialChange?: (typeID: string, credentialID: string) => void;
 	} = $props();
 
@@ -167,6 +170,10 @@
 	}
 	const properties = $derived(activeTab === 'parameters' ? definition.parameters ?? [] : definition.sharedSettings ?? []);
 	const values = $derived((activeTab === 'parameters' ? node.parameters : node.settings) ?? {});
+	// A note lives in settings.notes (the n8n importer's contract, BUG-6gkd12),
+	// so it round-trips an import/export unchanged. Written through the same
+	// onChange as every other settings field.
+	const notes = $derived(typeof node.settings?.notes === 'string' ? node.settings.notes : '');
 	/**
 	 * What a loader's answer depends on outside the node's parameters.
 	 *
@@ -314,7 +321,51 @@
 					<p class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_credential_reference_note()}</p>
 				</div>
 			{/if}
-			{#if visibleProperties.length === 0}
+			{#if activeTab === 'settings' && !isAnnotation(definition)}
+			<!-- Node state, the part of Settings the node owns rather than the
+			     type (FEAT-ez6xtm): the disable switch the D key and the
+			     toolbar carry, and the note that can be shown on the canvas. -->
+			<div class="grid gap-2 rounded-lg border border-border bg-background/40 p-2">
+				<p class="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">{m.properties_node_state()}</p>
+				{#if onDisabledChange}
+					<label class="flex items-start justify-between gap-2" for={`node-disabled-${node.id}`}>
+						<span class="grid gap-0.5 text-xs">
+							<span class="font-medium leading-4">{m.properties_disabled()}</span>
+							<span class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_node_disabled_hint()}</span>
+						</span>
+						<input
+							id={`node-disabled-${node.id}`}
+							type="checkbox"
+							class="mt-0.5 size-3.5 shrink-0 accent-(--kf-accent-src)"
+							checked={Boolean(node.disabled)}
+							onchange={(event) => onDisabledChange?.(event.currentTarget.checked)}
+						/>
+					</label>
+				{/if}
+				<label class="grid gap-1" for={`node-notes-${node.id}`}>
+					<span class="text-xs font-medium leading-4">{m.properties_node_notes()}</span>
+					<textarea
+						id={`node-notes-${node.id}`}
+						class="min-h-16 w-full resize-y rounded-md border border-input bg-background px-1.5 py-1 text-xs leading-5 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+						placeholder={m.properties_node_notes_hint()}
+						value={notes}
+						onchange={(event) => onChange('settings', 'notes', event.currentTarget.value)}
+					></textarea>
+				</label>
+				<label class="flex items-center gap-1.5 text-xs" for={`node-notes-in-flow-${node.id}`}>
+					<input
+						id={`node-notes-in-flow-${node.id}`}
+						type="checkbox"
+						class="size-3.5 accent-(--kf-accent-src)"
+						checked={Boolean(node.settings?.notesInFlow)}
+						disabled={notes.trim() === ''}
+						onchange={(event) => onChange('settings', 'notesInFlow', event.currentTarget.checked)}
+					/>
+					{m.properties_node_notes_display()}
+				</label>
+			</div>
+		{/if}
+		{#if visibleProperties.length === 0 && !(activeTab === 'settings' && !isAnnotation(definition))}
 				<p class="text-xs leading-5 text-muted-foreground">{activeTab === 'parameters' ? m.properties_no_parameters_to_configure() : m.properties_no_settings_to_configure()}</p>
 			{:else}
 				{#each visibleProperties as property (property.key)}
