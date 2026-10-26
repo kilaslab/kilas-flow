@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/kilaslab/kilas-flow/internal/credentials"
+	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/shippedcatalogue"
 	"github.com/kilaslab/kilas-flow/scripts/internal/splice"
 )
 
@@ -335,5 +338,44 @@ func TestTheCommittedPagesHoldTheGeneratedFacts(t *testing.T) {
 	}
 	if err := apply(root, list, true, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The generated node-catalogue and credential-types pages (scripts/
+// generate-node-catalogue.mjs, booted-binary output) open with the counts the
+// catalogue actually holds. The generator's own --check gates the full listing
+// byte for byte, but it needs go and node together; this test re-derives the
+// counts from the Go packages that own them, so a node added or a credential
+// type removed fails `go test ./scripts/docs-facts/` even before anyone
+// regenerates — the same arrangement the sentence facts above have.
+func TestTheGeneratedCataloguePagesHoldTheLiveCounts(t *testing.T) {
+	root, err := splice.RepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := node.NewRegistry()
+	if err := shippedcatalogue.Register(registry); err != nil {
+		t.Fatalf("assemble the shipped catalogue: %v", err)
+	}
+	counts := shippedcatalogue.Count(registry)
+	total := counts.Total()
+
+	catalogue, err := os.ReadFile(filepath.Join(root, "docs", "src", "content", "docs", "reference", "node-catalogue.md"))
+	if err != nil {
+		t.Fatalf("read the node catalogue page: %v", err)
+	}
+	want := fmt.Sprintf("**%d distinct node types** across **%d type-and-version pairs**: %d types (%d pairs) compiled into the binary and %d types (%d pairs) from the declarative packs it ships with.",
+		total.Types, total.Pairs, counts.Compiled.Types, counts.Compiled.Pairs, counts.Packs.Types, counts.Packs.Pairs)
+	if !strings.Contains(string(catalogue), want) {
+		t.Errorf("the node catalogue page's counts are stale: want the sentence to contain %q", want)
+	}
+
+	credentialTypes, err := os.ReadFile(filepath.Join(root, "docs", "src", "content", "docs", "reference", "credential-types.md"))
+	if err != nil {
+		t.Fatalf("read the credential types page: %v", err)
+	}
+	wantTypes := fmt.Sprintf("**%d credential types ship**", len(credentials.Default().List()))
+	if !strings.Contains(string(credentialTypes), wantTypes) {
+		t.Errorf("the credential types page's count is stale: want it to contain %q", wantTypes)
 	}
 }

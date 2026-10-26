@@ -353,7 +353,9 @@ its tenant list so an operator can eyeball it.
 
 ## API operations
 
-`GET /api/v1/node-types` serves the catalogue.
+`GET /api/v1/node-types` serves the catalogue — and the docs hold a
+generated [node catalogue](/reference/node-catalogue/) rendered from exactly
+that response, one section per type with parameters, ports and credentials.
 `GET /api/v1/node-types/{type}/icon` serves a node's artwork.
 `POST /api/v1/node-types/{type}/load-options` resolves the selectable values for
 a property whose valid values live on the customer's own service — the loader is

@@ -9,11 +9,14 @@ to write, no SDK to import, and nothing to compile. The whole flow is three
 steps — **scaffold**, **validate**, **pack** — and every sample on this page is
 a real file that `nodepackgen validate` accepts.
 
-`nodepackgen` is a second binary, not a subcommand of `kilasflow`: the server
-binary takes flags only, so `kilasflow pack validate …` refuses the argument
-rather than doing anything. Build the tool from the repository with
-`go build ./cmd/nodepackgen`, or run it out of the container image, which ships
-it at `/app/nodepackgen`.
+Two binaries share this work, and each has its own job. `nodepackgen` is the
+authoring tool — scaffold, validate, pack, and generate from an OpenAPI
+document; build it from the repository with `go build ./cmd/nodepackgen`, or
+run it out of the container image, which ships it at `/app/nodepackgen`. The
+server binary's `kilasflow pack validate` verb validates a pack exactly the
+way the loader will read it — directory (sidecar first) or manifest file —
+which is the check to run on the server's own host before a restart; see the
+[CLI reference](/reference/cli/#kilasflow-pack-validate).
 
 The reference to imitate is `packs/telegram/pack.json`: a hand-written
 declarative pack with resources, operations, a credential type and the
@@ -49,11 +52,20 @@ else is refused with a diagnostic naming the operation.
 ## Step 1: scaffold
 
 `nodepackgen scaffold` writes a minimal working pack directory: one resource,
-one operation, one credential reference, shaped after the Telegram pack. It
-loads and executes without further editing.
+one operation, one credential reference, shaped after the Telegram pack. Left
+at its defaults it names a credential type called `exampleApi`, which is not
+in the catalogue and never can be — a pack cannot add a credential type — so
+pass the two flags that make it real: the credential type your API
+authenticates with and its base URL. [Build nodes for your
+API](/guides/build-nodes-for-your-api/) covers choosing the type; the
+generic ones (`httpHeaderAuth`, `httpBearerAuth`, `httpBasicAuth`,
+`httpQueryAuth`, `httpCustomAuth`) cover most APIs.
 
 ```sh
-$ nodepackgen scaffold -dir ./packs/acme
+$ nodepackgen scaffold -dir ./packs/acme \
+    -type pack.acme -display-name Acme \
+    -credential-type httpHeaderAuth \
+    -base-url https://api.acme.example
 nodepackgen: scaffolded ./packs/acme/pack.json
 $ ls ./packs/acme
 pack.json  pack.sha256
@@ -66,16 +78,16 @@ full:
 
 ```json
 {
-  "type": "pack.example",
+  "type": "pack.acme",
   "version": 1,
-  "displayName": "Example",
+  "displayName": "Acme",
   "description": "An example hand-written pack. Rename the resource and operation to match the API it calls.",
   "category": "Messaging",
   "icon": "builtin:send",
   "subtitle": "{{ $parameter.operation }}: {{ $parameter.resource }}",
-  "credentialType": "exampleApi",
+  "credentialType": "httpHeaderAuth",
   "requestDefaults": {
-    "baseURL": "{{ $credentials.baseUrl }}"
+    "baseURL": "https://api.acme.example"
   },
   "parameters": [
     {
@@ -150,16 +162,16 @@ priority picker. The manifest, in full:
 
 ```json
 {
-  "type": "pack.example",
+  "type": "pack.acme",
   "version": 1,
-  "displayName": "Example",
+  "displayName": "Acme",
   "description": "An example hand-written pack. Rename the resource and operation to match the API it calls.",
   "category": "Messaging",
   "icon": "builtin:send",
   "subtitle": "{{ $parameter.operation }}: {{ $parameter.resource }}",
-  "credentialType": "exampleApi",
+  "credentialType": "httpHeaderAuth",
   "requestDefaults": {
-    "baseURL": "{{ $credentials.baseUrl }}"
+    "baseURL": "https://api.acme.example"
   },
   "parameters": [
     {
@@ -241,10 +253,13 @@ nodepackgen: packs are valid
 
 ## Step 4: credentials
 
-Rename the pack to its own type, point it at its own credential type, and
-template the shared request over non-secret credential fields. The manifest,
-in full (only `type`, `displayName`, `credentialType` and `requestDefaults`
-change from the previous stage):
+Credentials are where a pack meets a decision it cannot make alone: **which
+existing credential type does your API authenticate with?** A pack cannot add
+a credential type — the catalogue is declared in Go
+(`internal/credentials/builtin.go`) and nothing in startup lets a pack
+contribute one — so the pack names a type that already exists. For most APIs
+that is one of the generic HTTP types, and `httpHeaderAuth` (a fixed header
+whose name is a field) is the one to reach for first:
 
 ```json
 {
@@ -255,11 +270,11 @@ change from the previous stage):
   "category": "Messaging",
   "icon": "builtin:send",
   "subtitle": "{{ $parameter.operation }}: {{ $parameter.resource }}",
-  "credentialType": "acmeApi",
+  "credentialType": "httpHeaderAuth",
   "requestDefaults": {
-    "baseURL": "{{ $credentials.baseUrl }}",
+    "baseURL": "https://api.acme.example",
     "headers": {
-      "X-Client": "{{ $credentials.clientId }}"
+      "X-Client": "kilasflow-pack"
     }
   },
   "parameters": [
@@ -329,12 +344,19 @@ change from the previous stage):
 ```
 
 Two credential rules matter here. First, `$credentials` in a routing template
-resolves to **non-secret fields only**. `baseUrl` and `clientId` are fine in a
-template; an API token is not. The correct way to place a secret is through
-the credential type's declarative authentication, which attaches it to the
-outbound request without ever passing through a template. Second, a pack names
-a credential type and the operator binds a real credential of that type after
-installation — the pack never sees credential values.
+resolves to **non-secret fields only**, and the generic HTTP types carry none
+— so the base URL is a literal in `requestDefaults`, exactly as above. A type
+whose address is part of the credential changes that: `wahaApi`'s `baseUrl`
+is deliberately not secret, which is why the WAHA pack templates
+`{{ $credentials.baseUrl }}` and works. Second, the secret itself never
+passes through a template: `httpHeaderAuth`'s declarative authentication
+attaches the header to every outbound request, which is the whole reason the
+pack does not mention it. The operator binds a real credential of the type
+after installation — the pack never sees credential values.
+
+The full decision — which generic type, where a base URL may live, what a new
+named type costs (a Go change, not a pack) — is
+[Credentials for your API](/guides/build-nodes-for-your-api/#credentials-for-your-api).
 
 ## Loading options from the customer's service
 
@@ -354,7 +376,7 @@ every other outbound call is:
     "source": "http",
     "method": "GET",
     "endpoint": "/api/channels",
-    "credentialType": "acmeApi",
+    "credentialType": "httpHeaderAuth",
     "itemsPath": "data",
     "labelTemplate": "{{ name }} ({{ provider }})",
     "valueField": "id",
@@ -387,7 +409,7 @@ every other outbound call is:
   "modes": [
     {"name": "id", "label": "By ID", "kind": "string", "pattern": "^a_[0-9]+$", "patternHint": "an agent id, a_<digits>"},
     {"name": "list", "label": "From list", "kind": "options", "placeholder": "Search agents…",
-     "loadOptions": {"source": "http", "method": "GET", "endpoint": "/api/agents", "credentialType": "acmeApi", "itemsPath": "data", "valueField": "id", "labelTemplate": "{{ name }}"}}
+     "loadOptions": {"source": "http", "method": "GET", "endpoint": "/api/agents", "credentialType": "httpHeaderAuth", "itemsPath": "data", "valueField": "id", "labelTemplate": "{{ name }}"}}
   ]
 }
 ```
@@ -414,7 +436,7 @@ registration ride along in the `trigger` block:
   "category": "Triggers",
   "icon": "builtin:zap",
   "subtitle": "{{ $parameter.event }}",
-  "credentialType": "acmeApi",
+  "credentialType": "httpHeaderAuth",
   "requestDefaults": {},
   "trigger": {
     "events": ["message.created", "message.updated"],
@@ -435,7 +457,7 @@ registration ride along in the `trigger` block:
         "url": "{{ .baseUrl }}/api/webhooks",
         "headers": {"Content-Type": "application/json"},
         "body": "{\"url\":\"{{ .PublicURL }}\"}",
-        "credentialType": "acmeApi"
+        "credentialType": "httpHeaderAuth"
       }
     },
     "notice": "Acme is not configured to deliver here yet. Add {{ url }} to the Acme dashboard, or turn on auto-register and activate again."
@@ -508,7 +530,12 @@ key; and any two of `secretParameter`, `secretCapture` and `secretCredential`
 together. Both trigger examples in this guide
 pass it with no issues, as does the shipped WAHA trigger pack. What it cannot
 check is the run-time side: that the credential named by `credentialType` is
-bound on the node, or that the remote service accepts the request.
+bound on the node, or that the remote service accepts the request. And one
+run-time behaviour it cannot see: a `deliveryIdHeader` parameter only dedupes
+when the workflow document sets it on the node — a pack's parameter default
+fills the editor form, not the stored binding. The sender's half of the
+contract — what to sign, what to send, what a replay is answered with — is
+[App events as triggers](/guides/app-events/).
 
 ### Keeping what the service answers
 
@@ -529,7 +556,7 @@ send a multi-select of events:
   "description": "Subscribes to Acme events and verifies the secret Acme generates.",
   "category": "Triggers",
   "icon": "builtin:zap",
-  "credentialType": "acmeApi",
+  "credentialType": "httpHeaderAuth",
   "requestDefaults": {},
   "trigger": {
     "events": ["message.created", "message.updated"],
@@ -548,20 +575,20 @@ send a multi-select of events:
       "check": {
         "method": "GET",
         "url": "{{ .baseUrl }}/api/subscriptions/{{ .Captured.id }}",
-        "credentialType": "acmeApi"
+        "credentialType": "httpHeaderAuth"
       },
       "set": {
         "method": "POST",
         "url": "{{ .baseUrl }}/api/subscriptions",
         "headers": {"Content-Type": "application/json"},
         "body": "{\"url\":\"{{ .PublicURL }}\",\"events\":{{ .ParameterJSON.subscribedEvents }}}",
-        "credentialType": "acmeApi",
+        "credentialType": "httpHeaderAuth",
         "capture": {"id": "data.id", "secret": "data.secret"}
       },
       "remove": {
         "method": "DELETE",
         "url": "{{ .baseUrl }}/api/subscriptions/{{ .Captured.id }}",
-        "credentialType": "acmeApi"
+        "credentialType": "httpHeaderAuth"
       }
     }
   },
@@ -695,7 +722,7 @@ a credential — or should — read it from there instead:
 "hmac": {
   "header": "X-Acme-Signature",
   "algorithm": "sha256",
-  "secretCredential": {"type": "acmeApi", "field": "signingSecret"}
+  "secretCredential": {"type": "httpHeaderAuth", "field": "value"}
 }
 ```
 
@@ -743,7 +770,7 @@ A service that follows [standardwebhooks.com](https://standardwebhooks.com)
 is one word instead of six:
 
 ```json
-"hmac": {"preset": "standardWebhooks", "secretCredential": {"type": "acmeApi", "field": "signingSecret"}}
+"hmac": {"preset": "standardWebhooks", "secretCredential": {"type": "httpHeaderAuth", "field": "value"}}
 ```
 
 The preset is the whole scheme — `webhook-signature`, sha256, base64, the
@@ -795,6 +822,13 @@ that namespace is reserved for built-in nodes. The registry also resolves
 versions downward: registering `202409` and `202502` and requesting `202410`
 gets `202409`, which is what lets an imported workflow keep its original
 version.
+
+Upgrading follows the same steps — new `pack.json`, new `pack.sha256`,
+restart — and the version rule is what makes it safe: a workflow written
+against version 1 stays on version 1 after you register version 2, so ship a
+new version alongside rather than instead. The full sequence, including what
+each step asks of the operator, is
+[Publishing and installation](/guides/build-nodes-for-your-api/#publishing-and-installation).
 
 To ship a pack to one customer rather than every tenant, scope its node type by
 declaring `visibleTo` in the manifest or by giving the operator a
