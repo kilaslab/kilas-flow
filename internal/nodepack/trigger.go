@@ -658,12 +658,16 @@ func RegisterTrigger(
 	// pack's definition requires — so a type the pack does not declare is a
 	// secret no delivery can ever resolve, and a pack that looks verified and
 	// never is.
-	if credential := trigger.HMAC.SecretCredential; credential != nil {
-		if pack.CredentialType == "" {
-			return fmt.Errorf("node pack %q: hmac.secretCredential reads a credential field, but the pack declares no credentialType", pack.Type)
-		}
-		if credential.Type != pack.CredentialType {
-			return fmt.Errorf("node pack %q: hmac.secretCredential names type %q, but the pack's credentialType is %q", pack.Type, credential.Type, pack.CredentialType)
+	// HMAC itself is optional: a trigger pack with no signature verification
+	// config registers the same way one with it does.
+	if trigger.HMAC != nil {
+		if credential := trigger.HMAC.SecretCredential; credential != nil {
+			if pack.CredentialType == "" {
+				return fmt.Errorf("node pack %q: hmac.secretCredential reads a credential field, but the pack declares no credentialType", pack.Type)
+			}
+			if credential.Type != pack.CredentialType {
+				return fmt.Errorf("node pack %q: hmac.secretCredential names type %q, but the pack's credentialType is %q", pack.Type, credential.Type, pack.CredentialType)
+			}
 		}
 	}
 	// The delivery shape is per node *type*, not per version: two versions of
