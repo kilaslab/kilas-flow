@@ -1,7 +1,7 @@
 ---
 id: FEAT-zwpvbf
 title: 'LangChain root chains: Information Extractor, Text Classifier, Summarization, Q&A, Sentiment'
-status: todo
+status: doing
 priority: high
 labels:
     - n8n
@@ -58,3 +58,7 @@ Related (from the audit): none. FEAT-gcq50s excludes the "Q&A Chain retriever".
 `probes/Text_Classifier.json`, `probes/Information_Extractor.json`, `results-ai.json` (Sentiment Analysis, Summarization Chain, Question and Answer Chain, Auto-fixing/Item List Output Parser).
 
 # Attachments
+
+# Progress
+
+Node-side implemented 2026-10-25 (orchestrator-verified): five root chains (informationExtractor, textClassifier per-category ports, summarization, retrievalQa on item reference text, sentimentAnalysis) reusing ChainExecutor.completeChainItem; output-parser Item List schemaType + auto-fix wording; 12 new chain tests + outputschema tests. Gates as FEAT-t672pv. REMAINING: importer mapping entries for the chain types + parsers (importer lane).

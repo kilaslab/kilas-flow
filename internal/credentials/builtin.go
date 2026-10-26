@@ -262,6 +262,27 @@ func RegisterAll(registry *Registry) error {
 			DefaultDomainsFrom: "url",
 		},
 		{
+			// Google's own credential ID, so an imported workflow that names
+			// `googleGeminiApi` finds a type of exactly that name — the same
+			// rule every provider credential here follows.
+			ID: "googleGeminiApi", DisplayName: "Google Gemini",
+			Description: "A Google AI Studio API key for the Gemini models.",
+			Properties: []property.PropertyDefinition{
+				{
+					Key: "apiKey", Label: "API key", Kind: property.KindString, Required: true,
+					TypeOptions: &property.TypeOptions{Password: true},
+					Description: "A key from Google AI Studio (aistudio.google.com), in the form AIza….",
+				},
+			},
+			Secrets:      []string{"apiKey"},
+			Authenticate: &Authentication{Placement: PlacementBearer, Value: "{{ apiKey }}"},
+			// The OpenAI-compatible catalogue Gemini publishes, which answers
+			// with the model list and refuses a revoked key, unlike a probe
+			// that would pass on anything reachable.
+			Test:           &TestRequest{URL: "https://generativelanguage.googleapis.com/v1beta/openai/models"},
+			DefaultDomains: []string{"generativelanguage.googleapis.com"},
+		},
+		{
 			ID: "openRouterApi", DisplayName: "OpenRouter",
 			Description: "An OpenRouter API key.",
 			Properties: []property.PropertyDefinition{

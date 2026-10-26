@@ -75,6 +75,10 @@ const (
 const (
 	OpenAICredentialType     = "openAiApi"
 	OpenRouterCredentialType = "openRouterApi"
+	// GoogleGeminiCredentialType is Google's own credential ID, registered for
+	// the Gemini app node and usable by any model consumer the same way the
+	// other provider keys are (see credentials.modelAPIKeyFields).
+	GoogleGeminiCredentialType = "googleGeminiApi"
 	// BearerCredentialType is what the generic OpenAI-compatible model takes,
 	// because a self-hosted endpoint has no vendor to name.
 	BearerCredentialType = "httpBearerAuth"
@@ -143,6 +147,9 @@ var modelAPIKeyFields = map[string]string{
 	BearerCredentialType:     "token",
 	OpenAICredentialType:     "apiKey",
 	OpenRouterCredentialType: "apiKey",
+	// Google's own credential ID, registered for the Gemini app node and
+	// usable by any model consumer the same way the other provider keys are.
+	GoogleGeminiCredentialType: "apiKey",
 }
 
 // descriptorKey marks the single item an AI sub-node emits.
@@ -3309,8 +3316,9 @@ func outputParserNode() node.Definition {
 				Options: []node.PropertyOption{
 					{Label: "JSON Schema", Value: ai.OutputSchemaJSONSchema},
 					{Label: "Example JSON", Value: ai.OutputSchemaExample},
+					{Label: "Item List", Value: ai.OutputSchemaItemList},
 				},
-				Description: "Describe the output shape directly, or show one example it is inferred from.",
+				Description: "Describe the output shape directly, show one example it is inferred from, or describe one item of a list and have the answer held to a list of them.",
 			},
 			{
 				Key: "jsonSchema", Label: "JSON Schema", Kind: node.PropertyString,
@@ -3322,7 +3330,7 @@ func outputParserNode() node.Definition {
 			},
 			{
 				Key: "maxRetries", Label: "Maximum retries", Kind: node.PropertyNumber, Default: float64(ai.DefaultOutputMaxRetries),
-				Description: "How many responses that fail validation are retried before the run fails.",
+				Description: "How many responses that fail validation are retried by telling the model what was wrong — the auto-fixing loop — before the run fails.",
 			},
 		},
 		SharedSettings: sharedSettings(),

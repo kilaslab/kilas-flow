@@ -32,6 +32,9 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		option(&settings)
 	}
 	javaScript := jsCodeExecutorOf(settings, httpPolicy)
+	// The root chains share one executor: they are five prompt assemblies over
+	// the one model call, repair loop and event publisher.
+	rootChains := NewRootChainExecutor(httpPolicy, settings.modelTimeoutCeiling)
 	for id, executor := range map[string]engine.Executor{
 		"core.manual":                    engine.ExecutorFunc(executeManual),
 		ChatTriggerExecutorID:            engine.ExecutorFunc(executeChatTrigger),
@@ -54,11 +57,18 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		ChatModelExecutorID:              engine.ExecutorFunc(executeChatModel),
 		OpenAIChatModelExecutorID:        executeProviderChatModel(openAIChatModelProvider()),
 		OpenRouterChatModelExecutorID:    executeProviderChatModel(openRouterChatModelProvider()),
+		OpenAIAppExecutorID:              NewAppModelExecutor(openAIAppProvider(), httpPolicy, settings.modelTimeoutCeiling),
+		GoogleGeminiAppExecutorID:        NewAppModelExecutor(googleGeminiAppProvider(), httpPolicy, settings.modelTimeoutCeiling),
 		MemoryExecutorID:                 engine.ExecutorFunc(executeMemory),
 		HTTPToolExecutorID:               engine.ExecutorFunc(executeHTTPTool),
 		ToolFormExecutorID:               engine.ExecutorFunc(executeToolForm),
 		AgentExecutorID:                  NewAgentExecutor(agentRuntime, httpPolicy, agentMemory, WithModelTimeoutCeiling(settings.modelTimeoutCeiling), WithDatastoreStore(datastoreStoreOf(settings.datastoreEngine)), WithAgentVectorStore(settings.vectorStore, NewEmbeddingsExecutor(httpPolicy, settings.vectorStore)), WithAgentSQLGuard(databaseGuard), WithAgentToolForms(settings.nodeCatalog, registry)),
 		ChainExecutorID:                  NewChainExecutor(httpPolicy, settings.modelTimeoutCeiling),
+		InformationExtractorExecutorID:   engine.ExecutorFunc(rootChains.executeInformationExtractor),
+		TextClassifierExecutorID:         engine.ExecutorFunc(rootChains.executeTextClassifier),
+		ChainSummarizationExecutorID:     engine.ExecutorFunc(rootChains.executeChainSummarization),
+		ChainRetrievalQaExecutorID:       engine.ExecutorFunc(rootChains.executeChainRetrievalQa),
+		SentimentAnalysisExecutorID:      engine.ExecutorFunc(rootChains.executeSentimentAnalysis),
 		WorkflowToolExecutorID:           engine.ExecutorFunc(executeWorkflowTool),
 		CalculatorExecutorID:             engine.ExecutorFunc(executeCalculator),
 		CalculatorToolExecutorID:         engine.ExecutorFunc(executeCalculatorTool),
