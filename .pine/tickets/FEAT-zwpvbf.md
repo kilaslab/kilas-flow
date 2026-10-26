@@ -1,7 +1,7 @@
 ---
 id: FEAT-zwpvbf
 title: 'LangChain root chains: Information Extractor, Text Classifier, Summarization, Q&A, Sentiment'
-status: doing
+status: done
 priority: high
 labels:
     - n8n
@@ -62,3 +62,7 @@ Related (from the audit): none. FEAT-gcq50s excludes the "Q&A Chain retriever".
 # Progress
 
 Node-side implemented 2026-10-25 (orchestrator-verified): five root chains (informationExtractor, textClassifier per-category ports, summarization, retrievalQa on item reference text, sentimentAnalysis) reusing ChainExecutor.completeChainItem; output-parser Item List schemaType + auto-fix wording; 12 new chain tests + outputschema tests. Gates as FEAT-t672pv. REMAINING: importer mapping entries for the chain types + parsers (importer lane).
+
+# Progress
+
+Import mappings for openAi/googleGemini/the chains/parsers landed via feat/parity-nodes-1 (#43, FEAT-sz4ddp+kfmq1z branch ticket C) — import works end to end. Fully done 2026-10-26.
