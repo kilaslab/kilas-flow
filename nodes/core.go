@@ -87,6 +87,17 @@ func RegisterAll(registry *node.Registry) error {
 		rssFeedReadTriggerNode(),
 		codeNode(),
 		stickyNoteNode(),
+		// The file & format utility family: Convert to File and Compression
+		// over the binary store, the HTML, Markdown and XML converters, the
+		// Crypto utilities, and Edit Image — n8n's names, so an import maps
+		// by type.
+		convertToFileNode(),
+		compressionNode(),
+		htmlNode(),
+		markdownNode(),
+		xmlConvertNode(),
+		cryptoNode(),
+		editImageNode(),
 		loopNode(),
 		telegramTrigger(),
 		switchNode(),

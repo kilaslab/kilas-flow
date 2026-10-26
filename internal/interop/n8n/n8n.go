@@ -662,6 +662,64 @@ var mappings = []mapping{
 		exportTypeVersion: 1, publishedVersions: []float64{1},
 		toKilas: rssFeedReadTriggerToKilas, toN8N: packToN8N,
 	},
+	// The file & format utility family (FEAT-re138f). Pure-Go nodes with no
+	// credential and no outbound traffic, whose parameter keys are n8n's own
+	// on both sides, so the translators carry them and report only the parts
+	// of the surface this server's nodes do not run — by refusal, so a
+	// workflow never activates with a step that quietly produced nothing.
+	{
+		n8nType: "n8n-nodes-base.convertToFile", kilasType: ConvertToFileNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, publishedVersions: []float64{1, 1.1},
+		toKilas: convertToFileToKilas, toN8N: packToN8N,
+		refuseKilas: refuseUnsupportedConvertToFileOperation,
+	},
+	{
+		n8nType: "n8n-nodes-base.compression", kilasType: CompressionNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, publishedVersions: []float64{1, 1.1},
+		toKilas: compressionToKilas, toN8N: packToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.html", kilasType: HTMLNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, publishedVersions: []float64{1, 1.1},
+		toKilas: htmlNodeToKilas, toN8N: packToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.markdown", kilasType: MarkdownNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, publishedVersions: []float64{1},
+		toKilas: packToKilas, toN8N: packToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.xml", kilasType: XMLNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, publishedVersions: []float64{1},
+		toKilas: xmlNodeToKilas, toN8N: packToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.crypto", kilasType: CryptoNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, publishedVersions: []float64{1, 1.1},
+		toKilas: cryptoNodeToKilas, toN8N: packToN8N,
+		refuseKilas: refuseUnsupportedCryptoOperation,
+	},
+	{
+		n8nType: "n8n-nodes-base.editImage", kilasType: EditImageNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, publishedVersions: []float64{1},
+		toKilas: editImageToKilas, toN8N: packToN8N,
+		refuseKilas: refuseUnsupportedEditImageOperation,
+	},
+	// The legacy spreadsheet and binary-move nodes, onto the family's new
+	// nodes: a read lands on Extract From File the way it always hinted, a
+	// write on Convert to File, and both directions of Move Binary Data on the
+	// node that now owns that work. importOnly: an export writes the node the
+	// work runs on today, not the legacy type it arrived as.
+	{
+		n8nType: "n8n-nodes-base.spreadsheetFile", kilasType: ExtractFromFileNodeType, kilasVersion: workflow.V(1),
+		kilasTypeFor: spreadsheetFileKilasType, toKilas: spreadsheetFileToKilas,
+		refuseKilas: refuseUnsupportedSpreadsheetFileOperation, importOnly: true,
+	},
+	{
+		n8nType: "n8n-nodes-base.moveBinaryData", kilasType: ConvertToFileNodeType, kilasVersion: workflow.V(1),
+		kilasTypeFor: moveBinaryDataKilasType, toKilas: moveBinaryDataToKilas,
+		refuseKilas: refuseUnsupportedMoveBinaryDataOperation, importOnly: true,
+	},
 	// The OpenAI-compatible providers. Each publishes an endpoint that speaks
 	// OpenAI's protocol, so the native node is the same one in every case and
 	// only the base URL differs.
@@ -845,6 +903,20 @@ const (
 	RssFeedReadNodeType        = "kilasflow.rssFeedRead"
 	RssFeedReadTriggerNodeType = "kilasflow.rssFeedReadTrigger"
 	RssFeedReadToolNodeType    = "kilasflow.rssFeedReadTool"
+)
+
+// The file & format utility family's canonical types, mirrored from
+// nodes/fileformat.go, nodes/html.go, nodes/markdown.go, nodes/xmlnode.go,
+// nodes/crypto.go and nodes/editimage.go for the same reason every other type
+// here is: the adapter must not depend on the node pack.
+const (
+	ConvertToFileNodeType = "kilasflow.convertToFile"
+	CompressionNodeType   = "kilasflow.compression"
+	HTMLNodeType          = "kilasflow.html"
+	MarkdownNodeType      = "kilasflow.markdown"
+	XMLNodeType           = "kilasflow.xml"
+	CryptoNodeType        = "kilasflow.crypto"
+	EditImageNodeType     = "kilasflow.editImage"
 )
 
 // The provider app nodes and the root chains PR #36 landed, mirrored from
@@ -1146,8 +1218,9 @@ func unmappedReason(nodeType string) string {
 // node genuinely does belong here — a hint that names a node that cannot do
 // the job would send the author somewhere worse than the honest absence.
 var replacementHints = map[string]string{
-	"n8n-nodes-base.readBinaryFile":  "The closest native node is Extract From File (kilasflow.extractFromFile), which parses every format this node read once the bytes are in the workflow; the path-reading half needs an HTTP Request node beside it.",
-	"n8n-nodes-base.spreadsheetFile": "The closest native node is Extract From File (kilasflow.extractFromFile), which reads CSV, XLSX and the other spreadsheet formats from workflow binary data; its write half has no equivalent here.",
+	"n8n-nodes-base.readBinaryFile": "The closest native node is Extract From File (kilasflow.extractFromFile), which parses every format this node read once the bytes are in the workflow; the path-reading half needs an HTTP Request node beside it.",
+	// spreadsheetFile used to sit here: it maps onto Extract From File (its
+	// read half) and Convert to File (its write half) since FEAT-re138f.
 }
 
 func byKilasType(nodeType string) (mapping, bool) {

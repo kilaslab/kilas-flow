@@ -8055,3 +8055,327 @@ func autofixParserToKilas(node Node) (map[string]any, []Unsupported) {
 	}
 	return map[string]any{}, issues
 }
+
+// --- The file & format utility family (FEAT-re138f) ---------------------------
+
+// convertToFileToKilas carries n8n's Convert to File across. The operation,
+// mode, property and option keys are n8n's own and cross unchanged; the base64
+// operation is this server's own (the destination of n8n's legacy Move Binary
+// Data node), so an n8n node never names it. An operation outside the five
+// this node writes is refused by the mapping, not softened here.
+func convertToFileToKilas(node Node) (map[string]any, []Unsupported) {
+	converted, _ := packToKilas(node)
+	if converted == nil {
+		converted = map[string]any{}
+	}
+	if strings.TrimSpace(stringParameter(converted, "operation")) == "" {
+		converted["operation"] = "csv"
+	}
+	return converted, nil
+}
+
+// compressionToKilas carries n8n's Compression across. operation,
+// compressionFormat, binaryPropertyName and outputPrefix cross unchanged; the
+// fileName option is the one member with no home here — the compressed file is
+// named after the input with the format's extension — so it is named rather
+// than quietly dropped.
+func compressionToKilas(node Node) (map[string]any, []Unsupported) {
+	converted, _ := packToKilas(node)
+	issues := make([]Unsupported, 0)
+	if converted == nil {
+		converted = map[string]any{}
+	}
+	if strings.TrimSpace(stringParameter(converted, "operation")) == "" {
+		converted["operation"] = "compress"
+	}
+	if strings.TrimSpace(stringParameter(converted, "compressionFormat")) == "" {
+		converted["compressionFormat"] = "gzip"
+	}
+	if options, _ := node.Parameters["options"].(map[string]any); options != nil {
+		if value, present := options["fileName"]; present && value != nil && value != "" {
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "options.fileName",
+				Reason: "this node names the compressed file after the input with the format's extension; " +
+					"the file name this node carried was not kept",
+			})
+		}
+	}
+	return converted, issues
+}
+
+// htmlNodeToKilas carries n8n's HTML across. All three operations and their
+// keys cross unchanged; the defaultValue option of the extract-text operation
+// has no home here — this node writes the text it found or an empty string —
+// so it is named rather than quietly dropped.
+func htmlNodeToKilas(node Node) (map[string]any, []Unsupported) {
+	converted, _ := packToKilas(node)
+	issues := make([]Unsupported, 0)
+	if converted == nil {
+		converted = map[string]any{}
+	}
+	if strings.TrimSpace(stringParameter(converted, "operation")) == "" {
+		converted["operation"] = "generateHtmlTemplate"
+	}
+	if options, _ := node.Parameters["options"].(map[string]any); options != nil {
+		if value, present := options["defaultValue"]; present && value != nil && value != "" {
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "options.defaultValue",
+				Reason: "this node writes the text the document carried, or an empty string when it carried none; " +
+					"the fallback value this node brought was not kept",
+			})
+		}
+	}
+	return converted, issues
+}
+
+// xmlNodeToKilas carries n8n's XML across. mode, xml, json and the whole
+// options collection are n8n's own keys and cross unchanged.
+func xmlNodeToKilas(node Node) (map[string]any, []Unsupported) {
+	converted, _ := packToKilas(node)
+	if converted == nil {
+		converted = map[string]any{}
+	}
+	if strings.TrimSpace(stringParameter(converted, "mode")) == "" {
+		converted["mode"] = "xmlToJson"
+	}
+	return converted, nil
+}
+
+// cryptoNodeToKilas carries n8n's Crypto across. The hash, HMAC and sign keys
+// cross unchanged. n8n's verify operation and its JWT credentials have no
+// runner here — the refusal is the mapping's, so a workflow with a verify
+// step never activates half-read — and this server's UUID operation is its
+// own, which an n8n node never names.
+func cryptoNodeToKilas(node Node) (map[string]any, []Unsupported) {
+	converted, _ := packToKilas(node)
+	if converted == nil {
+		converted = map[string]any{}
+	}
+	if strings.TrimSpace(stringParameter(converted, "operation")) == "" {
+		converted["operation"] = "hash"
+	}
+	return converted, nil
+}
+
+// refuseUnsupportedCryptoOperation refuses the operations this server's Crypto
+// node does not run: n8n's verify (a JWT check this node has no key surface
+// for) and anything the node never heard of.
+func refuseUnsupportedCryptoOperation(node Node) string {
+	operation := strings.ToLower(stringParameter(node.Parameters, "operation"))
+	switch operation {
+	case "", "hash", "hmac", "sign":
+		return ""
+	case "uuid":
+		return ""
+	}
+	return fmt.Sprintf(
+		"the n8n Crypto node's %q operation has no equivalent on this server's Crypto node. "+
+			"It hashes, computes an HMAC, signs a JWT and generates a UUID; rebuild the step around "+
+			"one of those before activating", operation)
+}
+
+// editImageToKilas carries n8n's Edit Image across. The operation keys cross
+// unchanged; the resize mode rides under options in n8n and at the top level
+// here, so it is lifted. The webp output format is refused by the mapping —
+// this node's pure-Go codecs write png and jpeg only.
+func editImageToKilas(node Node) (map[string]any, []Unsupported) {
+	converted, _ := packToKilas(node)
+	if converted == nil {
+		converted = map[string]any{}
+	}
+	if strings.TrimSpace(stringParameter(converted, "operation")) == "" {
+		converted["operation"] = "resize"
+	}
+	options, _ := converted["options"].(map[string]any)
+	if mode, present := options["resizeMode"]; present && mode != nil {
+		converted["resizeMode"] = mode
+		delete(options, "resizeMode")
+	}
+	if len(options) == 0 {
+		delete(converted, "options")
+	}
+	return converted, nil
+}
+
+// refuseUnsupportedEditImageOperation refuses the operations and formats this
+// server's Edit Image node does not run: composite, rotate, blur, border and
+// the rest of n8n's sharp-backed list, and the webp output format.
+func refuseUnsupportedEditImageOperation(node Node) string {
+	operation := strings.ToLower(stringParameter(node.Parameters, "operation"))
+	switch operation {
+	case "", "resize", "crop", "addtext":
+	default:
+		return fmt.Sprintf(
+			"the n8n Edit Image node's %q operation has no equivalent on this server's Edit Image node. "+
+				"It resizes, crops and adds text over pure-Go codecs; rebuild the step around one of those "+
+				"before activating", operation)
+	}
+	if options, _ := node.Parameters["options"].(map[string]any); options != nil {
+		if format, _ := options["format"].(string); strings.EqualFold(format, "webp") {
+			return "this server's Edit Image node writes PNG and JPEG only: its codecs are pure Go and carry no WebP encoder. " +
+				"Set the output format to png or jpeg before activating"
+		}
+	}
+	return ""
+}
+
+// refuseUnsupportedConvertToFileOperation refuses the file types this server's
+// Convert to File node does not write. They are refused rather than softened
+// because a workflow that asked for an iCal invite must not find a CSV where
+// one was.
+func refuseUnsupportedConvertToFileOperation(node Node) string {
+	operation := strings.ToLower(stringParameter(node.Parameters, "operation"))
+	switch operation {
+	case "", "csv", "xlsx", "json", "text":
+		return ""
+	}
+	return fmt.Sprintf(
+		"the n8n Convert to File node's %q operation has no equivalent on this server's Convert to File node. "+
+			"It writes csv, xlsx, json and text files (and converts base64 strings to binary); rebuild the step "+
+			"around one of those before activating", operation)
+}
+
+// --- The legacy spreadsheet and binary-move nodes ------------------------------
+
+// spreadsheetFileKilasType picks the node a legacy Spreadsheet File node's work
+// runs on today: a read on Extract From File, a write on Convert to File.
+func spreadsheetFileKilasType(node Node) string {
+	if strings.EqualFold(stringParameter(node.Parameters, "operation"), "write") {
+		return ConvertToFileNodeType
+	}
+	return ExtractFromFileNodeType
+}
+
+// refuseUnsupportedSpreadsheetFileOperation refuses the file types neither
+// target reads or writes: ODS and XLS were common enough in the wild that
+// guessing them onto a CSV reader would have quietly changed the output.
+func refuseUnsupportedSpreadsheetFileOperation(node Node) string {
+	fileType := strings.ToLower(stringParameter(node.Parameters, "fileType"))
+	switch fileType {
+	case "", "csv", "xlsx":
+		return ""
+	}
+	return fmt.Sprintf(
+		"the legacy Spreadsheet File node's %q file type has no reader or writer on this server. "+
+			"Extract From File reads csv and xlsx, and Convert to File writes both; rebuild the step around "+
+			"one of those before activating", fileType)
+}
+
+// spreadsheetFileToKilas writes the target's parameters from the legacy
+// node's: the file type becomes the operation, and the binary property and
+// file name cross as themselves.
+func spreadsheetFileToKilas(node Node) (map[string]any, []Unsupported) {
+	converted := map[string]any{}
+	fileType := strings.ToLower(stringParameter(node.Parameters, "fileType"))
+	if fileType == "" {
+		fileType = "csv"
+	}
+	converted["operation"] = fileType
+	if value := stringParameter(node.Parameters, "binaryPropertyName"); value != "" {
+		converted["binaryPropertyName"] = fromN8NValue(value)
+	}
+	options := map[string]any{}
+	if value := stringParameter(node.Parameters, "fileName"); value != "" {
+		options["fileName"] = fromN8NValue(value)
+	}
+	// The legacy write operation's row options: the header row flag crosses,
+	// and the delimiter when the file is a csv.
+	if headerRow, present := node.Parameters["headerRow"]; present {
+		options["headerRow"] = headerRow
+	}
+	if source, _ := node.Parameters["options"].(map[string]any); source != nil {
+		if value, present := source["fileName"]; present && value != nil && value != "" {
+			options["fileName"] = fromN8NValue(value)
+		}
+		if value, present := source["headerRow"]; present {
+			options["headerRow"] = value
+		}
+		if value, present := source["delimiter"]; present && value != nil && value != "" && fileType == "csv" {
+			options["delimiter"] = value
+		}
+	}
+	if len(options) > 0 {
+		converted["options"] = options
+	}
+	return converted, nil
+}
+
+// moveBinaryDataKilasType picks the node a legacy Move Binary Data node's work
+// runs on today: a base64 string becoming binary on Convert to File, and
+// binary becoming a property on Extract From File.
+func moveBinaryDataKilasType(node Node) string {
+	if strings.EqualFold(stringParameter(node.Parameters, "operation"), "moveToBase64") {
+		return ExtractFromFileNodeType
+	}
+	return ConvertToFileNodeType
+}
+
+// refuseUnsupportedMoveBinaryDataOperation refuses the modes neither target
+// runs: the JSON-path modes read structured data out of a binary JSON file,
+// which is Extract From File's json operation rather than a move.
+func refuseUnsupportedMoveBinaryDataOperation(node Node) string {
+	operation := strings.ToLower(stringParameter(node.Parameters, "operation"))
+	mode := strings.ToLower(stringParameter(node.Parameters, "mode"))
+	switch {
+	case operation == "", operation == "movetobinaryfield":
+		if mode == "" || mode == "base64" {
+			return ""
+		}
+		return fmt.Sprintf(
+			"the legacy Move Binary Data node's %q mode has no equivalent on this server. Convert to File's "+
+				"base64 operation turns a base64 string into binary; a JSON file is read by Extract From File's "+
+				"json operation", mode)
+	case operation == "movetobase64":
+		return ""
+	}
+	return fmt.Sprintf(
+		"the legacy Move Binary Data node's %q operation has no equivalent on this server. Convert to File "+
+			"turns a base64 string into binary and Extract From File turns binary into a base64 property; "+
+			"rebuild the step around one of those before activating", operation)
+}
+
+// moveBinaryDataToKilas writes the target's parameters from the legacy node's,
+// reading the property keys under both spellings the node shipped: source and
+// destination were named differently across its versions, and a legacy import
+// that guesses wrong would move the wrong field.
+func moveBinaryDataToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	if strings.EqualFold(stringParameter(node.Parameters, "operation"), "moveToBase64") {
+		converted := map[string]any{
+			"operation": "binaryToProperty",
+		}
+		if value := firstNonEmptyParameter(node.Parameters, "binaryPropertyName", "sourceProperty"); value != "" {
+			converted["binaryPropertyName"] = fromN8NValue(value)
+		}
+		if value := firstNonEmptyParameter(node.Parameters, "destinationKey", "targetProperty"); value != "" {
+			converted["destinationKey"] = fromN8NValue(value)
+		}
+		issues = append(issues, Unsupported{
+			Severity: SeverityLossy,
+			Reason: "the legacy node wrote the base64 string straight into the property; Extract From File's " +
+				"binaryToProperty operation writes {dataBase64, mimeType} there, which is the shape every " +
+				"other reader of this server's binary data expects",
+		})
+		return converted, issues
+	}
+	converted := map[string]any{
+		"operation": "base64",
+	}
+	if value := firstNonEmptyParameter(node.Parameters, "propertyName", "sourceProperty"); value != "" {
+		converted["propertyName"] = fromN8NValue(value)
+	}
+	if value := firstNonEmptyParameter(node.Parameters, "binaryPropertyName", "targetProperty"); value != "" {
+		converted["binaryPropertyName"] = fromN8NValue(value)
+	}
+	return converted, issues
+}
+
+// firstNonEmptyParameter reads the first key that is present with text.
+func firstNonEmptyParameter(parameters map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(stringParameter(parameters, key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}

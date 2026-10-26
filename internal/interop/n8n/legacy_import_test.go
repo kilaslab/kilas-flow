@@ -473,7 +473,9 @@ func TestALegacyPlaceholderNamesTheClosestNativeNode(t *testing.T) {
 		wantNeedle string
 	}{
 		{nodeType: "n8n-nodes-base.readBinaryFile", wantNeedle: "Extract From File (kilasflow.extractFromFile)"},
-		{nodeType: "n8n-nodes-base.spreadsheetFile", wantNeedle: "Extract From File (kilasflow.extractFromFile)"},
+		// spreadsheetFile was here until FEAT-re138f mapped it: its read half
+		// onto Extract From File, its write half onto Convert to File. The
+		// mapping's own tests live in fileformat_import_test.go.
 	}
 	for _, test := range tests {
 		t.Run(test.nodeType, func(t *testing.T) {
