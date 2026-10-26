@@ -539,6 +539,15 @@ func workflowImportUsage(ctx *Context, args []string) error {
 	case file == "" && dir == "":
 		return usageError("no document: pass --file <path> (or - for stdin), or --dir <directory>")
 	}
+	if dir != "" {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return usageError("could not read the directory %s: %v", dir, err)
+		}
+		if len(entries) == 0 {
+			return usageError("the directory %s holds no .json workflow to import", dir)
+		}
+	}
 	return nil
 }
 
@@ -554,6 +563,9 @@ func runWorkflowImport(ctx *Context, args []string) error {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			return usageError("could not read the directory %s: %v", dir, err)
+		}
+		if len(entries) == 0 {
+			return usageError("the directory %s holds no .json workflow to import", dir)
 		}
 		files = files[:0]
 		for _, entry := range entries {
