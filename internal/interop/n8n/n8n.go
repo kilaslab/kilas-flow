@@ -634,6 +634,34 @@ var mappings = []mapping{
 		exportTypeVersion: 1, publishedVersions: []float64{1},
 		toKilas: googleSheetsTriggerToKilas, toN8N: googleSheetsTriggerToN8N,
 	},
+	// The email pair. Send Email's parameter keys are n8n's own on both sides
+	// of the version split — v1's top-level ccEmail, bccEmail and attachments
+	// and v2's options members are all read by the target node — so the
+	// translator carries them and reports only the one thing this server
+	// genuinely drops: n8n's attribution footer.
+	{
+		n8nType: "n8n-nodes-base.emailSend", kilasType: EmailSendNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 2.1, publishedVersions: []float64{1, 2, 2.1},
+		toKilas: emailSendToKilas, toN8N: emailSendToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.emailReadImap", kilasType: EmailReadImapNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 2.2, publishedVersions: []float64{1, 2, 2.1, 2.2},
+		toKilas: emailReadImapToKilas, toN8N: emailReadImapToN8N,
+	},
+	// The RSS pair. Both nodes carry n8n's own keys, so the translators are
+	// thin; the read node's agent-tool form arrives through toolVariants,
+	// one line beside its entry in nodes.toolForms.
+	{
+		n8nType: "n8n-nodes-base.rssFeedRead", kilasType: RssFeedReadNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.2, publishedVersions: []float64{1, 1.1, 1.2},
+		toKilas: rssFeedReadToKilas, toN8N: rssFeedReadToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.rssFeedReadTrigger", kilasType: RssFeedReadTriggerNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, publishedVersions: []float64{1},
+		toKilas: rssFeedReadTriggerToKilas, toN8N: packToN8N,
+	},
 	// The OpenAI-compatible providers. Each publishes an endpoint that speaks
 	// OpenAI's protocol, so the native node is the same one in every case and
 	// only the base URL differs.
@@ -676,6 +704,67 @@ var mappings = []mapping{
 	{
 		n8nType: "@n8n/n8n-nodes-langchain.outputParserStructured", kilasType: "kilasflow.outputParser", kilasVersion: workflow.V(1),
 		exportTypeVersion: 1.3, toKilas: outputParserToKilas, toN8N: outputParserToN8N,
+	},
+	// n8n's Auto-fixing Output Parser wraps another parser and calls a model
+	// to repair its failures; this server's parser carries that repair loop
+	// in its own retries, so the wrapper imports as the parser it wraps and
+	// the splice in Import merges the two (see parserWrapperInner).
+	{
+		n8nType: n8nOutputParserAutofixing, kilasType: "kilasflow.outputParser", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, importOnly: true, toKilas: autofixParserToKilas,
+	},
+	// n8n's Item List Output Parser splits a separator-separated answer into
+	// items and counts them; this server's item-list schema source holds the
+	// model to a JSON array of items — the same list read a different way,
+	// with the count and separator named as the difference.
+	{
+		n8nType: n8nOutputParserItemList, kilasType: "kilasflow.outputParser", kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, importOnly: true, toKilas: itemListParserToKilas,
+	},
+	// The provider app nodes: an OpenAI or Gemini model named on the node
+	// itself. v1's OpenAI family is the shape the target node mirrors; v2
+	// renamed the wire protocol, and the refusal names what cannot run.
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.openAi", kilasType: OpenAIAppNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.8, publishedVersions: []float64{1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 2, 2.1, 2.2, 2.3},
+		toKilas: openAiAppToKilas, toN8N: openAiAppToN8N,
+		refuseKilas: refuseUnsupportedOpenAiOperation,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.googleGemini", kilasType: GoogleGeminiAppNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.2, publishedVersions: []float64{1, 1.1, 1.2},
+		toKilas: geminiAppToKilas, toN8N: geminiAppToN8N,
+		refuseKilas: refuseUnsupportedGeminiOperation,
+	},
+	// The root chains. Each is a thin rename onto the node PR #36 landed,
+	// with the refusals for the shapes that node does not run.
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.informationExtractor", kilasType: InformationExtractorType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.2, publishedVersions: []float64{1, 1.1, 1.2},
+		toKilas: informationExtractorToKilas, toN8N: informationExtractorToN8N,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.textClassifier", kilasType: TextClassifierType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, publishedVersions: []float64{1, 1.1},
+		toKilas: textClassifierToKilas, toN8N: textClassifierToN8N,
+		refuseKilas: refuseMultiClassClassification,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.chainSummarization", kilasType: ChainSummarizationType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 2.1, publishedVersions: []float64{1, 2, 2.1},
+		toKilas: chainSummarizationToKilas, toN8N: chainSummarizationToN8N,
+		refuseKilas: refuseUnsupportedSummarizationInput,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.chainRetrievalQa", kilasType: ChainRetrievalQaType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.7, publishedVersions: []float64{1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7},
+		toKilas: chainRetrievalQaToKilas, toN8N: chainRetrievalQaToN8N,
+	},
+	{
+		n8nType: "@n8n/n8n-nodes-langchain.sentimentAnalysis", kilasType: SentimentAnalysisType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, publishedVersions: []float64{1, 1.1},
+		toKilas: sentimentAnalysisToKilas, toN8N: sentimentAnalysisToN8N,
+		refuseKilas: refuseCustomSentimentCategories,
 	},
 	// The Data Table family. Twelve operations across two resources — seven
 	// row operations and five table ones, with the table update surfaced as
@@ -744,6 +833,39 @@ const (
 	GoogleDriveTriggerNodeType  = "kilasflow.googleDriveTrigger"
 	GmailNodeType               = "kilasflow.gmail"
 	GmailTriggerNodeType        = "kilasflow.gmailTrigger"
+)
+
+// The email pair's canonical types, mirrored from nodes.EmailSendNodeType and
+// nodes.EmailReadImapNodeType for the same reason every other type here is:
+// the adapter must not depend on the node pack. The RSS pair's follow.
+const (
+	EmailSendNodeType     = "kilasflow.emailSend"
+	EmailReadImapNodeType = "kilasflow.emailReadImap"
+
+	RssFeedReadNodeType        = "kilasflow.rssFeedRead"
+	RssFeedReadTriggerNodeType = "kilasflow.rssFeedReadTrigger"
+	RssFeedReadToolNodeType    = "kilasflow.rssFeedReadTool"
+)
+
+// The provider app nodes and the root chains PR #36 landed, mirrored from
+// nodes/openai_app.go and nodes/ai_chains.go for the same reason every other
+// type here is: the adapter must not depend on the node pack.
+const (
+	OpenAIAppNodeType        = "kilasflow.openAi"
+	GoogleGeminiAppNodeType  = "kilasflow.googleGemini"
+	InformationExtractorType = "kilasflow.informationExtractor"
+	TextClassifierType       = "kilasflow.textClassifier"
+	ChainSummarizationType   = "kilasflow.chainSummarization"
+	ChainRetrievalQaType     = "kilasflow.chainRetrievalQa"
+	SentimentAnalysisType    = "kilasflow.sentimentAnalysis"
+)
+
+// The n8n output-parser types the kilasflow.outputParser node answers to:
+// n8n's structured parser was already mapped; the auto-fixing wrapper and
+// the item-list parser are the two the PR #36 follow-up adds.
+const (
+	n8nOutputParserAutofixing = "@n8n/n8n-nodes-langchain.outputParserAutofixing"
+	n8nOutputParserItemList   = "@n8n/n8n-nodes-langchain.outputParserItemList"
 )
 
 // The error-workflow pair's canonical types, mirrored from
@@ -919,6 +1041,9 @@ var toolVariants = map[string]toolVariant{
 		publishedVersions: []float64{2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7},
 	},
 	TelegramNodeType: {kilasType: TelegramToolNodeType},
+	// The RSS Read tool: the read node with the tool's own naming, which is
+	// what n8n's onboarding template 6270 asks an agent for.
+	RssFeedReadNodeType: {kilasType: RssFeedReadToolNodeType},
 	// The Google Sheets tool has the base node's versions (4 to 4.7).
 	GoogleSheetsNodeType: {kilasType: GoogleSheetsToolNodeType, toKilas: googleSheetsToolToKilas},
 }
@@ -1260,6 +1385,17 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 		nodes = append(nodes, converted)
 	}
 
+	// The auto-fixing parser splice: n8n's wrapper takes the parser it
+	// repairs and a model to repair with, and this server's parser carries
+	// that repair loop in its own retries. A wrapper with an inner parser is
+	// therefore merged into it — the inner node reaches the chain, the
+	// wrapper's own model is not connected, and the wrapper itself has
+	// nothing left to be — while a wrapper standing alone stays, and its own
+	// validator names the schema it never had.
+	parserWrappers := parserWrapperInner(source, listedSources(payload), nameByN8NType(source, n8nOutputParserAutofixing))
+	nodes, spliceAdjustments := mergeParserWrappers(nodes, idByName, parserWrappers)
+	unsupported = append(unsupported, spliceAdjustments...)
+
 	typeByID := make(map[string]string, len(nodes))
 	versionByID := make(map[string]workflow.TypeVersion, len(nodes))
 	parametersByID := make(map[string]map[string]any, len(nodes))
@@ -1270,7 +1406,7 @@ func Import(payload []byte, catalog workflow.Catalog) (ImportResult, error) {
 		parametersByID[converted.ID] = converted.Parameters
 		settingsByID[converted.ID] = converted.Settings
 	}
-	connections, connectionIssues := importConnections(source.Connections, listedSources(payload), idByName, typeByID, versionByID, parametersByID, settingsByID, catalog)
+	connections, connectionIssues := importConnections(source.Connections, listedSources(payload), idByName, typeByID, versionByID, parametersByID, settingsByID, catalog, parserWrappers)
 	unsupported = append(unsupported, connectionIssues...)
 	// A hasOutputParser flag whose parser survived as its own node with an
 	// ai_outputParser edge is answered by that edge: the converter reports
@@ -1660,9 +1796,10 @@ func pinnedItems(value any) ([]workflow.Item, error) {
 // sources (listed, read from the JSON because the map forgets it). n8n walks
 // the connections into one input in that order to find which output of a node
 // `$('X')` reads, and the engine walks the document's order the same way.
-func importConnections(source Connections, listed []string, idByName, typeByID map[string]string, versionByID map[string]workflow.TypeVersion, parametersByID, settingsByID map[string]map[string]any, catalog workflow.Catalog) ([]workflow.Connection, []Unsupported) {
+func importConnections(source Connections, listed []string, idByName, typeByID map[string]string, versionByID map[string]workflow.TypeVersion, parametersByID, settingsByID map[string]map[string]any, catalog workflow.Catalog, parserWrappers map[string]string) ([]workflow.Connection, []Unsupported) {
 	connections := make([]workflow.Connection, 0)
 	issues := make([]Unsupported, 0)
+	spliced := map[string]bool{}
 
 	sourceNames := make([]string, 0, len(source))
 	seen := make(map[string]bool, len(source))
@@ -1726,6 +1863,25 @@ func importConnections(source Connections, listed []string, idByName, typeByID m
 
 			for outputIndex, targets := range kinds[kindName] {
 				for _, target := range targets {
+					// An auto-fixing parser wrapper receives the parser it
+					// wraps and a model to repair with; both edges are
+					// superseded by the splice that merged the wrapper into
+					// the parser, and neither would resolve onto the merged
+					// node's ports anyway.
+					if kind == workflow.ConnectionOutputParser && parserWrappers[target.Node] != "" {
+						continue
+					}
+					if kind == workflow.ConnectionLanguageModel && parserWrappers[target.Node] != "" {
+						issues = append(issues, Unsupported{
+							Severity: SeverityLossy,
+							NodeName: target.Node, NodeID: idByName[target.Node],
+							Field: "connections",
+							Reason: fmt.Sprintf("the model %q powered this Auto-fixing Output Parser's repair loop. This "+
+								"server's parser repairs with the schema's own validation errors through the chain's model, "+
+								"so the separate repair model is not connected", sourceName),
+						})
+						continue
+					}
 					targetID, found := idByName[target.Node]
 					if !found {
 						issues = append(issues, Unsupported{
@@ -1735,16 +1891,37 @@ func importConnections(source Connections, listed []string, idByName, typeByID m
 						continue
 					}
 
-					sourcePort, sourceOK := resolvePort(catalog, typeByID[sourceID], versionByID[sourceID], parametersByID[sourceID], kind, outputIndex, portOutput)
+					// The wrapper's own outgoing parser edge leaves from the
+					// parser it wrapped, which is the node carrying the
+					// schema the chain is held to.
+					edgeSourceName, edgeSourceID, edgeOutputIndex := sourceName, sourceID, outputIndex
+					if kind == workflow.ConnectionOutputParser && parserWrappers[sourceName] != "" {
+						if !spliced[sourceName] {
+							spliced[sourceName] = true
+							issues = append(issues, Unsupported{
+								Severity: SeverityLossy,
+								NodeName: sourceName, NodeID: idByName[sourceName],
+								Field: "connections",
+								Reason: fmt.Sprintf("the Auto-fixing Output Parser %q was merged into the parser it wrapped (%q): "+
+									"this server's parser carries its own repair loop, so the wrapper's retries run inside it",
+									sourceName, parserWrappers[sourceName]),
+							})
+						}
+						edgeSourceName = parserWrappers[sourceName]
+						edgeSourceID = idByName[edgeSourceName]
+						edgeOutputIndex = 0
+					}
+
+					sourcePort, sourceOK := resolvePort(catalog, typeByID[edgeSourceID], versionByID[edgeSourceID], parametersByID[edgeSourceID], kind, edgeOutputIndex, portOutput)
 					if !sourceOK {
 						// A node that continues on a separate error branch has
 						// one more output than its type declares, and n8n writes
 						// it in the slot just past them. The compiler adds that
 						// port to the definition for exactly this reason, so the
 						// edge resolves to it rather than being held back.
-						if mode, _ := settingsByID[sourceID]["onError"].(string); mode == "continueErrorOutput" &&
+						if mode, _ := settingsByID[edgeSourceID]["onError"].(string); mode == "continueErrorOutput" &&
 							kind == workflow.ConnectionMain &&
-							outputIndex == mainOutputCount(catalog, typeByID[sourceID], versionByID[sourceID], parametersByID[sourceID]) {
+							edgeOutputIndex == mainOutputCount(catalog, typeByID[edgeSourceID], versionByID[edgeSourceID], parametersByID[edgeSourceID]) {
 							sourcePort, sourceOK = errorPortName, true
 						}
 					}
@@ -1787,7 +1964,7 @@ func importConnections(source Connections, listed []string, idByName, typeByID m
 					connections = append(connections, workflow.Connection{
 						ID:     fmt.Sprintf("n8n-c%d", counter),
 						Kind:   kind,
-						Source: workflow.Endpoint{NodeID: sourceID, Port: sourcePort},
+						Source: workflow.Endpoint{NodeID: edgeSourceID, Port: sourcePort},
 						Target: workflow.Endpoint{NodeID: targetID, Port: targetPort},
 					})
 				}
@@ -1890,6 +2067,93 @@ func dropResolvedParserFlags(issues []Unsupported, connections []workflow.Connec
 		kept = append(kept, issue)
 	}
 	return kept
+}
+
+// nameByN8NType collects the n8n names of the source nodes of one type, so a
+// whole-graph question — which nodes are wrappers — can be answered before
+// the per-node translation has run.
+func nameByN8NType(source Document, nodeType string) map[string]bool {
+	names := map[string]bool{}
+	for _, node := range source.Nodes {
+		if node.Type == nodeType && strings.TrimSpace(node.Name) != "" {
+			names[node.Name] = true
+		}
+	}
+	return names
+}
+
+// parserWrapperInner maps each auto-fixing wrapper's n8n name to the n8n name
+// of the parser it wraps, read from the ai_outputParser edges in the order the
+// workflow lists its sources. n8n allows one parser per wrapper, so the first
+// edge wins and a second would be n8n's own drawing error.
+func parserWrapperInner(source Document, listed []string, wrappers map[string]bool) map[string]string {
+	inner := map[string]string{}
+	if len(wrappers) == 0 {
+		return inner
+	}
+	sourceNames := append([]string(nil), listed...)
+	unlisted := make([]string, 0)
+	seen := map[string]bool{}
+	for name := range source.Connections {
+		if !seen[name] {
+			unlisted = append(unlisted, name)
+		}
+	}
+	sort.Strings(unlisted)
+	sourceNames = append(sourceNames, unlisted...)
+	for _, sourceName := range sourceNames {
+		if wrappers[sourceName] {
+			continue
+		}
+		for _, targets := range source.Connections[sourceName][string(workflow.ConnectionOutputParser)] {
+			for _, target := range targets {
+				if wrappers[target.Node] {
+					if _, taken := inner[target.Node]; !taken {
+						inner[target.Node] = sourceName
+					}
+				}
+			}
+		}
+	}
+	return inner
+}
+
+// mergeParserWrappers removes the wrappers that wrapped a parser and turns
+// the wrapped parser's repair loop on: the wrapper's whole contribution is
+// the fixing, and this server's parser carries that in its own retries. A
+// wrapper standing alone is kept — its own validator names the schema it
+// never had, which is the honest refusal.
+func mergeParserWrappers(nodes []workflow.Node, idByName map[string]string, parserWrappers map[string]string) ([]workflow.Node, []ImportIssue) {
+	if len(parserWrappers) == 0 {
+		return nodes, nil
+	}
+	wrappedIDs := map[string]bool{}
+	innerIDs := map[string]bool{}
+	for wrapper, innerName := range parserWrappers {
+		if id, known := idByName[wrapper]; known {
+			wrappedIDs[id] = true
+		}
+		if id, known := idByName[innerName]; known {
+			innerIDs[id] = true
+		}
+	}
+	kept := make([]workflow.Node, 0, len(nodes))
+	for index, converted := range nodes {
+		if wrappedIDs[converted.ID] {
+			continue
+		}
+		if innerIDs[converted.ID] {
+			if retries, isNumber := converted.Parameters["maxRetries"].(float64); !isNumber || retries < 1 {
+				if converted.Parameters == nil {
+					converted.Parameters = map[string]any{}
+				}
+				converted.Parameters["maxRetries"] = float64(2)
+			}
+			nodes[index].Parameters = converted.Parameters
+		}
+		kept = append(kept, converted)
+	}
+	return kept, nil
 }
 
 // portDirection selects which side of a definition resolvePort reads.

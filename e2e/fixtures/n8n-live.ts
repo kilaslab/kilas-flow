@@ -106,6 +106,10 @@ export const STUB_EXECUTED = [
 	'kilasflow.wait@1',
 	'kilasflow.executeWorkflow@1',
 	'kilasflow.executeWorkflowTrigger@1',
+	// The RSS pair against the loopback stub's real feed document: the read
+	// node parses it, and the trigger fires on a manual run.
+	'kilasflow.rssFeedRead@1',
+	'kilasflow.rssFeedReadTrigger@1',
 	'kilasflow.datastore@1',
 	'kilasflow.chatTrigger@1',
 	'kilasflow.documentLoader@1',
@@ -154,6 +158,7 @@ export const EDITOR_VALIDATED = [
 	'kilasflow.googleSheets@1',
 	'kilasflow.googleSheetsTrigger@1',
 	'kilasflow.googleSheetsTool@1',
+	'kilasflow.rssFeedReadTool@1',
 	'kilasflow.datastoreTool@1',
 	'kilasflow.postgres@1',
 	'kilasflow.postgres@2',
@@ -181,6 +186,11 @@ export const MATRIX_EXCLUDED: Record<string, string> = {
 	'kilasflow.chainSummarization@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
 	'kilasflow.chainRetrievalQa@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
 	'kilasflow.sentimentAnalysis@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
+	// The email pair dials a mail server, which the HTTP stub tier cannot
+	// stand in for; unit-covered in nodes/email_test.go and internal/mail
+	// against fake SMTP and IMAP servers.
+	'kilasflow.emailSend@1': 'needs a live SMTP server; unit-covered in nodes/email_test.go and internal/mail',
+	'kilasflow.emailReadImap@1': 'needs a live IMAP server; unit-covered in nodes/email_test.go and internal/mail',
 	// The host-event trigger starts from an event a host publishes through the
 	// tenant-authenticated events API, not from anything a workflow-shaped run
 	// can feed it. Covered where that surface lives: the fan-out and item

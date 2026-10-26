@@ -160,7 +160,7 @@ const unsupportedFixture = `{
   "name": "Has unsupported",
   "nodes": [
     {"id": "a", "name": "Manual", "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1, "position": [0, 0]},
-    {"id": "b", "name": "Send Email", "type": "n8n-nodes-base.emailSend", "typeVersion": 2.1, "position": [220, 0],
+    {"id": "b", "name": "Send Email", "type": "n8n-nodes-base.microsoftOutlook", "typeVersion": 2.1, "position": [220, 0],
      "parameters": {"toEmail": "ops@example.test", "subject": "Report"}}
   ],
   "connections": {
@@ -367,7 +367,7 @@ func TestImportKeepsAnUnsupportedNodeVisibleAndUnrunnable(t *testing.T) {
 	if placeholder.Type != n8n.UnsupportedNodeType {
 		t.Fatalf("node type = %q, want the unsupported placeholder", placeholder.Type)
 	}
-	if placeholder.Parameters["originalType"] != "n8n-nodes-base.emailSend" {
+	if placeholder.Parameters["originalType"] != "n8n-nodes-base.microsoftOutlook" {
 		t.Errorf("originalType = %#v, want the n8n type preserved", placeholder.Parameters["originalType"])
 	}
 	// The capsule is a structured object, not JSON escaped inside JSON, and it
@@ -380,12 +380,12 @@ func TestImportKeepsAnUnsupportedNodeVisibleAndUnrunnable(t *testing.T) {
 	if !ok || parameters["toEmail"] != "ops@example.test" {
 		t.Errorf("original parameters = %#v, want the source parameters preserved", original["parameters"])
 	}
-	if original["type"] != "n8n-nodes-base.emailSend" {
+	if original["type"] != "n8n-nodes-base.microsoftOutlook" {
 		t.Errorf("original type = %#v, want the source type preserved", original["type"])
 	}
 
 	// Actionable: the message names the exact unsupported element.
-	if !hasReason(result.Unsupported, "n8n-nodes-base.emailSend") {
+	if !hasReason(result.Unsupported, "n8n-nodes-base.microsoftOutlook") {
 		t.Fatalf("unsupported = %#v, want the node type named", result.Unsupported)
 	}
 
@@ -400,7 +400,7 @@ func TestImportKeepsAnUnsupportedNodeVisibleAndUnrunnable(t *testing.T) {
 	if err == nil {
 		t.Fatal("a workflow containing an unsupported node compiled")
 	}
-	if !strings.Contains(err.Error(), "emailSend") {
+	if !strings.Contains(err.Error(), "microsoftOutlook") {
 		t.Errorf("compile error = %v, want it to name the unsupported node", err)
 	}
 }
@@ -627,7 +627,7 @@ func TestRoundTripKeepsAnUnsupportedNodeAsItsOriginalN8NNode(t *testing.T) {
 	}
 	// The node came from n8n and belongs there; exporting it as a KilasFlow
 	// placeholder would make the round trip lossy for no reason.
-	if placeholder.Type != "n8n-nodes-base.emailSend" {
+	if placeholder.Type != "n8n-nodes-base.microsoftOutlook" {
 		t.Fatalf("exported type = %q, want the original n8n type", placeholder.Type)
 	}
 	if placeholder.Parameters["toEmail"] != "ops@example.test" {
@@ -715,9 +715,13 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"@n8n/n8n-nodes-base.formTrigger ↔ kilasflow.formTrigger",
 		"@n8n/n8n-nodes-langchain.agent ↔ kilasflow.agent",
 		"@n8n/n8n-nodes-langchain.chainLlm ↔ kilasflow.chainLlm",
+		"@n8n/n8n-nodes-langchain.chainRetrievalQa ↔ kilasflow.chainRetrievalQa",
+		"@n8n/n8n-nodes-langchain.chainSummarization ↔ kilasflow.chainSummarization",
 		"@n8n/n8n-nodes-langchain.chatTrigger ↔ kilasflow.chatTrigger",
 		"@n8n/n8n-nodes-langchain.documentDefaultDataLoader ↔ kilasflow.documentLoader",
 		"@n8n/n8n-nodes-langchain.embeddingsOpenAi ↔ kilasflow.embeddings",
+		"@n8n/n8n-nodes-langchain.googleGemini ↔ kilasflow.googleGemini",
+		"@n8n/n8n-nodes-langchain.informationExtractor ↔ kilasflow.informationExtractor",
 		"@n8n/n8n-nodes-langchain.lmChatDeepSeek ↔ kilasflow.chatModel",
 		"@n8n/n8n-nodes-langchain.lmChatGoogleGemini ↔ kilasflow.chatModel",
 		"@n8n/n8n-nodes-langchain.lmChatGroq ↔ kilasflow.chatModel",
@@ -729,7 +733,12 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"@n8n/n8n-nodes-langchain.lmOllama ↔ kilasflow.chatModel",
 		"@n8n/n8n-nodes-langchain.mcpClientTool ↔ kilasflow.mcpClientTool",
 		"@n8n/n8n-nodes-langchain.memoryBufferWindow ↔ kilasflow.memoryBuffer",
+		"@n8n/n8n-nodes-langchain.openAi ↔ kilasflow.openAi",
+		"@n8n/n8n-nodes-langchain.outputParserAutofixing ↔ kilasflow.outputParser",
+		"@n8n/n8n-nodes-langchain.outputParserItemList ↔ kilasflow.outputParser",
 		"@n8n/n8n-nodes-langchain.outputParserStructured ↔ kilasflow.outputParser",
+		"@n8n/n8n-nodes-langchain.sentimentAnalysis ↔ kilasflow.sentimentAnalysis",
+		"@n8n/n8n-nodes-langchain.textClassifier ↔ kilasflow.textClassifier",
 		"@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter ↔ kilasflow.textSplitter",
 		"@n8n/n8n-nodes-langchain.toolCalculator ↔ kilasflow.calculatorTool",
 		"@n8n/n8n-nodes-langchain.toolHttpRequest ↔ kilasflow.httpTool",
@@ -743,6 +752,8 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.dataTable ↔ kilasflow.datastore",
 		"n8n-nodes-base.dataTableTool ↔ kilasflow.datastoreTool",
 		"n8n-nodes-base.dateTime ↔ kilasflow.dateTime",
+		"n8n-nodes-base.emailReadImap ↔ kilasflow.emailReadImap",
+		"n8n-nodes-base.emailSend ↔ kilasflow.emailSend",
 		"n8n-nodes-base.errorTrigger ↔ kilasflow.errorTrigger",
 		"n8n-nodes-base.executeWorkflow ↔ kilasflow.executeWorkflow",
 		"n8n-nodes-base.executeWorkflowTrigger ↔ kilasflow.executeWorkflowTrigger",
@@ -773,6 +784,9 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.postgresTool ↔ kilasflow.postgresTool",
 		"n8n-nodes-base.removeDuplicates ↔ kilasflow.removeDuplicates",
 		"n8n-nodes-base.respondToWebhook ↔ kilasflow.respondToWebhook",
+		"n8n-nodes-base.rssFeedRead ↔ kilasflow.rssFeedRead",
+		"n8n-nodes-base.rssFeedReadTool ↔ kilasflow.rssFeedReadTool",
+		"n8n-nodes-base.rssFeedReadTrigger ↔ kilasflow.rssFeedReadTrigger",
 		"n8n-nodes-base.scheduleTrigger ↔ kilasflow.schedule",
 		"n8n-nodes-base.set ↔ kilasflow.set",
 		"n8n-nodes-base.sort ↔ kilasflow.sort",
@@ -936,7 +950,7 @@ const capsuleFixture = `{
   "name": "Full node",
   "nodes": [
     {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
-    {"id":"b","name":"Send Email","type":"n8n-nodes-base.emailSend","typeVersion":2.1,"position":[220,0],
+    {"id":"b","name":"Send Email","type":"n8n-nodes-base.microsoftOutlook","typeVersion":2.1,"position":[220,0],
      "parameters":{"toEmail":"ops@example.test"},
      "credentials":{"smtp":{"id":"7","name":"Company SMTP"}},
      "disabled":true,
@@ -1085,7 +1099,7 @@ func TestPlaceholderCapsuleRoundTripsEveryField(t *testing.T) {
 			returned = candidate
 		}
 	}
-	if returned.Type != "n8n-nodes-base.emailSend" {
+	if returned.Type != "n8n-nodes-base.microsoftOutlook" {
 		t.Fatalf("exported type = %q, want the original n8n type", returned.Type)
 	}
 	if returned.TypeVersion != 2.1 {
@@ -1209,10 +1223,10 @@ func TestExportReadsTheLegacyStringCapsule(t *testing.T) {
 			{
 				ID: "b", Name: "Send Email", Type: n8n.UnsupportedNodeType, TypeVersion: workflow.V(1),
 				Parameters: map[string]any{
-					"originalType":        "n8n-nodes-base.emailSend",
+					"originalType":        "n8n-nodes-base.microsoftOutlook",
 					"originalTypeVersion": 2.1,
 					// Exactly the shape the previous importer wrote.
-					"original": `{"type":"n8n-nodes-base.emailSend","typeVersion":2.1,"parameters":{"toEmail":"ops@example.test"}}`,
+					"original": `{"type":"n8n-nodes-base.microsoftOutlook","typeVersion":2.1,"parameters":{"toEmail":"ops@example.test"}}`,
 				},
 			},
 		},
@@ -1232,7 +1246,7 @@ func TestExportReadsTheLegacyStringCapsule(t *testing.T) {
 		if node.Name != "Send Email" {
 			continue
 		}
-		if node.Type != "n8n-nodes-base.emailSend" {
+		if node.Type != "n8n-nodes-base.microsoftOutlook" {
 			t.Errorf("exported type = %q, want the original n8n type", node.Type)
 		}
 		if node.Parameters["toEmail"] != "ops@example.test" {

@@ -9,7 +9,7 @@ sidebar:
 
 > **Generated reference — KilasFlow `0.1.0-dev`.** Produced from the node catalogue a real binary serves at `GET /api/v1/node-types`, not hand-written. The per-type counts and every table below are the committed output, and `make generate-node-catalogue-check` fails when the catalogue changes without a regeneration.
 
-A default install serves **77 distinct node types** across **84 type-and-version pairs**: 73 types (78 pairs) compiled into the binary and 4 types (6 pairs) from the declarative packs it ships with. This page lists every one — the index table first, then a section per type with its parameters, ports, credential requirements and the n8n node it maps to. What a version *resolves to* is in [the node registry](/concepts/node-registry/); what a parameter *does* at run time is in each node's own documentation, where it carries one.
+A default install serves **82 distinct node types** across **89 type-and-version pairs**: 78 types (83 pairs) compiled into the binary and 4 types (6 pairs) from the declarative packs it ships with. This page lists every one — the index table first, then a section per type with its parameters, ports, credential requirements and the n8n node it maps to. What a version *resolves to* is in [the node registry](/concepts/node-registry/); what a parameter *does* at run time is in each node's own documentation, where it carries one.
 
 The catalogue a particular install serves can be smaller: a type scoped to other tenants is absent from `GET /node-types` by design (see [Tenant-scoped nodes](/guides/tenant-scoped-nodes/)), and an install with `KILASFLOW_PACKS_DIR` set serves its packs beside these. Ask your own instance for the truth: `curl -s $KILASFLOW_HOST/api/v1/node-types | jq -r '.[].type'`.
 
@@ -31,6 +31,8 @@ The catalogue a particular install serves can be smaller: a type scoped to other
 | [`kilasflow.datastoreTool`](#kilasflowdatastoretool) | Data table Tool | 1 | AI | builtin | — |
 | [`kilasflow.dateTime`](#kilasflowdatetime) | Date & Time | 1 | Transform | builtin | — |
 | [`kilasflow.documentLoader`](#kilasflowdocumentloader) | Default Data Loader | 1 | AI | builtin | — |
+| [`kilasflow.emailReadImap`](#kilasflowemailreadimap) | Email Trigger (IMAP) | 1 | Triggers | builtin | — |
+| [`kilasflow.emailSend`](#kilasflowemailsend) | Send Email | 1 | Communication | builtin | — |
 | [`kilasflow.embeddings`](#kilasflowembeddings) | Embeddings | 1 | AI | builtin | — |
 | [`kilasflow.errorTrigger`](#kilasflowerrortrigger) | Error Trigger | 1 | Trigger | builtin | — |
 | [`kilasflow.executeWorkflow`](#kilasflowexecuteworkflow) | Execute Sub-workflow | 1 | Flow | builtin | — |
@@ -70,6 +72,9 @@ The catalogue a particular install serves can be smaller: a type scoped to other
 | [`kilasflow.postgresTool`](#kilasflowpostgrestool) | PostgreSQL Tool | 2 | AI | builtin | — |
 | [`kilasflow.removeDuplicates`](#kilasflowremoveduplicates) | Remove Duplicates | 1 | Transform | builtin | — |
 | [`kilasflow.respondToWebhook`](#kilasflowrespondtowebhook) | Respond to Webhook | 1 | Core | builtin | `n8n-nodes-base.respondToWebhook` |
+| [`kilasflow.rssFeedRead`](#kilasflowrssfeedread) | RSS Read | 1 | Core | builtin | — |
+| [`kilasflow.rssFeedReadTool`](#kilasflowrssfeedreadtool) | RSS Read Tool | 1 | AI | builtin | — |
+| [`kilasflow.rssFeedReadTrigger`](#kilasflowrssfeedreadtrigger) | RSS Feed Trigger | 1 | Triggers | builtin | — |
 | [`kilasflow.schedule`](#kilasflowschedule) | Schedule | 1 | Triggers | builtin | `n8n-nodes-base.scheduleTrigger`, `n8n-nodes-base.cron`, `n8n-nodes-base.interval` |
 | [`kilasflow.sentimentAnalysis`](#kilasflowsentimentanalysis) | Sentiment Analysis | 1 | AI | builtin | — |
 | [`kilasflow.set`](#kilasflowset) | Set | 1 | Core | builtin | `n8n-nodes-base.set` |
@@ -442,6 +447,61 @@ Parameters:
 | --- | --- | --- | --- | --- |
 | `textField` | string | no | `text` | JSON field holding the document text. Also accepts pageContent and content. |
 | `metadataField` | string | no | `metadata` | JSON object copied onto every produced document as metadata. |
+
+## kilasflow.emailReadImap
+
+Starts a workflow when a mailbox receives a message. Polls with a leased cursor and a UID watermark, so two replicas cannot emit one mail twice.
+
+| | |
+| --- | --- |
+| Display name | Email Trigger (IMAP) |
+| Category | Triggers (trigger) |
+| Versions | `1` |
+| Inputs | — |
+| Outputs | `main` (main) |
+| Credentials | `imap` (required) |
+| n8n equivalent | — |
+
+Parameters:
+
+| Parameter | Kind | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `mailbox` | string | no | `INBOX` |  |
+| `postProcessAction` | options | no | `read` | What to do after a message is emitted. Nothing means an unread message is emitted again on the next poll. Options: `read`, `nothing`. |
+| `format` | options | no | `simple` | Simple emits headers, text and HTML; RAW emits the whole message base64url-encoded. Options: `simple`, `raw`. |
+| `pollTimes` | collection | no | — |  |
+
+## kilasflow.emailSend
+
+Sends an email over SMTP: text or HTML, with attachments from the workflow's binary data.
+
+| | |
+| --- | --- |
+| Display name | Send Email |
+| Category | Communication (output) |
+| Versions | `1` |
+| Inputs | `main` (main) |
+| Outputs | `main` (main) |
+| Credentials | `smtp` (required) |
+| n8n equivalent | — |
+
+Parameters:
+
+| Parameter | Kind | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `fromEmail` | string | yes | — | The sender's address, optionally with a name: Ops <ops@example.test>. |
+| `toEmail` | string | yes | — | The recipient's address. Several can be comma-separated. |
+| `subject` | string | no | — |  |
+| `emailFormat` | options | no | `html` | Send the message as plain text, as HTML, or as both — the recipient's client picks. Options: `text`, `html`, `both`. |
+| `text` | string | no | — | The plain-text body. Supports expressions. |
+| `html` | string | no | — | The HTML body. Supports expressions. |
+| `options` | collection | no | — |  |
+| `options.ccEmail` | string | no | — | Carbon-copy recipients, comma-separated. |
+| `options.bccEmail` | string | no | — | Blind carbon-copy recipients, comma-separated. They receive the mail but no header names them. |
+| `options.replyTo` | string | no | — | The address replies go to. |
+| `options.attachments` | string | no | — | Binary properties to embed in the body, comma-separated. Reference them in the HTML via cid:propertyName. |
+| `options.fileAttachments` | string | no | — | Binary properties to attach as files, comma-separated. |
+| `options.allowUnauthorizedCerts` | boolean | no | `false` | Connect even if the server's certificate cannot be verified. |
 
 ## kilasflow.embeddings
 
@@ -1516,6 +1576,73 @@ Parameters:
 | `redirectURL` | string | no | — | Where the caller is sent. The status code defaults to 307 unless you set one, so a POST stays a POST — a 302 turns it into a GET in every browser. |
 | `responseHeaders` | keyValue | no | — |  |
 | `responseKey` | string | no | — | Wrap a JSON response under this key, so the caller receives `{"key": …}` rather than a bare object or array. |
+
+## kilasflow.rssFeedRead
+
+Reads the entries of an RSS or Atom feed into items.
+
+| | |
+| --- | --- |
+| Display name | RSS Read |
+| Category | Core (input) |
+| Versions | `1` |
+| Inputs | `main` (main) |
+| Outputs | `main` (main) |
+| Credentials | — |
+| n8n equivalent | — |
+
+Parameters:
+
+| Parameter | Kind | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `url` | string | yes | — | The feed's address. Supports expressions, so one node can read a feed per item. |
+| `options` | collection | no | — |  |
+| `options.customFields` | string | no | — | Extra entry elements to include in the output, comma-separated: author, dc:date, whatever the feed carries. |
+
+## kilasflow.rssFeedReadTool
+
+Lets an AI Agent read an RSS or Atom feed through the RSS Read node. The URL is the author's; the model supplies values only.
+
+| | |
+| --- | --- |
+| Display name | RSS Read Tool |
+| Category | AI (input) |
+| Versions | `1` |
+| Inputs | — |
+| Outputs | `tool` (ai_tool) |
+| Credentials | — |
+| n8n equivalent | — |
+
+Parameters:
+
+| Parameter | Kind | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `toolName` | string | no | — | Optional override for the name the model calls. Defaults to the node name, normalised to letters, digits, and underscores. |
+| `toolDescription` | string | yes | — | What the tool does, written for the model. |
+| `url` | string | yes | — | The feed's address. Supports expressions, so one node can read a feed per item. |
+| `options` | collection | no | — |  |
+| `options.customFields` | string | no | — | Extra entry elements to include in the output, comma-separated: author, dc:date, whatever the feed carries. |
+
+## kilasflow.rssFeedReadTrigger
+
+Starts a workflow when a feed publishes a new entry. Polls with a leased cursor and a GUID watermark.
+
+| | |
+| --- | --- |
+| Display name | RSS Feed Trigger |
+| Category | Triggers (trigger) |
+| Versions | `1` |
+| Inputs | — |
+| Outputs | `main` (main) |
+| Credentials | — |
+| n8n equivalent | — |
+
+Parameters:
+
+| Parameter | Kind | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `feedUrl` | string | yes | `https://blog.n8n.io/rss/` | The feed to poll. Supports expressions. |
+| `pollTimes` | collection | no | — |  |
 
 ## kilasflow.schedule
 

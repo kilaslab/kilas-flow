@@ -9,7 +9,7 @@ sidebar:
 
 > **Generated reference — KilasFlow `0.1.0-dev`.** Produced from the credential-type catalogue a real binary serves at `GET /api/v1/credential-types`, not hand-written.
 
-**18 credential types ship**, and a node pack adds none — it names one of these. The concepts page covers [how a credential is stored, scoped and tested](/concepts/credentials/); this page is the per-type field reference an integrator or editor renders a form from.
+**20 credential types ship**, and a node pack adds none — it names one of these. The concepts page covers [how a credential is stored, scoped and tested](/concepts/credentials/); this page is the per-type field reference an integrator or editor renders a form from.
 
 | ID | Name | Fields | Testable |
 | --- | --- | --- | --- |
@@ -23,11 +23,13 @@ sidebar:
 | [`httpCustomAuth`](#httpcustomauth) | HTTP Custom Auth | `json` | no |
 | [`httpHeaderAuth`](#httpheaderauth) | HTTP Header Auth | `name`, `value` | no |
 | [`httpQueryAuth`](#httpqueryauth) | HTTP Query Auth | `name`, `value` | no |
+| [`imap`](#imap) | IMAP | `user`, `password`, `host`, `port`, `secure`, `allowUnauthorizedCerts` | yes |
 | [`jwtAuth`](#jwtauth) | JWT Auth | `keyType`, `secret`, `publicKey`, `privateKey`, `algorithm` | no |
 | [`mysql`](#mysql) | MySQL | `host`, `port`, `database`, `user`, `password`, `tls` | yes |
 | [`openAiApi`](#openaiapi) | OpenAI | `apiKey`, `url` | yes |
 | [`openRouterApi`](#openrouterapi) | OpenRouter | `apiKey` | yes |
 | [`postgres`](#postgres) | PostgreSQL | `host`, `port`, `database`, `user`, `password`, `sslMode` | yes |
+| [`smtp`](#smtp) | SMTP | `user`, `password`, `host`, `port`, `secure`, `disableStartTls` | yes |
 | [`sqlite`](#sqlite) | SQLite file | `path` | yes |
 | [`telegramApi`](#telegramapi) | Telegram | `accessToken`, `baseUrl` | yes |
 | [`wahaApi`](#wahaapi) | WAHA | `baseUrl`, `apiKey` | no |
@@ -175,6 +177,23 @@ An empty allowed-domains list means **any host** for this type: scope it before 
 
 This type answers `untestable` on the test endpoints — there is no probe that proves it.
 
+## imap
+
+Reads a mailbox over IMAP. The field keys are n8n's own, so an imported workflow's credential shape survives the mapping.
+
+| Field | Required | Secret | Default | Description |
+| --- | --- | --- | --- | --- |
+| `user` | yes | no | — |  |
+| `password` | yes | yes | — |  |
+| `host` | yes | no | — |  |
+| `port` | no | no | `993` |  |
+| `secure` | no | no | `true` | On (the default) connects with TLS from the start. Off connects in clear and upgrades with STARTTLS when the server offers it. |
+| `allowUnauthorizedCerts` | no | no | `false` | Connect even when the server's certificate cannot be verified. |
+
+An empty allowed-domains list means **any host** for this type: scope it before giving it to a caller who can choose where a request goes.
+
+The test endpoints can probe this type: `POST /api/v1/credential-types/{type}/test` before it is saved, `POST /api/v1/credentials/{id}/test` after.
+
 ## jwtAuth
 
 Holds the key that verifies incoming JSON Web Tokens.
@@ -245,6 +264,23 @@ Connects to a PostgreSQL database you own.
 | `user` | yes | no | — |  |
 | `password` | yes | yes | — |  |
 | `sslMode` | no | no | `verify-full` | verify-full (the default) checks the server's certificate and host name; verify-ca checks the certificate only; require encrypts without checking either; disable sends everything in the clear. |
+
+An empty allowed-domains list means **any host** for this type: scope it before giving it to a caller who can choose where a request goes.
+
+The test endpoints can probe this type: `POST /api/v1/credential-types/{type}/test` before it is saved, `POST /api/v1/credentials/{id}/test` after.
+
+## smtp
+
+Sends email through an SMTP server. The field keys are n8n's own, so an imported workflow's credential shape survives the mapping.
+
+| Field | Required | Secret | Default | Description |
+| --- | --- | --- | --- | --- |
+| `user` | no | no | — |  |
+| `password` | no | yes | — | Leave user and password empty for an internal relay that does not authenticate. |
+| `host` | yes | no | — |  |
+| `port` | no | no | `465` | Defaults to 465, the implicit-TLS port. |
+| `secure` | no | no | `true` | On (the default) connects with TLS from the start, usually port 465. Off connects in clear and upgrades with STARTTLS when the server offers it, usually port 587. |
+| `disableStartTls` | no | no | `false` | Leave the connection unencrypted when the credential's SSL/TLS is off. Only for a relay you know is reachable in the clear. |
 
 An empty allowed-domains list means **any host** for this type: scope it before giving it to a caller who can choose where a request goes.
 

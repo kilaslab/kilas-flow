@@ -391,7 +391,7 @@ every tenant can open every file the server can.
 ## The built-in catalogue
 
 <!-- generated:credential-types -->
-18 credential types ship.
+20 credential types ship.
 <!-- /generated:credential-types -->
 
 They are all declared in one place, and node packs do not add credential types
@@ -408,6 +408,8 @@ today:
 | `postgres` | PostgreSQL connections from a workflow |
 | `mysql` | MySQL and MariaDB connections from a workflow |
 | `sqlite` | a SQLite file in the tenant's own directory (see [SQLite files](#sqlite-files)) |
+| `smtp` | sending email from a workflow over SMTP — host, port, SSL/TLS or STARTTLS, and a login when the relay wants one |
+| `imap` | the IMAP Email Trigger's mailbox login — host, port, SSL/TLS, user and password; its test is the login itself |
 | `telegramApi` | Telegram Bot API |
 | `wahaApi` | WAHA |
 | `openAiApi` | OpenAI |

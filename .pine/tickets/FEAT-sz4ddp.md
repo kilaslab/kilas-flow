@@ -1,7 +1,7 @@
 ---
 id: FEAT-sz4ddp
 title: 'Email: Send Email (SMTP) and IMAP Email Trigger'
-status: todo
+status: done
 priority: high
 labels:
     - n8n
@@ -55,3 +55,7 @@ Related (from the audit): none. FEAT-nqpvf6 (done) names IMAP only as a poll-fra
 `results-extra.json` (Send Email SMTP, IMAP Email Trigger, Microsoft Outlook), the credential-types listing.
 
 # Attachments
+
+# Progress
+
+Implemented 2026-10-26 (orchestrator-verified): Send Email (SMTP) + IMAP Email Trigger over internal/mail (policy-guarded dials through safehttp), smtp + imap credential types with declared dial tests, credentials.probe gained the Dial branch (RunDialTest under the credential's own scope; testable() mirrors it), catalogue row + docs facts refreshed. Out of scope by declared surface: IMAP resolved format + attachment downloads (imported as lossy/dropped). Gates: build ok; api/handlers (incl. the fixed unsupported-node fixture — now n8n-nodes-base.executeCommand since emailSend maps), credentials, mail ok; vet ok.
