@@ -1,7 +1,7 @@
 ---
 id: FEAT-t672pv
 title: OpenAI and Google Gemini app nodes (message, analyze image, transcribe)
-status: doing
+status: done
 priority: high
 labels:
     - n8n
@@ -59,3 +59,7 @@ Related (from the audit): FEAT-j5s2n4 (done) listed "the OpenAI app node's messa
 # Progress
 
 Node-side implemented 2026-10-25 (orchestrator-verified): kilasflow.openAi + kilasflow.googleGemini app nodes (message / analyze image / transcribe) over the internal/ai adapter with safehttp, googleGeminiApi credential type, n8n parameter keys (modelId, messages.messageValues, options) so import maps by type name. Gates: go test ai/credentials ok, nodes ok except 11 environmental sidecar tests (identical at clean base), build ok, make lint exit 0 (web 1202). REMAINING: importer mapping-table entries for openAi/googleGemini (importer lane).
+
+# Progress
+
+Import mappings for openAi/googleGemini/the chains/parsers landed via feat/parity-nodes-1 (#43, FEAT-sz4ddp+kfmq1z branch ticket C) — import works end to end. Fully done 2026-10-26.
