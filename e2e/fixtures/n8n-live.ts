@@ -181,6 +181,13 @@ export const MATRIX_EXCLUDED: Record<string, string> = {
 	'kilasflow.chainSummarization@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
 	'kilasflow.chainRetrievalQa@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
 	'kilasflow.sentimentAnalysis@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
+	// The host-event trigger starts from an event a host publishes through the
+	// tenant-authenticated events API, not from anything a workflow-shaped run
+	// can feed it. Covered where that surface lives: the fan-out and item
+	// shape in internal/hostevents, the endpoint and its idempotency in
+	// internal/api/events_test.go.
+	'kilasflow.hostEvent@1':
+		'needs a host to publish the event; covered in internal/hostevents and internal/api/events_test.go',
 };
 
 // One live comparison case per node family with an n8n counterpart. The
