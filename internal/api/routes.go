@@ -47,7 +47,7 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 		WithAvailability(deps.NodeAvailability).Register(v1)
 	handlers.NewWorkflows(deps.Workflows, deps.Executions, deps.NodeRegistry, deps.Tenants, deps.ExecutionController).
 		WithTriggers(deps.TriggerCoordinator).WithSessionMemory(deps.SessionMemory).WithIdempotency(deps.Idempotency).
-		WithCredentials(deps.Credentials).WithCodeChecker(deps.CodeChecker).Register(v1)
+		WithCredentials(deps.Credentials).WithCodeChecker(deps.CodeChecker).WithRateLimiter(deps.RateLimiter).Register(v1)
 	handlers.NewExecutions(deps.ExecutionController, deps.Executions, deps.Events, deps.Tenants, deps.NodeRegistry).
 		WithWorkflowVersions(deps.Workflows).WithCredentials(deps.Credentials).Register(v1)
 	credentials := handlers.NewCredentials(deps.Credentials, deps.Tenants).
@@ -78,6 +78,11 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	handlers.NewDatastores(deps.Datastores, deps.Tenants).WithIdempotency(deps.Idempotency).Register(v1)
 	handlers.NewEmbedSessions(deps.EmbedIssuer, deps.Workflows, deps.Tenants).WithDatastores(deps.Datastores).Register(v1)
 	handlers.NewInterop(deps.Workflows, deps.NodeRegistry, deps.Tenants).Register(v1)
+	// The host → workflow path. Registered beside the interop surface because
+	// it answers the same question from the other side: how work that starts
+	// outside this installation reaches the workflows that serve it.
+	handlers.NewEvents(deps.HostEvents, deps.Tenants).
+		WithIdempotency(deps.Idempotency).WithRateLimiter(deps.RateLimiter).Register(v1)
 
 	// Self-hosted API reference. Huma's own docs endpoint is disabled in
 	// openAPIConfig because it loads Scalar from a CDN.

@@ -43,7 +43,7 @@ const session = await kilasflow.createEmbedSession({
 
 ## Operation surface
 
-One thin, typed method per API operation — all 81 under `/api/v1` that a
+One thin, typed method per API operation — all 82 under `/api/v1` that a
 backend can drive (the one exception is below), grouped here the way the
 [API contract](https://github.com/kilaslab/kilas-flow/blob/main/docs/src/content/docs/reference/api-contract.md)
 groups them. Every method takes an `AbortSignal` last, resolves `Promise<void>`
@@ -58,6 +58,7 @@ the three writes that can be retried safely, which take an
 | Credentials | `listCredentialTypes`, `listCredentials`, `createCredential`, `getCredential`, `updateCredential`, `deleteCredential`, `testCredential`, `testCredentialPayload` |
 | Auth and keys | `login`, `logout`, `getMe`, `listApiKeys`, `createApiKey`, `revokeApiKey`, `createStreamTicket` |
 | Schedules | `listSchedules`, `createSchedule`, `updateSchedule`, `deleteSchedule` |
+| Host events | `publishEvent` |
 | Node catalogue | `listNodeTypes`, `nodeIconUrl`, `loadNodePropertyOptions`, `loadNodePropertySchema`, `getExpressionGrammar` |
 | Interop | `importWorkflow`, `convertWorkflowFragment`, `exportWorkflow` |
 | Datastores | `listDatastores`, `createDatastore`, `getDatastore`, `renameDatastore`, `deleteDatastore`, `clearDatastore`, `addDatastoreColumn`, `renameDatastoreColumn`, `deleteDatastoreColumn`, `listDatastoreRows`, `getDatastoreRow`, `insertDatastoreRow`, `updateDatastoreRows`, `deleteDatastoreRows`, `upsertDatastoreRow`, `incrementDatastoreRows`, `iterateDatastoreRows`, `exportDatastoreRows`, `importDatastoreRows`, `datastoreFilter`, `paginateCursor` |
@@ -94,9 +95,11 @@ while its diagnostics and minted webhook URLs are fully typed.
 
 ### Retrying safely
 
-`runWorkflow`, `insertDatastoreRow` and `upsertDatastoreRow` take an
+`runWorkflow`, `publishEvent`, `insertDatastoreRow` and `upsertDatastoreRow` take an
 `IdempotentWriteOptions` object where the signal goes, so a retry after a
-timeout repeats no side effect:
+timeout repeats no side effect. `publishEvent` also falls back to the event's
+own `eventId` when no key was sent, which is the idempotency the events API
+promises on the field:
 
 ```ts
 // One key per logical operation, persisted *before* the first attempt. A key

@@ -2,7 +2,7 @@
 title: Datastores
 description: "Tenant-owned row stores: tables, columns, rows, and CSV import and export. Generated from the live OpenAPI document."
 sidebar:
-  order: 7
+  order: 8
 ---
 
 <!-- Generated from the live OpenAPI document by scripts/generate-api-reference.mjs — do not edit by hand. -->

@@ -1,7 +1,7 @@
 ---
 id: FEAT-2npfgy
 title: 'Metrics endpoint: execution, queue, webhook and per-tenant series'
-status: todo
+status: done
 priority: medium
 labels:
     - saas
@@ -44,3 +44,7 @@ go.mod (otel only as indirect)
 internal/engine (terminal paths), internal/webhook/webhook.go (filtered and accepted), internal/repository/executions.go (ClaimNext)
 
 # Attachments
+
+# Progress
+
+Implemented 2026-10-26 (orchestrator-verified): /metrics endpoint — hand-rolled text-format registry in internal/metrics (no client_golang dependency; swap contained there), gauge collectors for execution/queue/webhook series incl. per-tenant labels, observation hooks in runOnce/logTerminal/trace sink + webhook outcome counting, composition wiring in main.go. Gates as FEAT-mccadj.

@@ -2,6 +2,7 @@
 package node
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -90,6 +91,19 @@ type Definition struct {
 	// on a canvas, saved and activated, and would simply never receive a
 	// request. No error, just an active workflow that is unreachable.
 	Webhook *WebhookDeclaration `json:"webhook,omitempty"`
+	// HostEvents declares that this node type starts runs from events the
+	// host publishes through POST /api/v1/events rather than from an inbound
+	// request. The declaration names where the subscriptions live — a node
+	// parameter for the built-in trigger, the type's own event list for a
+	// pack trigger — so activation can record them without knowing either
+	// kind of trigger by name.
+	HostEvents *HostEventDeclaration `json:"hostEvents,omitempty"`
+	// EventCatalogue describes the host events a trigger offers in the
+	// editor: one entry per event type, with the JSON schema of its payload
+	// and a sample. It is served with the definition because the editor is
+	// where a host's events meet the people wiring them; a trigger with no
+	// catalogue still runs, it just has nothing to offer a picker.
+	EventCatalogue []EventDefinition `json:"eventCatalogue,omitempty"`
 	// Credentials are the credential types this node can use.
 	//
 	// Named by string rather than by a typed reference, which is what n8n does
@@ -172,6 +186,43 @@ type N8NSource struct {
 	// Node is the node name inside the package an n8n workflow pairs with it
 	// ("apify", making the n8n type "@apify/n8n-nodes-apify.apify").
 	Node string
+}
+
+// HostEventDeclaration is how a node type says it starts from host events.
+//
+// It is the trigger-family counterpart of WebhookDeclaration, and it holds the
+// two halves a subscription needs: where the event types this node listens for
+// are named, and where the event's own type sits in the item the run starts
+// with. A node type that declares neither parameter nor events subscribes to
+// nothing, which is the honest reading of an empty declaration rather than an
+// error — the same way a webhook declaration with no path binds no route.
+type HostEventDeclaration struct {
+	// Parameter is the parameter key holding the event types this node
+	// subscribes to, for a trigger whose subscriptions are chosen per node.
+	Parameter string `json:"parameter,omitempty"`
+	// Events are the event types fixed by the type itself, for a trigger
+	// whose event list is part of its declaration — a pack trigger's ports.
+	// Ignored when Parameter names a per-node subscription list.
+	Events []string `json:"events,omitempty"`
+	// EventPath is the dotted path in the trigger item naming the event, for
+	// a trigger that routes an item to the port matching its event. Empty
+	// means the trigger emits every event from its one output.
+	EventPath string `json:"eventPath,omitempty"`
+}
+
+// EventDefinition is one host event a trigger offers: its type, the JSON
+// schema of its payload, and a sample of it. Declared by a pack (the host's
+// own product pack is the usual author) so the editor can offer the events
+// and something to test a workflow against, rather than a bare string.
+type EventDefinition struct {
+	// Type is the event type exactly as it is published and subscribed to.
+	Type string `json:"type"`
+	// Title is the human name shown in a picker.
+	Title string `json:"title,omitempty"`
+	// Schema is the JSON schema of the event's payload.
+	Schema json.RawMessage `json:"schema,omitempty"`
+	// Sample is a full sample event document.
+	Sample json.RawMessage `json:"sample,omitempty"`
 }
 
 // WebhookDeclaration is how a node type says it answers an inbound request.
@@ -834,6 +885,20 @@ func cloneDefinition(definition Definition) Definition {
 			}
 		}
 		definition.Codex = &codex
+	}
+	if definition.HostEvents != nil {
+		declaration := *definition.HostEvents
+		declaration.Events = append([]string(nil), definition.HostEvents.Events...)
+		definition.HostEvents = &declaration
+	}
+	if definition.EventCatalogue != nil {
+		catalogue := make([]EventDefinition, len(definition.EventCatalogue))
+		for index, event := range definition.EventCatalogue {
+			event.Schema = append(json.RawMessage(nil), event.Schema...)
+			event.Sample = append(json.RawMessage(nil), event.Sample...)
+			catalogue[index] = event
+		}
+		definition.EventCatalogue = catalogue
 	}
 	if definition.N8NSource != nil {
 		source := *definition.N8NSource

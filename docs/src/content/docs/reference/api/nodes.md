@@ -2,7 +2,7 @@
 title: Node types
 description: "The node catalogue, icons, load-options, load-schema, and the expression grammar. Generated from the live OpenAPI document."
 sidebar:
-  order: 6
+  order: 7
 ---
 
 <!-- Generated from the live OpenAPI document by scripts/generate-api-reference.mjs — do not edit by hand. -->

@@ -13,6 +13,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/execution"
 	"github.com/kilaslab/kilas-flow/internal/idempotency"
 	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/ratelimit"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/webhook"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
@@ -56,6 +57,10 @@ type Workflows struct {
 	// code builds Go Code nodes for the validate operation only. Optional:
 	// without it a dry run checks everything but compilation, as it did before.
 	code CodeChecker
+	// rateLimiter bounds how many runs one tenant may queue per minute.
+	// Optional: nil leaves the run API unlimited, which is what every
+	// deployment without the per-tenant limiter wired has always had.
+	rateLimiter RateLimiter
 }
 
 // SessionForgetter drops a workflow's retained agent conversations. It is a
@@ -897,6 +902,18 @@ func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*ru
 	if err := handler.available(true); err != nil {
 		return nil, err
 	}
+	// The tenant's allowance is spent before anything else happens: a refused
+	// run reads no workflow and claims no idempotency key, so the retry the
+	// Retry-After names starts clean.
+	if handler.rateLimiter != nil {
+		allowed, retryAfter, err := handler.rateLimiter.Allow(ctx, handler.tenant(ctx).ID, ratelimit.BucketRun)
+		if err != nil {
+			return nil, serverProblem(ctx, "the run rate limiter could not be read", err)
+		}
+		if !allowed {
+			return nil, rateLimitedProblem(retryAfter)
+		}
+	}
 	var payload json.RawMessage
 	triggerNodeID, versionID := "", ""
 	if input.Body != nil {
@@ -1199,6 +1216,14 @@ func (handler *Workflows) WithIdempotency(service *idempotency.Service) *Workflo
 // document is checked against.
 func (handler *Workflows) WithCredentials(store repository.CredentialRepository) *Workflows {
 	handler.credentials = store
+	return handler
+}
+
+// WithRateLimiter bounds the run API per tenant. A nil limiter is ignored.
+func (handler *Workflows) WithRateLimiter(limiter RateLimiter) *Workflows {
+	if limiter != nil {
+		handler.rateLimiter = limiter
+	}
 	return handler
 }
 

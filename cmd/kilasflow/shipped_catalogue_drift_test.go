@@ -30,8 +30,10 @@ import (
 var runCallsThatAddNoShippedNode = map[string]string{
 	"nodepack.LoadDir":           "installs the operator's own packs from packs.dir; the shipped catalogue is what a default install has before any",
 	"setupSidecar":               "loads the opt-in JavaScript sidecar's community nodes, an operator's installation that is off by default",
-	"wasmpack.NewExecutor":       "builds the executor that runs module packs against definitions LoadDir registered; it adds none itself",
+	"wasmpack.NewExecutor":       "builds the executor that runs module packs against definitions LoadDir registered; it adds none themselves",
 	"webhook.Extract":            "reads the definitions to find webhook triggers",
+	"hostevents.Extract":         "reads the definitions to find host-event subscriptions; it registers nothing",
+	"loadoptions.HostEvents":     "reads the definitions to offer a host-event trigger's picker the packs' catalogues; it registers nothing",
 	"nodes.WithNodeCatalog":      "hands the agent the catalogue it reads a tool form's base node from; it registers nothing",
 	"(registry).ApplyVisibility": "narrows who may see definitions that are already registered",
 }

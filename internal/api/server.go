@@ -135,7 +135,16 @@ type Deps struct {
 	// answering 503: a composition root that has no purge must say so rather
 	// than delete the tenant row and orphan every row pointing at it.
 	TenantPurger handlers.TenantPurger
-	Version      string
+	// HostEvents is the fan-out behind POST /api/v1/events: one published
+	// event, one execution per active workflow listening for it. Nil leaves
+	// the endpoint answering 503 rather than accepting events nobody can run,
+	// which is the composition root's way of saying the surface is off.
+	HostEvents handlers.HostEventPublisher
+	// RateLimiter bounds the run and events APIs per tenant. Nil leaves both
+	// unlimited, which is what a deployment without the per-tenant limiter
+	// wired has always had.
+	RateLimiter handlers.RateLimiter
+	Version     string
 	// OAuthSigningKey HMAC-signs Google Connect state. Empty disables Connect.
 	OAuthSigningKey []byte
 	// OAuthTokenURL overrides Google's token endpoint in tests.

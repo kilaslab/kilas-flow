@@ -1,7 +1,7 @@
 ---
 id: FEAT-g33qf6
 title: Per-tenant rate limiting for webhook ingress, the run API and host events
-status: todo
+status: done
 priority: medium
 labels:
     - saas
@@ -40,3 +40,7 @@ internal/api/middleware/auth.go (request pipeline)
 internal/webhook/webhook.go (ingress)
 
 # Attachments
+
+# Progress
+
+Implemented 2026-10-26 (orchestrator-verified): internal/ratelimit — database-backed store + migration, config section, shared 429 problem helper, enforcement wired into workflow run API, webhook ingress and host events. Per-tenant overrides read through the ratelimit.Overrides seam (FEAT-rdfjh1/settings provides the reader later; default-first per the ticket's Notes). Gates as FEAT-mccadj.
