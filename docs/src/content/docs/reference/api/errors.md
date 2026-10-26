@@ -37,7 +37,7 @@ Workflow compile failure is structured: a `422` whose error details carry a `Wor
 
 ## Idempotency conflicts
 
-The operations that accept an `Idempotency-Key` request header — `run-workflow`, `insert-datastore-row` and `upsert-datastore-row` — answer a reuse with a `409` whose error detail carries a typed `value.code`:
+The operations that accept an `Idempotency-Key` request header — `run-workflow`, `publish-event`, `insert-datastore-row` and `upsert-datastore-row` — answer a reuse with a `409` whose error detail carries a typed `value.code`:
 
 | `value.code` | Meaning | What to do |
 | --- | --- | --- |

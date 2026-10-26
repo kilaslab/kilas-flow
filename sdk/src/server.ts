@@ -54,6 +54,7 @@ import type {
 	LoadSchemaResource,
 	LoginInputBody,
 	PrincipalResource,
+	PublishEventResult,
 	ReadyOutputBody,
 	RowListOutputBody,
 	ScheduleBody,
@@ -299,6 +300,31 @@ export interface RunWorkflowOptions extends IdempotentWriteOptions {
 	workflowVersionId?: string;
 }
 
+/**
+ * One host event to publish: the recommended host → workflow path. Every
+ * active workflow whose event trigger lists the event's type runs, from its
+ * active revision — one request instead of a webhook route per workflow or a
+ * run call per workflow.
+ */
+export interface PublishEvent {
+	/**
+	 * The host's own identifier for this event. When no idempotency key was
+	 * sent it is the key, and it deduplicates per workflow either way: the
+	 * same eventId reaches each workflow once within the server's delivery
+	 * window.
+	 */
+	eventId?: string;
+	/** The event type, exactly as triggers subscribe to it. */
+	type: string;
+	/** The event's body, carried through to each workflow untouched. */
+	payload?: unknown;
+	/**
+	 * When the event happened on the host's clock, as an ISO 8601 timestamp.
+	 * Absent means the server stamps the publish time.
+	 */
+	occurredAt?: string;
+}
+
 /** What the server accepts as a key: 1-255 printable ASCII, no spaces. */
 const IDEMPOTENCY_KEY_PATTERN = /^[\x21-\x7e]{1,255}$/;
 
@@ -523,6 +549,32 @@ export class KilasFlowClient {
 			body: options.name === undefined ? undefined : { name: options.name },
 			signal
 		});
+	}
+
+	// --- Host events ---------------------------------------------------------
+
+	/**
+	 * Publishes one host event: the recommended host → workflow path. Every
+	 * active workflow whose event trigger lists the event's type queues an
+	 * execution of its active revision, and the answer names what ran —
+	 * `matched` carries each workflow with its execution id, `filtered` the
+	 * ones that did not run and why. An event nobody listens for is accepted
+	 * and matches nothing.
+	 *
+	 * The write is retryable: pass an idempotency key (or rely on the event's
+	 * own `eventId`) and a retry after a timeout answers with the first
+	 * outcome instead of running every workflow again.
+	 */
+	async publishEvent(
+		event: PublishEvent,
+		options?: AbortSignal | IdempotentWriteOptions
+	): Promise<PublishEventResult> {
+		const { signal, headers } = idempotentWrite(options, 'publishEvent');
+		const body: Record<string, unknown> = { type: event.type };
+		if (event.eventId !== undefined) body.eventId = event.eventId;
+		if (event.payload !== undefined) body.payload = event.payload;
+		if (event.occurredAt !== undefined) body.occurredAt = event.occurredAt;
+		return this.#transport.request('POST', '/events', { body, signal, headers });
 	}
 
 	// --- Executions ----------------------------------------------------------

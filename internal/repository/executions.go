@@ -470,6 +470,19 @@ func (store *GORMExecutionStore) Get(ctx context.Context, tenant TenantScope, ex
 // Pagination is keyset rather than offset based: the cursor pins the last
 // (started_at, id) pair seen, so an execution created while a user pages
 // through history cannot shift rows onto a page they already read.
+// QueueDepth counts the executions waiting for a worker, across every tenant:
+// the queue is shared, and the operator's question is how deep it is, not
+// whose work is in it. For the metrics gauge, read at scrape time.
+func (store *GORMExecutionStore) QueueDepth(ctx context.Context) (int64, error) {
+	var depth int64
+	if err := store.db.WithContext(ctx).Model(&executionModel{}).
+		Where("status = ?", string(execution.StatusQueued)).
+		Count(&depth).Error; err != nil {
+		return 0, fmt.Errorf("count queued executions: %w", err)
+	}
+	return depth, nil
+}
+
 func (store *GORMExecutionStore) List(ctx context.Context, tenant TenantScope, filter ExecutionFilter) (ExecutionPage, error) {
 	if err := tenant.validate(); err != nil {
 		return ExecutionPage{}, err

@@ -94,6 +94,11 @@ var toolForms = []toolForm{
 		validate:       validateGoogleSheetsTool,
 	},
 	{
+		toolType: RssFeedReadToolNodeType, baseType: RssFeedReadNodeType, baseVersion: workflow.V(1),
+		displayName: "RSS Read Tool",
+		description: "Lets an AI Agent read an RSS or Atom feed through the RSS Read node. The URL is the author's; the model supplies values only.",
+	},
+	{
 		toolType: TelegramToolNodeType, baseType: telegramPackNodeType, baseVersion: workflow.V(1),
 		displayName: "Telegram Tool",
 		description: "Lets an AI Agent send Telegram messages and run the Telegram node's other operations.",

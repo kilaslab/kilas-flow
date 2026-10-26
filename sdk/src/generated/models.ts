@@ -671,6 +671,20 @@ export interface NodeCodex {
   subcategories?: NodeCodexSubcategories;
 }
 
+export interface EventDefinition {
+  sample?: unknown;
+  schema?: unknown;
+  title?: string;
+  type: string;
+}
+
+export interface HostEventDeclaration {
+  eventPath?: string;
+  /** @nullable */
+  events?: string[] | null;
+  parameter?: string;
+}
+
 export interface NodeIcon {
   dark?: string;
   light?: string;
@@ -809,7 +823,10 @@ export interface Definition {
   displayName: string;
   documentationUrl?: string;
   /** @nullable */
+  eventCatalogue?: EventDefinition[] | null;
+  /** @nullable */
   group: string[] | null;
+  hostEvents?: HostEventDeclaration;
   icon?: NodeIcon;
   iconColor?: string;
   /** @nullable */
@@ -1542,6 +1559,64 @@ export interface PrincipalResource {
   userId?: string;
   /** Set when a scoped key is bound to one workflow */
   workflowId?: string;
+}
+
+export type PublishEventFilterReason = typeof PublishEventFilterReason[keyof typeof PublishEventFilterReason];
+
+
+export const PublishEventFilterReason = {
+  duplicate: 'duplicate',
+  inactive: 'inactive',
+} as const;
+
+export interface PublishEventFilter {
+  /** The execution a duplicate was collapsed with, when it is known. */
+  executionId?: string;
+  reason: PublishEventFilterReason;
+  /** The workflow that was considered. */
+  workflowId: string;
+}
+
+export interface PublishEventInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * The host's own identifier for this event. When Idempotency-Key is absent it is the idempotency key, and it deduplicates per workflow either way: publishing the same eventId again reaches each workflow once within a five-minute window.
+     * @maxLength 128
+     */
+  eventId?: string;
+  /** When the event happened on the host's clock. Absent means the server stamps the publish time. */
+  occurredAt?: string;
+  /** The event's body, carried through to each workflow as the trigger item's payload. */
+  payload?: unknown;
+  /**
+     * The event type, exactly as triggers subscribe to it.
+     * @minLength 1
+     * @maxLength 255
+     */
+  type: string;
+}
+
+export interface PublishEventMatch {
+  /** The queued execution, followable on the event stream. */
+  executionId: string;
+  /** The workflow that queued an execution. */
+  workflowId: string;
+}
+
+export interface PublishEventResult {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * Workflows that were considered and did not run, with the reason.
+     * @nullable
+     */
+  filtered: PublishEventFilter[] | null;
+  /**
+     * One entry per workflow that queued an execution.
+     * @nullable
+     */
+  matched: PublishEventMatch[] | null;
 }
 
 export interface PublishVersionInputBody {
@@ -4212,6 +4287,63 @@ const res = await fetch(getCreateEmbedSessionUrl(),
 
   const data: createEmbedSessionResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as createEmbedSessionResponse
+}
+
+
+
+export type publishEventResponse202 = {
+  data: PublishEventResult
+  status: 202
+}
+
+export type publishEventResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 202>
+}
+
+export type publishEventResponseSuccess = (publishEventResponse202) & {
+  headers: Headers;
+};
+export type publishEventResponseError = (publishEventResponseDefault) & {
+  headers: Headers;
+};
+
+export type publishEventResponse = (publishEventResponseSuccess | publishEventResponseError)
+
+export const getPublishEventUrl = () => {
+
+
+
+
+  return `/api/v1/events`
+}
+
+/**
+ * Publishes one event and queues an execution for every active workflow whose event trigger lists the event's type, running each workflow's active revision. This is the recommended host → workflow path: one request reaches every listening workflow, where a webhook route is per workflow and POST /workflows/{id}/run runs the latest revision and ignores activation. The response names what ran. An event nobody listens for is accepted and matches nothing. Send Idempotency-Key to make a retry safe; without one, an eventId in the body is the idempotency key, and deduplicates per workflow either way. 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency.
+ * @summary Publish a host event
+ */
+export const publishEvent = async (publishEventInputBody: NonReadonly<PublishEventInputBody>, options?: RequestInit): Promise<publishEventResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getPublishEventUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(publishEventInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: publishEventResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as publishEventResponse
 }
 
 

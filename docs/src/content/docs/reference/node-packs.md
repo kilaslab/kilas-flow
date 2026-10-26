@@ -69,8 +69,14 @@ loader on the list mode of its `modes` instead (guide:
 `guides/node-authoring`).
 
 A trigger accepts `events`, `catchAll`, `eventPath`, `shape`, `webhook`,
-`hmac`, `lifecycle`, `media`, `notice`. Events are in output-index order with
-the catch-all last; `hmac` names a signature scheme (`algorithm` `sha256` or
+`hmac`, `lifecycle`, `media`, `notice`, `hostEvents`. Events are in
+output-index order with the catch-all last; `hostEvents` opts the trigger's
+events into host-event delivery — the host publishes an event through
+`POST /api/v1/events` and every active workflow carrying the trigger runs
+from the port matching the event — and its `catalogue` describes each event
+(`type`, `title`, `schema`, `sample`) for the editor, each entry naming one
+of the trigger's own events; `hmac` names a signature scheme (`algorithm`
+`sha256` or
 `sha512`, `encoding` `hex` or `base64`, `prefix`, a `signingString` template
 over `{{ .body }}`, `{{ .timestamp }}` and `{{ .header.<name> }}`,
 `timestampHeader` with `toleranceSeconds`, or the `standardWebhooks` preset in

@@ -28,6 +28,7 @@ func RegisterAll(registry *node.Registry) error {
 		stopAndErrorNode(),
 		respondToWebhookNode(),
 		scheduleTrigger(),
+		hostEventTrigger(),
 		postgresNode(),
 		// Version 2 registers beside version 1, never over it: a workflow
 		// authored against query/execute/transaction keeps running unchanged.
@@ -75,6 +76,15 @@ func RegisterAll(registry *node.Registry) error {
 		gmailTrigger(),
 		googleSheetsNode(),
 		googleSheetsTrigger(),
+		// The email pair: Send Email over SMTP and the IMAP trigger on the
+		// leased poll framework. n8n's names, so an import maps by type.
+		emailSendNode(),
+		emailReadImapNode(),
+		// The RSS pair: the read node and its feed trigger, both under n8n's
+		// names so an import maps by type. The tool form registers with the
+		// other tool forms, after the bases.
+		rssFeedReadNode(),
+		rssFeedReadTriggerNode(),
 		codeNode(),
 		stickyNoteNode(),
 		loopNode(),

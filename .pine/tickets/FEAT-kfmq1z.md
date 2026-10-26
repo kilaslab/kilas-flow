@@ -1,7 +1,7 @@
 ---
 id: FEAT-kfmq1z
 title: RSS Read and RSS Feed Trigger
-status: todo
+status: done
 priority: low
 labels:
     - n8n
@@ -53,3 +53,7 @@ Related (from the audit): FEAT-nqpvf6 (done; names RSS only as a would-be poll c
 `results-extra.json` (RSS Read, RSS Feed Trigger)
 
 # Attachments
+
+# Progress
+
+Implemented 2026-10-26 (orchestrator-verified): RSS Read + RSS Feed Trigger (stub-friendly, httptest fixtures), importer mapping entries + toolVariants, e2e stub/matrix coverage. Gates: nodes ok except documented sidecar family; interop tests ok; facts refreshed (77/84).

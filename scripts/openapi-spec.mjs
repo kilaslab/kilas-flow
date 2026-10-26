@@ -18,10 +18,13 @@ import { spawn } from 'node:child_process';
 const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
- * Builds and runs the server, writes its OpenAPI document to `specPath`, and
- * shuts the server down again.
+ * Builds and boots a server, hands its base URL to `fn`, and shuts it down
+ * again whatever `fn` does. This is the boot half of `dumpOpenAPISpec` on its
+ * own, for generators that read other endpoints of a real binary — the docs'
+ * node catalogue reads `/api/v1/node-types` and `/api/v1/credential-types`
+ * the same way this module reads `/api/openapi.json`.
  */
-export async function dumpOpenAPISpec(specPath) {
+export async function withServerURL(fn) {
 	const workspace = await mkdtemp(join(tmpdir(), 'kilasflow-openapi-'));
 	const port = await freePort();
 	const baseURL = `http://127.0.0.1:${port}`;
@@ -47,7 +50,19 @@ export async function dumpOpenAPISpec(specPath) {
 		server.stdout.on('data', (chunk) => logs.push(chunk.toString()));
 
 		await waitForReady(server, `${baseURL}/api/v1/ready`, logs);
+		return await fn(baseURL);
+	} finally {
+		await stop(server);
+		await rm(workspace, { recursive: true, force: true });
+	}
+}
 
+/**
+ * Builds and runs the server, writes its OpenAPI document to `specPath`, and
+ * shuts the server down again.
+ */
+export async function dumpOpenAPISpec(specPath) {
+	return withServerURL(async (baseURL) => {
 		const response = await fetch(`${baseURL}/api/openapi.json`);
 		if (!response.ok) {
 			throw new Error(`OpenAPI endpoint returned ${response.status} ${response.statusText}`);
@@ -61,10 +76,7 @@ export async function dumpOpenAPISpec(specPath) {
 		await mkdir(dirname(specPath), { recursive: true });
 		await writeFile(specPath, `${JSON.stringify(document, null, 2)}\n`);
 		return document;
-	} finally {
-		await stop(server);
-		await rm(workspace, { recursive: true, force: true });
-	}
+	});
 }
 
 async function freePort() {

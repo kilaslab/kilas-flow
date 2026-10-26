@@ -24,6 +24,11 @@ Responses:
 | `200` | OK | `application/json` — `array or null` |
 | `default` | Error | `application/problem+json` |
 
+```sh
+curl -X GET "$KILASFLOW_HOST/api/v1/credential-types" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
 Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
 
 ## Test an unsaved credential (`test-credential-payload`)
@@ -40,12 +45,57 @@ Parameters:
 
 Request body: `application/json` — `TestPayloadBody` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `allowedDomains` | no | `array or null` | Hosts the probe may reach. Empty means the type's default scope, or any host for a type that has none, unless a stored secret was used: the stored credential's effective scope then applies, narrowed by these. |
+| `credentialId` | no | `string` | Stored credential the redaction placeholder resolves against. It must name a credential of this type in the caller's tenant. |
+| `fields` | yes | `object` | Field values to test. Send the redaction placeholder to use a stored secret. |
+
 Responses:
 
 | Status | Description | Body |
 | --- | --- | --- |
 | `200` | OK | `application/json` — `TestCredentialResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `TestCredentialResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `detail` | no | `string` | — |
+| `ok` | yes | `boolean` | — |
+| `resolvedFromStorage` | no | `array or null` | — |
+| `untestable` | no | `boolean` | — |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "fields": {}
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "detail": "string",
+  "ok": false,
+  "resolvedFromStorage": [
+    "string"
+  ],
+  "untestable": false
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/credential-types/{type}/test" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"fields":{}}'
+```
 
 Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
 
@@ -69,6 +119,24 @@ Responses:
 | `200` | OK | `application/json` — `array or null` |
 | `default` | Error | `application/problem+json` |
 
+:::code
+
+```sh title="curl"
+curl -X GET "$KILASFLOW_HOST/api/v1/credentials" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+```ts title="TypeScript"
+// import { KilasFlowClient } from "@kilasflow/sdk/server";
+const credentials = await client.listCredentials(); // names only; values never leave the server
+```
+
+```go title="Go"
+resp, err := http.Get(baseURL + "/api/v1/credentials")
+```
+
+:::
+
 Embed: Allow with `workflow:read` — names are needed to render a credential picker; values are never returned.
 
 ## Create a credential (`create-credential`)
@@ -79,12 +147,93 @@ Stores an encrypted credential payload.
 
 Request body: `application/json` — `CredentialBody` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `allowedDomains` | no | `array or null` | Hosts this credential may be sent to. An empty list means the type's default scope, or any host for a type that has none. On update, leaving this out keeps the stored scope and an explicit empty list resets it to that default. |
+| `fields` | yes | `object` | Field values for the credential type. On create, every value is stored as sent and the redaction placeholder is refused. On update, a field left out, or sent as the redaction placeholder, keeps its stored value; send an empty string to clear one. |
+| `name` | yes | `string` | Display name |
+| `type` | no | `string` | Credential type ID; immutable after creation |
+
 Responses:
 
 | Status | Description | Body |
 | --- | --- | --- |
 | `201` | Created | `application/json` — `CredentialResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `CredentialResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `allowedDomains` | yes | `array or null` | Hosts this credential may be sent to, including its type's default when none were saved. Empty means any host. |
+| `createdAt` | yes | `string` | — |
+| `fields` | yes | `object` | — |
+| `id` | yes | `string` | — |
+| `name` | yes | `string` | — |
+| `type` | yes | `string` | — |
+| `updatedAt` | yes | `string` | — |
+| `usedBy` | no | `array or null` | Workflows whose draft or published version attaches this credential. Returned by a single read only, and left out when nothing uses it or the caller's API key is scoped. |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "fields": {},
+  "name": "string"
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "allowedDomains": [
+    "string"
+  ],
+  "createdAt": "2026-01-02T15:04:05Z",
+  "fields": {},
+  "id": "string",
+  "name": "string",
+  "type": "string",
+  "updatedAt": "2026-01-02T15:04:05Z",
+  "usedBy": [
+    {
+      "active": false,
+      "name": "string",
+      "nodes": [
+        "string"
+      ],
+      "workflowId": "string"
+    }
+  ]
+}
+```
+
+:::code
+
+```sh title="curl"
+curl -X POST "$KILASFLOW_HOST/api/v1/credentials" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"fields":{},"name":"string"}'
+```
+
+```ts title="TypeScript"
+// import { KilasFlowClient } from "@kilasflow/sdk/server";
+const credential = await client.createCredential({
+  name: "Acme production", type: "httpHeaderAuth",
+  fields: { name: "X-Api-Key", value: apiKey },
+});
+```
+
+```go title="Go"
+payload, _ := json.Marshal(map[string]any{"name": "Acme production", "type": "httpHeaderAuth", "fields": map[string]string{"name": "X-Api-Key", "value": apiKey}})
+resp, err := http.Post(baseURL+"/api/v1/credentials", "application/json", bytes.NewReader(payload))
+```
+
+:::
 
 Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
 
@@ -107,6 +256,50 @@ Responses:
 | `200` | OK | `application/json` — `CredentialResource` |
 | `default` | Error | `application/problem+json` |
 
+Fields of the `CredentialResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `allowedDomains` | yes | `array or null` | Hosts this credential may be sent to, including its type's default when none were saved. Empty means any host. |
+| `createdAt` | yes | `string` | — |
+| `fields` | yes | `object` | — |
+| `id` | yes | `string` | — |
+| `name` | yes | `string` | — |
+| `type` | yes | `string` | — |
+| `updatedAt` | yes | `string` | — |
+| `usedBy` | no | `array or null` | Workflows whose draft or published version attaches this credential. Returned by a single read only, and left out when nothing uses it or the caller's API key is scoped. |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "allowedDomains": [
+    "string"
+  ],
+  "createdAt": "2026-01-02T15:04:05Z",
+  "fields": {},
+  "id": "string",
+  "name": "string",
+  "type": "string",
+  "updatedAt": "2026-01-02T15:04:05Z",
+  "usedBy": [
+    {
+      "active": false,
+      "name": "string",
+      "nodes": [
+        "string"
+      ],
+      "workflowId": "string"
+    }
+  ]
+}
+```
+
+```sh
+curl -X GET "$KILASFLOW_HOST/api/v1/credentials/{id}" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
 Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
 
 ## Update a credential (`update-credential`)
@@ -123,12 +316,76 @@ Parameters:
 
 Request body: `application/json` — `CredentialBody` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `allowedDomains` | no | `array or null` | Hosts this credential may be sent to. An empty list means the type's default scope, or any host for a type that has none. On update, leaving this out keeps the stored scope and an explicit empty list resets it to that default. |
+| `fields` | yes | `object` | Field values for the credential type. On create, every value is stored as sent and the redaction placeholder is refused. On update, a field left out, or sent as the redaction placeholder, keeps its stored value; send an empty string to clear one. |
+| `name` | yes | `string` | Display name |
+| `type` | no | `string` | Credential type ID; immutable after creation |
+
 Responses:
 
 | Status | Description | Body |
 | --- | --- | --- |
 | `200` | OK | `application/json` — `CredentialResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `CredentialResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `allowedDomains` | yes | `array or null` | Hosts this credential may be sent to, including its type's default when none were saved. Empty means any host. |
+| `createdAt` | yes | `string` | — |
+| `fields` | yes | `object` | — |
+| `id` | yes | `string` | — |
+| `name` | yes | `string` | — |
+| `type` | yes | `string` | — |
+| `updatedAt` | yes | `string` | — |
+| `usedBy` | no | `array or null` | Workflows whose draft or published version attaches this credential. Returned by a single read only, and left out when nothing uses it or the caller's API key is scoped. |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "fields": {},
+  "name": "string"
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "allowedDomains": [
+    "string"
+  ],
+  "createdAt": "2026-01-02T15:04:05Z",
+  "fields": {},
+  "id": "string",
+  "name": "string",
+  "type": "string",
+  "updatedAt": "2026-01-02T15:04:05Z",
+  "usedBy": [
+    {
+      "active": false,
+      "name": "string",
+      "nodes": [
+        "string"
+      ],
+      "workflowId": "string"
+    }
+  ]
+}
+```
+
+```sh
+curl -X PUT "$KILASFLOW_HOST/api/v1/credentials/{id}" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"fields":{},"name":"string"}'
+```
 
 Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
 
@@ -152,6 +409,11 @@ Responses:
 | `204` | No Content |  |
 | `default` | Error | `application/problem+json` |
 
+```sh
+curl -X DELETE "$KILASFLOW_HOST/api/v1/credentials/{id}" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
 Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
 
 ## Test a credential (`test-credential`)
@@ -172,6 +434,33 @@ Responses:
 | --- | --- | --- |
 | `200` | OK | `application/json` — `TestCredentialResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `TestCredentialResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `detail` | no | `string` | — |
+| `ok` | yes | `boolean` | — |
+| `resolvedFromStorage` | no | `array or null` | — |
+| `untestable` | no | `boolean` | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "detail": "string",
+  "ok": false,
+  "resolvedFromStorage": [
+    "string"
+  ],
+  "untestable": false
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/credentials/{id}/test" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
 
 Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
 
@@ -197,5 +486,24 @@ Responses:
 | --- | --- | --- |
 | `200` | OK | `application/json` — `OauthStartResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `OauthStartResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `authorizeUrl` | yes | `string` | Google authorization URL. Open it with window.open, never in an iframe. |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "authorizeUrl": "https://flows.example"
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/credentials/{id}/oauth/start" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
 
 Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.

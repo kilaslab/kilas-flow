@@ -53,6 +53,14 @@ export async function startStub({ bindHost = '127.0.0.1' }: { bindHost?: string 
 				response.end(hostPage());
 				return;
 			}
+			// A real RSS document, so the RSS Read node and the feed trigger
+			// run against the shape they meet in the world rather than the
+			// stub's JSON default.
+			if (url.pathname === '/feed') {
+				response.writeHead(200, { 'content-type': 'application/rss+xml' });
+				response.end(rssFeed());
+				return;
+			}
 			response.writeHead(200, { 'content-type': 'application/json' });
 			response.end(JSON.stringify({ ok: true, method: request.method, path: url.pathname }));
 		});
@@ -76,6 +84,39 @@ export async function startStub({ bindHost = '127.0.0.1' }: { bindHost?: string 
 			await once(server, 'close').catch(() => undefined);
 		}
 	};
+}
+
+// The feed the /feed path serves: two entries, an author, categories, and a
+// content body long enough to need the snippet cut.
+function rssFeed(): string {
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Stub Wire</title>
+    <link>http://127.0.0.1/feed</link>
+    <description>the stub's own feed</description>
+    <item>
+      <title>First dispatch</title>
+      <link>http://127.0.0.1/feed/1</link>
+      <pubDate>Mon, 26 Oct 2026 08:00:00 +0000</pubDate>
+      <guid isPermaLink="false">stub-1</guid>
+      <dc:creator>Stub</dc:creator>
+      <category>coverage</category>
+      <description>a short teaser</description>
+      <content:encoded><![CDATA[<p>The first dispatch carries enough words to require the one hundred and twenty character snippet cut that the reader applies to every body it renders, and then some more.</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>Second dispatch</title>
+      <link>http://127.0.0.1/feed/2</link>
+      <pubDate>Tue, 27 Oct 2026 08:00:00 +0000</pubDate>
+      <guid isPermaLink="false">stub-2</guid>
+      <dc:creator>Stub</dc:creator>
+      <category>coverage</category>
+      <description>another teaser</description>
+      <content:encoded><![CDATA[<p>The second dispatch is shorter.</p>]]></content:encoded>
+    </item>
+  </channel>
+</rss>`;
 }
 
 // Minimal host application for the embed handshake: it frames the editor,

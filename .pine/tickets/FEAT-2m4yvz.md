@@ -1,7 +1,7 @@
 ---
 id: FEAT-2m4yvz
 title: Generated node catalogue and credential-type reference (one page per node type, searchable by n8n name)
-status: todo
+status: done
 priority: low
 labels:
     - docs
@@ -99,3 +99,7 @@ Related tickets: BUG-b4cb1c
 # Related Files
 
 # Attachments
+
+# Progress
+
+Implemented 2026-10-26: reference/node-catalogue.md + reference/credential-types.md generated from a built binary by scripts/generate-node-catalogue.mjs (76 pairs, 18 credential types incl. the AI surface), drift-gated via generate-node-catalogue-check. CI wiring of the two new check targets into the drift job = follow-up (.github lane).

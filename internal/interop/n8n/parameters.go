@@ -7214,3 +7214,844 @@ func dataTableToN8NParams(node workflow.Node, tool bool) (map[string]any, []Loss
 func dataTableToolToN8N(node workflow.Node) (map[string]any, []Lossy) {
 	return dataTableToN8NParams(node, true)
 }
+
+// --- The email pair ----------------------------------------------------------
+
+// emailSendToKilas carries n8n's Send Email parameters across. Every key is
+// the same on both sides — v1's top-level ccEmail, bccEmail and attachments
+// and v2's options members are all spellings the target node reads — so the
+// one thing to report is n8n's attribution footer, which this server will
+// not append to anybody's mail.
+func emailSendToKilas(node Node) (map[string]any, []Unsupported) {
+	converted, _ := packToKilas(node)
+	issues := make([]Unsupported, 0)
+	if options, _ := node.Parameters["options"].(map[string]any); options != nil {
+		if value, present := options["appendAttribution"]; present && value != false {
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "options.appendAttribution",
+				Reason: "this node appended n8n's own attribution footer to the mail it sent. " +
+					"This server sends the body as written and appends nothing.",
+			})
+		}
+	}
+	return converted, issues
+}
+
+// emailSendToN8N writes them back; the keys round-trip as themselves.
+func emailSendToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	return packToN8N(node)
+}
+
+// emailReadImapToKilas carries the IMAP trigger across. mailbox, action,
+// format and pollTimes are n8n's own keys and cross unchanged; the parts of
+// the surface this server's trigger does not implement are reported rather
+// than silently changed.
+func emailReadImapToKilas(node Node) (map[string]any, []Unsupported) {
+	converted, _ := packToKilas(node)
+	issues := make([]Unsupported, 0)
+	if converted == nil {
+		converted = map[string]any{}
+	}
+	switch format := stringParameter(node.Parameters, "format"); format {
+	case "resolved":
+		// n8n's resolved format resolves the whole mail into items with
+		// attachments as binary; this server's poll framework has no binary
+		// store, so the trigger answers in its simple shape instead.
+		converted["format"] = "simple"
+		issues = append(issues, Unsupported{
+			Severity: SeverityLossy, Field: "format",
+			Reason: "this trigger's resolved format resolves attachments into binary data, which this server's " +
+				"polling framework does not store; it emits the simple shape instead (headers, text and HTML)",
+		})
+	case "raw", "simple", "":
+	default:
+		issues = append(issues, Unsupported{
+			Severity: SeverityLossy, Field: "format",
+			Reason: fmt.Sprintf("format %q is not one this trigger reads; it emits the simple shape", format),
+		})
+	}
+	if options, _ := node.Parameters["options"].(map[string]any); options != nil {
+		if value, present := options["customEmailConfig"]; present && value != nil && value != "" && value != `["UNSEEN"]` {
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "options.customEmailConfig",
+				Reason: "this trigger's custom IMAP search rules were not carried: it watches for every message " +
+					"above its UID watermark instead. Rebuild the filter around the workflow if the rules mattered",
+			})
+		}
+		if value, _ := options["trackLastMessageId"].(bool); value == false {
+			issues = append(issues, Unsupported{
+				Severity: SeverityLossy, Field: "options.trackLastMessageId",
+				Reason: "this trigger was set to fetch every matching mail on every poll; the leased cursor's UID " +
+					"watermark is always on here, so each mail is emitted once",
+			})
+		}
+	}
+	if value, _ := node.Parameters["downloadAttachments"].(bool); value {
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "downloadAttachments",
+			Reason: "this trigger downloaded attachments as binary data, which this server's polling framework does " +
+				"not store; only the headers and the text and HTML bodies are emitted",
+		})
+	}
+	return converted, issues
+}
+
+// emailReadImapToN8N writes the trigger back; the keys round-trip as
+// themselves.
+func emailReadImapToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	return packToN8N(node)
+}
+
+// --- The RSS pair ------------------------------------------------------------
+
+// rssFeedReadToKilas carries n8n's RSS Read across. url and options cross as
+// themselves; the one member with no equivalent here is ignoreSSL, because
+// this server's outbound policy checks certificates on every request and an
+// import that silently dropped the flag would claim a connection shape the
+// policy never allows.
+func rssFeedReadToKilas(node Node) (map[string]any, []Unsupported) {
+	converted, _ := packToKilas(node)
+	issues := make([]Unsupported, 0)
+	if options, _ := node.Parameters["options"].(map[string]any); options != nil {
+		if value, _ := options["ignoreSSL"].(bool); value {
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "options.ignoreSSL",
+				Reason: "this node ignored the feed server's certificate, which this server's outbound policy never " +
+					"does: every request checks certificates. The feed is read only over a connection the policy trusts",
+			})
+		}
+	}
+	return converted, issues
+}
+
+// rssFeedReadToN8N writes the read node back; the keys round-trip.
+func rssFeedReadToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	return packToN8N(node)
+}
+
+// rssFeedReadTriggerToKilas carries the trigger across; feedUrl and pollTimes
+// cross as themselves, and the read node's ignoreSSL note applies here too.
+func rssFeedReadTriggerToKilas(node Node) (map[string]any, []Unsupported) {
+	converted, _ := packToKilas(node)
+	issues := make([]Unsupported, 0)
+	if options, _ := node.Parameters["options"].(map[string]any); options != nil {
+		if value, _ := options["ignoreSSL"].(bool); value {
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "options.ignoreSSL",
+				Reason: "this trigger ignored the feed server's certificate, which this server's outbound policy " +
+					"never does: every poll checks certificates",
+			})
+		}
+	}
+	return converted, issues
+}
+
+// --- The provider app nodes and the root chains (PR #36 follow-up) ----------
+//
+// The nodes landed in PR #36 under n8n's own parameter keys — modelId, the
+// messages fixed collection, options on the app nodes; the attributes,
+// categories and mode selectors on the chains — so these translators are
+// mostly renames between the two spellings of the same shape, plus the
+// refusals for the operations this server does not run.
+
+// openAiAppToKilas maps n8n's OpenAI node onto the app node. v1's family
+// (1 through 1.8) is the shape the target node mirrors: messages stored under
+// `values`, the binary field named `binaryPropertyName`, penalties in snake
+// case. v2 renamed the wire protocol (Responses API) rather than these keys,
+// and the refusal in the mapping table names what cannot run.
+func openAiAppToKilas(node Node) (map[string]any, []Unsupported) {
+	return appModelToKilas(node, false)
+}
+
+// geminiAppToKilas maps n8n's Google Gemini node, which stores its rows under
+// `values` too and spells the assistant role `model`.
+func geminiAppToKilas(node Node) (map[string]any, []Unsupported) {
+	return appModelToKilas(node, true)
+}
+
+// appModelOptions maps n8n's OpenAI-family option keys onto this server's
+// own spellings. Everything carried is renamed; everything dropped is named.
+var appModelOptions = map[string]string{
+	"frequency_penalty": "frequencyPenalty",
+	"presence_penalty":  "presencePenalty",
+	"temperature":       "temperature",
+	"maxTokens":         "maxTokens",
+	"topP":              "topP",
+	"timeout":           "timeout",
+}
+
+func appModelToKilas(node Node, gemini bool) (map[string]any, []Unsupported) {
+	converted := map[string]any{}
+	issues := make([]Unsupported, 0)
+	for _, key := range []string{"resource", "operation", "modelId", "jsonOutput", "text", "language", "baseUrl"} {
+		if value, present := node.Parameters[key]; present {
+			converted[key] = fromN8NValue(value)
+		}
+	}
+	// The message rows: n8n stores them under `values`, this server's own
+	// form under `messageValues`; and Gemini's assistant role is `model`.
+	if messages, present := node.Parameters["messages"]; present {
+		if collection, isCollection := messages.(map[string]any); isCollection {
+			rewritten := map[string]any{}
+			for name, rows := range collection {
+				if name == "values" || name == "messageValues" {
+					name = "messageValues"
+				}
+				rewritten[name] = appMessageRowsToKilas(rows, gemini)
+			}
+			converted["messages"] = rewritten
+		} else {
+			converted["messages"] = fromN8NValue(messages)
+		}
+	}
+	// The binary field: n8n's name is binaryPropertyName on both resources
+	// that read one; the target node spells it binaryInput.
+	for _, key := range []string{"binaryPropertyName", "binaryInput"} {
+		if value, present := node.Parameters[key]; present {
+			converted["binaryInput"] = fromN8NValue(value)
+		}
+	}
+	options, _ := node.Parameters["options"].(map[string]any)
+	if options != nil {
+		carried := map[string]any{}
+		for n8nKey, kilasKey := range appModelOptions {
+			if value, present := options[n8nKey]; present && value != nil {
+				carried[kilasKey] = fromN8NValue(value)
+			}
+		}
+		if len(carried) > 0 {
+			converted["options"] = carried
+		}
+		for _, dropped := range []string{"n", "reasoning_effort", "reasoningEffort"} {
+			if value, present := options[dropped]; present && value != nil {
+				issues = append(issues, Unsupported{
+					Severity: SeverityDropped, Field: "options." + dropped,
+					Reason: fmt.Sprintf("this node set %s, which this server's model call does not implement; "+
+						"the provider's own default applies", dropped),
+				})
+			}
+		}
+	}
+	if simplify, present := node.Parameters["simplify"]; present && simplify == false {
+		issues = append(issues, Unsupported{
+			Severity: SeverityLossy, Field: "simplify",
+			Reason: "this node asked for the provider's raw response shape; the simplified completion is always emitted here",
+		})
+	}
+	return converted, issues
+}
+
+// appMessageRowsToKilas renames the assistant role on Gemini rows and carries
+// the rest as themselves.
+func appMessageRowsToKilas(rows any, gemini bool) any {
+	list, isList := rows.([]any)
+	if !isList {
+		return fromN8NValue(rows)
+	}
+	out := make([]any, 0, len(list))
+	for _, entry := range list {
+		row, isMap := entry.(map[string]any)
+		if !isMap {
+			out = append(out, fromN8NValue(entry))
+			continue
+		}
+		copied := map[string]any{}
+		for key, value := range row {
+			copied[key] = fromN8NValue(value)
+		}
+		if gemini && copied["role"] == "model" {
+			copied["role"] = "assistant"
+		}
+		out = append(out, copied)
+	}
+	return out
+}
+
+// appModelToN8N writes the app node back in n8n's spelling: the rows return
+// to `values`, the binary field to `binaryPropertyName`, the penalties to
+// snake case.
+func appModelToN8N(node workflow.Node, gemini bool) (map[string]any, []Lossy) {
+	parameters := map[string]any{}
+	for _, key := range []string{"resource", "operation", "modelId", "jsonOutput", "text", "language", "baseUrl"} {
+		if value, present := node.Parameters[key]; present {
+			parameters[key] = toN8NValue(value)
+		}
+	}
+	if messages, present := node.Parameters["messages"]; present {
+		if collection, isCollection := messages.(map[string]any); isCollection {
+			rewritten := map[string]any{}
+			for name, rows := range collection {
+				if name == "messageValues" || name == "values" {
+					name = "values"
+				}
+				rewritten[name] = appMessageRowsToN8N(rows, gemini)
+			}
+			parameters["messages"] = rewritten
+		} else {
+			parameters["messages"] = toN8NValue(messages)
+		}
+	}
+	if value, present := node.Parameters["binaryInput"]; present {
+		parameters["binaryPropertyName"] = toN8NValue(value)
+	}
+	options, _ := node.Parameters["options"].(map[string]any)
+	if options != nil {
+		carried := map[string]any{}
+		for n8nKey, kilasKey := range appModelOptions {
+			if value, present := options[kilasKey]; present && value != nil {
+				carried[n8nKey] = toN8NValue(value)
+			}
+		}
+		if len(carried) > 0 {
+			parameters["options"] = carried
+		}
+	}
+	return parameters, nil
+}
+
+func appMessageRowsToN8N(rows any, gemini bool) any {
+	list, isList := rows.([]any)
+	if !isList {
+		return toN8NValue(rows)
+	}
+	out := make([]any, 0, len(list))
+	for _, entry := range list {
+		row, isMap := entry.(map[string]any)
+		if !isMap {
+			out = append(out, toN8NValue(entry))
+			continue
+		}
+		copied := map[string]any{}
+		for key, value := range row {
+			copied[key] = toN8NValue(value)
+		}
+		if gemini && copied["role"] == "assistant" {
+			copied["role"] = "model"
+		}
+		out = append(out, copied)
+	}
+	return out
+}
+
+func openAiAppToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	return appModelToN8N(node, false)
+}
+
+func geminiAppToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	return appModelToN8N(node, true)
+}
+
+// refuseUnsupportedOpenAiOperation names the resource/operation pairs this
+// server's app node does not run. The default operation is version-dependent:
+// v1's text default is `message`, v2 renamed the whole protocol to Responses
+// (`response`), so an unset operation is read by the version that wrote it.
+func refuseUnsupportedOpenAiOperation(node Node) string {
+	resource := strings.ToLower(stringParameter(node.Parameters, "resource"))
+	if resource == "" {
+		resource = "text"
+	}
+	operation := strings.ToLower(stringParameter(node.Parameters, "operation"))
+	if operation == "" {
+		if node.TypeVersion >= 2 {
+			operation = "response"
+		} else {
+			operation = "message"
+		}
+	}
+	switch resource + "/" + operation {
+	case "text/message", "image/analyze", "audio/transcribe":
+		return ""
+	}
+	return fmt.Sprintf(
+		"the n8n OpenAI node's %s/%s operation has no equivalent on this server's OpenAI node. "+
+			"It runs a chat completion (text/message), an image reading (image/analyze) and a transcription "+
+			"(audio/transcribe); rebuild the step around one of those or an HTTP Request before activating",
+		resource, operation)
+}
+
+// refuseUnsupportedGeminiOperation keeps the Gemini node on the one operation
+// its target runs, and refuses the built-in tools: search grounding and code
+// execution change what the model answers, which a plain completion through
+// the OpenAI-compatible endpoint cannot stand in for.
+func refuseUnsupportedGeminiOperation(node Node) string {
+	resource := strings.ToLower(stringParameter(node.Parameters, "resource"))
+	if resource == "" {
+		resource = "text"
+	}
+	if resource != "text" {
+		return fmt.Sprintf(
+			"the n8n Google Gemini node's %s resource has no equivalent on this server's Gemini node, which runs "+
+				"the chat message only; rebuild the step around the message operation or an HTTP Request before activating", resource)
+	}
+	if tools, _ := node.Parameters["builtInTools"].(map[string]any); geminiToolsEnabled(tools) {
+		return "this Gemini node switched on built-in tools (Google Search, Maps, URL context, file search or code " +
+			"execution), which this server's Gemini node does not implement: its completion runs without them and would " +
+			"answer differently. Rebuild the step around an HTTP Request or a model with its own tools before activating"
+	}
+	return ""
+}
+
+// geminiToolsEnabled reads the builtInTools collection for any member set
+// away from its off default.
+func geminiToolsEnabled(tools map[string]any) bool {
+	if tools == nil {
+		return false
+	}
+	for _, key := range []string{"googleSearch", "urlContext", "codeExecution"} {
+		if value, _ := tools[key].(bool); value {
+			return true
+		}
+	}
+	if maps, _ := tools["googleMaps"].(map[string]any); maps != nil {
+		if strings.TrimSpace(stringParameter(maps, "latitude")) != "" || strings.TrimSpace(stringParameter(maps, "longitude")) != "" {
+			return true
+		}
+	}
+	if search, _ := tools["fileSearch"].(map[string]any); search != nil {
+		if names := strings.TrimSpace(stringParameter(search, "fileSearchStoreNames")); names != "" && names != "[]" {
+			return true
+		}
+	}
+	return false
+}
+
+// fixedCollectionUnder renames one fixed collection's row list: n8n stores
+// the rows under the group the node declared (attributes, categories), this
+// server's forms under `values`.
+func fixedCollectionUnder(value any, from, to string, row func(map[string]any) map[string]any) any {
+	collection, isCollection := value.(map[string]any)
+	if !isCollection {
+		return fromN8NValue(value)
+	}
+	rewritten := map[string]any{}
+	for name, rows := range collection {
+		if name == from {
+			name = to
+		}
+		if list, isList := rows.([]any); isList && row != nil {
+			out := make([]any, 0, len(list))
+			for _, entry := range list {
+				if entryMap, isMap := entry.(map[string]any); isMap {
+					out = append(out, row(entryMap))
+					continue
+				}
+				out = append(out, fromN8NValue(entry))
+			}
+			rewritten[name] = out
+			continue
+		}
+		rewritten[name] = fromN8NValue(rows)
+	}
+	return rewritten
+}
+
+// informationExtractorToKilas renames the attribute rows' list and keeps the
+// shape the target node reads. Two things genuinely differ and are named:
+// n8n's per-attribute `required` flag (every attribute is required here) and
+// the `date` type (the model answers a string).
+func informationExtractorToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	converted := map[string]any{}
+	for _, key := range []string{"text"} {
+		if value, present := node.Parameters[key]; present {
+			converted[key] = fromN8NValue(value)
+		}
+	}
+	if attributes, present := node.Parameters["attributes"]; present {
+		converted["attributes"] = fixedCollectionUnder(attributes, "attributes", "values", func(row map[string]any) map[string]any {
+			copied := map[string]any{}
+			for key, value := range row {
+				copied[key] = fromN8NValue(value)
+			}
+			if copied["type"] == "date" {
+				copied["type"] = "string"
+				issues = append(issues, Unsupported{
+					Severity: SeverityLossy, Field: "attributes",
+					Reason: fmt.Sprintf("the attribute %q was typed date, which this server's extractor does not declare: "+
+						"it is read as a string, so edit the attribute if the shape must be stricter", copied["name"]),
+				})
+			}
+			if required, present := copied["required"]; present && required == false {
+				issues = append(issues, Unsupported{
+					Severity: SeverityLossy, Field: "attributes",
+					Reason: fmt.Sprintf("the attribute %q was optional in n8n; every attribute is required in this server's "+
+						"output schema, so the model is asked for it too", copied["name"]),
+				})
+			}
+			delete(copied, "required")
+			return copied
+		})
+	}
+	if options, present := node.Parameters["options"]; present {
+		converted["options"] = fromN8NValue(options)
+	}
+	return converted, issues
+}
+
+// informationExtractorToN8N writes the extractor back in n8n's spelling.
+func informationExtractorToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	parameters := map[string]any{}
+	if value, present := node.Parameters["text"]; present {
+		parameters["text"] = toN8NValue(value)
+	}
+	if attributes, present := node.Parameters["attributes"]; present {
+		parameters["attributes"] = fixedCollectionToN8N(attributes, "values", "attributes")
+	}
+	if options, present := node.Parameters["options"]; present {
+		parameters["options"] = toN8NValue(options)
+	}
+	return parameters, nil
+}
+
+// fixedCollectionToN8N is the export half of fixedCollectionUnder.
+func fixedCollectionToN8N(value any, from, to string) any {
+	collection, isCollection := value.(map[string]any)
+	if !isCollection {
+		return toN8NValue(value)
+	}
+	rewritten := map[string]any{}
+	for name, rows := range collection {
+		if name == from {
+			name = to
+		}
+		if list, isList := rows.([]any); isList {
+			out := make([]any, 0, len(list))
+			for _, entry := range list {
+				out = append(out, toN8NValue(entry))
+			}
+			rewritten[name] = out
+			continue
+		}
+		rewritten[name] = toN8NValue(rows)
+	}
+	return rewritten
+}
+
+// textClassifierToKilas renames the category rows' list. A classifier that
+// may return several categories has no single-output equivalent here, so it
+// is refused in the mapping table rather than quietly re-routed.
+func textClassifierToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	converted := map[string]any{}
+	if value, present := node.Parameters["inputText"]; present {
+		converted["inputText"] = fromN8NValue(value)
+	}
+	if categories, present := node.Parameters["categories"]; present {
+		converted["categories"] = fixedCollectionUnder(categories, "categories", "values", nil)
+	}
+	if options, present := node.Parameters["options"]; present {
+		carried := map[string]any{}
+		if collection, isCollection := options.(map[string]any); isCollection {
+			if value, present := collection["systemPromptTemplate"]; present {
+				carried["systemPromptTemplate"] = fromN8NValue(value)
+			}
+			if fallback := stringParameter(collection, "fallback"); fallback == "other" {
+				issues = append(issues, Unsupported{
+					Severity: SeverityDropped, Field: "options.fallback",
+					Reason: "this classifier sent unclear text to an extra 'other' output branch. This server's classifier " +
+						"has one output per category; name one of them as the fallback category to keep the routing",
+				})
+			}
+			if fix, present := collection["enableAutoFixing"]; present && fix == false {
+				issues = append(issues, Unsupported{
+					Severity: SeverityLossy, Field: "options.enableAutoFixing",
+					Reason: "this classifier turned auto-fixing off; the schema repair loop is always available here, so a " +
+						"repairable answer is repaired rather than failing the run",
+				})
+			}
+		}
+		if len(carried) > 0 {
+			converted["options"] = carried
+		}
+	}
+	return converted, issues
+}
+
+// textClassifierToN8N writes the classifier back in n8n's spelling.
+func textClassifierToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	parameters := map[string]any{}
+	if value, present := node.Parameters["inputText"]; present {
+		parameters["inputText"] = toN8NValue(value)
+	}
+	if categories, present := node.Parameters["categories"]; present {
+		parameters["categories"] = fixedCollectionToN8N(categories, "values", "categories")
+	}
+	if options, present := node.Parameters["options"]; present {
+		parameters["options"] = toN8NValue(options)
+	}
+	return parameters, nil
+}
+
+// refuseMultiClassClassification refuses the one classifier shape with no
+// equivalent: several true categories per text.
+func refuseMultiClassClassification(node Node) string {
+	options, _ := node.Parameters["options"].(map[string]any)
+	if multi, _ := options["multiClass"].(bool); multi {
+		return "this classifier was allowed to return several categories for one text. This server's classifier routes " +
+			"each item to exactly one output, so running it as imported would drop every category after the first. " +
+			"Split the step or drop the multi-class option before activating"
+	}
+	return ""
+}
+
+// chainSummarizationToKilas maps both of n8n's summarization shapes onto the
+// target node's two modes. v1 named a strategy (stuff, map reduce, refine)
+// over the whole input; v2 names where the input comes from. The JSON-input
+// modes map; the binary and document-loader ones have no equivalent, and are
+// refused in the mapping table.
+func chainSummarizationToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	converted := map[string]any{}
+	mode := "node"
+	operation := strings.ToLower(stringParameter(node.Parameters, "operationMode"))
+	switch operation {
+	case "", "node", "nodeinputjson":
+	case "perItem":
+		mode = "perItem"
+	default:
+		// nodeInputBinary and documentLoader never reach here: the mapping
+		// table refuses them before the translator runs. Anything else keeps
+		// the together mode and is named.
+		issues = append(issues, Unsupported{
+			Severity: SeverityLossy, Field: "operationMode",
+			Reason: fmt.Sprintf("this chain's operationMode %q has no exact equivalent; it summarizes every item's text together", operation),
+		})
+	}
+	converted["operationMode"] = mode
+	if value, present := node.Parameters["textToSummarize"]; present {
+		converted["textToSummarize"] = fromN8NValue(value)
+	}
+	if options, present := node.Parameters["options"]; present {
+		if collection, isCollection := options.(map[string]any); isCollection {
+			carried := map[string]any{}
+			if value, present := collection["systemPromptTemplate"]; present {
+				carried["systemPromptTemplate"] = fromN8NValue(value)
+			}
+			if len(carried) > 0 {
+				converted["options"] = carried
+			}
+			if _, has := collection["summarizationMethodAndPrompts"]; has {
+				issues = append(issues, Unsupported{
+					Severity: SeverityDropped, Field: "options.summarizationMethodAndPrompts",
+					Reason: "this chain carried its own summarization prompts and strategy. This server's chain summarizes " +
+						"with its own prompt; edit the system prompt template to match the old wording if it mattered",
+				})
+			}
+		}
+	}
+	// v1 spelled its strategy under `type` with prompts in the options.
+	if strategy := stringParameter(node.Parameters, "type"); strategy != "" && node.TypeVersion < 2 {
+		issues = append(issues, Unsupported{
+			Severity: SeverityDropped, Field: "type",
+			Reason: fmt.Sprintf("this chain summarized with the %q strategy. This server's chain makes one call over the "+
+				"whole text (or one per item in its per-item mode); the strategy and its prompts were not carried", strategy),
+		})
+	}
+	return converted, issues
+}
+
+// chainSummarizationToN8N writes the chain back: the together mode is v2's
+// JSON-input one, and the per-item mode is named as the difference it is,
+// because n8n's node has no per-item spelling.
+func chainSummarizationToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	lossy := make([]Lossy, 0)
+	parameters := map[string]any{}
+	switch stringParameter(node.Parameters, "operationMode") {
+	case "perItem":
+		parameters["operationMode"] = "nodeInputJson"
+		lossy = append(lossy, Lossy{
+			Severity: SeverityLossy, Field: "operationMode",
+			Reason: "this chain summarized each item on its own. n8n's Summarization Chain has no per-item mode, so it " +
+				"exports as the whole-input mode; the two read the same items differently",
+		})
+	default:
+		parameters["operationMode"] = "nodeInputJson"
+	}
+	if value, present := node.Parameters["textToSummarize"]; present {
+		parameters["textToSummarize"] = toN8NValue(value)
+	}
+	if options, present := node.Parameters["options"]; present {
+		parameters["options"] = toN8NValue(options)
+	}
+	return parameters, lossy
+}
+
+// refuseUnsupportedSummarizationInput refuses the two input modes this
+// server's chain does not read.
+func refuseUnsupportedSummarizationInput(node Node) string {
+	switch operation := strings.ToLower(stringParameter(node.Parameters, "operationMode")); operation {
+	case "nodeinputbinary":
+		return "this chain summarized binary input, which this server's Summarization Chain does not read: it takes the " +
+			"text from the items. Extract the text first (Extract From File) or rebuild the step before activating"
+	case "documentloader":
+		return "this chain read its input from a document-loader sub-node, which this server's Summarization Chain does " +
+			"not take: it reads the text from the items. Feed the loader's output in or rebuild the step before activating"
+	}
+	return ""
+}
+
+// chainRetrievalQaToKilas maps the question-and-answer chain. n8n's versions
+// moved the question between `query` and a prompted `text`; whichever is set
+// becomes the prompt. The required retriever sub-node has no equivalent: this
+// server's chain reads its reference text from the item, and the held-back
+// ai_retriever edge is the import's own account of that.
+func chainRetrievalQaToKilas(node Node) (map[string]any, []Unsupported) {
+	converted := map[string]any{}
+	issues := make([]Unsupported, 0)
+	prompt := stringParameter(node.Parameters, "text")
+	if prompt == "" {
+		prompt = stringParameter(node.Parameters, "query")
+	}
+	if prompt != "" {
+		converted["prompt"] = fromN8NValue(prompt)
+	}
+	if options, present := node.Parameters["options"]; present {
+		if collection, isCollection := options.(map[string]any); isCollection {
+			carried := map[string]any{}
+			if value, present := collection["systemPromptTemplate"]; present {
+				carried["systemPromptTemplate"] = fromN8NValue(value)
+			}
+			if len(carried) > 0 {
+				converted["options"] = carried
+			}
+		}
+	}
+	return converted, issues
+}
+
+// chainRetrievalQaToN8N writes the chain back with the newest version's key.
+func chainRetrievalQaToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	parameters := map[string]any{}
+	if value, present := node.Parameters["prompt"]; present {
+		parameters["query"] = toN8NValue(value)
+	}
+	if options, present := node.Parameters["options"]; present {
+		parameters["options"] = toN8NValue(options)
+	}
+	return parameters, nil
+}
+
+// sentimentAnalysisToKilas maps the sentiment chain. Its own default scale is
+// the one the target node runs; a custom scale changes what the model is held
+// to and is refused in the mapping table.
+func sentimentAnalysisToKilas(node Node) (map[string]any, []Unsupported) {
+	converted := map[string]any{}
+	issues := make([]Unsupported, 0)
+	if value, present := node.Parameters["inputText"]; present {
+		converted["inputText"] = fromN8NValue(value)
+	}
+	if options, present := node.Parameters["options"]; present {
+		if collection, isCollection := options.(map[string]any); isCollection {
+			carried := map[string]any{}
+			if value, present := collection["systemPromptTemplate"]; present {
+				carried["systemPromptTemplate"] = fromN8NValue(value)
+			}
+			if len(carried) > 0 {
+				converted["options"] = carried
+			}
+			if detailed, _ := collection["includeDetailedResults"].(bool); detailed {
+				issues = append(issues, Unsupported{
+					Severity: SeverityDropped, Field: "options.includeDetailedResults",
+					Reason: "this analyser included per-category detail with its answer. This server's analyser answers " +
+						"sentiment and a confidence score; the detail is not carried",
+				})
+			}
+		}
+	}
+	return converted, issues
+}
+
+// sentimentAnalysisToN8N writes the analyser back.
+func sentimentAnalysisToN8N(node workflow.Node) (map[string]any, []Lossy) {
+	parameters := map[string]any{}
+	if value, present := node.Parameters["inputText"]; present {
+		parameters["inputText"] = toN8NValue(value)
+	}
+	if options, present := node.Parameters["options"]; present {
+		parameters["options"] = toN8NValue(options)
+	}
+	return parameters, nil
+}
+
+// refuseCustomSentimentCategories refuses a scale the target node does not
+// run: the schema's enum is what holds the answer to the three sentiments.
+func refuseCustomSentimentCategories(node Node) string {
+	options, _ := node.Parameters["options"].(map[string]any)
+	categories, _ := options["categories"].(map[string]any)
+	if categories == nil {
+		return ""
+	}
+	names, _ := categories["categories"].([]any)
+	if len(names) == 0 {
+		return ""
+	}
+	declared := make([]string, 0, len(names))
+	for _, name := range names {
+		if category, isMap := name.(map[string]any); isMap {
+			if label := strings.TrimSpace(stringParameter(category, "category")); label != "" {
+				declared = append(declared, label)
+			}
+		}
+	}
+	sortStringsCI(declared)
+	if strings.Join(declared, ",") == "negative,neutral,positive" {
+		return ""
+	}
+	return fmt.Sprintf("this analyser classified into its own categories (%s). This server's analyser scores positive, "+
+		"neutral or negative; running a custom scale would need a Text Classifier with those categories instead. "+
+		"Rebuild the step before activating", strings.Join(declared, ", "))
+}
+
+func sortStringsCI(values []string) {
+	sort.Slice(values, func(left, right int) bool { return strings.ToLower(values[left]) < strings.ToLower(values[right]) })
+}
+
+// itemListParserToKilas maps n8n's Item List Output Parser onto the item-list
+// schema source. n8n's parser splits a separator-separated answer and counts
+// the parts; this server's asks the model for a JSON array of items, which is
+// the same list read a different way — the count and the separator are the
+// difference, and both are named rather than guessed at.
+func itemListParserToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	converted := map[string]any{
+		"schemaType": "itemList",
+		"jsonSchema": `{"type":"string"}`,
+		"maxRetries": float64(0),
+	}
+	if options, _ := node.Parameters["options"].(map[string]any); options != nil {
+		if count, ok := options["numberOfItems"].(float64); ok && count > 0 {
+			issues = append(issues, Unsupported{
+				Severity: SeverityLossy, Field: "options.numberOfItems",
+				Reason: fmt.Sprintf("this parser demanded at least %v items. This server's item-list parser does not count "+
+					"the parts; add a Limit or an If behind the chain if the count matters", count),
+			})
+		}
+		if separator, ok := options["separator"].(string); ok && separator != "" && separator != "\\n" {
+			issues = append(issues, Unsupported{
+				Severity: SeverityLossy, Field: "options.separator",
+				Reason: fmt.Sprintf("this parser split its answer on %q. This server's item-list parser asks the model for "+
+					"a JSON array instead, so no separator applies", separator),
+			})
+		}
+	}
+	return converted, issues
+}
+
+// autofixParserToKilas maps the Auto-fixing Output Parser itself. The node
+// wraps another parser and calls a model to repair its failures, and this
+// server's parser carries that repair loop in its own retries — so the
+// wrapper's own parameters are all superseded, and the splice in the import
+// merges it into the parser it wrapped.
+func autofixParserToKilas(node Node) (map[string]any, []Unsupported) {
+	issues := make([]Unsupported, 0)
+	if options, _ := node.Parameters["options"].(map[string]any); options != nil {
+		if prompt, present := options["prompt"]; present && prompt != nil && prompt != "" {
+			issues = append(issues, Unsupported{
+				Severity: SeverityDropped, Field: "options.prompt",
+				Reason: "this auto-fixing parser carried its own repair prompt. This server's parser repairs with the schema's " +
+					"own validation errors, so the custom prompt was not carried",
+			})
+		}
+	}
+	return map[string]any{}, issues
+}

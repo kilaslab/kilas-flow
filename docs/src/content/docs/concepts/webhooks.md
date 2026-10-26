@@ -5,11 +5,11 @@ sidebar:
   order: 8
 ---
 
-A workflow starts from a trigger. Four kinds exist — a manual run, an inbound
-HTTP request, a cron schedule, and a call from another workflow — and all four
-write the same kind of queued execution row through the same durable queue. A
-trigger cannot bypass lifecycle, validation or execution-record rules by having
-its own path into the engine.
+A workflow starts from a trigger. Five kinds exist — a manual run, an inbound
+HTTP request, a cron schedule, a published host event, and a call from another
+workflow — and all five write the same kind of queued execution row through the
+same durable queue. A trigger cannot bypass lifecycle, validation or
+execution-record rules by having its own path into the engine.
 
 This page is about the inbound HTTP surface, because it is the one exposed to the
 public internet and therefore the one with a security posture.
@@ -387,6 +387,26 @@ The cron scheduler claims due rows transactionally, so a second instance will no
 double-fire the same schedule. It is nonetheless single-process: distributed
 scheduling is not designed. Schedules are managed through
 `/api/v1/schedules`.
+
+## Host events
+
+A host event arrives from the embedding host itself rather than the public
+internet: the host's backend calls `POST /api/v1/events` with its tenant key,
+and every active workflow whose event trigger lists the event's type queues an
+execution of its active revision. That is the recommended host → workflow path
+— see [the embedding guide](/guides/embedding/) for the whole story — because
+one publish reaches every listening workflow, where a webhook route is per
+workflow and a manual run call ignores activation entirely.
+
+Two trigger shapes subscribe. The built-in **Host Event** trigger picks event
+types through its parameter, offered from the catalogues node packs declare;
+a trigger pack opts its own events in with the `hostEvents` block, and a
+published event routes to the same port a webhook delivery with that event
+name would reach. In both cases the trigger item is the event document —
+`{type, payload, occurredAt, eventId}` — so a workflow branches on
+`{{ $json.type }}` and reads `{{ $json.payload }}`. Deduplication is per
+`(eventId, workflow)`: within the delivery window a retried publish reaches
+each workflow once, whatever idempotency key it carried.
 
 ## API operations
 

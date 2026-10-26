@@ -108,6 +108,12 @@ type Type struct {
 	Authenticate *Authentication `json:"authenticate,omitempty"`
 	// Test is an optional probe.
 	Test *TestRequest `json:"test,omitempty"`
+	// Dial is an optional connection test for a service no HTTP probe can
+	// reach — a mail server whose handshake itself proves the credential.
+	// Where Test names a URL, Dial names a protocol, and RunDialTest speaks
+	// it. The two are mutually exclusive by construction: a type either
+	// answers HTTP or it does not.
+	Dial *DialTest `json:"dial,omitempty"`
 	// DefaultDomains is the host scope a credential of this type carries when
 	// its author saved none. It is for a type whose service lives at one known
 	// address: without it, an empty list lets the key go anywhere a workflow
@@ -218,6 +224,10 @@ func cloneType(credentialType Type) Type {
 	if credentialType.Test != nil {
 		test := *credentialType.Test
 		credentialType.Test = &test
+	}
+	if credentialType.Dial != nil {
+		dial := *credentialType.Dial
+		credentialType.Dial = &dial
 	}
 	return credentialType
 }

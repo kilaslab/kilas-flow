@@ -261,6 +261,56 @@ webhook:
   # Env: KILASFLOW_WEBHOOK_REQUIRE_AUTH
   require_auth: false
 
+metrics:
+  # Enabled turns the endpoint on: a second listener serving the text
+  # exposition format on Host:Port, on every process role, so the workers
+  # that actually run executions report too.
+  # Env: KILASFLOW_METRICS_ENABLED
+  enabled: false
+  # Host is the address the metrics listener binds to. The default is
+  # loopback, because the series are for the operator's scraper on the same
+  # host or network, and an internet-facing bind is a deployment's explicit
+  # decision to make.
+  # Env: KILASFLOW_METRICS_HOST
+  host: '127.0.0.1'
+  # Port is the port the metrics listener binds to. Required when the
+  # endpoint is enabled.
+  # Env: KILASFLOW_METRICS_PORT
+  port: 9090
+  # TenantLabel decides whether the tenant-scoped series carry a tenant
+  # label: "off" records none, "on" records one per tenant unbounded, and
+  # "top" records one for the top-N tenants by observation count and folds
+  # the rest into tenant="other". A label per tenant is a cardinality
+  # decision only the operator can make, which is why none is the default.
+  # Env: KILASFLOW_METRICS_TENANT_LABEL
+  tenant_label: 'off'
+  # TopTenants is how many tenants keep their own label when tenant_label
+  # is "top".
+  # Env: KILASFLOW_METRICS_TOP_TENANTS
+  top_tenants: 10
+
+ratelimit:
+  # Store is where the buckets live: "memory" for a single process, or
+  # "database" to share one allowance across every process of a deployment
+  # — the only right answer when several server processes sit behind a load
+  # balancer, because separate in-memory buckets each grant the full rate.
+  # Env: KILASFLOW_RATELIMIT_STORE
+  store: 'memory'
+  # RunPerMinute is how many manual runs one tenant may queue per minute,
+  # through POST /workflows/{id}/run. The number is also the burst: the
+  # bucket holds a full minute's allowance and refills at a sixtieth of it
+  # per second.
+  # Env: KILASFLOW_RATELIMIT_RUN_PER_MINUTE
+  run_per_minute: 120
+  # WebhookPerMinute is how many inbound webhook deliveries one tenant's
+  # endpoints accept per minute.
+  # Env: KILASFLOW_RATELIMIT_WEBHOOK_PER_MINUTE
+  webhook_per_minute: 600
+  # EventsPerMinute is how many events one tenant may publish per minute,
+  # through POST /events.
+  # Env: KILASFLOW_RATELIMIT_EVENTS_PER_MINUTE
+  events_per_minute: 600
+
 embed:
   # SigningKeyEnv names the environment variable holding the token signing
   # key: exactly 32 bytes, encoded as base64, hex, or raw bytes. Like the

@@ -124,6 +124,12 @@ func (service *Service) publishTerminal(record execution.Record, data json.RawMe
 // (see resolvedSecrets), so the log never holds a credential value the
 // execution page does not.
 func (service *Service) logTerminal(ctx context.Context, record execution.Record, workflowName string) {
+	// Counted before the level switch, deliberately: the log level chooses
+	// which lines appear, and the series are not lines — turning metrics off
+	// with log.execution_level would be a switch labelled something else.
+	if service.metrics != nil {
+		service.metrics.ExecutionSettled(record.TenantID, string(record.Trigger), string(record.Status))
+	}
 	level := slog.LevelInfo
 	if record.Status == execution.StatusFailed {
 		level = slog.LevelWarn

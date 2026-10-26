@@ -11,7 +11,7 @@ life, which is what makes compiled graphs and the metadata served to the editor
 deterministic.
 
 <!-- generated:catalogue-size -->
-A default install serves 76 distinct node types across 83 type-and-version pairs: 72 types (77 pairs) compiled into the binary, counting the `kilasflow.unsupported` import placeholder for nodes KilasFlow does not implement, and 4 types (6 pairs) from the declarative packs it ships with.
+A default install serves 82 distinct node types across 89 type-and-version pairs: 78 types (83 pairs) compiled into the binary, counting the `kilasflow.unsupported` import placeholder for nodes KilasFlow does not implement, and 4 types (6 pairs) from the declarative packs it ships with.
 <!-- /generated:catalogue-size -->
 
 A pack loaded from `packs.dir` adds to that. The list of record is
@@ -353,7 +353,9 @@ its tenant list so an operator can eyeball it.
 
 ## API operations
 
-`GET /api/v1/node-types` serves the catalogue.
+`GET /api/v1/node-types` serves the catalogue — and the docs hold a
+generated [node catalogue](/reference/node-catalogue/) rendered from exactly
+that response, one section per type with parameters, ports and credentials.
 `GET /api/v1/node-types/{type}/icon` serves a node's artwork.
 `POST /api/v1/node-types/{type}/load-options` resolves the selectable values for
 a property whose valid values live on the customer's own service — the loader is

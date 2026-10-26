@@ -44,6 +44,7 @@ var perItemNodes = map[string]bool{
 	nodes.OpenAIAppNodeType: true, nodes.GoogleGeminiAppNodeType: true,
 	nodes.InformationExtractorNodeType: true, nodes.TextClassifierNodeType: true,
 	nodes.ChainRetrievalQaNodeType: true, nodes.SentimentAnalysisNodeType: true,
+	nodes.EmailSendNodeType: true, nodes.RssFeedReadNodeType: true,
 }
 
 // Every native node the runner could split into one-item calls is classified,

@@ -19,11 +19,13 @@ func PollHandlers(policy safehttp.Policy) map[string]poller.Handler {
 		GmailTriggerNodeType:        NewGmailPoller(policy),
 		GoogleDriveTriggerNodeType:  NewGoogleDrivePoller(policy),
 		GoogleSheetsTriggerNodeType: NewGoogleSheetsPoller(policy),
+		EmailReadImapNodeType:       NewEmailImapPoller(policy),
+		RssFeedReadTriggerNodeType:  NewRSSFeedPoller(policy),
 	}
 }
 
-// ExtractPolls turns a document's Gmail, Drive and Sheets triggers into the
-// leased cursor rows an activation stores.
+// ExtractPolls turns a document's Gmail, Drive, Sheets, IMAP and RSS feed
+// triggers into the leased cursor rows an activation stores.
 func ExtractPolls(document workflow.Document) []repository.PollTrigger {
 	triggers := make([]repository.PollTrigger, 0, 1)
 	for _, node := range document.Nodes {
@@ -31,7 +33,8 @@ func ExtractPolls(document workflow.Document) []repository.PollTrigger {
 			continue
 		}
 		switch node.Type {
-		case GmailTriggerNodeType, GoogleDriveTriggerNodeType, GoogleSheetsTriggerNodeType:
+		case GmailTriggerNodeType, GoogleDriveTriggerNodeType, GoogleSheetsTriggerNodeType,
+			EmailReadImapNodeType, RssFeedReadTriggerNodeType:
 		default:
 			continue
 		}

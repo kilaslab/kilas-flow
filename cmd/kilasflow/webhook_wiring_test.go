@@ -32,7 +32,7 @@ func TestWebhookRequireAuthSwitchIsWiredAtBoot(t *testing.T) {
 	t.Run("required", func(t *testing.T) {
 		var log bytes.Buffer
 		handler := startWebhookHandler(processRoleBoth, webhookConfig(true),
-			wiringBindings{}, wiringRunner{}, nil, nil, webhook.NewRegistry(),
+			wiringBindings{}, wiringRunner{}, nil, nil, webhook.NewRegistry(), nil, nil,
 			slog.New(slog.NewTextHandler(&log, nil)))
 
 		// An open trigger must be refused outright by the deployment switch.
@@ -50,7 +50,7 @@ func TestWebhookRequireAuthSwitchIsWiredAtBoot(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
 		var log bytes.Buffer
 		handler := startWebhookHandler(processRoleBoth, webhookConfig(false),
-			wiringBindings{}, wiringRunner{}, nil, nil, webhook.NewRegistry(),
+			wiringBindings{}, wiringRunner{}, nil, nil, webhook.NewRegistry(), nil, nil,
 			slog.New(slog.NewTextHandler(&log, nil)))
 
 		// The zero value has to mean off: an imported workflow keeps its old
@@ -85,7 +85,7 @@ func TestWebhookRequireAuthSwitchIsWiredAtBoot(t *testing.T) {
 	t.Run("worker", func(t *testing.T) {
 		var log bytes.Buffer
 		startWebhookHandler(processRoleWorker, webhookConfig(false),
-			wiringBindings{}, wiringRunner{}, nil, nil, webhook.NewRegistry(),
+			wiringBindings{}, wiringRunner{}, nil, nil, webhook.NewRegistry(), nil, nil,
 			slog.New(slog.NewTextHandler(&log, nil)))
 
 		if log.String() != "" {
@@ -97,7 +97,7 @@ func TestWebhookRequireAuthSwitchIsWiredAtBoot(t *testing.T) {
 	t.Run("api", func(t *testing.T) {
 		var log bytes.Buffer
 		startWebhookHandler(processRoleAPI, webhookConfig(false),
-			wiringBindings{}, wiringRunner{}, nil, nil, webhook.NewRegistry(),
+			wiringBindings{}, wiringRunner{}, nil, nil, webhook.NewRegistry(), nil, nil,
 			slog.New(slog.NewTextHandler(&log, nil)))
 
 		if !strings.Contains(log.String(), "accept unauthenticated deliveries") {
