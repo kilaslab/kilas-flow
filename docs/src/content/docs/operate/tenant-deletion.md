@@ -30,7 +30,7 @@ filesystem has no transaction to join.
 | --- | --- | --- |
 | `lock-out` | `api_keys`, `users` (an update, nothing is deleted) | The tenant cannot write while its own rows are going. A deletion that fails leaves it locked out, which is the safe direction. |
 | `stop-triggers` | — | The coordinator on this process asks every remote service to forget the tenant's registrations, and its hooks resolve the tenant's credentials, so those credentials have to still exist. |
-| `triggers` | `poll_cursors`, `schedules`, `webhook_deliveries`, `webhook_routes`, `webhook_bindings` | Intake is closed. A webhook arriving after this would queue an execution that the definitions step could then not delete, because `workflow_versions` refuses to lose its executions. Leased Gmail and Drive poll cursors go with the other intake rows so a replica cannot emit into a tenant that is being deleted. |
+| `triggers` | `poll_cursors`, `schedules`, `host_event_deliveries`, `host_event_subscriptions`, `rate_limit_buckets`, `webhook_deliveries`, `webhook_routes`, `webhook_bindings` | Intake is closed. A webhook arriving after this would queue an execution that the definitions step could then not delete, because `workflow_versions` refuses to lose its executions. Leased Gmail and Drive poll cursors go with the other intake rows so a replica cannot emit into a tenant that is being deleted. |
 | `binaries` | — | A filesystem has no transaction to join, so it is a step of its own, and the payload directory goes before the rows that name its payloads. |
 | `runs` | `execution_node_runs`, `execution_waits`, `executions`, `idempotency_keys` | Waits are deleted before executions: `execution_waits.execution_id` is `ON DELETE RESTRICT`, so the other order fails the whole transaction for any tenant with a suspended run — the ordinary case for a deletion request. |
 | `definitions` | `secret_bindings`, `credentials`, `credential_events`, `workflow_versions`, `workflow_publish_events`, `workflow_static_data`, `workflow_tags`, `workflows` | Versions before workflows (also `RESTRICT`). Workflows are hard-deleted, not soft-deleted. The credential audit trail goes with the credentials it describes. `workflow_tags` is the per-tenant index of each workflow's tags; the tags themselves live in the version documents. |
@@ -112,8 +112,11 @@ operation refuses every caller, exactly like any other operator route.
     "execution_node_runs": 12,
     "execution_waits": 1,
     "executions": 6,
+    "host_event_deliveries": 1,
+    "host_event_subscriptions": 1,
     "idempotency_keys": 2,
     "poll_cursors": 1,
+    "rate_limit_buckets": 2,
     "schedules": 1,
     "secret_bindings": 1,
     "tenants": 1,
