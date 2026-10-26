@@ -16,6 +16,8 @@
     "test": "pnpm i18n:compile && vitest run",
     "test:watch": "vitest",
     "lint:focus": "vitest run src/lib/design-system/focus-lint.test.ts",
+    "lint:tokens": "pnpm i18n:compile && vitest run src/lib/design-system --maxWorkers=2",
+    "test:design-budget": "vitest run src/lib/design-system/design-budget.test.ts",
     "generate:api": "node scripts/generate-api-client.mjs",
     "generate:api:check": "node scripts/check-api-client.mjs"
   },

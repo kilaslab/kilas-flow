@@ -60,10 +60,16 @@ export const ALIAS_PAIRS: ContrastPair[] = [
 	text('--warning', '--background'),
 	text('--warning-foreground', '--warning'),
 	text('--sidebar-foreground', '--sidebar'),
-	text('--accent-foreground', '--accent')
-	// `text-primary` (--primary as text) is deliberately absent: the kunyit fill
-	// is 1.7:1 on white in light. Text that should read in the accent moves to
-	// --kf-accent-text under FEAT-r8ph93.
+	text('--accent-foreground', '--accent'),
+	// FEAT-r8ph93: link text lives on --kf-accent-text, never on the kunyit
+	// fill (1.7:1 in light) or on shadcn's --accent hover surface.
+	text('--kf-accent-text', '--background'),
+	text('--kf-accent-text', '--card'),
+	text('--kf-accent-text', '--popover')
+	// --primary as text is deliberately absent: the kunyit fill is 1.7:1 on
+	// white in light. Text that should read in the accent moved to
+	// --kf-accent-text under FEAT-r8ph93, and palette-lint.test.ts refuses
+	// that utility outright.
 ];
 
 /**

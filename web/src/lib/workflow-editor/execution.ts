@@ -1,3 +1,15 @@
+import type { Component } from 'svelte';
+
+import Ban from '@lucide/svelte/icons/ban';
+import Check from '@lucide/svelte/icons/check';
+import CircleDashed from '@lucide/svelte/icons/circle-dashed';
+import Clock from '@lucide/svelte/icons/clock';
+import LoaderCircle from '@lucide/svelte/icons/loader-circle';
+import Minus from '@lucide/svelte/icons/minus';
+import PencilLine from '@lucide/svelte/icons/pencil-line';
+import Pin from '@lucide/svelte/icons/pin';
+import X from '@lucide/svelte/icons/x';
+
 import * as m from '$lib/paraglide/messages.js';
 import type { Connection, Definition, ExecutionNodeRunResource, Node } from '$lib/api/generated/models';
 import { resolveDefinition } from './document';
@@ -310,34 +322,104 @@ export function formatTimestamp(value: string | undefined): string {
 }
 
 /**
- * Tailwind classes per status, so list rows and canvas badges agree.
+ * The semantic register a status renders in (FEAT-r8ph93).
  *
- * The failed text is the destructive token pulled a fifth of the way toward
- * the foreground (BUG-namghh): plain `text-destructive` on its own 15% tint is
- * 4.35:1 in dark and 4.40:1 in light at 12px, under AA. Mixing toward the
- * foreground lightens it in dark and darkens it in light, so one class serves
- * both themes without a new token.
+ * The brand accent is reserved for the primary action, selection, focus and
+ * links; a status — run state, workflow state, revision role — always speaks
+ * in one of the four state hues or in neutral, whatever surface paints it.
+ * `waiting` rides `info` because it is a run in flight that paused for input,
+ * not a fault; `cancelled`/`cancelling` ride `warning` because a person
+ * stopped them, which is news even when nothing failed.
  */
-export function statusTone(status: string): string {
+export type StatusToken = 'success' | 'danger' | 'warning' | 'info' | 'neutral';
+
+/** The one status→token map every status-painting surface reads. */
+export function statusToken(status: string): StatusToken {
 	switch (status) {
 		case 'succeeded':
-			return 'bg-success/15 text-success border-success/30';
+		case 'published':
+		case 'active':
+			return 'success';
 		case 'failed':
-			return 'bg-destructive/15 text-[color-mix(in_oklab,var(--destructive)_80%,var(--foreground))] border-destructive/30';
+			return 'danger';
+		case 'running':
+		case 'queued':
+		case 'waiting':
+			return 'info';
 		case 'cancelled':
 		case 'cancelling':
-			return 'bg-warning/15 text-warning border-warning/30';
-		case 'running':
-			return 'bg-primary/15 text-primary border-primary/30';
-		case 'waiting':
-			return 'bg-violet-500/15 text-violet-600 border-violet-500/30 dark:text-violet-400';
-		case 'skipped':
-			return 'bg-muted text-muted-foreground border-border';
-		case 'pinned':
-			return 'bg-primary/15 text-primary border-primary/30';
+		case 'unpublished':
+			return 'warning';
 		default:
-			return 'bg-secondary text-secondary-foreground border-border';
+			// skipped, pinned, draft, paused, the server's trigger tokens and
+			// anything unknown: neutral, never the accent.
+			return 'neutral';
 	}
+}
+
+/** Utility classes per register, on the *-subtle tokens the contrast pairs hold. */
+const TONE_CLASSES: Record<StatusToken, string> = {
+	success: 'bg-(--kf-success-subtle) text-(--kf-success) border-(--kf-success)/30',
+	danger: 'bg-(--kf-danger-subtle) text-(--kf-danger) border-(--kf-danger)/30',
+	warning: 'bg-(--kf-warning-subtle) text-(--kf-warning) border-(--kf-warning)/30',
+	info: 'bg-(--kf-info-subtle) text-(--kf-info) border-(--kf-info)/30',
+	neutral: 'bg-muted text-muted-foreground border-border'
+};
+
+/**
+ * Tailwind classes per status, so list rows and canvas badges agree.
+ *
+ * Every register paints its text on its own subtle tint, which is the pair
+ * tokens.contrast.test.ts holds at ≥4.5:1 in both themes — the failed text no
+ * longer needs the old foreground mix-in, and running/waiting no longer borrow
+ * the accent.
+ */
+export function statusTone(status: string): string {
+	return TONE_CLASSES[statusToken(status)];
+}
+
+/**
+ * The status as a colour the canvas can paint a node's border with, straight
+ * off the run-state tokens so the replay reads in state hues rather than the
+ * brand accent.
+ */
+export function statusAccent(status: string): string {
+	switch (statusToken(status)) {
+		case 'success':
+			return 'var(--kf-run-success)';
+		case 'danger':
+			return 'var(--kf-run-error)';
+		case 'warning':
+			return 'var(--kf-run-warning)';
+		case 'info':
+			return status === 'waiting' ? 'var(--kf-run-waiting)' : 'var(--kf-run-running)';
+		default:
+			return 'var(--kf-run-disabled)';
+	}
+}
+
+/**
+ * The glyph a status renders with, or null for one this map does not know
+ * (the caller draws a dot). A status never travels on colour alone.
+ */
+const STATUS_ICONS: Record<string, Component> = {
+	succeeded: Check,
+	published: Check,
+	active: Check,
+	failed: X,
+	running: LoaderCircle,
+	queued: Clock,
+	waiting: Clock,
+	cancelled: Ban,
+	cancelling: CircleDashed,
+	unpublished: Ban,
+	skipped: Minus,
+	pinned: Pin,
+	draft: PencilLine
+};
+
+export function statusIcon(status: string): Component | null {
+	return STATUS_ICONS[status] ?? null;
 }
 
 /**
@@ -362,26 +444,4 @@ const STATUS_LABELS: Partial<Record<string, () => string>> = {
 /** Human label for a status, including the client-only `skipped`. */
 export function statusLabel(status: string): string {
 	return STATUS_LABELS[status]?.() ?? status.charAt(0).toUpperCase() + status.slice(1);
-}
-
-/**
- * The status as a colour the canvas can paint a node's border with.
- *
- * `statusTone` returns utility classes for badges; a node tile needs the raw
- * value because it composes the colour into a ring with `color-mix`.
- */
-export function statusAccent(status: string): string {
-	switch (status) {
-		case 'succeeded':
-			return 'var(--success)';
-		case 'failed':
-			return 'var(--destructive)';
-		case 'cancelled':
-		case 'running':
-			return 'var(--primary)';
-		case 'waiting':
-			return 'var(--violet-500, var(--primary))';
-		default:
-			return 'var(--muted-foreground)';
-	}
 }

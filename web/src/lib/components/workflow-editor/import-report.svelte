@@ -89,15 +89,15 @@
 	{#if webhooks}
 		<section aria-label={m.workflows_webhook_addresses()}>
 			<h3 class="text-xs font-semibold">{m.workflows_webhook_addresses_count({ count: webhooks.length })}</h3>
-			<p class="mt-0.5 text-xs leading-5 text-muted-foreground">
+			<p class="mt-1 text-xs leading-5 text-muted-foreground">
 				{m.workflows_webhook_addresses_note()}
 			</p>
 			{#if webhooks.length === 0}
-				<p class="mt-1.5 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground">
+				<p class="mt-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground">
 					{m.workflows_no_webhooks()}
 				</p>
 			{:else}
-				<ul class="mt-1.5 divide-y divide-border overflow-hidden rounded-lg border border-border">
+				<ul class="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border">
 					{#each webhooks as webhook (`${webhook.nodeId}-${webhook.url}`)}
 						<li class="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2">
 							<span class="min-w-0 flex-1 basis-40">
@@ -108,8 +108,7 @@
 							<Button
 								type="button"
 								variant="outline"
-								size="sm"
-								class="h-7 shrink-0 px-2 text-[0.6875rem]"
+								class="shrink-0 px-2 text-[0.6875rem]"
 								onclick={() => void copyURL(webhook.url)}
 								aria-label={m.workflows_copy_webhook_url_for({ name: webhookNodeName(webhook.nodeId) })}
 							>
@@ -123,7 +122,7 @@
 					{/each}
 				</ul>
 				{#if copyFailed}
-					<p role="status" class="mt-1.5 text-xs text-muted-foreground">{m.workflows_error_copy()}</p>
+					<p role="status" class="mt-2 text-xs text-muted-foreground">{m.workflows_error_copy()}</p>
 				{/if}
 			{/if}
 		</section>
@@ -136,7 +135,7 @@
 
 	{#if onOpenWorkflow}
 		<div class="flex justify-end">
-			<Button type="button" size="sm" onclick={onOpenWorkflow}>{m.workflows_open_named_in_editor({ name: workflowName })}</Button>
+			<Button type="button" onclick={onOpenWorkflow}>{m.workflows_open_named_in_editor({ name: workflowName })}</Button>
 		</div>
 	{/if}
 </div>

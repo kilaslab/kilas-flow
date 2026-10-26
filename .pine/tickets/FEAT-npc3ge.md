@@ -1,7 +1,7 @@
 ---
 id: FEAT-npc3ge
 title: "Density and layout rhythm: 24/28/32 controls, 40 px rows, one content width, one page header, editor chrome sizes"
-status: todo
+status: done
 priority: high
 labels:
     - frontend
@@ -35,3 +35,7 @@ Source: the 2026-09-23 frontend visual audit. The owner chose direction A, "Kuny
 # Related Files
 
 # Attachments
+
+# Progress
+
+Implemented 2026-10-26 (orchestrator-verified): density/layout rhythm per spec — 24/28/32 control sizes, 40px rows, one content width, one page header across the editor surfaces; spacing-lint + design-budget lints enforce the rhythm. Node picker stays a centered modal at the shared rail width (literal right-sheet docking would be an interaction change beyond this ticket). Gates as FEAT-r8ph93. FEAT-a3dwj2 (light toggle) and FEAT-pqnxx4 (type scale) remain owners of their areas.

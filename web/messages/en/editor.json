@@ -32,8 +32,13 @@
 	"editor_select_node_first": "Select a node first.",
 	"editor_nodes_copied": [
 		{
-			"declarations": ["input count", "local countPlural = count: plural"],
-			"selectors": ["countPlural"],
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
 			"match": {
 				"countPlural=one": "Copied 1 node.",
 				"countPlural=other": "Copied {count} nodes."
@@ -50,8 +55,13 @@
 	"editor_paste_report_description": "What the n8n nodes pasted into {name} became, read the way an import is. It describes the last paste only.",
 	"editor_nodes_pasted": [
 		{
-			"declarations": ["input count", "local countPlural = count: plural"],
-			"selectors": ["countPlural"],
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
 			"match": {
 				"countPlural=one": "Pasted 1 node",
 				"countPlural=other": "Pasted {count} nodes"
@@ -60,8 +70,13 @@
 	],
 	"editor_nodes_duplicated": [
 		{
-			"declarations": ["input count", "local countPlural = count: plural"],
-			"selectors": ["countPlural"],
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
 			"match": {
 				"countPlural=one": "Duplicated 1 node.",
 				"countPlural=other": "Duplicated {count} nodes."
@@ -71,8 +86,13 @@
 	"editor_renamed_taken": "Renamed to “{name}” — that name was taken.",
 	"editor_connections_removed": [
 		{
-			"declarations": ["input count", "local countPlural = count: plural"],
-			"selectors": ["countPlural"],
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
 			"match": {
 				"countPlural=one": "Removed 1 connection that {node} has no port for any more: {detail}. Undo brings it back.",
 				"countPlural=other": "Removed {count} connections that {node} has no ports for any more: {detail}. Undo brings them back."
@@ -130,8 +150,13 @@
 	"editor_activation_notices_aria": "Activation notices",
 	"editor_activation_notices_summary": [
 		{
-			"declarations": ["input count", "local countPlural = count: plural"],
-			"selectors": ["countPlural"],
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
 			"match": {
 				"countPlural=one": "1 activation notice. The workflow is active, but a trigger still needs something done before it receives anything.",
 				"countPlural=other": "{count} activation notices. The workflow is active, but a trigger still needs something done before it receives anything."
@@ -157,5 +182,6 @@
 	"editor_chat_expand": "Expand chat",
 	"editor_chat_collapse": "Shrink chat",
 	"editor_chat_took": "{seconds}s",
-	"editor_chat_hint": "Enter to send · Shift+Enter for a new line"
+	"editor_chat_hint": "Enter to send · Shift+Enter for a new line",
+	"editor_resize_rail_aria": "Resize panel"
 }

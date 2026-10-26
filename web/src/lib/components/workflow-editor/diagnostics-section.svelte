@@ -79,7 +79,7 @@
 		{#each groups as group (group.severity)}
 			{@const info = meta[group.severity]}
 			<section aria-label={m.workflows_diagnostics_label({ heading: info.heading() })}>
-				<div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+				<div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
 					<h3 class="text-xs font-semibold">
 						{info.heading()}
 						<span class="font-normal text-muted-foreground">· {group.rows.length}</span>
@@ -89,7 +89,7 @@
 						{info.action()}
 					</p>
 				</div>
-				<div class="mt-1.5 overflow-x-auto rounded-lg border border-border">
+				<div class="mt-2 overflow-x-auto rounded-lg border border-border">
 					<Table.Root class="min-w-[36rem]">
 						<Table.Caption class="sr-only">{m.workflows_diagnostics_caption({ heading: info.heading() })}</Table.Caption>
 						<Table.Header class="[&_th]:h-7 [&_th]:px-3 [&_th]:text-xs [&_th]:uppercase [&_th]:tracking-wide [&_th]:text-muted-foreground">
@@ -105,7 +105,7 @@
 							{#each group.rows as row, index (`${group.severity}-${row.nodeId ?? row.nodeName ?? ''}-${row.field ?? ''}-${index}`)}
 								<Table.Row>
 									<Table.Cell class="whitespace-nowrap px-3 py-2">
-										<span class={`inline-flex items-center rounded-full border px-2 py-0.5 text-[0.6875rem] font-medium ${info.badge}`}>{row.severity}</span>
+										<span class={`inline-flex items-center rounded-full border px-2 py-0 text-[0.6875rem] font-medium ${info.badge}`}>{row.severity}</span>
 									</Table.Cell>
 									<Table.Cell class="max-w-40 truncate px-3 py-2 font-medium" title={nodeLabel(row)}>{nodeLabel(row)}</Table.Cell>
 									<Table.Cell class="max-w-48 truncate px-3 py-2 font-mono text-[0.6875rem] text-muted-foreground" title={typeLabel(row)}>{typeLabel(row)}</Table.Cell>

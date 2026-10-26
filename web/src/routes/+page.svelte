@@ -61,12 +61,13 @@
 			class="mt-1 inline-flex shrink-0 items-center gap-2 rounded-full border
 			       border-border px-3 py-1 text-xs font-medium"
 		>
-			<span
-				class="size-1.5 rounded-full"
-				class:bg-emerald-500={connected}
-				class:bg-red-500={health.isError}
-				class:bg-amber-400={health.isPending}
-			></span>
+		<span
+			aria-hidden="true"
+			class="size-1.5 rounded-full"
+			class:bg-success={connected}
+			class:bg-destructive={health.isError}
+			class:bg-warning={health.isPending}
+		></span>
 			{connected
 				? m.home_status_connected()
 				: health.isPending
@@ -86,7 +87,7 @@
 	>
 		<div
 			class="flex items-center justify-between border-b border-border
-			       px-4 py-2.5"
+			       px-4 py-2"
 		>
 			<h2 class="text-xs font-semibold tracking-wide uppercase text-muted-foreground">
 				{m.home_status_heading()}
@@ -109,14 +110,14 @@
 					{#if health.isPending}
 						<span class="text-muted-foreground">{m.home_checking()}</span>
 					{:else if health.isSuccess}
-						<span class="text-emerald-600 dark:text-emerald-400">
+						<span class="text-success">
 							{health.data.status}
 						</span>
 						<span class="ml-2 text-xs text-muted-foreground">
 							{m.home_health_version({ version: health.data.version })}
 						</span>
 					{:else}
-						<span class="text-red-600 dark:text-red-400">{errorMessage(health.error)}</span>
+						<span class="text-destructive">{errorMessage(health.error)}</span>
 					{/if}
 				</dd>
 			</div>
@@ -129,12 +130,12 @@
 					{#if ready.isPending}
 						<span class="text-muted-foreground">{m.home_checking()}</span>
 					{:else if ready.isSuccess}
-						<span class="text-emerald-600 dark:text-emerald-400">{ready.data.status}</span>
+						<span class="text-success">{ready.data.status}</span>
 						<span class="ml-2 text-xs text-muted-foreground">
 							{m.home_ready_database({ name: ready.data.database })}
 						</span>
 					{:else}
-						<span class="text-red-600 dark:text-red-400">{errorMessage(ready.error)}</span>
+						<span class="text-destructive">{errorMessage(ready.error)}</span>
 					{/if}
 				</dd>
 			</div>
@@ -143,7 +144,7 @@
 
 	{#if health.isError}
 		<p
-			class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm
+			class="rounded-lg border border-warning/30 bg-(--kf-warning-subtle) px-4 py-3 text-sm
 			       text-muted-foreground"
 		>
 			{m.home_backend_help({ api: 'make dev-api', dev: 'make dev' })}
@@ -151,9 +152,9 @@
 	{/if}
 
 	<nav class="flex flex-wrap gap-x-5 gap-y-2 text-sm">
-		<a class="text-primary hover:underline" href="/docs">{m.home_link_api_reference()}</a>
-		<a class="text-primary hover:underline" href="/api/openapi.json">{m.home_link_openapi_json()}</a>
-		<a class="text-primary hover:underline" href="/api/openapi.yaml">{m.home_link_openapi_yaml()}</a>
+		<a class="text-(--kf-accent-text) hover:underline" href="/docs">{m.home_link_api_reference()}</a>
+		<a class="text-(--kf-accent-text) hover:underline" href="/api/openapi.json">{m.home_link_openapi_json()}</a>
+		<a class="text-(--kf-accent-text) hover:underline" href="/api/openapi.yaml">{m.home_link_openapi_yaml()}</a>
 	</nav>
 
 	<footer class="text-xs text-muted-foreground">

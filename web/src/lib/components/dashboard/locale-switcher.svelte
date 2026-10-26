@@ -23,7 +23,7 @@
 		const next = event.currentTarget.value;
 		if (setLocale(next)) rememberLocale(next);
 	}}
-	class="h-7 w-full rounded-md border border-sidebar-border bg-sidebar px-1.5 text-xs text-sidebar-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring"
+	class="h-7 w-full rounded-md border border-sidebar-border bg-sidebar px-2 text-xs text-sidebar-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sidebar-ring"
 >
 	{#each localeOptions() as option (option.value)}
 		<option value={option.value}>{option.label}</option>

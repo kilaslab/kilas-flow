@@ -11,6 +11,8 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
+	import { PageHeader } from '$lib/components/ui/page-header';
+	import { StatusBadge } from '$lib/components/ui/status-badge';
 	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
 	import { RequestGuard } from '$lib/dashboard/request-guard';
 	import * as m from '$lib/paraglide/messages.js';
@@ -153,19 +155,20 @@
 	<title>{m.schedules_page_title()}</title>
 </svelte:head>
 
-<section class="mx-auto w-full max-w-4xl">
-	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-		<div class="max-w-xl">
-			<h1 class="text-base font-semibold tracking-tight">{m.nav_schedules()}</h1>
+<section class="mx-auto w-full max-w-(--kf-page-max)">
+	<PageHeader title={m.nav_schedules()}>
+		{#snippet description()}
 			<p class="text-xs text-muted-foreground">
 				{m.schedules_description()}
 			</p>
-		</div>
-		<Button onclick={openCreate} disabled={loading} class="w-full sm:w-auto sm:shrink-0">
-			<CalendarClock aria-hidden="true" />
-			{m.schedules_new()}
-		</Button>
-	</div>
+		{/snippet}
+		{#snippet actions()}
+			<Button onclick={openCreate} disabled={loading} class="w-full sm:w-auto sm:shrink-0">
+				<CalendarClock aria-hidden="true" />
+				{m.schedules_new()}
+			</Button>
+		{/snippet}
+	</PageHeader>
 
 	<div class="mt-4">
 		<ListStates
@@ -175,6 +178,7 @@
 			error={listFailure}
 			count={rows.length}
 			rows={2}
+			rowClass="h-(--kf-row-h-2line)"
 			onRetry={() => void loadSchedules()}
 			emptyIcon={CalendarClock}
 			emptyTitle={m.schedules_empty_title()}
@@ -182,7 +186,7 @@
 		>
 			<ul aria-label={m.nav_schedules()} class="divide-y divide-border overflow-hidden rounded-lg border border-border">
 				{#each rows as schedule (schedule.id)}
-					<li class="flex min-h-11 items-center gap-3 px-3 py-1.5">
+					<li class="flex min-h-(--kf-row-h-2line) items-center gap-3 px-3 py-1">
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-medium" title={workflowNames.get(schedule.workflowId) ?? schedule.workflowId}>{workflowNames.get(schedule.workflowId) ?? schedule.workflowId}</p>
 							<p class="truncate text-xs text-muted-foreground" title={`${schedule.cron} ${m.schedules_row_timing({ next: formatTimestamp(schedule.nextRunAt), last: formatTimestamp(schedule.lastRunAt) })}`}>
@@ -190,20 +194,21 @@
 								{m.schedules_row_timing({ next: formatTimestamp(schedule.nextRunAt), last: formatTimestamp(schedule.lastRunAt) })}
 							</p>
 							{#if triggerOwned(schedule)}
-								<p class="text-[0.625rem] text-muted-foreground">{m.schedules_trigger_managed()} <a class="underline underline-offset-2" href={`/app/workflows/${schedule.workflowId}`}>{m.schedules_open_in_editor()}</a>.</p>
+								<p class="text-[0.625rem] text-muted-foreground">{m.schedules_trigger_managed()} <a class="text-(--kf-accent-text) underline underline-offset-2" href={`/app/workflows/${schedule.workflowId}`}>{m.schedules_open_in_editor()}</a>.</p>
 							{:else if inactiveWarning(schedule)}
 								<p class="text-[0.625rem] text-warning" role="note">{inactiveWarning(schedule)}</p>
 							{/if}
 						</div>
-						<span class="shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium {schedule.active ? 'border-success/30 bg-success/15 text-success' : 'border-border bg-muted text-muted-foreground'}">
-							{schedule.active ? m.schedules_active() : m.schedules_paused()}
-						</span>
+					<StatusBadge
+						status={schedule.active ? 'active' : 'paused'}
+						label={schedule.active ? m.schedules_active() : m.schedules_paused()}
+					/>
 						{#if triggerOwned(schedule)}
-							<Button variant="outline" size="sm" disabled title={m.schedules_trigger_edit_title()}>{m.schedules_edit()}</Button>
-							<Button variant="ghost" size="sm" disabled title={m.schedules_trigger_delete_title()} aria-label={m.schedules_delete_aria({ cron: schedule.cron })}><Trash2 aria-hidden="true" class="size-4 text-destructive" /></Button>
+							<Button variant="outline" disabled title={m.schedules_trigger_edit_title()}>{m.schedules_edit()}</Button>
+							<Button variant="ghost" disabled title={m.schedules_trigger_delete_title()} aria-label={m.schedules_delete_aria({ cron: schedule.cron })}><Trash2 aria-hidden="true" class="size-4 text-destructive" /></Button>
 						{:else}
-							<Button variant="outline" size="sm" onclick={() => openEdit(schedule)}>{m.schedules_edit()}</Button>
-							<Button variant="ghost" size="sm" aria-label={m.schedules_delete_aria({ cron: schedule.cron })} onclick={() => void remove(schedule)}>
+							<Button variant="outline" onclick={() => openEdit(schedule)}>{m.schedules_edit()}</Button>
+							<Button variant="ghost" aria-label={m.schedules_delete_aria({ cron: schedule.cron })} onclick={() => void remove(schedule)}>
 								<Trash2 aria-hidden="true" class="size-4 text-destructive" />
 							</Button>
 						{/if}

@@ -466,7 +466,7 @@
 			<span class="truncate text-[0.8125rem] font-semibold tracking-tight">{branding.name}</span>
 		{/if}
 		{#if !canWrite}
-			<span class="ml-auto rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">{m.editor_state_read_only()}</span>
+			<span class="ml-auto rounded-full border border-border bg-muted px-2 py-0 text-xs text-muted-foreground">{m.editor_state_read_only()}</span>
 		{/if}
 	</div>
 {/if}
@@ -485,16 +485,16 @@
 	     401. That is a refresh failure, not a reason to unmount the editor the
 	     host's user is working in. -->
 	{#if workflow.isError}
-		<div role="alert" class="flex flex-wrap items-center gap-2 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5">
+		<div role="alert" class="flex flex-wrap items-center gap-2 border-b border-destructive/25 bg-destructive/5 px-3 py-1">
 			<p class="min-w-0 flex-1 text-xs leading-5 text-destructive">{m.workflows_editor_stale({ message: message(workflow.error) })}</p>
-			<Button variant="outline" size="sm" onclick={() => void workflow.refetch()}>{m.workflows_refresh()}</Button>
+			<Button variant="outline" onclick={() => void workflow.refetch()}>{m.workflows_refresh()}</Button>
 		</div>
 	{/if}
 	{#if newerRevision}
-		<div role="status" class="flex flex-wrap items-center gap-2 border-b border-warning/40 bg-warning/10 px-3 py-1.5">
+		<div role="status" class="flex flex-wrap items-center gap-2 border-b border-warning/40 bg-warning/10 px-3 py-1">
 			<p class="min-w-0 flex-1 text-xs leading-5">{m.workflows_newer_revision({ revision: newerRevision.latestVersion.revision })}</p>
-			<Button variant="outline" size="sm" onclick={() => void reloadTheirs()}>{m.workflows_reload_theirs()}</Button>
-			<Button variant="ghost" size="sm" onclick={() => (newerRevision = null)}>{m.workflows_keep_mine()}</Button>
+			<Button variant="outline" onclick={() => void reloadTheirs()}>{m.workflows_reload_theirs()}</Button>
+			<Button variant="ghost" onclick={() => (newerRevision = null)}>{m.workflows_keep_mine()}</Button>
 		</div>
 	{/if}
 	{#key canvasFrom}

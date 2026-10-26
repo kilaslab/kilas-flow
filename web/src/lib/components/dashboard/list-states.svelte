@@ -5,6 +5,7 @@
 	import { message } from '$lib/api/http';
 	import { failedBesideRows, listState } from '$lib/dashboard/list-state';
 	import { Button } from '$lib/components/ui/button';
+	import { cn } from '$lib/utils';
 	import * as m from '$lib/paraglide/messages.js';
 
 	/**
@@ -33,6 +34,7 @@
 		error = null,
 		count,
 		rows = 3,
+		rowClass = undefined,
 		onRetry,
 		onRetryMore,
 		// Capitalised locally so the markup can render it as a component; the
@@ -61,6 +63,12 @@
 		 * usually is, which differs per surface, so each page keeps its own.
 		 */
 		rows?: number;
+		/**
+		 * The skeleton row height: the 40px single-line step by default, the
+		 * 52px two-line or the 36px dense-table step where the page's rows sit
+		 * at one of those, so the frame does not jump when the rows arrive.
+		 */
+		rowClass?: string;
 		onRetry: () => void;
 		/**
 		 * Retries the request behind the notice that sits beside loaded rows,
@@ -95,14 +103,14 @@
 	<div aria-live="polite" class="overflow-hidden rounded-lg border border-border">
 		<p class="sr-only">{m.common_loading({ label: label.toLowerCase() })}</p>
 		{#each Array(rows) as _}
-			<div class="h-11 animate-pulse border-b border-border bg-muted/50 last:border-0" aria-hidden="true"></div>
+			<div class={cn('h-(--kf-row-h) animate-pulse border-b border-border bg-muted/50 last:border-0', rowClass)} aria-hidden="true"></div>
 		{/each}
 	</div>
 {:else if state === 'failed'}
 	<div class="max-w-lg rounded-lg border border-destructive/25 bg-destructive/5 p-3">
 		<h2 class="text-sm font-medium">{m.common_load_failed({ label })}</h2>
-		<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(error)}</p>
-		<Button class="mt-2.5" size="sm" variant="outline" onclick={onRetry}>
+		<p class="mt-1 text-xs leading-5 text-muted-foreground">{message(error)}</p>
+		<Button class="mt-3" variant="outline" onclick={onRetry}>
 			<RefreshCw aria-hidden="true" />
 			{m.common_try_again()}
 		</Button>
@@ -128,7 +136,7 @@
 		-->
 		<div role="alert" class="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
 			<p class="text-xs text-destructive">{m.common_load_incomplete({ label, message: message(error) })}</p>
-			<Button size="sm" variant="outline" onclick={onRetryMore ?? onRetry}>
+			<Button variant="outline" onclick={onRetryMore ?? onRetry}>
 				<RefreshCw aria-hidden="true" />
 				{m.common_try_again()}
 			</Button>

@@ -113,7 +113,7 @@
 		<Controls showLock={false} />
 	</SvelteFlow>
 
-	<p class="pointer-events-none absolute left-2 top-2 z-10 rounded-md border border-border bg-card/90 px-1.5 py-0.5 text-[0.625rem] font-medium text-muted-foreground backdrop-blur">
+	<p class="pointer-events-none absolute left-2 top-2 z-10 rounded-md border border-border bg-card/90 px-1 py-0 text-[0.625rem] font-medium text-muted-foreground backdrop-blur">
 		{m.executions_read_only_replay()}
 	</p>
 </div>

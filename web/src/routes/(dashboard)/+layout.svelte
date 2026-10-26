@@ -14,8 +14,8 @@
 	import LocaleSwitcher from '$lib/components/dashboard/locale-switcher.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Sheet from '$lib/components/ui/sheet';
-	import { sectionForPath, sectionLabel } from '$lib/dashboard/nav-sections';
 	import { EDITOR_SIDEBAR_BREAKPOINT, isEditorRoute, sidebarCollapsed as collapsedFor } from '$lib/dashboard/sidebar';
+	import { sectionForPath, sectionLabel } from '$lib/dashboard/nav-sections';
 	import * as m from '$lib/paraglide/messages.js';
 	import { DEFAULT_THEME_COLOR, watchThemeColor } from '$lib/design-system/theme-color';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
@@ -75,9 +75,12 @@
 		}
 	}
 
-	// The header title and the sidebar read one registration, so a section can
-	// no longer be named in the rail and titled as something else here.
-	const sectionTitle = $derived(sectionLabel(sectionForPath(page.url.pathname)));
+	// The top bar carries only the breadcrumb (FEAT-npc3ge): the page's title
+	// is the H1 in the content, so a section is named once per screen. The
+	// trail runs from the workspace root through the section; a detail route
+	// (an execution, a datastore) adds its id as the current crumb.
+	const section = $derived(sectionForPath(page.url.pathname));
+	const detailCrumb = $derived(['executions', 'datastores'].includes(section) ? (page.params.id ?? '') : '');
 </script>
 
 <svelte:head>
@@ -121,10 +124,10 @@
 				{/if}
 			</button>
 		</div>
-		<div class="flex-1 {sidebarCollapsed ? 'px-1.5' : 'px-2'} py-2">
+		<div class="flex-1 {sidebarCollapsed ? 'px-1' : 'px-2'} py-2">
 			<DashboardNav collapsed={sidebarCollapsed} />
 		</div>
-		<div class="border-t border-sidebar-border {sidebarCollapsed ? 'px-1.5' : 'px-2'} py-2">
+		<div class="border-t border-sidebar-border {sidebarCollapsed ? 'px-1' : 'px-2'} py-2">
 			<LocaleSwitcher />
 		</div>
 	</aside>
@@ -155,12 +158,26 @@
 				</Sheet.Content>
 			</Sheet.Root>
 
-			<div class="min-w-0 flex-1">
-				<p class="truncate text-[0.8125rem] font-semibold tracking-tight">{sectionTitle}</p>
-			</div>
+		<!-- The top bar carries only the breadcrumb (FEAT-npc3ge): a location
+		     trail, deliberately without links. Section navigation is the
+		     sidebar's one job and every detail route keeps its own back
+		     control, so a clickable crumb would be a second link named exactly
+		     like the sidebar's — two affordances pretending to be one. The
+		     trail states the current section, then the item's id. -->
+		<nav aria-label={m.common_breadcrumb()} class="min-w-0 flex-1">
+			<ol class="flex min-w-0 items-center gap-1 text-xs">
+				<li class="shrink-0 truncate font-medium text-muted-foreground" aria-current={detailCrumb ? undefined : 'page'}>
+					{sectionLabel(section)}
+				</li>
+				{#if detailCrumb}
+					<li aria-hidden="true" class="shrink-0 text-muted-foreground/60">/</li>
+					<li class="min-w-0 truncate font-mono text-muted-foreground" aria-current="page" title={detailCrumb}>{detailCrumb}</li>
+				{/if}
+			</ol>
+		</nav>
 			{#if principal}
 				<span class="hidden max-w-44 truncate text-xs text-muted-foreground sm:inline" title={principal.email ?? principal.name ?? principal.label ?? m.common_signed_in()}>{principal.email ?? principal.name ?? principal.label ?? m.common_signed_in()}</span>
-				<Button variant="ghost" size="sm" class="h-7 shrink-0 px-2 text-xs" onclick={() => void signOut()}>
+				<Button variant="ghost" class="shrink-0 px-2 text-xs" onclick={() => void signOut()}>
 					<LogOut aria-hidden="true" class="size-3.5" />
 					{m.common_sign_out()}
 				</Button>

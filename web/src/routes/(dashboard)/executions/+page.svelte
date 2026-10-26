@@ -12,6 +12,8 @@
 	import type { ExecutionSummary, WorkflowSummary } from '$lib/api/generated/models';
 	import ListStates from '$lib/components/dashboard/list-states.svelte';
 	import { Button } from '$lib/components/ui/button';
+	import { PageHeader } from '$lib/components/ui/page-header';
+	import { StatusBadge } from '$lib/components/ui/status-badge';
 	import * as Table from '$lib/components/ui/table';
 	import {
 		appendPageIfCurrent,
@@ -41,7 +43,7 @@
 	import { failedBesideRows } from '$lib/dashboard/list-state';
 	import { RequestGuard } from '$lib/dashboard/request-guard';
 	import * as m from '$lib/paraglide/messages.js';
-	import { formatDuration, formatTimestamp, statusLabel, statusTone } from '$lib/workflow-editor/execution';
+	import { formatDuration, formatTimestamp, statusLabel } from '$lib/workflow-editor/execution';
 
 	// Names, the filter's options and the "deleted" badge all come from the
 	// workflow listing, which the server pages: reading one page would put every
@@ -294,31 +296,32 @@
 	<title>{m.executions_page_title()}</title>
 </svelte:head>
 
-<section class="mx-auto w-full max-w-5xl">
-	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-		<div class="max-w-xl">
-			<h1 class="text-base font-semibold tracking-tight">{m.nav_executions()}</h1>
+<section class="mx-auto w-full max-w-(--kf-page-max)">
+	<PageHeader title={m.nav_executions()}>
+		{#snippet description()}
 			<p class="text-xs text-muted-foreground">{m.executions_list_description()}</p>
-		</div>
-		<div class="flex shrink-0 items-center gap-2">
-			<label class="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted has-checked:text-foreground">
-				<input type="checkbox" bind:checked={autoRefresh} class="size-3.5 accent-primary" />
-				{m.executions_auto_refresh()}
-			</label>
-			<Button variant="outline" onclick={() => void load(status, workflowID)} disabled={loading}>
-				<RefreshCw aria-hidden="true" />
-				{m.executions_refresh()}
-			</Button>
-		</div>
-	</div>
+		{/snippet}
+		{#snippet actions()}
+			<div class="flex shrink-0 items-center gap-2">
+				<label class="inline-flex h-7 cursor-pointer items-center gap-2 rounded-md border border-border px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted has-checked:text-foreground">
+					<input type="checkbox" bind:checked={autoRefresh} class="size-3.5 accent-primary" />
+					{m.executions_auto_refresh()}
+				</label>
+				<Button variant="outline" onclick={() => void load(status, workflowID)} disabled={loading}>
+					<RefreshCw aria-hidden="true" />
+					{m.executions_refresh()}
+				</Button>
+			</div>
+		{/snippet}
+	</PageHeader>
 	{#if stopError}
-		<p role="alert" class="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">{m.executions_stop_failed({ message: stopError })}</p>
+		<p role="alert" class="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1 text-xs text-destructive">{m.executions_stop_failed({ message: stopError })}</p>
 	{/if}
 
 	<div class="mt-6 flex flex-wrap items-end gap-3">
 		<div class="grid gap-1">
 			<label for="execution-status" class="text-xs font-medium text-muted-foreground">{m.executions_status()}</label>
-			<select id="execution-status" bind:value={status} class="h-7 min-w-36 rounded-md border border-input bg-background px-1.5 text-xs">
+			<select id="execution-status" bind:value={status} class="h-7 min-w-36 rounded-md border border-input bg-background px-1 text-xs">
 				<option value="">{m.executions_all_statuses()}</option>
 				{#each EXECUTION_STATUSES as option (option)}
 					<option value={option}>{statusLabel(option)}</option>
@@ -327,7 +330,7 @@
 		</div>
 		<div class="grid gap-1">
 			<label for="execution-workflow" class="text-xs font-medium text-muted-foreground">{m.executions_workflow()}</label>
-			<select id="execution-workflow" bind:value={workflowID} class="h-7 min-w-44 max-w-64 rounded-md border border-input bg-background px-1.5 text-xs">
+			<select id="execution-workflow" bind:value={workflowID} class="h-7 min-w-44 max-w-64 rounded-md border border-input bg-background px-1 text-xs">
 				<option value="">{m.executions_all_workflows()}</option>
 				{#each workflowFilterOptions as workflow (workflow.id)}
 					<option value={workflow.id}>{workflow.name}</option>
@@ -341,7 +344,7 @@
 			</div>
 		{/if}
 		{#if filtersActive}
-			<Button variant="ghost" size="sm" onclick={clearFilters}>{m.executions_clear_filters()}</Button>
+			<Button variant="ghost" onclick={clearFilters}>{m.executions_clear_filters()}</Button>
 		{/if}
 	</div>
 
@@ -352,6 +355,7 @@
 			failed={failure !== null}
 			error={failure}
 			count={page.items.length}
+			rowClass="h-(--kf-row-h-table)"
 			onRetry={() => void load(status, workflowID)}
 			onRetryMore={() => void loadMore()}
 			emptyIcon={Activity}
@@ -360,7 +364,7 @@
 		>
 			{#snippet emptyAction()}
 				{#if filtersActive}
-					<Button class="mt-3" size="sm" variant="outline" onclick={clearFilters}>{m.executions_clear_filters()}</Button>
+					<Button class="mt-3" variant="outline" onclick={clearFilters}>{m.executions_clear_filters()}</Button>
 				{/if}
 			{/snippet}
 			<!-- A plain paragraph, not role=status: with auto-refresh on, a live
@@ -369,7 +373,7 @@
 			<div class="overflow-hidden rounded-xl border border-border bg-card">
 				<Table.Root class="min-w-[48rem]">
 					<Table.Caption class="sr-only">{m.executions_table_caption()}</Table.Caption>
-					<Table.Header class="[&_th]:h-7 [&_th]:px-3 [&_th]:text-xs [&_th]:uppercase [&_th]:tracking-wide [&_th]:text-muted-foreground">
+					<Table.Header class="[&_th]:h-7 [&_th]:px-3 [&_th]:text-xs [&_th]:uppercase [&_th]:tracking-wide [&_th]:text-muted-foreground [&_td]:h-(--kf-row-h-table)">
 						<Table.Row>
 							<Table.Head scope="col">{m.executions_status()}</Table.Head>
 							<Table.Head scope="col">{m.executions_workflow()}</Table.Head>
@@ -383,26 +387,26 @@
 					<Table.Body>
 						{#each page.items as item (item.id)}
 							<Table.Row>
-								<Table.Cell class="px-3 py-2">
-									<span class={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusTone(item.status)}`}>{statusLabel(item.status)}</span>
-								</Table.Cell>
+							<Table.Cell class="px-3 py-2">
+								<StatusBadge status={item.status} />
+							</Table.Cell>
 								<Table.Cell class="max-w-56 truncate px-3 py-2" title={workflowNames.get(item.workflowId) ?? item.workflowId}>
 									{workflowNames.get(item.workflowId) ?? item.workflowId}
 									{#if isDeletedWorkflow(item.workflowId, workflowsLoaded, workflowNames)}
-										<span class="ml-1 rounded border border-border bg-muted px-1 py-px text-[0.625rem] font-medium text-muted-foreground">{m.executions_deleted()}</span>
+										<span class="ml-1 rounded border border-border bg-muted px-1 py-0 text-[0.625rem] font-medium text-muted-foreground">{m.executions_deleted()}</span>
 									{/if}
 								</Table.Cell>
 								<Table.Cell class="px-3 py-2 text-muted-foreground">{formatTimestamp(item.startedAt)}</Table.Cell>
 								<Table.Cell class="px-3 py-2 tabular-nums text-muted-foreground">{formatDuration(item.durationMs ?? null)}</Table.Cell>
 								<Table.Cell class="px-3 py-2 text-muted-foreground">{statusLabel(item.trigger)}</Table.Cell>
 								<Table.Cell class="px-3 py-2">
-									<a href={`/executions/${item.id}`} class="rounded font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2">
+									<a href={`/executions/${item.id}`} class="rounded font-medium text-(--kf-accent-text) underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2">
 										<span class="font-mono text-xs">{item.id}</span>
 									</a>
 								</Table.Cell>
 								<Table.Cell class="px-3 py-2 text-right">
 									{#if isStoppableStatus(item.status)}
-										<Button variant="ghost" size="sm" class="h-7 px-2 text-[0.6875rem]" disabled={stoppingID !== null} onclick={() => void stop(item)} aria-label={m.executions_stop_execution({ id: item.id })}>
+										<Button variant="ghost" class="px-2 text-[0.6875rem]" disabled={stoppingID !== null} onclick={() => void stop(item)} aria-label={m.executions_stop_execution({ id: item.id })}>
 											<Square aria-hidden="true" class="size-3" />
 											{stoppingID === item.id ? m.executions_stopping() : m.executions_stop()}
 										</Button>

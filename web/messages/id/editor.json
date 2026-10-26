@@ -182,5 +182,6 @@
 	"editor_chat_expand": "Perbesar chat",
 	"editor_chat_collapse": "Perkecil chat",
 	"editor_chat_took": "{seconds} dtk",
-	"editor_chat_hint": "Enter untuk kirim · Shift+Enter untuk baris baru"
+	"editor_chat_hint": "Enter untuk kirim · Shift+Enter untuk baris baru",
+	"editor_resize_rail_aria": "Ubah ukuran panel"
 }

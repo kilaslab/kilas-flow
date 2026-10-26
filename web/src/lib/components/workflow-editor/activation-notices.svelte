@@ -68,26 +68,26 @@
 		data-testid="activation-notices"
 	>
 		{#if heading}
-			<p class="border-b border-warning/20 px-3 py-1.5 text-[0.6875rem] font-medium text-muted-foreground">{heading}</p>
+			<p class="border-b border-warning/20 px-3 py-1 text-[0.6875rem] font-medium text-muted-foreground">{heading}</p>
 		{/if}
 		<ul class="divide-y divide-warning/15">
 			{#each notices as notice (notice.key)}
 				<li class="flex items-start gap-2 px-3 py-2">
-					<TriangleAlert aria-hidden="true" class="mt-0.5 size-3.5 shrink-0 text-warning" />
+					<TriangleAlert aria-hidden="true" class="mt-1 size-3.5 shrink-0 text-warning" />
 					<div class="min-w-0 flex-1">
 						<p class="text-xs leading-5">
 							<span class="font-medium">{notice.nodeName}</span>
 							<span class="text-muted-foreground"> — {notice.message}</span>
 						</p>
 						{#if notice.url}
-							<div class="mt-1.5 flex items-start gap-1.5">
+							<div class="mt-2 flex items-start gap-2">
 								<!-- Selectable rather than truncated: when the clipboard is
 								     unavailable, reading the URL by eye is the only way left
 								     to get it into somebody else's console. -->
-								<code class="min-w-0 flex-1 break-all rounded border border-border bg-muted/60 px-1.5 py-0.5 font-mono text-[0.6875rem] leading-4">{notice.url}</code>
+								<code class="min-w-0 flex-1 break-all rounded border border-border bg-muted/60 px-1 py-0 font-mono text-[0.6875rem] leading-4">{notice.url}</code>
 								<button
 									type="button"
-									class="inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-border bg-card px-1.5 text-[0.6875rem] font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+									class="inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-border bg-card px-1 text-[0.6875rem] font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
 									onclick={() => void copy(notice)}
 								>
 									{#if copiedKey === notice.key && !copyFailed}

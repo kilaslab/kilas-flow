@@ -138,7 +138,7 @@
 <Dialog.Root {open} {onOpenChange}>
 	<Dialog.Trigger>
 		{#snippet child({ props })}
-			<Button {...props} variant="outline" size="sm">
+			<Button {...props} variant="outline">
 				<Upload aria-hidden="true" />
 				{m.workflows_import_n8n()}
 			</Button>
@@ -192,7 +192,7 @@
 					{#if fileName}
 						<p id="import-file-name" class="flex items-center gap-2 text-xs text-muted-foreground">
 							<span class="min-w-0 flex-1 truncate font-mono">{fileName}</span>
-							<Button type="button" variant="ghost" size="sm" class="h-6 shrink-0 px-2 text-xs" onclick={clearFile}>{m.workflows_clear()}</Button>
+							<Button type="button" variant="ghost" class="h-6 shrink-0 px-2 text-xs" onclick={clearFile}>{m.workflows_clear()}</Button>
 						</p>
 					{/if}
 				</div>

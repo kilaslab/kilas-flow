@@ -127,19 +127,19 @@
 			<dl class="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-[0.8125rem]">
 				<div>
 					<dt class="text-xs text-muted-foreground">{m.auth_field_execution()}</dt>
-					<dd class="mt-0.5 font-mono text-xs">{info.executionId}</dd>
+					<dd class="mt-1 font-mono text-xs">{info.executionId}</dd>
 				</div>
 				<div>
 					<dt class="text-xs text-muted-foreground">{m.auth_field_node()}</dt>
-					<dd class="mt-0.5 font-mono text-xs">{info.nodeId}</dd>
+					<dd class="mt-1 font-mono text-xs">{info.nodeId}</dd>
 				</div>
 				<div>
 					<dt class="text-xs text-muted-foreground">{m.auth_field_expires()}</dt>
-					<dd class="mt-0.5">{new Date(info.expiresAt).toLocaleString()}</dd>
+					<dd class="mt-1">{new Date(info.expiresAt).toLocaleString()}</dd>
 				</div>
 				<div>
 					<dt class="text-xs text-muted-foreground">{m.auth_field_mode()}</dt>
-					<dd class="mt-0.5">{info.mode}</dd>
+					<dd class="mt-1">{info.mode}</dd>
 				</div>
 			</dl>
 
@@ -152,7 +152,7 @@
 					{m.auth_field_decided_by()}
 					<input
 						id="approval-decided-by"
-						class="h-8 rounded-md border border-input bg-background px-2 text-sm font-normal text-foreground"
+						class="h-7 pointer-coarse:h-8 rounded-md border border-input bg-background px-2 text-sm font-normal text-foreground"
 						bind:value={decidedBy}
 						placeholder={m.auth_decided_by_placeholder()}
 						autocomplete="name"
@@ -162,7 +162,7 @@
 					{m.auth_field_note()}
 					<textarea
 						id="approval-note"
-						class="min-h-16 rounded-md border border-input bg-background px-2 py-1.5 text-sm font-normal text-foreground"
+						class="min-h-16 rounded-md border border-input bg-background px-2 py-1 text-sm font-normal text-foreground"
 						bind:value={note}
 						placeholder={m.auth_note_placeholder()}
 					></textarea>

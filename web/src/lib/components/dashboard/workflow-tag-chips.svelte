@@ -18,10 +18,10 @@
 	<span class="hidden min-w-0 shrink items-center gap-1 sm:flex">
 		<span class="sr-only">{m.workflows_tags_label()}{' '}</span>
 		{#each shown as tag (tag)}
-			<span class="max-w-24 truncate rounded border border-border bg-muted/40 px-1.5 text-[0.6875rem] text-muted-foreground" title={tag}>{tag}</span>
+			<span class="max-w-24 truncate rounded border border-border bg-muted/40 px-1 text-[0.6875rem] text-muted-foreground" title={tag}>{tag}</span>
 		{/each}
 		{#if hidden.length > 0}
-			<span class="shrink-0 rounded border border-border bg-muted/40 px-1.5 text-[0.6875rem] text-muted-foreground" title={hidden.join(', ')}>{m.workflows_tags_more({ count: hidden.length })}</span>
+			<span class="shrink-0 rounded border border-border bg-muted/40 px-1 text-[0.6875rem] text-muted-foreground" title={hidden.join(', ')}>{m.workflows_tags_more({ count: hidden.length })}</span>
 		{/if}
 	</span>
 {/if}

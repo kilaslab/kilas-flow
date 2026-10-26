@@ -15,10 +15,12 @@
 
 /* Density scale. The editor is a working surface, not a landing page: every
    control height below is deliberate and shared, so a new panel inherits the
-   canvas's density instead of inventing its own.
+   canvas's density instead of inventing its own (FEAT-npc3ge).
 
-     app header  2.75rem   editor toolbar 2.5rem   list row 2.75rem
-     form control 1.75rem  sidebar 13rem / 3.5rem collapsed   page pad 1.25rem
+     controls 24 / 28 everywhere, 32 only under a coarse pointer
+     rows 40px single line, 52px two-line, 36px dense tables
+     app header 2.75rem   editor toolbar 2.5rem   page max 70rem
+     sidebar 13rem / 3.5rem collapsed   inspector 22.5rem (resizable 20–35rem)
 
    Canvas geometry lives with it because edge routing depends on it: a step
    tile is 4.25rem square, an attachment node is a 3rem circle. */
@@ -633,6 +635,13 @@
 
 ::selection {
 	background: var(--kf-text-selection);
+}
+
+/* A right-rail resize gesture in flight (rail-width.svelte.ts): the cursor
+   stays a col-resize over everything and no text selects mid-drag. */
+.kf-rail-resizing {
+	cursor: col-resize;
+	user-select: none;
 }
 
 /* Canvas node states, drawn on the tile rather than on Svelte Flow's wrapper

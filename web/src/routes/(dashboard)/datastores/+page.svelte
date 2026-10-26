@@ -16,6 +16,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
+	import { PageHeader } from '$lib/components/ui/page-header';
 	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
 	import { RequestGuard } from '$lib/dashboard/request-guard';
 	import * as m from '$lib/paraglide/messages.js';
@@ -119,17 +120,18 @@
 	<title>{m.datastores_page_title()}</title>
 </svelte:head>
 
-<section class="mx-auto w-full max-w-4xl">
-	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-		<div class="max-w-xl">
-			<h1 class="text-base font-semibold tracking-tight">{m.nav_datastores()}</h1>
+<section class="mx-auto w-full max-w-(--kf-page-max)">
+	<PageHeader title={m.nav_datastores()}>
+		{#snippet description()}
 			<p class="text-xs text-muted-foreground">{m.datastores_subtitle()}</p>
-		</div>
-		<Button onclick={openCreate} class="w-full sm:w-auto sm:shrink-0">
-			<Database aria-hidden="true" />
-			{m.datastores_new()}
-		</Button>
-	</div>
+		{/snippet}
+		{#snippet actions()}
+			<Button onclick={openCreate} class="w-full sm:w-auto sm:shrink-0">
+				<Database aria-hidden="true" />
+				{m.datastores_new()}
+			</Button>
+		{/snippet}
+	</PageHeader>
 
 	<div class="mt-4">
 		<ListStates
@@ -147,7 +149,7 @@
 			<ul aria-label={m.nav_datastores()} class="divide-y divide-border overflow-hidden rounded-lg border border-border">
 				{#each rows as datastore (datastore.id)}
 					{@const columnCount = (datastore.columns ?? []).length}
-					<li class="flex h-11 items-center gap-3 px-3">
+					<li class="flex h-(--kf-row-h) items-center gap-3 px-3">
 						<a
 							href={`/datastores/${datastore.id}`}
 							class="min-w-0 flex-1 truncate rounded text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2"

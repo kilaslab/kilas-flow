@@ -14,15 +14,17 @@
 				destructive: "bg-destructive/10 text-destructive hover:bg-destructive/20 active:bg-destructive/30 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:active:bg-destructive/40",
 				link: "text-(--kf-accent-text) underline-offset-4 hover:underline",
 			},
+			// The density scale (FEAT-npc3ge): two control heights everywhere —
+			// 24 for compact canvas and table actions, 28 as the default — and a
+			// 32 that exists only under a coarse pointer. The old sm step (28 px
+			// at a 12.8 px face) folded into the default, which is that height.
 			size: {
-				default: "h-8 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
-				xs: "h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
-				sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
-				lg: "h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
-				icon: "size-8",
+				default: "h-7 gap-1 px-2",
+				xs: "h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
+				lg: "h-7 pointer-coarse:h-8 gap-1 px-2",
+				icon: "size-7",
 				"icon-xs": "size-6 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
-				"icon-sm": "size-7 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg",
-				"icon-lg": "size-9",
+				"icon-lg": "size-7 pointer-coarse:size-8",
 			},
 		},
 		defaultVariants: {

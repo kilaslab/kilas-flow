@@ -12,8 +12,13 @@ import type { ConnectionChange, SettingChange } from './history-diff';
  * slightly different copy for each of them.
  */
 
-/** A pill on a version row, as label plus the tone classes that colour it. */
-export type VersionRole = { label: string; tone: string };
+/**
+ * A pill on a version row: its wording plus the status key the shared
+ * status→token map in execution.ts renders it with (FEAT-r8ph93). A role is a
+ * state, so it speaks in a state hue — draft is neutral, published is success —
+ * never in the brand accent.
+ */
+export type VersionRole = { label: string; status: string };
 
 /**
  * Which roles a revision holds right now.
@@ -26,8 +31,8 @@ export type VersionRole = { label: string; tone: string };
  */
 export function versionRoles(summary: Pick<WorkflowVersionSummaryResource, 'draft' | 'published'>): VersionRole[] {
 	const roles: VersionRole[] = [];
-	if (summary.draft) roles.push({ label: m.versions_role_draft(), tone: 'bg-primary/15 text-primary border-primary/30' });
-	if (summary.published) roles.push({ label: m.versions_role_published(), tone: 'bg-success/15 text-success border-success/30' });
+	if (summary.draft) roles.push({ label: m.versions_role_draft(), status: 'draft' });
+	if (summary.published) roles.push({ label: m.versions_role_published(), status: 'published' });
 	return roles;
 }
 
@@ -136,6 +141,8 @@ export function publishEventSentence(event: Pick<WorkflowPublishEventResource, '
 /**
  * What to call the action a publish event records, for the badge beside its
  * sentence — the event's own word rather than the sentence it is stated in.
+ * The badge itself renders through the shared status map (`published` reads
+ * success, `unpublished` warning, anything else neutral).
  */
 export function publishEventActionLabel(event: Pick<WorkflowPublishEventResource, 'action'>): string {
 	switch (event.action) {
@@ -145,18 +152,6 @@ export function publishEventActionLabel(event: Pick<WorkflowPublishEventResource
 			return m.versions_action_unpublished();
 		case 'restored':
 			return m.versions_action_restored();
-	}
-}
-
-/** Tone classes for a publish-timeline row, so an unpublish reads as a stop. */
-export function publishEventTone(event: Pick<WorkflowPublishEventResource, 'action'>): string {
-	switch (event.action) {
-		case 'published':
-			return 'bg-success/15 text-success border-success/30';
-		case 'unpublished':
-			return 'bg-warning/15 text-warning border-warning/30';
-		default:
-			return 'bg-muted text-muted-foreground border-border';
 	}
 }
 

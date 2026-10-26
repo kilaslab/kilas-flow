@@ -19,6 +19,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
+	import { PageHeader } from '$lib/components/ui/page-header';
 	import { defaultScope } from '$lib/dashboard/credential-scope';
 	import { canTest, testVerdict, type TestVerdict } from '$lib/dashboard/credential-test';
 	import { deleteParams, isInUseConflict, usageOf, type CredentialUsage } from '$lib/dashboard/credential-usage';
@@ -349,22 +350,23 @@
 	<title>{m.credentials_page_title()}</title>
 </svelte:head>
 
-<section class="mx-auto w-full max-w-4xl">
-	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-		<div class="max-w-xl">
-			<h1 class="text-base font-semibold tracking-tight">{m.nav_credentials()}</h1>
+<section class="mx-auto w-full max-w-(--kf-page-max)">
+	<PageHeader title={m.nav_credentials()}>
+		{#snippet description()}
 			<p class="text-xs text-muted-foreground">
 				{m.credentials_description()}
 			</p>
-		</div>
-		<Button onclick={openCreate} disabled={types.isPending} class="w-full sm:w-auto">
-			<KeyRound aria-hidden="true" />
-			{m.credentials_new()}
-		</Button>
-	</div>
+		{/snippet}
+		{#snippet actions()}
+			<Button onclick={openCreate} disabled={types.isPending} class="w-full sm:w-auto">
+				<KeyRound aria-hidden="true" />
+				{m.credentials_new()}
+			</Button>
+		{/snippet}
+	</PageHeader>
 
 	{#if deleteError && !deleteOpen}
-		<p role="alert" class="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">{m.credentials_delete_failed({ message: deleteError })}</p>
+		<p role="alert" class="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1 text-xs text-destructive">{m.credentials_delete_failed({ message: deleteError })}</p>
 	{/if}
 	<div class="mt-4">
 		<ListStates
@@ -374,6 +376,7 @@
 			error={listFailure}
 			count={rows.length}
 			rows={2}
+			rowClass="h-(--kf-row-h-2line)"
 			onRetry={() => void loadCredentials()}
 			emptyIcon={KeyRound}
 			emptyTitle={m.credentials_empty_title()}
@@ -382,7 +385,7 @@
 			<ul aria-label={m.nav_credentials()} class="divide-y divide-border overflow-hidden rounded-lg border border-border">
 				{#each rows as credential (credential.id)}
 					{@const typeName = (types.data ?? []).find((candidate) => candidate.id === credential.type)?.displayName ?? credential.type}
-					<li class="flex min-h-11 items-center gap-3 px-3 py-1.5">
+					<li class="flex min-h-(--kf-row-h-2line) items-center gap-3 px-3 py-1">
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-sm font-medium">{credential.name}</p>
 							<p class="truncate text-xs text-muted-foreground" title={`${typeName} · ${(credential.allowedDomains ?? []).length > 0 ? (credential.allowedDomains ?? []).join(', ') : m.credentials_any_host()}`}>
@@ -390,8 +393,8 @@
 								· {(credential.allowedDomains ?? []).length > 0 ? (credential.allowedDomains ?? []).join(', ') : m.credentials_any_host()}
 							</p>
 						</div>
-						<Button variant="outline" size="sm" onclick={() => openEdit(credential)}>{m.credentials_edit()}</Button>
-						<Button variant="ghost" size="sm" aria-label={m.credentials_delete_aria({ name: credential.name })} onclick={() => askDelete(credential)}>
+						<Button variant="outline" onclick={() => openEdit(credential)}>{m.credentials_edit()}</Button>
+						<Button variant="ghost" aria-label={m.credentials_delete_aria({ name: credential.name })} onclick={() => askDelete(credential)}>
 							<Trash2 aria-hidden="true" class="size-4 text-destructive" />
 						</Button>
 					</li>
@@ -497,7 +500,7 @@
 					<ul class="list-disc space-y-1 pl-5">
 						{#each deleteUsage as user (user.workflowId)}
 							<li>
-								<a class="font-medium underline" href={`/app/workflows/${encodeURIComponent(user.workflowId)}`}>{user.name}</a>
+								<a class="font-medium text-(--kf-accent-text) underline underline-offset-2" href={`/app/workflows/${encodeURIComponent(user.workflowId)}`}>{user.name}</a>
 								{#if user.active}<span class="text-muted-foreground"> ({m.credentials_delete_usage_active()})</span>{/if}
 								{#if user.nodes.length > 0}<span class="block text-muted-foreground">{m.credentials_delete_usage_nodes({ nodes: user.nodes.join(', ') })}</span>{/if}
 							</li>

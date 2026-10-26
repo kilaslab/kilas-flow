@@ -1,7 +1,7 @@
 ---
 id: FEAT-r8ph93
 title: "Colour system: separate the brand accent from semantic states everywhere (badges, banners, links, run results)"
-status: todo
+status: done
 priority: high
 labels:
     - frontend
@@ -39,3 +39,7 @@ The same holds for accent BORDERS in light: `border-primary`, `aria-selected:bor
 # Related Files
 
 # Attachments
+
+# Progress
+
+Implemented 2026-10-26 (orchestrator-verified): one status->token map in execution.ts (statusToken/statusTone/statusAccent), accent separated from semantic states everywhere; fills stay legal, text/border accent uses linted. In-repo audit lints added: palette-lint, spacing-lint, design-budget, contrast pairs (>=4.5:1 on --kf-*-subtle tints); measure.js external audit harness. BUG-namghh's list can be closed against palette-lint + --kf-accent-text alias pairs. Gates: web vitest green, svelte-check 0/0, make lint 0.

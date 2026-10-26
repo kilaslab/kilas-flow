@@ -8,13 +8,19 @@
 	"common_collapse_sidebar": "Collapse sidebar",
 	"common_open_workspace_navigation": "Open workspace navigation",
 	"common_workspace_navigation": "Workspace navigation",
+	"common_breadcrumb": "Breadcrumb",
 	"common_loading": "Loading {label}…",
 	"common_load_failed": "{label} could not be loaded",
 	"common_load_incomplete": "{label} may be incomplete. {message}",
 	"common_item_count": [
 		{
-			"declarations": ["input count", "local countPlural = count: plural"],
-			"selectors": ["countPlural"],
+			"declarations": [
+				"input count",
+				"local countPlural = count: plural"
+			],
+			"selectors": [
+				"countPlural"
+			],
 			"match": {
 				"countPlural=one": "1 item",
 				"countPlural=other": "{count} items"

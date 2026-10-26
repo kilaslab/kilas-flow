@@ -32,6 +32,7 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import SyncedCheckbox from '$lib/components/dashboard/synced-checkbox.svelte';
 	import { Input } from '$lib/components/ui/input';
+	import { PageHeader } from '$lib/components/ui/page-header';
 	import * as Table from '$lib/components/ui/table';
 	import {
 		appendPage,
@@ -544,10 +545,10 @@
 	<title>{m.datastores_detail_page_title({ name: detail?.name ?? m.datastores_noun() })}</title>
 </svelte:head>
 
-<section class="mx-auto w-full max-w-5xl">
+<section class="mx-auto w-full max-w-(--kf-page-max)">
 	<a
 		href="/datastores"
-		class="inline-flex items-center gap-1.5 rounded text-xs text-muted-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
+		class="inline-flex items-center gap-2 rounded text-xs text-muted-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2"
 	>
 		<ArrowLeft aria-hidden="true" class="size-3.5" />{m.nav_datastores()}
 	</a>
@@ -555,36 +556,37 @@
 	{#if detailLoading}
 		<div aria-live="polite" class="mt-3 overflow-hidden rounded-lg border border-border">
 			<p class="sr-only">{m.common_loading({ label: m.datastores_noun() })}</p>
-			<div class="h-11 animate-pulse bg-muted/50" aria-hidden="true"></div>
+			<div class="h-(--kf-row-h-table) animate-pulse bg-muted/50" aria-hidden="true"></div>
 		</div>
 	{:else if detailFailure || !detail}
 		<div class="mt-3 max-w-lg rounded-lg border border-destructive/25 bg-destructive/5 p-3">
 			<p class="text-xs font-medium text-destructive">{m.datastores_load_failed()}</p>
-			<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(detailFailure)}</p>
-			<Button class="mt-2.5" size="sm" variant="outline" onclick={() => void loadDetail(id)}>
+			<p class="mt-1 text-xs leading-5 text-muted-foreground">{message(detailFailure)}</p>
+			<Button class="mt-3" variant="outline" onclick={() => void loadDetail(id)}>
 				{m.common_try_again()}
 			</Button>
 		</div>
 	{:else}
 		<div class="mt-2 flex flex-wrap items-center justify-between gap-3">
-			<div class="max-w-xl">
-				<h1 class="text-base font-semibold tracking-tight">{detail.name}</h1>
-				<p class="text-xs text-muted-foreground">
-					{m.datastores_columns_summary({ count: userColumns.length })}
-				</p>
-			</div>
+			<PageHeader title={detail.name}>
+				{#snippet description()}
+					<p class="text-xs text-muted-foreground">
+						{m.datastores_columns_summary({ count: userColumns.length })}
+					</p>
+				{/snippet}
+			</PageHeader>
 			<div class="flex flex-wrap gap-2">
-				<Button variant="outline" size="sm" onclick={() => openTransfer('import')}>
+				<Button variant="outline" onclick={() => openTransfer('import')}>
 					<Upload aria-hidden="true" />{m.datastores_import()}
 				</Button>
-				<Button variant="outline" size="sm" onclick={() => openTransfer('export')}>
+				<Button variant="outline" onclick={() => openTransfer('export')}>
 					<Download aria-hidden="true" />{m.datastores_export()}
 				</Button>
-				<Button size="sm" onclick={openRowDialog}>
+				<Button onclick={openRowDialog}>
 					<Plus aria-hidden="true" />{m.datastores_add_row()}
 				</Button>
 				<Button
-					size="sm"
+					
 					variant="outline"
 					onclick={() => {
 						columnName = '';
@@ -603,10 +605,10 @@
 				<p class="text-xs text-muted-foreground" role="status">
 					{m.datastores_rows_selected({ count: selectedIDs.length })}
 				</p>
-				<Button type="button" size="sm" variant="outline" onclick={() => (confirmingRows = true)}>
+				<Button type="button" variant="outline" onclick={() => (confirmingRows = true)}>
 					<Trash2 aria-hidden="true" />{m.datastores_delete_selected()}
 				</Button>
-				<Button type="button" size="sm" variant="ghost" onclick={() => { checkState = {}; allChecked = false; }}>
+				<Button type="button" variant="ghost" onclick={() => { checkState = {}; allChecked = false; }}>
 					{m.datastores_clear_selection()}
 				</Button>
 			</div>
@@ -623,7 +625,7 @@
 					id="datastore-search"
 					value={search}
 					placeholder={m.datastores_search_placeholder()}
-					class="h-7 max-w-64 text-xs"
+					class="max-w-64 text-xs"
 					oninput={(event) => (search = event.currentTarget.value)}
 				/>
 				<p class="text-xs text-muted-foreground" role="status">
@@ -636,9 +638,10 @@
 				{loading}
 				failed={failure !== null}
 				error={failure}
-				count={rows.items.length}
-				onRetry={() => void load(id)}
-				onRetryMore={() => void loadMore()}
+			count={rows.items.length}
+			rowClass="h-(--kf-row-h-table)"
+			onRetry={() => void load(id)}
+			onRetryMore={() => void loadMore()}
 				emptyIcon={Plus}
 				emptyTitle={m.datastores_empty_rows_title()}
 				emptyBody={m.datastores_empty_rows_body()}
@@ -646,7 +649,7 @@
 				<div class="overflow-hidden rounded-xl border border-border bg-card">
 					<Table.Root class="min-w-[44rem]">
 						<Table.Caption class="sr-only">{m.datastores_rows_caption({ name: detail.name })}</Table.Caption>
-						<Table.Header class="[&_th]:h-7 [&_th]:px-3 [&_th]:text-xs [&_th]:uppercase [&_th]:tracking-wide [&_th]:text-muted-foreground">
+						<Table.Header class="[&_th]:h-7 [&_th]:px-3 [&_th]:text-xs [&_th]:uppercase [&_th]:tracking-wide [&_th]:text-muted-foreground [&_td]:h-(--kf-row-h-table)">
 							<Table.Row>
 								<Table.Head scope="col" class="w-8">
 									<SyncedCheckbox
@@ -657,7 +660,7 @@
 								</Table.Head>
 								{#each headers as column (column.name)}
 									<Table.Head scope="col">
-										<span class="inline-flex items-center gap-1.5 normal-case">
+										<span class="inline-flex items-center gap-2 normal-case">
 											<button
 												type="button"
 												class="rounded font-medium hover:underline focus-visible:outline-2 focus-visible:outline-offset-1"
@@ -690,7 +693,7 @@
 														type="button"
 														variant="ghost"
 														size="icon"
-														class="size-5"
+														class="size-6"
 														aria-label={m.datastores_rename_column_aria({ column: column.name })}
 														onclick={() => startRename(column)}
 													>
@@ -700,7 +703,7 @@
 														type="button"
 														variant="ghost"
 														size="icon"
-														class="size-5 text-muted-foreground hover:text-destructive"
+														class="size-6 text-muted-foreground hover:text-destructive"
 														aria-label={m.datastores_delete_column_aria({ column: column.name })}
 														onclick={() => {
 															headerError = null;
@@ -847,7 +850,7 @@
 					<select
 						id="column-type"
 						bind:value={columnType}
-						class="h-7 rounded-md border border-input bg-background px-2 text-xs"
+						class="rounded-md border border-input bg-background px-2 text-xs"
 					>
 						{#each COLUMN_TYPES as option (option)}
 							<option value={option}>{option}</option>
@@ -951,7 +954,7 @@
 				{#if transferReport.failed.length === 0}
 					<p role="status" class="text-xs leading-5 text-muted-foreground">{summarizeReport(transferReport)}</p>
 				{:else}
-					<section aria-label={m.datastores_blocking_diagnostics_aria()} class="grid gap-1.5">
+					<section aria-label={m.datastores_blocking_diagnostics_aria()} class="grid gap-2">
 						<div class="flex flex-wrap items-baseline gap-x-2">
 							<h3 class="text-xs font-semibold">
 								{m.datastores_blocking_heading()} <span class="font-normal text-muted-foreground">· {transferReport.failed.length}</span>
@@ -960,10 +963,10 @@
 								{m.datastores_import_refused()}
 							</p>
 						</div>
-						<ul class="grid gap-1.5">
+						<ul class="grid gap-2">
 							{#each transferReport.failed as issue (`${issue.line}-${issue.column}`)}
 								<li class="flex flex-wrap items-baseline gap-x-2 rounded-lg border border-border px-3 py-2 text-xs leading-5">
-									<span class="inline-flex items-center rounded-full border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-[0.6875rem] font-medium text-destructive">{severityLabel(issue.severity)}</span>
+									<span class="inline-flex items-center rounded-full border border-destructive/30 bg-destructive/10 px-2 py-0 text-[0.6875rem] font-medium text-destructive">{severityLabel(issue.severity)}</span>
 									<span class="font-mono text-[0.6875rem] text-muted-foreground">{m.datastores_issue_line({ line: issue.line, column: issue.column })}</span>
 									<span class="w-full text-muted-foreground">{issue.reason}</span>
 								</li>

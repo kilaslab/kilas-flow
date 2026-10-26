@@ -224,7 +224,7 @@
 </script>
 
 <section aria-label={m.properties_panel_aria({ name: node.name })} class="flex h-full min-h-0 flex-col bg-card">
-	<div class="flex shrink-0 items-center gap-2 border-b border-border px-2.5 py-2">
+	<div class="flex shrink-0 items-center gap-2 border-b border-border px-2 py-2">
 		<NodeIcon {definition} size="md" label={m.properties_node_icon_label({ category: definition.category })} />
 		<div class="min-w-0 flex-1">
 			{#if onRename && !readOnly}
@@ -251,28 +251,28 @@
 			<p class="truncate font-mono text-[0.625rem] leading-tight text-muted-foreground">{definition.type}</p>
 		</div>
 		{#if definition.documentationUrl}
-			<a href={definition.documentationUrl} target="_blank" rel="noreferrer" class="shrink-0 rounded-md border border-border px-1.5 py-0.5 text-[0.625rem] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring">{m.properties_docs()}</a>
+			<a href={definition.documentationUrl} target="_blank" rel="noreferrer" class="shrink-0 rounded-md border border-border px-1 py-0 text-[0.625rem] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring">{m.properties_docs()}</a>
 		{/if}
 	</div>
 
-	<div class="flex shrink-0 gap-3 border-b border-border px-2.5" role="tablist" tabindex="-1" aria-label={m.properties_node_configuration()} onkeydown={(event) => {
+	<div class="flex shrink-0 gap-3 border-b border-border px-2" role="tablist" tabindex="-1" aria-label={m.properties_node_configuration()} onkeydown={(event) => {
 		if (event.key === 'ArrowRight' || event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'ArrowDown') moveTab(event, tab);
 	}}>
-		<button bind:this={tabButtons.parameters} type="button" role="tab" id="node-tab-parameters" aria-controls="node-tabpanel" aria-selected={activeTab === 'parameters'} tabindex={activeTab === 'parameters' ? 0 : -1} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'parameters')}>{m.properties_tab_parameters()}</button>
-		<button bind:this={tabButtons.settings} type="button" role="tab" id="node-tab-settings" aria-controls="node-tabpanel" aria-selected={activeTab === 'settings'} tabindex={activeTab === 'settings' ? 0 : -1} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'settings')}>{m.nav_settings()}</button>
+		<button bind:this={tabButtons.parameters} type="button" role="tab" id="node-tab-parameters" aria-controls="node-tabpanel" aria-selected={activeTab === 'parameters'} tabindex={activeTab === 'parameters' ? 0 : -1} class="h-7 border-b-2 border-transparent py-0 text-xs text-muted-foreground transition-colors aria-selected:border-(--kf-selection) aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'parameters')}>{m.properties_tab_parameters()}</button>
+		<button bind:this={tabButtons.settings} type="button" role="tab" id="node-tab-settings" aria-controls="node-tabpanel" aria-selected={activeTab === 'settings'} tabindex={activeTab === 'settings' ? 0 : -1} class="h-7 border-b-2 border-transparent py-0 text-xs text-muted-foreground transition-colors aria-selected:border-(--kf-selection) aria-selected:font-medium aria-selected:text-foreground" onclick={() => (tab = 'settings')}>{m.nav_settings()}</button>
 	</div>
 
 	<!-- `inert` rather than a pointer-events class: a keyboard user could tab
 	     into a read-only field and type text that was silently discarded. It
 	     covers the editable fields only. The webhook address is something to
 	     read and copy, and a read-only viewer needs it as much as an editor. -->
-	<div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-2.5" role="tabpanel" id="node-tabpanel" aria-labelledby={`node-tab-${activeTab}`}>
+	<div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-2" role="tabpanel" id="node-tabpanel" aria-labelledby={`node-tab-${activeTab}`}>
 		{#if activeTab === 'parameters' && webhookView}
 			<WebhookAddress address={webhookView} onRetry={() => void webhooks.refetch()} />
 		{/if}
 		<div class="space-y-3" inert={readOnly} class:opacity-70={readOnly}>
 			{#if activeTab === 'parameters' && applicableCredentialTypes.length > 0 && onCredentialChange}
-				<div class="grid gap-1.5 rounded-lg border border-border bg-background/40 p-2">
+				<div class="grid gap-2 rounded-lg border border-border bg-background/40 p-2">
 					<p class="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">
 						{m.properties_credential()}{#if credentialRequired}<span class="text-destructive" aria-hidden="true">*</span><span class="sr-only">{m.properties_credential_required()}</span>{/if}
 					</p>
@@ -282,11 +282,11 @@
 					{#each applicableCredentialTypes as typeID (typeID)}
 						{@const matching = credentials.filter((candidate) => candidate.type === typeID)}
 						<label class="text-[0.6875rem] font-medium" for={`credential-${typeID}`}>{credentialTypeName(typeID)}</label>
-						<div class="flex items-center gap-1.5">
+						<div class="flex items-center gap-2">
 							<select
 								id={`credential-${typeID}`}
 								value={selectedCredential(typeID)}
-								class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1.5 text-xs"
+								class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1 text-xs"
 								aria-invalid={credentialDeleted(typeID) ? 'true' : undefined}
 								aria-describedby={credentialDeleted(typeID) ? `credential-${typeID}-deleted` : undefined}
 								onchange={(event) => onCredentialChange?.(typeID, event.currentTarget.value)}
@@ -297,7 +297,7 @@
 								{/each}
 							</select>
 							{#if selectedCredential(typeID) && !credentialDeleted(typeID)}
-								<Button variant="outline" size="sm" class="h-7 shrink-0 px-2 text-[0.6875rem]" disabled={testingCredentialID !== null} onclick={() => void testSelectedCredential(typeID)}>
+								<Button variant="outline" class="shrink-0 px-2 text-[0.6875rem]" disabled={testingCredentialID !== null} onclick={() => void testSelectedCredential(typeID)}>
 									{testingCredentialID ? m.credentials_testing() : m.credentials_test()}
 								</Button>
 							{/if}
@@ -324,7 +324,7 @@
 						     fill behind them. -->
 						<div class="space-y-1" role="radiogroup" aria-label={property.label || 'Colour'}>
 							<p class="text-xs font-medium">{property.label || 'Colour'}</p>
-							<div class="flex flex-wrap gap-1.5">
+							<div class="flex flex-wrap gap-2">
 								{#each STICKY_SWATCHES as swatch, index (index)}
 									<button
 										type="button"
@@ -345,7 +345,7 @@
 			{/if}
 		</div>
 	</div>
-	<footer class="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border px-2.5 py-1.5 text-[0.625rem] leading-4 text-muted-foreground">
+	<footer class="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-border px-2 py-1 text-[0.625rem] leading-4 text-muted-foreground">
 		<span class="truncate">{m.properties_footer_version({ name: definition.displayName, version: definition.version })}</span>
 		{#if definition.description}<span class="min-w-0 flex-1 truncate" title={definition.description}>{definition.description}</span>{/if}
 	</footer>

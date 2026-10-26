@@ -19,6 +19,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
+	import { PageHeader } from '$lib/components/ui/page-header';
 	import { DRAIN_PAGE_LIMIT, drainPages, headerCursor, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
 	import { RequestGuard } from '$lib/dashboard/request-guard';
 	import * as m from '$lib/paraglide/messages.js';
@@ -178,13 +179,14 @@
 	<title>{m.settings_page_title()}</title>
 </svelte:head>
 
-<section class="mx-auto w-full max-w-5xl">
-	<div class="max-w-xl">
-		<h1 class="text-base font-semibold tracking-tight">{m.nav_settings()}</h1>
-		<p class="text-xs text-muted-foreground">{m.settings_intro()}</p>
-	</div>
+<section class="mx-auto w-full max-w-(--kf-page-max)">
+	<PageHeader title={m.nav_settings()}>
+		{#snippet description()}
+			<p class="text-xs text-muted-foreground">{m.settings_intro()}</p>
+		{/snippet}
+	</PageHeader>
 	{#if pageError}
-		<p role="alert" class="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">{pageError}</p>
+		<p role="alert" class="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1 text-xs text-destructive">{pageError}</p>
 	{/if}
 
 	<div class="mt-6 grid gap-6">
@@ -206,7 +208,7 @@
 					<div class="flex gap-2"><dt class="w-20 shrink-0 text-muted-foreground">{m.settings_tenant()}</dt><dd class="min-w-0 truncate font-mono text-[0.6875rem]">{identity.data.tenantId}</dd></div>
 					<div class="flex gap-2"><dt class="w-20 shrink-0 text-muted-foreground">{m.common_signed_in()}</dt><dd>{m.settings_signed_in_as({ kind: identity.data.kind })}</dd></div>
 				</dl>
-				<Button variant="outline" size="sm" class="mt-3" onclick={() => void signOut()}>
+				<Button variant="outline" class="mt-3" onclick={() => void signOut()}>
 					<LogOut aria-hidden="true" />
 					{m.common_sign_out()}
 				</Button>
@@ -217,7 +219,7 @@
 			<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 				<div>
 					<h2 class="text-sm font-semibold">{m.settings_api_keys()}</h2>
-					<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{m.settings_api_keys_description()}</p>
+					<p class="mt-1 text-xs leading-5 text-muted-foreground">{m.settings_api_keys_description()}</p>
 					{#if authOff}
 						<p role="note" class="mt-1 text-xs leading-5 text-muted-foreground">{m.settings_keys_auth_off()}</p>
 					{/if}
@@ -225,7 +227,7 @@
 				<Dialog.Root bind:open={createOpen} onOpenChange={(open) => !open && closeCreate()}>
 					<Dialog.Trigger>
 						{#snippet child({ props })}
-							<Button {...props} size="sm">
+							<Button {...props}>
 								<KeyRound aria-hidden="true" />
 								{m.settings_new_key()}
 							</Button>
@@ -242,8 +244,8 @@
 							<div class="grid gap-2">
 								<label for="minted-key" class="text-sm font-medium">{m.settings_copy_now()}</label>
 								<div class="flex items-center gap-2">
-									<code id="minted-key" class="min-w-0 flex-1 truncate rounded-md border border-border bg-muted/40 px-2 py-1.5 font-mono text-xs select-all">{minted.token}</code>
-									<Button variant="outline" size="sm" onclick={() => void copyToken()}>
+									<code id="minted-key" class="min-w-0 flex-1 truncate rounded-md border border-border bg-muted/40 px-2 py-1 font-mono text-xs select-all">{minted.token}</code>
+									<Button variant="outline" onclick={() => void copyToken()}>
 										{#if copied}<Check aria-hidden="true" />{m.settings_copied()}{:else}<Copy aria-hidden="true" />{m.settings_copy()}{/if}
 									</Button>
 								</div>
@@ -278,6 +280,7 @@
 					error={listFailure}
 					count={rows.length}
 					rows={2}
+					rowClass="h-(--kf-row-h-2line)"
 					onRetry={() => void loadKeys()}
 					emptyIcon={KeyRound}
 					emptyTitle={m.settings_keys_empty_title()}
@@ -285,18 +288,18 @@
 				>
 					<ul aria-label={m.settings_api_keys()} class="divide-y divide-border overflow-hidden rounded-lg border border-border">
 						{#each rows as key (key.id)}
-							<li class="flex min-h-11 items-center gap-3 px-3 py-1.5">
+							<li class="flex min-h-(--kf-row-h-2line) items-center gap-3 px-3 py-1">
 								<div class="min-w-0 flex-1">
 									<p class="truncate text-sm font-medium">{key.label}</p>
 									<p class="truncate text-xs text-muted-foreground" title={keyTitle(key)}>
 										<span class="font-mono">{key.prefix}</span>
 										{m.settings_key_created({ at: formatTimestamp(key.createdAt) })}
 										{#if key.lastUsedAt}{m.settings_key_last_used({ at: formatTimestamp(key.lastUsedAt) })}{/if}
-										{#if key.revokedAt}<span class="ml-1 rounded border border-border bg-muted px-1 py-px text-[0.625rem]">{m.settings_key_revoked()}</span>{/if}
+										{#if key.revokedAt}<span class="ml-1 rounded border border-border bg-muted px-1 py-0 text-[0.625rem]">{m.settings_key_revoked()}</span>{/if}
 									</p>
 								</div>
 								{#if !key.revokedAt}
-									<Button variant="ghost" size="sm" class="text-destructive" onclick={() => (revoking = key)}>{m.settings_revoke()}</Button>
+									<Button variant="ghost" class="text-destructive" onclick={() => (revoking = key)}>{m.settings_revoke()}</Button>
 								{/if}
 							</li>
 						{/each}
