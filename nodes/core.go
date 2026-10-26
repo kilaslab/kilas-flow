@@ -28,6 +28,7 @@ func RegisterAll(registry *node.Registry) error {
 		stopAndErrorNode(),
 		respondToWebhookNode(),
 		scheduleTrigger(),
+		hostEventTrigger(),
 		postgresNode(),
 		// Version 2 registers beside version 1, never over it: a workflow
 		// authored against query/execute/transaction keeps running unchanged.

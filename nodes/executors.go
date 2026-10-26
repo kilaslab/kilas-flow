@@ -48,6 +48,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		ErrorTriggerExecutorID:           engine.ExecutorFunc(executeErrorTrigger),
 		StopAndErrorExecutorID:           engine.ExecutorFunc(executeStopAndError),
 		ScheduleExecutorID:               engine.ExecutorFunc(executeSchedule),
+		HostEventExecutorID:              engine.ExecutorFunc(executeHostEvent),
 		RespondExecutorID:                engine.ExecutorFunc(executeRespond),
 		PostgresExecutorID:               NewDatabaseExecutor(sqlnode.DriverPostgres, "postgres", databaseGuard, settings.databaseCeiling),
 		PostgresV2ExecutorID:             NewPostgresV2Executor(databaseGuard, settings.databaseCeiling),

@@ -778,6 +778,56 @@ The preset is the whole scheme — `webhook-signature`, sha256, base64, the
 300-second tolerance — so naming any scheme field beside it is refused, and
 only the secret is yours to choose.
 
+### Declaring the host's event catalogue
+
+A pack written for the host's own product — the usual author of a host-event
+pack — can opt its trigger's events into host-event delivery. The host then
+publishes an event through `POST /api/v1/events` instead of delivering a
+webhook, and every active workflow carrying the trigger runs from the port
+matching the event, exactly the port a delivery routes to:
+
+```json
+"trigger": {
+  "events": ["message.received", "contact.tagged"],
+  "catchAll": "other",
+  "eventPath": "type",
+  "shape": "bodyAsItem",
+  "webhook": {"name": "default", "pathParameter": "path", "method": "POST"},
+  "hostEvents": {
+    "catalogue": [
+      {
+        "type": "message.received",
+        "title": "Message received",
+        "schema": {"type": "object", "properties": {"contactId": {"type": "string"}}},
+        "sample": {"type": "message.received", "payload": {"contactId": "c_812", "channel": "email"}}
+      },
+      {
+        "type": "contact.tagged",
+        "title": "Contact tagged",
+        "sample": {"type": "contact.tagged", "payload": {"contactId": "c_812", "tag": "vip"}}
+      }
+    ]
+  }
+}
+```
+
+The block is the opt-in and the catalogue in one place. Presence alone opts
+in: the trigger's `events` — its ports — become the host event types, and a
+published event's item is `{type, payload, occurredAt, eventId}`, with the
+type also placed at the trigger's `eventPath` so the same ports a webhook
+delivery reaches work without a second routing rule. `eventPath: "type"` is
+therefore the natural spelling for a host-event pack; a pack that also
+receives webhooks keeps whatever path its sender uses and the publish step
+copies the type there.
+
+The `catalogue` is the editor-facing half: each entry describes one of the
+trigger's own events (an entry naming an event the trigger does not list is
+refused at load), with the JSON schema of its payload and a full sample event.
+The editor offers the event types from the catalogue — the built-in Host Event
+trigger's picker loads the aggregated list from every pack that declares one —
+and a sample is what a workflow author tests against. An opt-in with no
+catalogue runs; it just has nothing to offer a picker.
+
 ## Icons
 
 `builtin:<name>` names a glyph the editor already imports and costs no bytes —

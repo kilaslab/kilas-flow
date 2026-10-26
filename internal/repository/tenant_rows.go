@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+
+	"github.com/kilaslab/kilas-flow/internal/ratelimit"
 )
 
 // TenantLockOut names what locking a tenant out did: the credentials it
@@ -114,6 +116,11 @@ func (purger *GORMTenantPurger) PurgeTriggers(ctx context.Context, tenant Tenant
 	return purger.purge(ctx, tenant, []purgeStep{
 		{table: "poll_cursors", model: &pollCursorModel{}},
 		{table: "schedules", model: &scheduleModel{}},
+		{table: "host_event_deliveries", model: &hostEventDeliveryModel{}},
+		{table: "host_event_subscriptions", model: &hostEventSubscriptionModel{}},
+		// The tenant's rate limit buckets go with its intake: a deleted
+		// tenant holds no allowance to spend.
+		{table: "rate_limit_buckets", model: &ratelimit.BucketModel{}},
 		{table: "webhook_deliveries", model: &webhookDeliveryModel{}},
 		{table: "webhook_routes", model: &webhookRouteModel{}},
 		{table: "webhook_bindings", model: &webhookBindingModel{}},

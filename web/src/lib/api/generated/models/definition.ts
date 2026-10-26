@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 import type { CredentialRequirement } from './credentialRequirement';
+import type { EventDefinition } from './eventDefinition';
+import type { HostEventDeclaration } from './hostEventDeclaration';
 import type { NodeCodex } from './nodeCodex';
 import type { NodeIcon } from './nodeIcon';
 import type { Port } from './port';
@@ -21,7 +23,10 @@ export interface Definition {
   displayName: string;
   documentationUrl?: string;
   /** @nullable */
+  eventCatalogue?: EventDefinition[] | null;
+  /** @nullable */
   group: string[] | null;
+  hostEvents?: HostEventDeclaration;
   icon?: NodeIcon;
   iconColor?: string;
   /** @nullable */

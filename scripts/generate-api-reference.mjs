@@ -66,6 +66,7 @@ const groups = [
 	{ slug: 'credentials', title: 'Credentials', blurb: 'Credential types and stored credentials. Reads never return values.', operations: ['list-credential-types', 'test-credential-payload', 'list-credentials', 'create-credential', 'get-credential', 'update-credential', 'delete-credential', 'test-credential', 'start-credential-oauth'] },
 	{ slug: 'auth', title: 'Authentication and keys', blurb: 'Sessions, API keys, and stream tickets.', operations: ['login', 'logout', 'get-me', 'list-api-keys', 'create-api-key', 'revoke-api-key', 'create-stream-ticket'] },
 	{ slug: 'schedules', title: 'Schedules', blurb: 'Cron-style triggers owned by a workflow.', operations: ['list-schedules', 'create-schedule', 'update-schedule', 'delete-schedule'] },
+	{ slug: 'host-events', title: 'Host events', blurb: 'The recommended host → workflow path: publish one event, every active workflow listening for it runs.', operations: ['publish-event'] },
 	{ slug: 'nodes', title: 'Node types', blurb: 'The node catalogue, icons, load-options, load-schema, and the expression grammar.', operations: ['list-node-types', 'get-node-icon', 'load-node-property-options', 'load-node-property-schema', 'get-expression-grammar'] },
 	{ slug: 'datastores', title: 'Datastores', blurb: 'Tenant-owned row stores: tables, columns, rows, and CSV import and export.', operations: ['list-datastores', 'create-datastore', 'get-datastore', 'rename-datastore', 'delete-datastore', 'add-datastore-column', 'rename-datastore-column', 'delete-datastore-column', 'insert-datastore-row', 'get-datastore-row', 'list-datastore-rows', 'update-datastore-rows', 'upsert-datastore-row', 'increment-datastore-rows', 'delete-datastore-rows', 'clear-datastore', 'import-datastore-rows', 'export-datastore-rows'] },
 	{ slug: 'tenants', title: 'Tenants and accounts', blurb: 'Operator surface: tenants, their users, and keys minted for another tenant.', operations: ['list-tenants', 'create-tenant', 'get-tenant', 'delete-tenant', 'list-tenant-users', 'create-tenant-user', 'disable-tenant-user', 'enable-tenant-user', 'set-tenant-user-password', 'create-tenant-api-key'] },
@@ -666,7 +667,7 @@ function renderErrors(version, schemas) {
 	lines.push('');
 	lines.push('## Idempotency conflicts');
 	lines.push('');
-	lines.push('The operations that accept an `Idempotency-Key` request header — `run-workflow`, `insert-datastore-row` and `upsert-datastore-row` — answer a reuse with a `409` whose error detail carries a typed `value.code`:');
+	lines.push('The operations that accept an `Idempotency-Key` request header — `run-workflow`, `publish-event`, `insert-datastore-row` and `upsert-datastore-row` — answer a reuse with a `409` whose error detail carries a typed `value.code`:');
 	lines.push('');
 	lines.push('| `value.code` | Meaning | What to do |');
 	lines.push('| --- | --- | --- |');

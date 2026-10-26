@@ -339,6 +339,16 @@ func loadTrigger(pack *Pack, definition node.Definition) (node.Definition, *rout
 	definition.Outputs = trigger.Ports()
 	definition.Webhook = trigger.Webhook
 	definition.ExecutorID = TriggerExecutorID
+	if trigger.HostEvents != nil {
+		// The opt-in half: the events are the ports, and the item an event
+		// becomes routes by the same path a webhook delivery does. The
+		// catalogue half is metadata for the editor; make rather than append
+		// so an opt-in with no entries still reads as opted-in in-process
+		// (an empty slice is not nil).
+		definition.HostEvents = trigger.hostEventDeclaration()
+		definition.EventCatalogue = make([]node.EventDefinition, 0, len(trigger.HostEvents.Catalogue))
+		definition.EventCatalogue = append(definition.EventCatalogue, trigger.HostEvents.Catalogue...)
+	}
 	if trigger.Lifecycle != nil {
 		definition.LifecycleID = trigger.Lifecycle.ID
 	}

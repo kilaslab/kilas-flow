@@ -139,6 +139,13 @@ const EXCLUDED: Record<string, string> = {
 	'kilasflow.chainSummarization@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
 	'kilasflow.chainRetrievalQa@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
 	'kilasflow.sentimentAnalysis@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
+	// The host-event trigger starts from an event a host publishes through the
+	// tenant-authenticated events API; no item a run can hand it exercises
+	// the node, so the coverage lives where the surface does: the fan-out and
+	// item shape in internal/hostevents, the endpoint and its idempotency in
+	// internal/api/events_test.go.
+	'kilasflow.hostEvent@1':
+		'needs a host to publish the event; covered in internal/hostevents and internal/api/events_test.go',
 };
 
 interface CatalogueEntry {

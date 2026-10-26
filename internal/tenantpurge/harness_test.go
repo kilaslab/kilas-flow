@@ -495,6 +495,28 @@ func (env *purgeEnv) seedTenant(id string) *tenantSeed {
 		env.t.Fatalf("activation of %s bound no route for its webhook node", id)
 	}
 
+	// Host-event subscriptions and one delivery claim: the purge's triggers
+	// step claims both tables, so the seed has to cover them or the
+	// completeness proof would pass vacuously.
+	if err := env.db.Exec(
+		"INSERT INTO "+env.prefix+"host_event_subscriptions (tenant_id, workflow_id, workflow_version_id, node_id, node_type, event_type, event_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		id, stored.ID, stored.ID, "host", "kilasflow.hostEvent", "seed.event", "events/seed-"+id, time.Now(),
+	).Error; err != nil {
+		env.t.Fatalf("seed host_event_subscriptions(%s) error = %v", id, err)
+	}
+	if err := env.db.Exec(
+		"INSERT INTO "+env.prefix+"host_event_deliveries (tenant_id, event_id, workflow_id, execution_id, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		id, "seed-ev-"+id, stored.ID, "", time.Now().Add(time.Hour), time.Now(),
+	).Error; err != nil {
+		env.t.Fatalf("seed host_event_deliveries(%s) error = %v", id, err)
+	}
+	if err := env.db.Exec(
+		"INSERT INTO "+env.prefix+"rate_limit_buckets (tenant_id, bucket, tokens, updated_at) VALUES (?, ?, ?, ?)",
+		id, "seed", 10, time.Now(),
+	).Error; err != nil {
+		env.t.Fatalf("seed rate_limit_buckets(%s) error = %v", id, err)
+	}
+
 	// The static data its Code nodes keep between runs.
 	if err := repository.NewStaticDataStore(env.db.DB).SaveStaticData(ctx, tenant, stored.ID, []byte(`{"global":{"cell":"`+seed.cell+`"}}`)); err != nil {
 		env.t.Fatalf("SaveStaticData(%s) error = %v", id, err)

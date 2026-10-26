@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -33,13 +35,16 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/embed"
 	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/events"
+	"github.com/kilaslab/kilas-flow/internal/hostevents"
 	"github.com/kilaslab/kilas-flow/internal/idempotency"
 	"github.com/kilaslab/kilas-flow/internal/jsrun"
 	"github.com/kilaslab/kilas-flow/internal/jsworker"
 	"github.com/kilaslab/kilas-flow/internal/loadoptions"
+	"github.com/kilaslab/kilas-flow/internal/metrics"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/nodepack"
 	"github.com/kilaslab/kilas-flow/internal/poller"
+	"github.com/kilaslab/kilas-flow/internal/ratelimit"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/routing"
 	"github.com/kilaslab/kilas-flow/internal/runcode"
@@ -557,6 +562,10 @@ func run(args []string) error {
 			scheduler.DefaultTimezone(scheduler.Extract(nodes.ScheduleType), cfg.Execution.DefaultTimezone),
 			scheduler.Next).
 		WithPolls(nodes.ExtractPolls).
+		// Host-event subscriptions, the same in-activation-transaction sync
+		// the other trigger families hold, so an active workflow is reachable
+		// by published event the moment it goes live.
+		WithHostEvents(hostevents.Extract(nodeRegistry)).
 		WithRetention(repository.RetentionPolicy{
 			MaxAge:      cfg.History.Retention,
 			MaxVersions: cfg.History.MaxVersions,
@@ -584,6 +593,13 @@ func run(args []string) error {
 			return listed, nil
 		})); err != nil {
 		return fmt.Errorf("register the workflow option loader: %w", err)
+	}
+	// The Host Event trigger's picker: the event types the packs this server
+	// carries declare, offered per tenant. Registered here for the same reason
+	// as the workflow list — this is the only place holding both the loader
+	// registry and the node registry the catalogues live in.
+	if err := optionLoader.RegisterInternal(nodes.HostEventEventsLoader, loadoptions.HostEvents(nodeRegistry)); err != nil {
+		return fmt.Errorf("register the host events option loader: %w", err)
 	}
 	// The Workflow Tool's inputs mapper. It reads the target's active revision,
 	// the one a tool call runs, so the form never lists a field the model would
@@ -684,11 +700,34 @@ func run(args []string) error {
 			return db.Exec("SELECT pg_notify(?, ?)", channel, payload).Error
 		}
 	}
+	// The observability registry, built before the runtime so the engine and
+	// the webhook boundary report into it from their first moment. Nil when
+	// the endpoint is off: nothing collects, nothing changes, and the helper
+	// that hands it to a dependency keeps a nil registry out of the interface
+	// (a typed nil inside a non-nil interface is not nil, and the dependency
+	// would dereference it on the first report).
+	// The per-tenant rate limiter, shared by every ingress a tenant can
+	// drive: webhook deliveries, the run API and the events API. The store is
+	// the deployment's choice — in-memory for one process, the database when
+	// several sit behind a load balancer and must share one allowance.
+	var rateLimitStore ratelimit.Store
+	if cfg.RateLimit.Store == "database" {
+		rateLimitStore = ratelimit.NewGORMStore(db.DB)
+	} else {
+		rateLimitStore = ratelimit.NewMemoryStore()
+	}
+	rateLimiter := ratelimit.NewService(rateLimitStore, map[string]int{
+		ratelimit.BucketRun:     cfg.RateLimit.RunPerMinute,
+		ratelimit.BucketWebhook: cfg.RateLimit.WebhookPerMinute,
+		ratelimit.BucketEvents:  cfg.RateLimit.EventsPerMinute,
+	})
+	metricsRegistry := newMetricsRegistry(cfg)
 	runtime, err := engine.NewService(engine.ServiceDeps{
 		Logger:      log,
 		Executions:  executions,
 		Binaries:    binaries,
 		Events:      eventBroker,
+		Metrics:     metricsObserver(metricsRegistry),
 		Catalog:     nodeRegistry,
 		Runner:      engine.NewRunner(executorRegistry),
 		Credentials: credentialsRepo,
@@ -727,7 +766,44 @@ func run(args []string) error {
 	if err != nil {
 		return fmt.Errorf("configure execution runtime: %w", err)
 	}
-	webhookHandler := startWebhookHandler(role, cfg, workflows, runtime, credentialsRepo, eventBroker, webhookTriggers, log)
+	// The gauges, registered now that the runtime they read exists. Queue
+	// depth comes from the database at scrape time; the running and capacity
+	// gauges read the runtime's own worker pool, so both sides of "how close
+	// is this process to its ceiling" come from one scrape.
+	if metricsRegistry != nil {
+		if err := metricsRegistry.RegisterGauge("kilasflow_execution_queue_depth",
+			"Executions waiting for a worker, across every tenant. Read from the database at scrape time.",
+			func(ctx context.Context) (float64, error) {
+				depth, err := executions.QueueDepth(ctx)
+				if err != nil {
+					return 0, err
+				}
+				return float64(depth), nil
+			}); err != nil {
+			return fmt.Errorf("register the queue depth gauge: %w", err)
+		}
+		if err := metricsRegistry.RegisterGauge("kilasflow_executions_running",
+			"Executions this process is running right now, against its worker capacity.",
+			func(_ context.Context) (float64, error) {
+				return float64(runtime.InFlight()), nil
+			}); err != nil {
+			return fmt.Errorf("register the running gauge: %w", err)
+		}
+		if err := metricsRegistry.RegisterGauge("kilasflow_execution_worker_capacity",
+			"The execution.max_concurrent worker pool size this process was started with.",
+			func(_ context.Context) (float64, error) {
+				return float64(runtime.Capacity()), nil
+			}); err != nil {
+			return fmt.Errorf("register the capacity gauge: %w", err)
+		}
+	}
+	// The host → workflow fan-out: one published event, one execution per
+	// active workflow listening for it. Built from the same store that keeps
+	// the subscriptions and the same runtime every other trigger queues
+	// through, so an event lands in the durable queue exactly the way a
+	// webhook delivery does.
+	hostEventService := hostevents.NewService(workflows, workflows, runtime, 0)
+	webhookHandler := startWebhookHandler(role, cfg, workflows, runtime, credentialsRepo, eventBroker, webhookTriggers, metricsObserver(metricsRegistry), rateLimiter, log)
 
 	// Telegram's development delivery mode. The supervisor's context is the
 	// server's, not an activation request's: a poller cancelled when its HTTP
@@ -826,6 +902,13 @@ func run(args []string) error {
 	idempotencySweeper := startIdempotencySweeper(ctx, role, idempotencyService, log)
 	defer idempotencySweeper.Stop()
 
+	// The metrics listener runs for every process role, deliberately placed
+	// ahead of the worker-only return: the workers are where executions
+	// actually run, and an endpoint that only existed on the API process would
+	// report a split deployment's least interesting half. Its own goroutine
+	// shuts it down when the context ends.
+	_ = startMetricsListener(ctx, cfg, metricsRegistry, log)
+
 	// A worker-only process has no listener: it runs until SIGINT/SIGTERM
 	// rather than exiting while its workers still hold leases.
 	if !role.runsAPI() {
@@ -917,6 +1000,8 @@ func run(args []string) error {
 		SessionMemory:   agentMemory,
 		Idempotency:     idempotencyService,
 		TenantPurger:    tenantPurger,
+		HostEvents:      hostEventService,
+		RateLimiter:     rateLimiter,
 		Version:         version,
 		OAuthSigningKey: oauthSigningKey,
 		OAuthHTTP:       oauthHTTP,
@@ -962,6 +1047,8 @@ func startWebhookHandler(
 	credentialStore repository.CredentialRepository,
 	broker *events.Broker,
 	triggers *webhook.Registry,
+	observer metrics.Observer,
+	limiter webhook.RateLimiter,
 	log *slog.Logger,
 ) *webhook.Handler {
 	handler := webhook.NewHandler(bindings, runner, credentialStore, broker, webhook.Limits{
@@ -971,7 +1058,14 @@ func startWebhookHandler(
 	}).WithTriggers(triggers).WithLogger(log).
 		// The deployment posture towards unauthenticated deliveries. Off means
 		// every trigger keeps the answer it gave before this setting existed.
-		RequireAuthentication(cfg.Webhook.RequireAuth)
+		RequireAuthentication(cfg.Webhook.RequireAuth).
+		// The same registry the engine reports into: the inbound surface and
+		// the runs it starts are one story on one scrape.
+		WithMetrics(observer).
+		// One tenant's flood must not spend the shared queue for everybody
+		// else; the allowance is per tenant and refused before a delivery
+		// claim exists.
+		WithRateLimiter(limiter)
 
 	// Claimed only for a process that serves the API: a worker-only process has
 	// no webhook surface, so a posture line for one would be a line about
@@ -1767,4 +1861,75 @@ type credentialLookup struct {
 
 func (lookup credentialLookup) Resolve(ctx context.Context, credentialID string) (credentials.Record, map[string]string, error) {
 	return lookup.store.Resolve(ctx, lookup.tenant, credentialID)
+}
+
+// newMetricsRegistry builds the observability registry the configuration asks
+// for: nil when the endpoint is off, which is the deployment where nothing
+// about the server's own behaviour is exposed.
+func newMetricsRegistry(cfg config.Config) *metrics.Registry {
+	if !cfg.Metrics.Enabled {
+		return nil
+	}
+	return metrics.NewRegistry(cfg.Metrics.TenantLabel, cfg.Metrics.TopTenants)
+}
+
+// metricsObserver hands a registry to a dependency that reports through the
+// Observer interface, keeping the typed-nil trap out of the wiring: a nil
+// *metrics.Registry boxed into the interface would not read as nil to the
+// dependency, and the first report would dereference it.
+func metricsObserver(registry *metrics.Registry) metrics.Observer {
+	if registry == nil {
+		return nil
+	}
+	return registry
+}
+
+// startMetricsListener serves the text exposition format on the configuration's
+// own listener, never on the public API.
+//
+// It runs for every process role, deliberately: the workers are where
+// executions actually run, and a metrics endpoint that only existed on the API
+// process would report a split deployment's least interesting half. The
+// listener is the security boundary — the series carry tenant labels and queue
+// depths, which are the operator's to share — which is why the default bind is
+// loopback and enabling it at all is the operator's decision.
+//
+// A helper rather than a call site in run() for the same reason
+// startWebhookHandler is: cmd/kilasflow/main.go is a cross-ticket contention
+// file, and the switch plus the boot line live in one function a merge cannot
+// drop half of. TestMetricsListenerIsWiredAtBoot drives it.
+func startMetricsListener(ctx context.Context, cfg config.Config, registry *metrics.Registry, log *slog.Logger) *http.Server {
+	if !cfg.Metrics.Enabled {
+		return nil
+	}
+	address := fmt.Sprintf("%s:%d", cfg.Metrics.Host, cfg.Metrics.Port)
+	server := &http.Server{
+		Addr:              address,
+		Handler:           metrics.Handler(registry),
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+	}
+	// Bound synchronously rather than inside the goroutine: an address this
+	// process cannot have is a boot problem the caller learns now, and a
+	// scraper never sees a refused connection on a listener that believed it
+	// was up.
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		log.Error("the metrics endpoint could not bind", "addr", address, "error", err)
+		return nil
+	}
+	go func() {
+		log.Info("metrics endpoint listening", "addr", address, "tenant_label", cfg.Metrics.TenantLabel)
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("the metrics listener failed", "addr", address, "error", err)
+		}
+	}()
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Error("the metrics listener did not shut down cleanly", "error", err)
+		}
+	}()
+	return server
 }

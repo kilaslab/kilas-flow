@@ -142,6 +142,14 @@ export interface RunWorkflowOptions extends IdempotentWriteOptions
 
 Options for a manual run: the idempotency key every retryable write takes, and the revision to run.
 
+#### `PublishEvent`
+
+```ts
+export interface PublishEvent
+```
+
+One host event to publish: the recommended host → workflow path.
+
 #### `TenantClientPoolOptions`
 
 ```ts
@@ -302,6 +310,17 @@ duplicateWorkflow( workflowId: string, options: { name?: string } = {}, signal?:
 ```
 
 Copies a workflow's newest revision into a new workflow under the same tenant, named `<name> (copy)` unless one is given.
+
+
+### Host events
+
+#### `publishEvent`
+
+```ts
+async publishEvent( event: PublishEvent, options?: AbortSignal | IdempotentWriteOptions ): Promise<PublishEventResult>
+```
+
+Publishes one host event: the recommended host → workflow path.
 
 
 ### Executions

@@ -268,3 +268,35 @@ describe('tenant deletion', () => {
 		});
 	});
 });
+
+describe('host events', () => {
+	it('publishes one event and returns the fan-out report', async () => {
+		const { calls, fetchImpl } = recordingFetch({
+			body: { matched: [{ workflowId: 'wf-1', executionId: 'exec-1' }], filtered: [] }
+		});
+		const sdk = client(fetchImpl);
+
+		const result = await sdk.publishEvent(
+			{ eventId: 'evt-1', type: 'message.received', payload: { contactId: 'c-1' } },
+			{ idempotencyKey: 'publish-1' }
+		);
+
+		expect(calls[0]!.init.method).toBe('POST');
+		expect(pathOf(calls[0]!)).toBe('/api/v1/events');
+		expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+			eventId: 'evt-1',
+			type: 'message.received',
+			payload: { contactId: 'c-1' }
+		});
+		expect(new Headers(calls[0]!.init.headers).get('Idempotency-Key')).toBe('publish-1');
+		expect(result.matched).toEqual([{ workflowId: 'wf-1', executionId: 'exec-1' }]);
+	});
+
+	it('sends only the type when nothing else was given', async () => {
+		const { calls, fetchImpl } = recordingFetch({ body: { matched: [], filtered: [] } });
+		await client(fetchImpl).publishEvent({ type: 'booking.created' });
+
+		expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ type: 'booking.created' });
+		expect(new Headers(calls[0]!.init.headers).get('Idempotency-Key')).toBeNull();
+	});
+});

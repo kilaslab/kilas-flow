@@ -12,13 +12,16 @@ import (
 	"net/http"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/events"
 	"github.com/kilaslab/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/metrics"
 	"github.com/kilaslab/kilas-flow/internal/node"
+	"github.com/kilaslab/kilas-flow/internal/ratelimit"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
@@ -63,6 +66,83 @@ type Handler struct {
 	// an imported workflow arrives with a trigger that has never authenticated
 	// anything.
 	requireAuth bool
+	// metrics counts each request's outcome: accepted, filtered, refused.
+	// Nil is the documented off state — no series, no behaviour change.
+	metrics metrics.Observer
+	// rateLimiter bounds how many deliveries one tenant may drive per minute.
+	// Nil is unlimited, which is what this surface has always been.
+	rateLimiter RateLimiter
+}
+
+// RateLimiter decides whether one more request from a tenant may proceed,
+// and when it may not, how long the caller should wait. The per-tenant
+// implementation lives in internal/ratelimit; this is the slice of it the
+// inbound boundary holds, so a handler can be built and tested with a stub.
+type RateLimiter interface {
+	Allow(ctx context.Context, tenantID, bucket string) (bool, time.Duration, error)
+}
+
+// WithRateLimiter bounds the surface per tenant. A nil limiter is ignored.
+func (handler *Handler) WithRateLimiter(limiter RateLimiter) *Handler {
+	if limiter != nil {
+		handler.rateLimiter = limiter
+	}
+	return handler
+}
+
+// allow spends one delivery from the tenant's allowance and, when there is
+// none left, answers the 429 itself: Retry-After, the named problem code,
+// and nothing else — the refusal happens before any verification, filter or
+// delivery claim, so a throttled sender costs the queue nothing.
+func (handler *Handler) allow(w http.ResponseWriter, r *http.Request, tenantID string) bool {
+	if handler.rateLimiter == nil {
+		return true
+	}
+	allowed, retryAfter, err := handler.rateLimiter.Allow(r.Context(), tenantID, ratelimit.BucketWebhook)
+	if err != nil {
+		// A limiter that cannot be read fails closed: answering normally
+		// would be the limit silently off for exactly the traffic it exists
+		// for.
+		handler.logger.Error("the webhook rate limiter could not be read", "tenant", tenantID, "error", err)
+		problem(w, http.StatusInternalServerError, "The delivery could not be admitted.")
+		return false
+	}
+	if allowed {
+		return true
+	}
+	handler.count(tenantID, metrics.WebhookRefused)
+	seconds := int(retryAfter / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"title":  http.StatusText(http.StatusTooManyRequests),
+		"status": http.StatusTooManyRequests,
+		"detail": "This tenant has reached its webhook rate limit; retry after the named delay.",
+		"code":   "rate_limited",
+	})
+	return false
+}
+
+// WithMetrics counts each request's outcome on the observer, when one was
+// wired at composition. A nil observer changes nothing.
+func (handler *Handler) WithMetrics(observer metrics.Observer) *Handler {
+	if observer != nil {
+		handler.metrics = observer
+	}
+	return handler
+}
+
+// count records one request's outcome. Tenant is the binding's when the
+// request got that far, and empty when it never did — an unroutable request
+// belongs to no tenant, and the series says so rather than guessing.
+func (handler *Handler) count(tenant, outcome string) {
+	if handler.metrics != nil {
+		handler.metrics.WebhookRequest(tenant, outcome)
+	}
 }
 
 // WithLogger replaces the handler's logger. A filtered delivery is the only
@@ -104,10 +184,12 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w = &sandboxedWriter{ResponseWriter: w}
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/webhook"), "/")
 	if path == "" {
+		handler.count("", metrics.WebhookRefused)
 		problem(w, http.StatusNotFound, "No webhook path was given.")
 		return
 	}
 	if handler.bindings == nil || handler.runner == nil {
+		handler.count("", metrics.WebhookRefused)
 		problem(w, http.StatusServiceUnavailable, "Webhook routing is not available.")
 		return
 	}
@@ -126,6 +208,9 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// submission method is the only one declared still has a page to serve.
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		if binding, page, found := handler.hostedPage(r, path); found {
+			if !handler.allow(w, r, binding.TenantID) {
+				return
+			}
 			applyCORS(w, r, binding)
 			// The page faces the same gate as the submission. It used to be
 			// written before either check, so a form restricted by IP
@@ -133,8 +218,10 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// to any caller who found the URL — while the submission the page
 			// exists for was refused.
 			if !handler.admit(w, r, binding) {
+				handler.count(binding.TenantID, metrics.WebhookRefused)
 				return
 			}
+			handler.count(binding.TenantID, metrics.WebhookAccepted)
 			writePage(w, http.StatusOK, page)
 			return
 		}
@@ -155,17 +242,23 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			route, _, _ := strings.Cut(path, "/")
 			handler.logger.Error("a webhook delivery could not be routed", "route", route, "error", err)
 		}
+		handler.count("", metrics.WebhookRefused)
 		problem(w, http.StatusNotFound, "No active workflow is bound to this webhook.")
+		return
+	}
+	if !handler.allow(w, r, binding.TenantID) {
 		return
 	}
 	applyCORS(w, r, binding)
 
 	if !handler.admit(w, r, binding) {
+		handler.count(binding.TenantID, metrics.WebhookRefused)
 		return
 	}
 
 	delivery, err := handler.readDelivery(r, binding, params)
 	if err != nil {
+		handler.count(binding.TenantID, metrics.WebhookRefused)
 		problem(w, http.StatusRequestEntityTooLarge, err.Error())
 		return
 	}
@@ -183,11 +276,13 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		page := kind.Page.Form(delivery)
 		switch r.Method {
 		case http.MethodGet, http.MethodHead:
+			handler.count(binding.TenantID, metrics.WebhookAccepted)
 			writePage(w, http.StatusOK, RenderForm(page, requestURL(r)))
 			return
 		default:
 			submission, err := kind.Page.Submission(delivery)
 			if err != nil {
+				handler.count(binding.TenantID, metrics.WebhookRefused)
 				writePage(w, http.StatusBadRequest, RenderFormMessage("Submission rejected", err.Error(), page.Attribution))
 				return
 			}
@@ -196,6 +291,7 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if kind.Verify != nil {
 		if err := kind.Verify(delivery); err != nil {
+			handler.count(binding.TenantID, metrics.WebhookRefused)
 			problem(w, http.StatusUnauthorized, err.Error())
 			return
 		}
@@ -207,12 +303,14 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if accepted, reason := kind.Accept(delivery); !accepted {
 			handler.logger.Info("a delivery was filtered out by its trigger",
 				"route", binding.Route, "workflow", binding.WorkflowID, "node", binding.NodeID, "reason", reason)
+			handler.count(binding.TenantID, metrics.WebhookFiltered)
 			writeJSON(w, http.StatusOK, map[string]any{"filtered": true, "reason": reason})
 			return
 		}
 	}
 	payload, err := json.Marshal(kind.Shape.Apply(delivery))
 	if err != nil {
+		handler.count(binding.TenantID, metrics.WebhookRefused)
 		problem(w, http.StatusBadRequest, "The request could not be encoded.")
 		return
 	}
@@ -223,6 +321,7 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if ignoreBots(r, binding) {
 		handler.logger.Info("a delivery was ignored as a bot",
 			"route", binding.Route, "workflow", binding.WorkflowID, "node", binding.NodeID)
+		handler.count(binding.TenantID, metrics.WebhookFiltered)
 		writeJSON(w, http.StatusOK, map[string]any{"filtered": true, "reason": "the request looks like a bot"})
 		return
 	}
@@ -234,6 +333,10 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if deliveryID != "" {
 		owner, claimed, err := handler.bindings.ClaimDelivery(r.Context(), binding.TenantID, binding.Route, deliveryID, "", handler.limits.DeliveryWindow)
 		if err == nil && !claimed {
+			// Consumed without a second run, which is what the sender wanted:
+			// counted as accepted rather than filtered, because a filter is a
+			// choice the trigger made and this is the dedupe doing its job.
+			handler.count(binding.TenantID, metrics.WebhookAccepted)
 			handler.answerDuplicate(w, r, binding, owner)
 			return
 		}
@@ -253,9 +356,11 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// compile, a version that was archived — is invisible to the operator.
 		handler.logger.Error("a webhook delivery could not be queued",
 			"route", binding.Route, "workflow", binding.WorkflowID, "node", binding.NodeID, "error", err)
+		handler.count(binding.TenantID, metrics.WebhookRefused)
 		problem(w, http.StatusInternalServerError, "The workflow could not be queued.")
 		return
 	}
+	handler.count(binding.TenantID, metrics.WebhookAccepted)
 
 	if responseMode(binding) == modeImmediate {
 		handler.respondImmediate(w, r, binding, kind)

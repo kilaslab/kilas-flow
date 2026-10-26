@@ -188,6 +188,11 @@ deliberate:
   that `/ready` is public: the block therefore discloses the installation's
   total datastore count to anyone who can reach the port.
 
+For the series an operator alerts on — queue depth, claim latency, execution
+outcomes by trigger, webhook outcomes, per-node-type durations — see
+[Metrics](/operate/metrics/), the opt-in Prometheus endpoint served on its own
+listener, never on this API.
+
 The opt-in JavaScript sidecar needs Node 24 in the image and the operator's
 community packages installed beside the binary: the catalogue is read from
 them at boot, so **every** process role that boots with `sidecar.enabled`

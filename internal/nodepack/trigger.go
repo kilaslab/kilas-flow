@@ -54,10 +54,48 @@ type Trigger struct {
 	// `{{ url }}` replaced by the route the service must deliver to. Without
 	// it an imported workflow looks correct and receives nothing.
 	Notice string `json:"notice,omitempty"`
+	// HostEvents, when set, opts this trigger's events into host-event
+	// delivery: the host publishes an event through POST /api/v1/events and
+	// every active workflow carrying this trigger runs, from the port
+	// matching the event — the same ports a webhook delivery routes to. The
+	// block's Catalogue is what the editor offers: the event types with
+	// their schemas and samples.
+	HostEvents *TriggerHostEvents `json:"hostEvents,omitempty"`
 	// SourceNode names the community n8n trigger node this trigger covers,
 	// paired with the pack-level sourcePackage, so the importer can resolve
 	// "<package>.<node>" onto it (FEAT-mq412g).
 	SourceNode string `json:"sourceNode,omitempty"`
+}
+
+// TriggerHostEvents opts a trigger pack's events into host-event delivery.
+//
+// A host that embeds KilasFlow raises domain events — message received,
+// contact tagged, booking created — and wants every active workflow listening
+// for one to run. A pack written for that host (usually the host's own product
+// pack) declares this block, and its trigger's events become the host's event
+// types: published through the events API, routed to the same ports a webhook
+// delivery reaches.
+//
+// The block is the opt-in and the catalogue in one place on purpose. An
+// opt-in with no catalogue runs — the events are the trigger's own ports —
+// but the editor gets nothing to offer beyond the port names, which is why a
+// pack that means to be used declares the catalogue too.
+type TriggerHostEvents struct {
+	// Catalogue describes each host event: its type, a human title, the JSON
+	// schema of its payload and a sample event. The types must be the
+	// trigger's own events, because the catalogue describes ports that
+	// exist.
+	Catalogue []node.EventDefinition `json:"catalogue,omitempty"`
+}
+
+// hostEventDeclaration is the declaration half loadTrigger carries onto the
+// node definition: the fixed subscription list (the ports) and the path the
+// executor routes an item by.
+func (trigger *Trigger) hostEventDeclaration() *node.HostEventDeclaration {
+	return &node.HostEventDeclaration{
+		Events:    trigger.Events,
+		EventPath: trigger.EventPath,
+	}
 }
 
 // TriggerHMAC describes signature verification.
@@ -263,6 +301,11 @@ func (trigger *Trigger) validate() error {
 	if trigger.Webhook == nil {
 		return fmt.Errorf("a trigger needs a webhook declaration, or activation binds no route")
 	}
+	if trigger.HostEvents != nil {
+		if err := trigger.HostEvents.validate(trigger.Events); err != nil {
+			return fmt.Errorf("hostEvents: %w", err)
+		}
+	}
 	if trigger.Lifecycle != nil {
 		if err := trigger.Lifecycle.requests().Validate(); err != nil {
 			return err
@@ -281,6 +324,49 @@ func (trigger *Trigger) validate() error {
 		return fmt.Errorf("hmac.secretCapture is %q, which the lifecycle's set does not capture", trigger.HMAC.SecretCapture)
 	}
 	return nil
+}
+
+// validate checks a host-events block against the trigger it belongs to: every
+// catalogue entry names one of the trigger's own events (a catalogue entry for
+// an event the trigger does not list describes a port that does not exist),
+// no event is described twice, and the schema and sample of each entry are
+// objects — a schema the editor cannot render or a sample that is not an
+// event document would reach the canvas and fail there instead of failing the
+// load where the author can still fix it.
+func (hostEvents *TriggerHostEvents) validate(events []string) error {
+	declared := make(map[string]bool, len(events))
+	for _, event := range events {
+		declared[event] = true
+	}
+	seen := make(map[string]bool, len(hostEvents.Catalogue))
+	for _, entry := range hostEvents.Catalogue {
+		type_ := strings.TrimSpace(entry.Type)
+		if type_ == "" {
+			return fmt.Errorf("a catalogue entry needs a type")
+		}
+		if !declared[entry.Type] {
+			return fmt.Errorf("catalogue entry %q is not one of this trigger's events", entry.Type)
+		}
+		if seen[entry.Type] {
+			return fmt.Errorf("catalogue entry %q is declared twice", entry.Type)
+		}
+		seen[entry.Type] = true
+		if len(entry.Schema) > 0 && !jsonIsObject(entry.Schema) {
+			return fmt.Errorf("catalogue entry %q carries a schema that is not a JSON object", entry.Type)
+		}
+		if len(entry.Sample) > 0 && !jsonIsObject(entry.Sample) {
+			return fmt.Errorf("catalogue entry %q carries a sample that is not a JSON object", entry.Type)
+		}
+	}
+	return nil
+}
+
+// jsonIsObject reports whether a raw JSON value is an object, by its first
+// non-space byte: unmarshalling the whole value to check would copy it only to
+// throw the copy away.
+func jsonIsObject(value []byte) bool {
+	trimmed := strings.TrimSpace(string(value))
+	return strings.HasPrefix(trimmed, "{")
 }
 
 // validate checks the hmac block's own shape: the scheme fields, the preset's

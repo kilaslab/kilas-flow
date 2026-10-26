@@ -41,6 +41,14 @@ const (
 	TriggerSchedule Trigger = "schedule"
 	// TriggerPoll is a run a leased Gmail or Drive poll started.
 	TriggerPoll Trigger = "poll"
+	// TriggerHostEvent is a run the host started by publishing an event
+	// through POST /api/v1/events.
+	//
+	// Its own value rather than reusing webhook: a host event arrives
+	// authenticated as the tenant rather than over a minted route, and a
+	// history that labelled it "webhook" would send a reader looking for a
+	// delivery that never happened.
+	TriggerHostEvent Trigger = "hostEvent"
 	// TriggerSubworkflow is a run another workflow started.
 	//
 	// Its own value rather than reusing manual: a sub-workflow run has a parent

@@ -17,7 +17,7 @@ When the two disagree, compare versions: every page here states the server versi
 
 ## Operations
 
-82 operations, all under `/api/v1`, in 11 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
+83 operations, all under `/api/v1`, in 12 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
 
 | Group | Operations | Contents |
 | --- | --- | --- |
@@ -26,6 +26,7 @@ When the two disagree, compare versions: every page here states the server versi
 | [Credentials](/reference/api/credentials/) | 9 | Credential types and stored credentials. Reads never return values. |
 | [Authentication and keys](/reference/api/auth/) | 7 | Sessions, API keys, and stream tickets. |
 | [Schedules](/reference/api/schedules/) | 4 | Cron-style triggers owned by a workflow. |
+| [Host events](/reference/api/host-events/) | 1 | The recommended host → workflow path: publish one event, every active workflow listening for it runs. |
 | [Node types](/reference/api/nodes/) | 5 | The node catalogue, icons, load-options, load-schema, and the expression grammar. |
 | [Datastores](/reference/api/datastores/) | 18 | Tenant-owned row stores: tables, columns, rows, and CSV import and export. |
 | [Tenants and accounts](/reference/api/tenants/) | 10 | Operator surface: tenants, their users, and keys minted for another tenant. |
