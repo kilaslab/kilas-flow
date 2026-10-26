@@ -29,7 +29,7 @@
     "@lucide/svelte": "^1.37.0",
     "@scalar/api-reference": "^1.67.0",
     "@sveltejs/adapter-static": "3.0.10",
-    "@sveltejs/kit": "2.70.3",
+    "@sveltejs/kit": "3.0.0",
     "@sveltejs/vite-plugin-svelte": "7.3.0",
     "@tailwindcss/vite": "4.3.3",
     "@types/node": "^24.13.3",
