@@ -11,10 +11,12 @@
 	import { message } from '$lib/api/http';
 	import { appendPage, canLoadMore, emptyPage, readPage, type CursorPage } from '$lib/dashboard/cursor-page';
 	import * as Sheet from '$lib/components/ui/sheet';
+	import { StatusBadge } from '$lib/components/ui/status-badge';
 	import * as Tabs from '$lib/components/ui/tabs';
 	import { currentLocale } from '$lib/i18n/locale.svelte';
 	import * as m from '$lib/paraglide/messages.js';
 	import { diffChangeCount, diffWorkflowDocuments, describeNodeChange } from '$lib/workflow-editor/history-diff';
+	import { railWidth } from '$lib/workflow-editor/rail-width.svelte';
 	import { validationIssuesFromApiError, type CanvasValidationIssue } from '$lib/workflow-editor/validation';
 	import {
 		connectionChangeSentence,
@@ -22,7 +24,6 @@
 		publishConfirmation,
 		publishEventActionLabel,
 		publishEventSentence,
-		publishEventTone,
 		publishRefusal,
 		relativeTime,
 		restoreConfirmation,
@@ -321,7 +322,10 @@
 	a panel can never silently discard what the user was looking at.
 -->
 <Sheet.Root bind:open>
-	<Sheet.Content data-history-panel side="right" showOverlay={false} trapFocus={false} preventScroll={false} class="flex w-[min(26rem,92vw)] flex-col gap-0 border-l border-border p-0 sm:max-w-none" aria-label={m.versions_history_title()}>
+	<!-- The panel renders at the right rail's remembered width (FEAT-npc3ge):
+	     the same setting that sizes the inspector sizes this panel, so the two
+	     never read as different surfaces. -->
+	<Sheet.Content data-history-panel side="right" showOverlay={false} trapFocus={false} preventScroll={false} style="width: min({railWidth.px}px, 92vw)" class="flex flex-col gap-0 border-l border-border p-0 sm:max-w-none" aria-label={m.versions_history_title()}>
 		<Sheet.Header class="shrink-0 gap-1 border-b border-border px-4 py-3 pr-12">
 			<Sheet.Title class="flex items-center gap-2 text-sm">
 				<History aria-hidden="true" class="size-4 text-muted-foreground" />{m.versions_history_title()}
@@ -343,7 +347,7 @@
 		</Sheet.Header>
 
 		<Tabs.Root bind:value={tab} class="flex min-h-0 flex-1 flex-col">
-			<Tabs.List variant="line" class="shrink-0 gap-3 border-b border-border px-4 py-1.5">
+			<Tabs.List variant="line" class="shrink-0 gap-3 border-b border-border px-4 py-1">
 				<Tabs.Trigger value="versions">{m.versions_tab_versions()}</Tabs.Trigger>
 				<Tabs.Trigger value="timeline">{m.versions_tab_timeline()}</Tabs.Trigger>
 			</Tabs.List>
@@ -354,11 +358,11 @@
 					     the thing every other row is compared against. -->
 					<button
 						type="button"
-						class="flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors {preview === null ? 'border-border bg-muted/60' : 'border-transparent hover:bg-muted/40'}"
+						class="flex w-full items-start gap-2 rounded-lg border px-2 py-2 text-left transition-colors {preview === null ? 'border-border bg-muted/60' : 'border-transparent hover:bg-muted/40'}"
 						aria-current={preview === null ? 'true' : undefined}
 						onclick={backToDraft}
 					>
-						<span aria-hidden="true" class="mt-1.5 size-1.5 shrink-0 rounded-full {dirty ? 'bg-warning' : 'bg-primary'}"></span>
+						<span aria-hidden="true" class="mt-2 size-1.5 shrink-0 rounded-full {dirty ? 'bg-warning' : 'bg-primary'}"></span>
 						<span class="min-w-0 flex-1">
 							<span class="block text-xs font-medium">{dirty ? m.versions_current_changes() : m.versions_current_draft()}</span>
 							<span class="block truncate text-[0.6875rem] text-muted-foreground">{dirty ? m.versions_unsaved_edits() : m.versions_matches_newest()}</span>
@@ -378,24 +382,24 @@
 					{:else if loaded.items.length === 0}
 						<p class="mt-3 px-2 text-xs text-muted-foreground">{m.versions_empty()}</p>
 					{:else}
-						<ul class="mt-1 space-y-0.5" aria-label={m.versions_saved_revisions_aria()}>
+						<ul class="mt-1 space-y-1" aria-label={m.versions_saved_revisions_aria()}>
 							{#each loaded.items as summary (summary.id)}
 								{@const roles = versionRoles(summary)}
 								{@const author = versionAuthor(summary)}
 								<li>
 									<button
 										type="button"
-										class="flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors {selected?.id === summary.id ? 'border-border bg-muted/60' : 'border-transparent hover:bg-muted/40'}"
+										class="flex w-full items-start gap-2 rounded-lg border px-2 py-2 text-left transition-colors {selected?.id === summary.id ? 'border-border bg-muted/60' : 'border-transparent hover:bg-muted/40'}"
 										aria-current={selected?.id === summary.id ? 'true' : undefined}
 										onclick={() => void select(summary)}
 									>
-										<span aria-hidden="true" class="mt-1.5 size-1.5 shrink-0 rounded-full {summary.published ? 'bg-success' : 'bg-muted-foreground/40'}"></span>
+										<span aria-hidden="true" class="mt-2 size-1.5 shrink-0 rounded-full {summary.published ? 'bg-success' : 'bg-muted-foreground/40'}"></span>
 										<span class="min-w-0 flex-1">
 											<span class="flex flex-wrap items-center gap-1">
 												<span class="text-xs font-medium">{versionTitle(summary)}</span>
 												{#each roles as role (role.label)}
-													<span class="inline-flex items-center rounded-full border px-1.5 py-px text-[0.625rem] font-medium {role.tone}">{role.label}</span>
-												{/each}
+													<StatusBadge status={role.status} label={role.label} />
+											{/each}
 											</span>
 											<span class="block truncate text-[0.6875rem] text-muted-foreground">
 												{relativeTime(summary.createdAt, { locale: currentLocale() })}{#if author} · {author}{/if}{#if summary.label} · {m.versions_row_revision({ revision: summary.revision })}{/if}
@@ -407,7 +411,7 @@
 						</ul>
 
 						{#if canLoadMore(loaded)}
-							<button type="button" class="mt-2 w-full rounded-md border border-border px-2 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-40" disabled={loadingMore} onclick={() => void loadMore()}>
+							<button type="button" class="mt-2 w-full rounded-md border border-border px-2 py-1 text-xs font-medium hover:bg-muted disabled:opacity-40" disabled={loadingMore} onclick={() => void loadMore()}>
 								{loadingMore ? m.executions_loading() : m.versions_load_older()}
 							</button>
 						{/if}
@@ -438,22 +442,22 @@
 									</p>
 									<ul class="mt-2 space-y-1 text-xs">
 										{#if diff.name}
-											<li class="flex gap-1.5"><span class="text-muted-foreground">{m.workflows_noun_capitalised()}</span><span>{m.versions_renamed_to({ name: diff.name.after })}</span></li>
+											<li class="flex gap-2"><span class="text-muted-foreground">{m.workflows_noun_capitalised()}</span><span>{m.versions_renamed_to({ name: diff.name.after })}</span></li>
 										{/if}
 										{#each diff.nodes as change (change.nodeID)}
-											<li class="flex gap-1.5">
+											<li class="flex gap-2">
 												<span class="shrink-0 font-medium">{change.name}</span>
 												<span class="text-muted-foreground">{describeNodeChange(change)}</span>
 											</li>
 										{/each}
 										{#each diff.connections as change (`${change.status}-${change.connectionID}-${change.sourcePort}-${change.targetPort}`)}
-											<li class="flex gap-1.5">
+											<li class="flex gap-2">
 												<span class="shrink-0 text-muted-foreground">{m.versions_connection_label()}</span>
 												<span>{connectionChangeSentence(change)}</span>
 											</li>
 										{/each}
 										{#each diff.settings as change (change.key)}
-											<li class="flex gap-1.5">
+											<li class="flex gap-2">
 												<span class="shrink-0 text-muted-foreground">{m.versions_setting_label()}</span>
 												<span>{settingChangeSentence(change)}</span>
 											</li>
@@ -463,13 +467,13 @@
 							{/if}
 
 							{#if actionError}
-								<p role="alert" class="mt-2 rounded-md border border-destructive/25 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">{actionError}</p>
+								<p role="alert" class="mt-2 rounded-md border border-destructive/25 bg-destructive/5 px-2 py-1 text-xs text-destructive">{actionError}</p>
 							{/if}
 
-							<div class="mt-3 flex flex-wrap gap-1.5">
+							<div class="mt-3 flex flex-wrap gap-2">
 								<button
 									type="button"
-									class="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
+									class="inline-flex h-7 items-center gap-2 rounded-md border border-border px-2 text-xs font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
 									disabled={Boolean(restoreBlocked) || busy}
 									title={restoreBlocked ?? undefined}
 									onclick={() => ask('restore')}
@@ -479,7 +483,7 @@
 								{#if canPublish}
 									<button
 										type="button"
-										class="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
+										class="inline-flex h-7 items-center gap-2 rounded-md border border-border px-2 text-xs font-medium transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
 										disabled={Boolean(publishBlocked) || busy}
 										title={publishBlocked ?? undefined}
 										onclick={() => ask('publish')}
@@ -488,16 +492,16 @@
 									</button>
 								{/if}
 								{#if canUnpublish && selected.published && active}
-									<button type="button" class="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-warning transition-colors hover:bg-warning/10 disabled:opacity-40" disabled={busy} onclick={() => void unpublish()}>
+									<button type="button" class="inline-flex h-7 items-center gap-2 rounded-md px-2 text-xs font-medium text-warning transition-colors hover:bg-warning/10 disabled:opacity-40" disabled={busy} onclick={() => void unpublish()}>
 										{m.versions_unpublish()}
 									</button>
 								{/if}
-								<button type="button" class="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted" onclick={backToDraft}>
+								<button type="button" class="inline-flex h-7 items-center gap-2 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted" onclick={backToDraft}>
 									{m.versions_back_to_draft()}
 								</button>
 							</div>
 							{#if restoreBlocked && selected.id !== latestVersionID}
-								<p class="mt-1.5 text-[0.6875rem] text-muted-foreground">{restoreBlocked}</p>
+								<p class="mt-2 text-[0.6875rem] text-muted-foreground">{restoreBlocked}</p>
 							{/if}
 						</div>
 					</div>
@@ -512,10 +516,10 @@
 				{:else if events.length === 0}
 					<p class="text-xs text-muted-foreground">{m.versions_timeline_empty()}</p>
 				{:else}
-					<ol class="space-y-2.5" aria-label={m.versions_publish_history_aria()}>
+					<ol class="space-y-3" aria-label={m.versions_publish_history_aria()}>
 						{#each events as event, index (`${event.createdAt}-${event.versionId}-${index}`)}
 							<li class="flex gap-2">
-								<span class="mt-0.5 inline-flex h-4 shrink-0 items-center rounded-full border px-1.5 text-[0.625rem] font-medium {publishEventTone(event)}">{publishEventActionLabel(event)}</span>
+								<StatusBadge class="shrink-0 self-start" status={event.action} label={publishEventActionLabel(event)} />
 								<span class="min-w-0">
 									<span class="block text-xs">{publishEventSentence(event, eventRevisionLabel(event.versionId, loaded.items))}</span>
 									<span class="block text-[0.6875rem] text-muted-foreground">
@@ -554,11 +558,11 @@
 				</p>
 				<label class="mt-2 block">
 					<span class="text-[0.6875rem] font-medium text-muted-foreground">{m.versions_reason_label()}</span>
-					<input bind:this={confirmReason} bind:value={reason} maxlength="255" class="mt-1 h-7 w-full rounded-md border border-border bg-background px-2 text-xs focus-visible:outline-2 focus-visible:outline-offset-1" placeholder={m.versions_reason_placeholder()} />
+					<input bind:this={confirmReason} bind:value={reason} maxlength="255" class="h-7 mt-1 h-7 w-full rounded-md border border-border bg-background px-2 text-xs focus-visible:outline-2 focus-visible:outline-offset-1" placeholder={m.versions_reason_placeholder()} />
 				</label>
-				<div class="mt-2.5 flex justify-end gap-1.5">
-					<button type="button" class="inline-flex h-7 items-center rounded-md px-2.5 text-xs font-medium text-muted-foreground hover:bg-muted" disabled={busy} onclick={() => (confirming = null)}>{m.workflows_cancel()}</button>
-					<button type="button" class="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40" disabled={busy} onclick={() => void confirm()}>
+				<div class="mt-3 flex justify-end gap-2">
+					<button type="button" class="inline-flex h-7 items-center rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted" disabled={busy} onclick={() => (confirming = null)}>{m.workflows_cancel()}</button>
+					<button type="button" class="inline-flex h-7 items-center gap-2 rounded-md bg-primary px-2 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40" disabled={busy} onclick={() => void confirm()}>
 						<Check aria-hidden="true" class="size-3.5" />
 						{busy ? m.versions_working() : pending.action === 'restore' ? m.versions_restore() : m.versions_publish()}
 					</button>

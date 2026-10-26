@@ -13,8 +13,11 @@
 	import { createGetWorkflowVersion } from '$lib/api/generated/workflows/workflows';
 	import type { Definition, ExecutionResource, WorkflowVersionResource } from '$lib/api/generated/models';
 	import { Button } from '$lib/components/ui/button';
+	import { StatusBadge } from '$lib/components/ui/status-badge';
 	import ExecutionCanvas from '$lib/components/workflow-editor/execution-canvas.svelte';
 	import NodeConsole from '$lib/components/workflow-editor/node-console.svelte';
+	import RailGrip from '$lib/components/workflow-editor/rail-grip.svelte';
+	import { railWidth } from '$lib/workflow-editor/rail-width.svelte';
 	import * as m from '$lib/paraglide/messages.js';
 	import { applyEvents, executionEvents, isTerminalStatus, latestExecutionStatus, liveConsole } from '$lib/workflow-editor/event-stream.svelte';
 	import {
@@ -29,7 +32,6 @@
 		parseConsole,
 		preferredNodeRun,
 		statusLabel,
-		statusTone,
 		waitingNotice
 	} from '$lib/workflow-editor/execution';
 
@@ -255,9 +257,9 @@
 	<title>{m.executions_detail_page_title({ name: execution.data?.id ?? m.executions_execution() })}</title>
 </svelte:head>
 
-<section class="mx-auto flex w-full max-w-7xl flex-col gap-3">
+<section class="mx-auto flex w-full max-w-(--kf-page-max) flex-col gap-3">
 	<div>
-		<Button href="/executions" variant="ghost" size="sm"><ArrowLeft aria-hidden="true" />{m.executions_all_executions()}</Button>
+		<Button href="/executions" variant="ghost"><ArrowLeft aria-hidden="true" />{m.executions_all_executions()}</Button>
 	</div>
 
 	{#if execution.isPending}
@@ -265,7 +267,7 @@
 	{:else if execution.isError && !execution.data}
 		<div class="max-w-xl rounded-lg border border-destructive/25 bg-destructive/5 p-3">
 			<h1 class="font-medium">{m.common_load_failed({ label: m.executions_execution() })}</h1>
-			<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(execution.error)}</p>
+			<p class="mt-1 text-xs leading-5 text-muted-foreground">{message(execution.error)}</p>
 			<Button class="mt-4" variant="outline" onclick={() => void execution.refetch()}>{m.common_try_again()}</Button>
 		</div>
 	{:else if execution.data}
@@ -275,29 +277,29 @@
 		{#if execution.isError}
 			<div role="alert" class="flex flex-wrap items-center gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3">
 				<p class="min-w-0 flex-1 text-xs leading-5 text-destructive">{m.executions_stale_refresh({ message: message(execution.error) })}</p>
-				<Button variant="outline" size="sm" onclick={() => void execution.refetch()}>{m.executions_refresh()}</Button>
+				<Button variant="outline" onclick={() => void execution.refetch()}>{m.executions_refresh()}</Button>
 			</div>
 		{/if}
 		<div class="flex flex-wrap items-start justify-between gap-3">
 			<div class="min-w-0">
 				<div class="flex flex-wrap items-center gap-2">
 					<h1 class="text-base font-semibold tracking-tight">{m.executions_execution()}</h1>
-					<span class={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusTone(status)}`}>{statusLabel(status)}</span>
+					<StatusBadge {status} />
 					{#if live.connected && !live.finished}
-						<span class="inline-flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
-							<span aria-hidden="true" class="size-1.5 animate-pulse rounded-full bg-primary"></span>
+						<span class="inline-flex items-center gap-2 text-xs text-muted-foreground" aria-live="polite">
+							<span aria-hidden="true" class="size-1.5 animate-pulse rounded-full bg-info motion-reduce:animate-none"></span>
 							{m.executions_live()}
 						</span>
 					{/if}
 					{#if stoppable}
-						<Button variant="outline" size="sm" onclick={() => void stop()} disabled={stopping}>
+						<Button variant="outline" onclick={() => void stop()} disabled={stopping}>
 							{stopping ? m.executions_stopping() : m.executions_stop()}
 						</Button>
 					{/if}
 				</div>
 				<p class="mt-1 font-mono text-xs text-muted-foreground">{execution.data.id}</p>
 				<p class="mt-1 text-xs">
-					<a class="rounded text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2" href={`/app/workflows/${execution.data.workflowId}`}>{m.executions_open_workflow()}</a>
+					<a class="rounded text-(--kf-accent-text) underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2" href={`/app/workflows/${execution.data.workflowId}`}>{m.executions_open_workflow()}</a>
 					<span class="text-muted-foreground"> · {version.data?.document.name ?? execution.data.workflowId}</span>
 				</p>
 				{#if stopError}<p role="alert" class="mt-1 text-xs text-destructive">{m.executions_stop_failed({ message: stopError })}</p>{/if}
@@ -305,24 +307,24 @@
 			<dl class="grid grid-cols-3 gap-x-6 gap-y-1 text-[0.8125rem]">
 				<div>
 					<dt class="text-xs text-muted-foreground">{m.executions_started()}</dt>
-					<dd class="mt-0.5">{formatTimestamp(execution.data.startedAt)}</dd>
+					<dd class="mt-1">{formatTimestamp(execution.data.startedAt)}</dd>
 				</div>
 				<div>
 					<dt class="text-xs text-muted-foreground">{m.executions_duration()}</dt>
-					<dd class="mt-0.5 tabular-nums">{formatDuration(duration)}</dd>
+					<dd class="mt-1 tabular-nums">{formatDuration(duration)}</dd>
 				</div>
 				<div>
 					<dt class="text-xs text-muted-foreground">{m.executions_trigger()}</dt>
-					<dd class="mt-0.5">{statusLabel(execution.data.trigger)}</dd>
+					<dd class="mt-1">{statusLabel(execution.data.trigger)}</dd>
 				</div>
 			</dl>
 		</div>
 
 		{#if status === 'waiting'}
 			{#if waiting.kind === 'approval'}
-				<div class="rounded-xl border border-violet-500/30 bg-violet-500/5 p-4">
+				<div class="rounded-xl border border-info/30 bg-(--kf-info-subtle) p-4">
 					<h2 class="text-sm font-medium">{m.executions_waiting_approval()}</h2>
-					<p class="mt-0.5 text-xs leading-5 text-muted-foreground">
+					<p class="mt-1 text-xs leading-5 text-muted-foreground">
 						{m.executions_waiting_approval_body()}
 					</p>
 					<div class="mt-3 flex flex-wrap gap-2">
@@ -339,7 +341,7 @@
 					<h2 class="text-sm font-medium">
 						{waiting.kind === 'timer' ? m.executions_waiting_until({ time: formatTimestamp(waiting.resumeAt) }) : m.executions_waiting_resumes()}
 					</h2>
-					<p class="mt-0.5 text-xs leading-5 text-muted-foreground">
+					<p class="mt-1 text-xs leading-5 text-muted-foreground">
 						{waiting.kind === 'timer' ? m.executions_waiting_until_body() : m.executions_waiting_resumes_body()}
 						{#if stoppable}{m.executions_waiting_cancel_note()}{/if}
 					</p>
@@ -361,14 +363,14 @@
 				{/if}
 				<details class="mt-2">
 					<summary class="cursor-pointer text-xs text-muted-foreground underline-offset-4 hover:underline">{m.executions_full_error_json()}</summary>
-					<pre class="mt-1.5 max-h-40 overflow-auto rounded-lg bg-background p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap text-muted-foreground">{asJSON(execution.data.error)}</pre>
+					<pre class="mt-2 max-h-40 overflow-auto rounded-lg bg-background p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap text-muted-foreground">{asJSON(execution.data.error)}</pre>
 				</details>
-				<Button class="mt-2" variant="outline" size="sm" onclick={() => copyText(asJSON(execution.data.error), 'error')}>{m.executions_copy_error()}</Button>
+				<Button class="mt-2" variant="outline" onclick={() => copyText(asJSON(execution.data.error), 'error')}>{m.executions_copy_error()}</Button>
 				{#if copied === 'error'}<span class="ml-2 text-xs text-muted-foreground" role="status">{m.executions_copied()}</span>{/if}
 			</div>
 		{/if}
 
-		<div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_22rem]">
+		<div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_var(--rail)]" style="--rail: {railWidth.px}px">
 			<div class="h-[26rem] overflow-hidden rounded-lg border border-border lg:h-[calc(100dvh-13rem)] lg:min-h-[26rem]">
 				{#if version.isPending}
 					<p aria-live="polite" class="grid h-full place-items-center text-sm text-muted-foreground">{m.executions_loading_graph()}</p>
@@ -403,51 +405,51 @@
 							{#if errorDetail(selectedRun.error)}
 								<p class="mt-1 text-xs leading-5 break-words text-muted-foreground">{errorDetail(selectedRun.error)}</p>
 							{/if}
-						<details class="mt-1.5">
+						<details class="mt-2">
 							<summary class="cursor-pointer text-xs text-muted-foreground underline-offset-4 hover:underline">{m.executions_full_error_json()}</summary>
-							<pre class="mt-1.5 overflow-x-auto rounded-lg bg-destructive/5 p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap text-destructive">{asJSON(selectedRun.error)}</pre>
+							<pre class="mt-2 overflow-x-auto rounded-lg bg-destructive/5 p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap text-destructive">{asJSON(selectedRun.error)}</pre>
 						</details>
 					</div>
 					{/if}
 					<div>
 						<h3 class="text-sm font-medium">{m.executions_input()}{selectedNodeID ? payloadChars(selectedRun.input) : ''}</h3>
 						{#if payloadSize(selectedRun.input) > LARGE_PAYLOAD_CHARS && !payloadExpanded(`input:${selectedNodeID}`)}
-							<div class="mt-1.5 rounded-lg border border-border bg-muted/40 p-3">
+							<div class="mt-2 rounded-lg border border-border bg-muted/40 p-3">
 								<p class="text-xs leading-5 text-muted-foreground">{m.executions_payload_too_large({ count: payloadSize(selectedRun.input).toLocaleString() })}</p>
-								<Button class="mt-2" variant="outline" size="sm" onclick={() => expandPayload(`input:${selectedNodeID}`)}>{m.executions_show_anyway()}</Button>
+								<Button class="mt-2" variant="outline" onclick={() => expandPayload(`input:${selectedNodeID}`)}>{m.executions_show_anyway()}</Button>
 							</div>
 						{:else}
-							<pre class="mt-1.5 max-h-96 overflow-auto rounded-lg bg-muted p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap">{asJSON(selectedRun.input)}</pre>
+							<pre class="mt-2 max-h-96 overflow-auto rounded-lg bg-muted p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap">{asJSON(selectedRun.input)}</pre>
 						{/if}
 					</div>
 					<div>
 						<h3 class="text-sm font-medium">{m.executions_output()}{selectedNodeID ? payloadChars(selectedRun.output) : ''}</h3>
 						{#if payloadSize(selectedRun.output) > LARGE_PAYLOAD_CHARS && !payloadExpanded(`output:${selectedNodeID}`)}
-							<div class="mt-1.5 rounded-lg border border-border bg-muted/40 p-3">
+							<div class="mt-2 rounded-lg border border-border bg-muted/40 p-3">
 								<p class="text-xs leading-5 text-muted-foreground">{m.executions_payload_too_large({ count: payloadSize(selectedRun.output).toLocaleString() })}</p>
-								<Button class="mt-2" variant="outline" size="sm" onclick={() => expandPayload(`output:${selectedNodeID}`)}>{m.executions_show_anyway()}</Button>
+								<Button class="mt-2" variant="outline" onclick={() => expandPayload(`output:${selectedNodeID}`)}>{m.executions_show_anyway()}</Button>
 							</div>
 						{:else}
-							<pre class="mt-1.5 max-h-96 overflow-auto rounded-lg bg-muted p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap">{asJSON(selectedRun.output)}</pre>
+							<pre class="mt-2 max-h-96 overflow-auto rounded-lg bg-muted p-3 font-mono text-[0.6875rem] leading-5 break-all whitespace-pre-wrap">{asJSON(selectedRun.output)}</pre>
 						{/if}
 					</div>
 					{#if attachments.length > 0}
 						<div>
 							<h3 class="text-sm font-medium">{m.executions_attachments()}</h3>
-							<ul class="mt-1.5 space-y-1.5">
+							<ul class="mt-2 space-y-2">
 								{#each attachments as attachment (`${attachment.port}:${attachment.item}:${attachment.property}`)}
 									<li class="flex items-start gap-2 rounded-lg border border-border px-3 py-2">
-										<Paperclip class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+										<Paperclip class="mt-1 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
 										<div class="min-w-0">
 											<p class="truncate text-xs font-medium">{attachment.reference.fileName || attachment.property}</p>
-											<p class="mt-0.5 text-xs text-muted-foreground">
+											<p class="mt-1 text-xs text-muted-foreground">
 												{attachment.reference.mediaType || m.executions_unknown_media_type()} · {formatBytes(attachment.reference.size)} · {m.executions_attachment_item({ index: attachment.item + 1 })}
 											</p>
 										</div>
 									</li>
 								{/each}
 							</ul>
-							<p class="mt-1.5 text-xs text-muted-foreground">{m.executions_contents_server_held()}</p>
+							<p class="mt-2 text-xs text-muted-foreground">{m.executions_contents_server_held()}</p>
 						</div>
 					{/if}
 					<p class="text-xs text-muted-foreground">
@@ -456,18 +458,19 @@
 				{/if}
 			{/snippet}
 
-			<aside aria-label={m.executions_node_data()} class="min-h-0 overflow-hidden rounded-lg border border-border">
+			<aside aria-label={m.executions_node_data()} class="relative min-h-0 overflow-hidden rounded-lg border border-border">
+			<RailGrip />
 				{#if !selectedNodeID}
 					<p class="grid h-full place-items-center p-6 text-center text-sm leading-6 text-muted-foreground">{m.executions_select_node_hint()}</p>
 				{:else}
 					<div class="flex h-full flex-col">
 						<div class="border-b border-border px-4 py-3">
 							<p class="text-xs font-medium text-muted-foreground">{m.executions_node()}</p>
-							<h2 class="mt-0.5 truncate text-base font-semibold">{selectedNode?.name ?? selectedNodeID}</h2>
+							<h2 class="mt-1 truncate text-base font-semibold">{selectedNode?.name ?? selectedNodeID}</h2>
 							{#if selectedNodeRuns.length > 1}
 								<!-- A loop body ran once per iteration; this selector is the
 								     only way back to what the earlier ones carried. -->
-								<div class="mt-1.5 flex items-center gap-1" role="group" aria-label={m.executions_run_selector_aria({ name: selectedNode?.name ?? selectedNodeID })}>
+								<div class="mt-2 flex items-center gap-1" role="group" aria-label={m.executions_run_selector_aria({ name: selectedNode?.name ?? selectedNodeID })}>
 									<button
 										type="button"
 										class="grid size-6 place-items-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-40"
@@ -489,9 +492,9 @@
 									</button>
 								</div>
 							{/if}
-							<p class="mt-2">
-								<span class={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusTone(selectedStatus)}`}>{statusLabel(selectedStatus)}</span>
-								{#if selectedRun && selectedRun.attempt > 1}
+						<p class="mt-2">
+							<StatusBadge status={selectedStatus} />
+							{#if selectedRun && selectedRun.attempt > 1}
 									<span class="ml-2 text-xs text-muted-foreground">{m.executions_attempt({ count: selectedRun.attempt })}</span>
 								{/if}
 							</p>
@@ -500,8 +503,8 @@
 							<div class="flex shrink-0 gap-3 border-b border-border px-4" role="tablist" tabindex="-1" aria-label={selectedNode?.name ?? selectedNodeID} onkeydown={(event) => {
 								if (event.key === 'ArrowRight' || event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'ArrowDown') movePanelTab(event, panelTab);
 							}}>
-								<button bind:this={panelTabButtons.data} type="button" role="tab" id="run-tab-data" aria-controls="run-tabpanel" aria-selected={activePanelTab === 'data'} tabindex={activePanelTab === 'data' ? 0 : -1} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (panelTab = 'data')}>{m.executions_node_data()}</button>
-								<button bind:this={panelTabButtons.console} type="button" role="tab" id="run-tab-console" aria-controls="run-tabpanel" aria-selected={activePanelTab === 'console'} tabindex={activePanelTab === 'console' ? 0 : -1} class="-mb-px border-b-2 border-transparent py-1.5 text-xs text-muted-foreground transition-colors aria-selected:border-primary aria-selected:font-medium aria-selected:text-foreground" onclick={() => (panelTab = 'console')}>{m.executions_console()}</button>
+							<button bind:this={panelTabButtons.data} type="button" role="tab" id="run-tab-data" aria-controls="run-tabpanel" aria-selected={activePanelTab === 'data'} tabindex={activePanelTab === 'data' ? 0 : -1} class="h-7 border-b-2 border-transparent py-0 text-xs text-muted-foreground transition-colors aria-selected:border-(--kf-selection) aria-selected:font-medium aria-selected:text-foreground" onclick={() => (panelTab = 'data')}>{m.executions_node_data()}</button>
+							<button bind:this={panelTabButtons.console} type="button" role="tab" id="run-tab-console" aria-controls="run-tabpanel" aria-selected={activePanelTab === 'console'} tabindex={activePanelTab === 'console' ? 0 : -1} class="h-7 border-b-2 border-transparent py-0 text-xs text-muted-foreground transition-colors aria-selected:border-(--kf-selection) aria-selected:font-medium aria-selected:text-foreground" onclick={() => (panelTab = 'console')}>{m.executions_console()}</button>
 							</div>
 						{/if}
 						<div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4" role={isCodeNode ? 'tabpanel' : undefined} id={isCodeNode ? 'run-tabpanel' : undefined} aria-labelledby={isCodeNode ? `run-tab-${activePanelTab}` : undefined}>

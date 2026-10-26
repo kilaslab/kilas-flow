@@ -205,9 +205,12 @@ export type NodeChromeState = {
 
 /** Border colour for the tile given selection, validation, and run state. */
 export function nodeChromeBorder(state: NodeChromeState): string {
-	if (state.invalid || state.runStatus === 'failed') return 'var(--destructive)';
-	if (state.runStatus === 'running' || state.runStatus === 'cancelling') return 'var(--primary)';
-	if (state.runStatus === 'succeeded') return 'var(--success)';
+	// Run state speaks in the state hues (FEAT-r8ph93): running is info,
+	// cancelling and cancelled are warning, never the brand accent.
+	if (state.invalid || state.runStatus === 'failed') return 'var(--kf-run-error)';
+	if (state.runStatus === 'running') return 'var(--kf-run-running)';
+	if (state.runStatus === 'cancelling' || state.runStatus === 'cancelled') return 'var(--kf-run-warning)';
+	if (state.runStatus === 'succeeded') return 'var(--kf-run-success)';
 	// One selection colour on every tile, whatever its category or brand colour
 	// (BUG-ywbvfa); it follows an embed host's accent through --kf-accent-src.
 	if (state.selected) return 'var(--kf-selection)';
@@ -218,10 +221,13 @@ export function nodeChromeBorder(state: NodeChromeState): string {
 /** Elevation and focus ring for the tile. */
 export function nodeChromeShadow(state: NodeChromeState): string {
 	if (state.invalid || state.runStatus === 'failed') {
-		return '0 0 0 2px color-mix(in oklch, var(--destructive) 42%, transparent), 0 2px 8px oklch(0 0 0 / 40%)';
+		return '0 0 0 2px color-mix(in oklch, var(--kf-run-error) 42%, transparent), 0 2px 8px oklch(0 0 0 / 40%)';
 	}
-	if (state.runStatus === 'running' || state.runStatus === 'cancelling') {
-		return '0 0 0 2px color-mix(in oklch, var(--primary) 45%, transparent), 0 2px 10px oklch(0 0 0 / 42%)';
+	if (state.runStatus === 'running') {
+		return '0 0 0 2px color-mix(in oklch, var(--kf-run-running) 45%, transparent), 0 2px 10px oklch(0 0 0 / 42%)';
+	}
+	if (state.runStatus === 'cancelling' || state.runStatus === 'cancelled') {
+		return '0 0 0 2px color-mix(in oklch, var(--kf-run-warning) 45%, transparent), 0 2px 10px oklch(0 0 0 / 42%)';
 	}
 	if (state.selected) return '0 0 0 2px var(--kf-selection-halo), var(--kf-shadow-1)';
 	// Soft card lift so nodes read as tiles rather than flat glyphs when zoomed out.

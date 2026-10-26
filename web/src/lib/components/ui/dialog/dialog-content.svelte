@@ -38,7 +38,7 @@
 		{#if showCloseButton}
 			<DialogPrimitive.Close data-slot="dialog-close">
 				{#snippet child({ props })}
-					<Button variant="ghost" class="absolute top-2 right-2" size="icon-sm" {...props}>
+					<Button variant="ghost" class="absolute top-2 right-2" size="icon" {...props}>
 						<XIcon  />
 						<span class="sr-only">{m.common_close()}</span>
 					</Button>

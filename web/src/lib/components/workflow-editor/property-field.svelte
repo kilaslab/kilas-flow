@@ -650,12 +650,12 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
      keystroke. -->
 {#snippet columnInput(column: MapperColumn)}
 	{#if columnControl(column.type) === 'boolean'}
-		<select aria-label={column.displayName} value={String(mapping.value[column.id] ?? 'false')} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => setColumn(column.id, event.currentTarget.value === 'true')}>
+		<select aria-label={column.displayName} value={String(mapping.value[column.id] ?? 'false')} class="h-7 rounded border border-input bg-background px-1 text-[0.6875rem]" onchange={(event) => setColumn(column.id, event.currentTarget.value === 'true')}>
 			<option value="true">true</option>
 			<option value="false">false</option>
 		</select>
 	{:else if column.options && column.options.length > 0}
-		<select aria-label={column.displayName} value={displayValue(mapping.value[column.id])} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => setColumn(column.id, event.currentTarget.value)}>
+		<select aria-label={column.displayName} value={displayValue(mapping.value[column.id])} class="h-7 rounded border border-input bg-background px-1 text-[0.6875rem]" onchange={(event) => setColumn(column.id, event.currentTarget.value)}>
 			<option value="">{m.properties_choose()}</option>
 			{#each column.options as option (option.value)}
 				<option value={option.value}>{option.label}</option>
@@ -664,7 +664,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 	{:else}
 		<!-- A number column of a mapper the model can fill is a text box: a
 		     number input refuses the braces a fixed expression needs. -->
-		<input aria-label={column.displayName} type={columnControl(column.type) === 'number' && !modelDefinable && !isExpression(mapping.value[column.id]) ? 'number' : 'text'} inputmode={columnControl(column.type) === 'number' && modelDefinable ? 'decimal' : undefined} value={columnText(mapping.value[column.id])} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" oninput={(event) => setColumn(column.id, editColumn(mapping.value[column.id], event.currentTarget.value, columnControl(column.type), modelDefinable))} />
+		<input aria-label={column.displayName} type={columnControl(column.type) === 'number' && !modelDefinable && !isExpression(mapping.value[column.id]) ? 'number' : 'text'} inputmode={columnControl(column.type) === 'number' && modelDefinable ? 'decimal' : undefined} value={columnText(mapping.value[column.id])} class="h-7 rounded border border-input bg-background px-1 text-[0.6875rem]" oninput={(event) => setColumn(column.id, editColumn(mapping.value[column.id], event.currentTarget.value, columnControl(column.type), modelDefinable))} />
 	{/if}
 {/snippet}
 
@@ -672,16 +672,16 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
      the notice, and the way out, which deletes the author's expression and so
      is asked first, inline, as the version panel asks before it restores. -->
 {#snippet wholeExpressionNotice()}
-	<p class="rounded border border-dashed border-input px-2 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">{m.properties_mapper_expression_notice()}</p>
+	<p class="rounded border border-dashed border-input px-2 py-1 text-[0.6875rem] leading-4 text-muted-foreground">{m.properties_mapper_expression_notice()}</p>
 	{#if confirmingFieldInputs}
-		<div role="alertdialog" aria-label={m.properties_mapper_use_fields()} tabindex="-1" class="grid gap-1.5 rounded border border-border bg-muted/40 p-2" onkeydown={(event) => {
+		<div role="alertdialog" aria-label={m.properties_mapper_use_fields()} tabindex="-1" class="grid gap-2 rounded border border-border bg-muted/40 p-2" onkeydown={(event) => {
 			if (event.key === 'Escape') {
 				event.stopPropagation();
 				cancelFieldInputs();
 			}
 		}}>
 			<p class="text-[0.6875rem] leading-4 text-muted-foreground">{m.properties_mapper_use_fields_confirm()}</p>
-			<div class="flex justify-end gap-1.5">
+			<div class="flex justify-end gap-2">
 				<button type="button" bind:this={cancelFieldInputsButton} class="rounded px-2 py-1 text-[0.6875rem] text-muted-foreground hover:bg-muted" onclick={cancelFieldInputs}>{m.workflows_cancel()}</button>
 				<button type="button" class="rounded bg-primary px-2 py-1 text-[0.6875rem] font-medium text-primary-foreground transition-opacity hover:opacity-90" onclick={useFieldInputs}>{m.properties_mapper_use_fields_confirm_action()}</button>
 			</div>
@@ -699,13 +699,13 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 			<span id={`property-label-${fieldID}`} class="text-xs font-medium leading-tight">{property.label}{#if property.required}<span aria-hidden="true" class="text-destructive"> *</span>{/if}</span>
 		{/if}
 		{#if expressionCapable}
-			<button type="button" role="switch" aria-checked={expressionMode} aria-label={m.properties_expression_mode_aria({ label: property.label })} class="shrink-0 rounded border border-border px-1 py-0.5 font-mono text-[0.625rem] leading-4 text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring aria-checked:border-primary/40 aria-checked:bg-primary/10 aria-checked:text-primary" onclick={toggleExpression}>
+			<button type="button" role="switch" aria-checked={expressionMode} aria-label={m.properties_expression_mode_aria({ label: property.label })} class="shrink-0 rounded border border-border px-1 py-0 font-mono text-[0.625rem] leading-4 text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring aria-checked:border-(--kf-selection) aria-checked:bg-(--kf-selection-row) aria-checked:text-(--kf-accent-text)" onclick={toggleExpression}>
 				{expressionMode ? m.properties_mode_expr() : m.properties_mode_fixed()}
 			</button>
 		{/if}
 	</div>
 	{#if expressionMode}
-		<textarea id={`property-${fieldID}`} value={template} spellcheck="false" rows={Math.min(12, Math.max(3, template.split('\n').length))} class="rounded-md border border-primary/40 bg-primary/5 px-2 py-1.5 font-mono text-xs" aria-describedby={`property-${fieldID}-hint`} role="combobox" aria-expanded={assistVisible} aria-controls={`property-${fieldID}-suggestions`} aria-autocomplete="list" aria-activedescendant={assistVisible ? assistOptionID(assistActive) : undefined} onkeydown={onAssistKeydown} oninput={(event) => {
+		<textarea id={`property-${fieldID}`} value={template} spellcheck="false" rows={Math.min(12, Math.max(3, template.split('\n').length))} class="rounded-md border border-(--kf-selection) bg-(--kf-selection-row) px-2 py-1 font-mono text-xs" aria-describedby={`property-${fieldID}-hint`} role="combobox" aria-expanded={assistVisible} aria-controls={`property-${fieldID}-suggestions`} aria-autocomplete="list" aria-activedescendant={assistVisible ? assistOptionID(assistActive) : undefined} onkeydown={onAssistKeydown} oninput={(event) => {
 			const next = event.currentTarget.value;
 			// A new prefix is a new list: the old highlight pointed into the
 			// candidates that are about to be replaced.
@@ -728,7 +728,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 						role="option"
 						tabindex="-1"
 						aria-selected={index === assistActive}
-						class="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left font-mono text-[0.6875rem] hover:bg-muted aria-selected:bg-accent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+						class="flex w-full items-center gap-2 rounded px-1 py-1 text-left font-mono text-[0.6875rem] hover:bg-muted aria-selected:bg-accent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
 						onmousedown={(event) => {
 							event.preventDefault();
 							acceptSuggestion(candidate);
@@ -742,7 +742,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 			</div>
 		{/if}
 		{#if preview.total > 0}
-			<div class="flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1">
+			<div class="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1">
 				<span class="text-[0.6875rem] text-muted-foreground">{preview.total > 1 ? m.properties_result_position({ position: `${preview.index + 1}/${preview.total}` }) : m.properties_result()}</span>
 				<code class="min-w-0 flex-1 truncate font-mono text-[0.6875rem]" title={preview.value}>{preview.value}</code>
 				{#if preview.total > 1}
@@ -789,13 +789,13 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		<!-- A notice holds no value: it is never stored, never required, and
 		     never sends an onChange. One that round-tripped into the document
 		     would fail validation on the next save. -->
-		<p class="rounded-md border border-border bg-muted/40 px-2 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">
+		<p class="rounded-md border border-border bg-muted/40 px-2 py-1 text-[0.6875rem] leading-4 text-muted-foreground">
 			{property.description || property.label}
 		</p>
 	{:else if property.kind === 'dateTime'}
 		<input id={`property-${fieldID}`} type="datetime-local" value={stringValue} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(event.currentTarget.value)} />
 	{:else if property.kind === 'json'}
-		<textarea id={`property-${fieldID}`} value={jsonText(value)} spellcheck="false" rows={typeOptions.rows || 4} class="rounded-md border border-input bg-background px-2 py-1.5 font-mono text-[0.6875rem]" aria-describedby={jsonError ? `property-${fieldID}-json-error` : undefined} oninput={(event) => {
+		<textarea id={`property-${fieldID}`} value={jsonText(value)} spellcheck="false" rows={typeOptions.rows || 4} class="h-7 rounded-md border border-input bg-background px-2 py-1 font-mono text-[0.6875rem]" aria-describedby={jsonError ? `property-${fieldID}-json-error` : undefined} oninput={(event) => {
 			jsonError = null;
 		}} onblur={(event) => {
 			const parsed = tryParseJson(event.currentTarget.value);
@@ -815,7 +815,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		     even when it is not in the list — a saved node, a loader still
 		     pending, or a loader that failed must not render as the first
 		     option and read back as a silent change. -->
-		<select id={`property-${fieldID}`} value={stringValue} class="h-7 rounded-md border border-input bg-background px-1.5 text-xs" onchange={(event) => onChange(event.currentTarget.value)}>
+		<select id={`property-${fieldID}`} value={stringValue} class="h-7 rounded-md border border-input bg-background px-1 text-xs" onchange={(event) => onChange(event.currentTarget.value)}>
 			{#if stringValue !== '' && !selectableOptions.some((option) => option.value === stringValue)}
 				<option value={stringValue}>{stringValue}</option>
 			{/if}
@@ -827,7 +827,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 			<p class="text-[0.6875rem] leading-4 text-muted-foreground">{loadState.reason}</p>
 		{/if}
 	{:else if property.kind === 'multiOptions'}
-		<div class="grid gap-1 rounded-md border border-input p-1.5">
+		<div class="grid gap-1 rounded-md border border-input p-1">
 			<!-- The loaded list when the property declares a loader (the column
 			     names of a sheet), its fixed options otherwise. A saved choice
 			     the list does not hold is still a row, checked and labelled by its
@@ -855,9 +855,9 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		     node's query pairs. Rendered as real controls rather than a JSON
 		     textarea, because the whole point of the shape is that the user
 		     does not have to know what it serialises to. -->
-		<div class="grid gap-1.5 rounded-md border border-input p-1.5">
+		<div class="grid gap-2 rounded-md border border-input p-1">
 			{#each entries as entry, index (index)}
-				<div class="grid gap-1 rounded border border-border/70 p-1.5">
+				<div class="grid gap-1 rounded border border-border/70 p-1">
 					<div class="flex items-center justify-between">
 						<span class="text-[0.6875rem] font-medium text-muted-foreground">{group.label} {index + 1}</span>
 						<button type="button" aria-label={m.properties_remove_group({ group: group.label, index: index + 1 })} class="grid size-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => removeGroupEntry(index)}>
@@ -881,7 +881,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 					{/each}
 				</div>
 			{/each}
-			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1.5 text-[0.6875rem] transition-colors hover:bg-muted" onclick={addGroupEntry}>
+			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1 text-[0.6875rem] transition-colors hover:bg-muted" onclick={addGroupEntry}>
 				<Plus aria-hidden="true" class="size-3" />{typeOptions.multipleValueButtonText || m.properties_add_group({ group: group.label })}
 			</button>
 		</div>
@@ -890,22 +890,22 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		     panel of every option would read as a form to fill in, when what
 		     the document means is "the ones named here, and the server's own
 		     default for everything else". -->
-		<div class="grid gap-1.5">
+		<div class="grid gap-2">
 			{#if unreadableCollection}
 				<!-- Named rather than silently replaced: this is a node
 				     somebody configured, and showing it as empty would look
 				     like the settings had been lost — which, on the next save,
 				     they would have been. -->
-				<div class="grid gap-1 rounded-md border border-destructive/40 bg-destructive/5 p-1.5">
+				<div class="grid gap-1 rounded-md border border-destructive/40 bg-destructive/5 p-1">
 					<p class="text-[0.6875rem] leading-4 text-destructive">{m.properties_collection_unreadable()}</p>
-					<code class="overflow-x-auto rounded border border-input bg-background px-1.5 py-1 font-mono text-[0.625rem] text-muted-foreground">{unreadableCollection}</code>
-					<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1.5 text-[0.6875rem] transition-colors hover:bg-muted" onclick={() => onChange({})}>
+					<code class="overflow-x-auto rounded border border-input bg-background px-1 py-1 font-mono text-[0.625rem] text-muted-foreground">{unreadableCollection}</code>
+					<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1 text-[0.6875rem] transition-colors hover:bg-muted" onclick={() => onChange({})}>
 						<X aria-hidden="true" class="size-3" />{m.workflows_clear()}
 					</button>
 				</div>
 			{/if}
 			{#each chosenOptions as field (field.key)}
-				<div class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-1 rounded-md border border-input p-1.5">
+				<div class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-1 rounded-md border border-input p-1">
 					<PropertyField
 						property={field}
 						value={collectionValue(value)[field.key]}
@@ -927,7 +927,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 				     must find it, and named here because a node behaving in a
 				     way nothing on screen explains is worse than a crowded
 				     panel. -->
-				<div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1 rounded-md border border-dashed border-input px-1.5 py-1">
+				<div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1 rounded-md border border-dashed border-input px-1 py-1">
 					<span class="text-[0.6875rem] leading-4 text-muted-foreground">
 						{m.properties_stranded_option({ key })}
 					</span>
@@ -940,7 +940,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 				<select
 					aria-label={m.properties_add_property({ label: property.label })}
 					value=""
-					class="h-7 justify-self-start rounded-md border border-input bg-background px-1.5 text-xs"
+					class="h-7 justify-self-start rounded-md border border-input bg-background px-1 text-xs"
 					onchange={(event) => {
 						const field = addable.find((candidate) => candidate.key === event.currentTarget.value);
 						if (field) onChange(addOption(value, field));
@@ -960,28 +960,28 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		<!-- The multi-group fixed collection, which has no row builder yet for
 		     several groups: shown as what is configured without pretending to
 		     edit a shape there is no control for. -->
-		<div class="grid gap-1 rounded-md border border-dashed border-input p-1.5 text-[0.6875rem] text-muted-foreground">
+		<div class="grid gap-1 rounded-md border border-dashed border-input p-1 text-[0.6875rem] text-muted-foreground">
 			<span>{m.properties_nested_fields({ count: (property.fields ?? []).length || (property.groups ?? []).length })}</span>
-			<textarea aria-label={m.properties_property_value_aria({ label: property.label })} value={jsonText(value)} spellcheck="false" rows={3} class="rounded border border-input bg-background px-1.5 py-1 font-mono text-[0.6875rem]" onblur={(event) => {
+			<textarea aria-label={m.properties_property_value_aria({ label: property.label })} value={jsonText(value)} spellcheck="false" rows={3} class="h-7 rounded border border-input bg-background px-1 py-1 font-mono text-[0.6875rem]" onblur={(event) => {
 				const parsed = tryParseJson(event.currentTarget.value);
 				if (parsed.ok) onChange(parsed.value);
 			}}></textarea>
 		</div>
 	{:else if property.kind === 'keyValue'}
-		<div class="grid gap-1.5 rounded-md border border-input p-1.5">
+		<div class="grid gap-2 rounded-md border border-input p-1">
 			{#each Object.entries(objectValue) as [key, item] (key)}
-				<div class="grid gap-1 rounded border border-border/70 p-1.5">
+				<div class="grid gap-1 rounded border border-border/70 p-1">
 					<div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1">
-						<input aria-label={m.properties_field_name_aria({ label: property.label })} value={key} class="h-7 min-w-0 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" onchange={(event) => renameKey(key, event.currentTarget.value)} />
-						<button type="button" role="switch" aria-checked={isExpression(item)} aria-label={m.properties_key_expression_mode_aria({ label: property.label, key })} class="shrink-0 rounded border border-border px-1 py-0.5 font-mono text-[0.625rem] text-muted-foreground transition-colors hover:bg-muted aria-checked:border-primary/40 aria-checked:bg-primary/10 aria-checked:text-primary" onclick={() => toggleKeyValueExpression(key)}>
+						<input aria-label={m.properties_field_name_aria({ label: property.label })} value={key} class="h-7 min-w-0 rounded border border-input bg-background px-1 font-mono text-[0.6875rem]" onchange={(event) => renameKey(key, event.currentTarget.value)} />
+						<button type="button" role="switch" aria-checked={isExpression(item)} aria-label={m.properties_key_expression_mode_aria({ label: property.label, key })} class="shrink-0 rounded border border-border px-1 py-0 font-mono text-[0.625rem] text-muted-foreground transition-colors hover:bg-muted aria-checked:border-(--kf-selection) aria-checked:bg-(--kf-selection-row) aria-checked:text-(--kf-accent-text)" onclick={() => toggleKeyValueExpression(key)}>
 							{isExpression(item) ? m.properties_mode_expr() : m.properties_mode_fixed()}
 						</button>
 					</div>
 					<div class="grid grid-cols-[minmax(0,1fr)_auto] gap-1">
 						{#if !isExpression(item) && typeof item === 'string' && item.includes('\n')}
-							<textarea aria-label={m.properties_field_value_aria({ label: property.label })} value={keyValueText(item)} rows={Math.min(8, Math.max(2, String(item).split('\n').length))} class="min-w-0 rounded border border-input bg-background px-1.5 py-1 font-mono text-[0.6875rem]" oninput={(event) => keyValueInput(key, item, event.currentTarget.value)}></textarea>
+							<textarea aria-label={m.properties_field_value_aria({ label: property.label })} value={keyValueText(item)} rows={Math.min(8, Math.max(2, String(item).split('\n').length))} class="h-7 min-w-0 rounded border border-input bg-background px-1 py-1 font-mono text-[0.6875rem]" oninput={(event) => keyValueInput(key, item, event.currentTarget.value)}></textarea>
 						{:else}
-							<input aria-label={m.properties_field_value_aria({ label: property.label })} value={keyValueText(item)} class="h-7 min-w-0 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => keyValueInput(key, item, event.currentTarget.value)} />
+							<input aria-label={m.properties_field_value_aria({ label: property.label })} value={keyValueText(item)} class="h-7 min-w-0 rounded border border-input bg-background px-1 font-mono text-[0.6875rem]" oninput={(event) => keyValueInput(key, item, event.currentTarget.value)} />
 						{/if}
 						<button type="button" aria-label={m.properties_remove_property({ label: key || m.properties_assignment_fallback() })} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => removeKeyValue(key)}>
 							<X aria-hidden="true" class="size-3.5" />
@@ -989,17 +989,17 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 					</div>
 				</div>
 			{/each}
-			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1.5 text-[0.6875rem] transition-colors hover:bg-muted" onclick={addKeyValue}>
+			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1 text-[0.6875rem] transition-colors hover:bg-muted" onclick={addKeyValue}>
 				<Plus aria-hidden="true" class="size-3" />{m.properties_add_field()}
 			</button>
 		</div>
 	{:else if property.kind === 'assignmentCollection'}
-		<div class="grid gap-1.5 rounded-md border border-input p-1.5">
+		<div class="grid gap-2 rounded-md border border-input p-1">
 			{#each assignments as row, index (row.id)}
-				<div class="grid gap-1 rounded border border-border/70 p-1.5">
+				<div class="grid gap-1 rounded border border-border/70 p-1">
 					<div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1">
-						<input aria-label={m.properties_field_name_aria({ label: property.label })} value={row.name} placeholder={m.properties_field_name_placeholder()} class="h-7 min-w-0 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => updateAssignment(index, { name: event.currentTarget.value })} />
-						<button type="button" role="switch" aria-checked={assignmentIsExpression(row)} aria-label={m.properties_key_expression_mode_aria({ label: property.label, key: row.name || m.properties_field_fallback() })} class="shrink-0 rounded border border-border px-1 py-0.5 font-mono text-[0.625rem] text-muted-foreground transition-colors hover:bg-muted aria-checked:border-primary/40 aria-checked:bg-primary/10 aria-checked:text-primary" onclick={() => toggleAssignmentExpression(index)}>
+						<input aria-label={m.properties_field_name_aria({ label: property.label })} value={row.name} placeholder={m.properties_field_name_placeholder()} class="h-7 min-w-0 rounded border border-input bg-background px-1 font-mono text-[0.6875rem]" oninput={(event) => updateAssignment(index, { name: event.currentTarget.value })} />
+						<button type="button" role="switch" aria-checked={assignmentIsExpression(row)} aria-label={m.properties_key_expression_mode_aria({ label: property.label, key: row.name || m.properties_field_fallback() })} class="shrink-0 rounded border border-border px-1 py-0 font-mono text-[0.625rem] text-muted-foreground transition-colors hover:bg-muted aria-checked:border-(--kf-selection) aria-checked:bg-(--kf-selection-row) aria-checked:text-(--kf-accent-text)" onclick={() => toggleAssignmentExpression(index)}>
 							{assignmentIsExpression(row) ? m.properties_mode_expr() : m.properties_mode_fixed()}
 						</button>
 					</div>
@@ -1018,9 +1018,9 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 						{:else if typeof row.value === 'string' && (row.value as string).includes('\n')}
 							<!-- Same rule as top-level strings: a multi-line row value
 							     gets a textarea, never an input that would flatten it. -->
-							<textarea aria-label={m.properties_field_value_aria({ label: property.label })} value={assignmentText(row)} rows={Math.min(8, Math.max(2, (row.value as string).split('\n').length))} class="min-w-0 rounded border border-input bg-background px-1.5 py-1 font-mono text-[0.6875rem]" oninput={(event) => assignmentInput(index, row, event.currentTarget.value)}></textarea>
+							<textarea aria-label={m.properties_field_value_aria({ label: property.label })} value={assignmentText(row)} rows={Math.min(8, Math.max(2, (row.value as string).split('\n').length))} class="h-7 min-w-0 rounded border border-input bg-background px-1 py-1 font-mono text-[0.6875rem]" oninput={(event) => assignmentInput(index, row, event.currentTarget.value)}></textarea>
 						{:else}
-							<input aria-label={m.properties_field_value_aria({ label: property.label })} value={assignmentText(row)} class="h-7 min-w-0 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => assignmentInput(index, row, event.currentTarget.value)} />
+							<input aria-label={m.properties_field_value_aria({ label: property.label })} value={assignmentText(row)} class="h-7 min-w-0 rounded border border-input bg-background px-1 font-mono text-[0.6875rem]" oninput={(event) => assignmentInput(index, row, event.currentTarget.value)} />
 						{/if}
 						<button type="button" aria-label={m.properties_remove_property({ label: row.name || m.properties_field_fallback() })} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => removeAssignment(index)}>
 							<X aria-hidden="true" class="size-3.5" />
@@ -1028,7 +1028,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 					</div>
 				</div>
 			{/each}
-			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1.5 text-[0.6875rem] transition-colors hover:bg-muted" onclick={addAssignment}>
+			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1 text-[0.6875rem] transition-colors hover:bg-muted" onclick={addAssignment}>
 				<Plus aria-hidden="true" class="size-3" />{m.properties_add_field()}
 			</button>
 		</div>
@@ -1038,7 +1038,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		     it rather than above it as a separate field. -->
 		<div class="grid gap-1">
 			<div class="flex items-start gap-1">
-				<select aria-label={m.properties_locator_mode_aria({ label: property.label })} value={locator.mode} class="h-7 w-28 shrink-0 rounded-md border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => onChange(writeLocator(switchMode(property, locator, event.currentTarget.value)))}>
+				<select aria-label={m.properties_locator_mode_aria({ label: property.label })} value={locator.mode} class="h-7 w-28 shrink-0 rounded-md border border-input bg-background px-1 text-[0.6875rem]" onchange={(event) => onChange(writeLocator(switchMode(property, locator, event.currentTarget.value)))}>
 					{#each property.modes ?? [] as mode (mode.name)}
 						<option value={mode.name}>{mode.label}</option>
 					{/each}
@@ -1050,11 +1050,11 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 					<!-- A mode this build does not know. Read-only and named,
 					     rather than an empty control that reads as "this field
 					     has no value". -->
-					<p class="min-w-0 flex-1 rounded-md border border-dashed border-destructive/40 px-2 py-1.5 text-[0.6875rem] leading-4 text-destructive">
+					<p class="min-w-0 flex-1 rounded-md border border-dashed border-destructive/40 px-2 py-1 text-[0.6875rem] leading-4 text-destructive">
 						{locatorDisplay ? m.properties_unknown_mode({ mode: locator.mode, value: locatorDisplay }) : m.properties_unknown_mode_empty({ mode: locator.mode })}
 					</p>
 				{:else if locatorMode.kind === 'options'}
-					<select id={`property-${fieldID}`} value={displayValue(locator.value)} class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1.5 text-xs" onchange={(event) => onChange(writeLocator({ ...locator, value: event.currentTarget.value, cachedResultName: selectedLabel(event.currentTarget.value) }))}>
+					<select id={`property-${fieldID}`} value={displayValue(locator.value)} class="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1 text-xs" onchange={(event) => onChange(writeLocator({ ...locator, value: event.currentTarget.value, cachedResultName: selectedLabel(event.currentTarget.value) }))}>
 						<option value="">{locatorMode.placeholder || m.properties_choose()}</option>
 						{#each selectableOptions as option (option.value)}
 							<option value={option.value}>{option.label}</option>
@@ -1072,7 +1072,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 			{/if}
 		</div>
 	{:else if property.kind === 'resourceMapper'}
-		<div class="grid gap-1.5 rounded-md border border-input p-1.5">
+		<div class="grid gap-2 rounded-md border border-input p-1">
 			{#if mapperIsExpression}
 				<!-- The mapper's own value is the expression (the bare expression
 				     takes the textarea above). Shown, not editable here: this shape
@@ -1083,7 +1083,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 			{#if property.mapper?.supportsAutoMap}
 				<label class="grid gap-1 text-[0.6875rem]">
 					<span class="text-muted-foreground">{m.properties_mapping_column_mode()}</span>
-					<select aria-label={m.properties_mapping_mode_aria({ label: property.label })} value={mapping.mappingMode} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => onChange(writeMapping({ ...mapping, mappingMode: event.currentTarget.value }, schemaColumns))}>
+					<select aria-label={m.properties_mapping_mode_aria({ label: property.label })} value={mapping.mappingMode} class="h-7 rounded border border-input bg-background px-1 text-[0.6875rem]" onchange={(event) => onChange(writeMapping({ ...mapping, mappingMode: event.currentTarget.value }, schemaColumns))}>
 						<option value="defineBelow">{m.properties_map_manually()}</option>
 						<option value="autoMapInputData">{m.properties_map_automatically()}</option>
 					</select>
@@ -1092,7 +1092,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 			{#if matchableColumns(schemaColumns).length > 0}
 				<div class="grid gap-1 text-[0.6875rem]">
 					<span class="text-muted-foreground">{m.properties_columns_to_match()}</span>
-					<div class="grid gap-1 rounded border border-input p-1.5">
+					<div class="grid gap-1 rounded border border-input p-1">
 						{#each matchableColumns(schemaColumns) as column (column.id)}
 							<label class="flex items-center gap-2">
 								<input type="checkbox" class="size-3.5" checked={mapping.matchingColumns.includes(column.id)} onchange={(event) => onChange(writeMapping({ ...mapping, matchingColumns: toggleMatch(column.id, event.currentTarget.checked) }, schemaColumns))} />
@@ -1107,7 +1107,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 				     nobody fills in. The write is the intersection of the item's
 				     keys and these columns, so an absent column is omitted and
 				     never sent as an explicit null. -->
-				<p class="rounded border border-dashed border-input px-2 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">
+				<p class="rounded border border-dashed border-input px-2 py-1 text-[0.6875rem] leading-4 text-muted-foreground">
 					{#if schemaColumns.length === 0}
 						{schemaState.reason || m.properties_columns_not_loaded()}
 					{:else}
@@ -1116,7 +1116,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 					{/if}
 				</p>
 			{:else if schemaColumns.length === 0}
-				<p class="rounded border border-dashed border-input px-2 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">
+				<p class="rounded border border-dashed border-input px-2 py-1 text-[0.6875rem] leading-4 text-muted-foreground">
 					{schemaState.reason || m.properties_columns_not_loaded()}
 				</p>
 			{:else}
@@ -1129,7 +1129,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 						<div class="grid gap-1 text-[0.6875rem]">
 							<div class="flex items-baseline justify-between gap-2">
 								<span class="text-muted-foreground">{column.displayName}{column.required ? ' *' : ''}</span>
-								<button type="button" role="switch" aria-checked={modelFills} aria-label={m.properties_column_model_aria({ column: column.displayName })} class="shrink-0 rounded border border-border px-1 py-0.5 font-mono text-[0.625rem] leading-4 text-muted-foreground transition-colors hover:bg-muted aria-checked:border-primary/40 aria-checked:bg-primary/10 aria-checked:text-primary" onclick={() => flipSource(column)}>
+								<button type="button" role="switch" aria-checked={modelFills} aria-label={m.properties_column_model_aria({ column: column.displayName })} class="shrink-0 rounded border border-border px-1 py-0 font-mono text-[0.625rem] leading-4 text-muted-foreground transition-colors hover:bg-muted aria-checked:border-(--kf-selection) aria-checked:bg-(--kf-selection-row) aria-checked:text-(--kf-accent-text)" onclick={() => flipSource(column)}>
 									{modelFills ? m.properties_mode_model() : m.properties_mode_fixed()}
 								</button>
 							</div>
@@ -1164,9 +1164,9 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 					<p class="text-muted-foreground">{m.properties_mapper_undeclared()}</p>
 					<div class="flex flex-wrap gap-1">
 						{#each undeclaredKeys as key (key)}
-							<span class="inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-muted-foreground">
+							<span class="inline-flex items-center gap-1 rounded border border-border px-1 py-0 font-mono text-muted-foreground">
 								{key}
-								<button type="button" aria-label={m.properties_remove_property({ label: key })} class="grid size-4 place-items-center rounded transition-colors hover:bg-muted" onclick={() => removeUndeclared(key)}><X class="size-3" aria-hidden="true" /></button>
+								<button type="button" aria-label={m.properties_remove_property({ label: key })} class="grid size-6 place-items-center rounded transition-colors hover:bg-muted" onclick={() => removeUndeclared(key)}><X class="size-3" aria-hidden="true" /></button>
 							</span>
 						{/each}
 					</div>
@@ -1175,18 +1175,18 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 			{/if}
 		</div>
 	{:else if property.kind === 'conditions'}
-		<div class="grid gap-1.5 rounded-md border border-input p-1.5">
+		<div class="grid gap-2 rounded-md border border-input p-1">
 			<div class="flex items-center gap-2">
 				<span class="text-[0.6875rem] text-muted-foreground">{m.properties_conditions_match()}</span>
-				<select aria-label={m.properties_combinator_aria({ label: property.label })} value={conditionFilter.combinator} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => writeFilter({ combinator: event.currentTarget.value === 'or' ? 'or' : 'and' })}>
+				<select aria-label={m.properties_combinator_aria({ label: property.label })} value={conditionFilter.combinator} class="h-7 rounded border border-input bg-background px-1 text-[0.6875rem]" onchange={(event) => writeFilter({ combinator: event.currentTarget.value === 'or' ? 'or' : 'and' })}>
 					<option value="and">{m.properties_all_and()}</option>
 					<option value="or">{m.properties_any_or()}</option>
 				</select>
 			</div>
 			{#each conditionFilter.conditions as row, index (index)}
-				<div class="grid gap-1 rounded border border-border/70 p-1.5">
+				<div class="grid gap-1 rounded border border-border/70 p-1">
 					<div class="flex items-center gap-1">
-						<input aria-label={m.properties_condition_left_aria({ label: property.label, index: index + 1 })} value={String(row.leftValue ?? '')} placeholder={'{{ $json.field }}'} class="h-7 min-w-0 flex-1 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => writeFilter({ conditions: updateCondition(conditionFilter.conditions, index, { leftValue: event.currentTarget.value }) })} />
+						<input aria-label={m.properties_condition_left_aria({ label: property.label, index: index + 1 })} value={String(row.leftValue ?? '')} placeholder={'{{ $json.field }}'} class="h-7 min-w-0 flex-1 rounded border border-input bg-background px-1 font-mono text-[0.6875rem]" oninput={(event) => writeFilter({ conditions: updateCondition(conditionFilter.conditions, index, { leftValue: event.currentTarget.value }) })} />
 						<!-- Order is meaningful: the rules read top to bottom. -->
 						<button type="button" aria-label={m.properties_move_condition_up({ index: index + 1 })} disabled={index === 0} class="grid size-7 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted disabled:opacity-40" onclick={() => writeFilter({ conditions: moveCondition(conditionFilter.conditions, index, -1) })}>
 							<ChevronUp aria-hidden="true" class="size-3.5" />
@@ -1199,7 +1199,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 						</button>
 					</div>
 					<div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-1">
-						<select aria-label={m.properties_condition_type_aria({ label: property.label, index: index + 1 })} value={row.operator.type} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => writeFilter({ conditions: updateCondition(conditionFilter.conditions, index, { operator: { type: event.currentTarget.value as ConditionValueType, operation: row.operator.operation } }) })}>
+						<select aria-label={m.properties_condition_type_aria({ label: property.label, index: index + 1 })} value={row.operator.type} class="h-7 rounded border border-input bg-background px-1 text-[0.6875rem]" onchange={(event) => writeFilter({ conditions: updateCondition(conditionFilter.conditions, index, { operator: { type: event.currentTarget.value as ConditionValueType, operation: row.operator.operation } }) })}>
 							<option value="string">{m.properties_type_string()}</option>
 							<option value="number">{m.properties_type_number()}</option>
 							<option value="boolean">{m.properties_type_boolean()}</option>
@@ -1207,7 +1207,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 							<option value="array">{m.properties_type_array()}</option>
 							<option value="object">{m.properties_type_object()}</option>
 						</select>
-						<select aria-label={m.properties_condition_operator_aria({ label: property.label, index: index + 1 })} value={row.operator.operation} class="h-7 rounded border border-input bg-background px-1.5 text-[0.6875rem]" onchange={(event) => {
+						<select aria-label={m.properties_condition_operator_aria({ label: property.label, index: index + 1 })} value={row.operator.operation} class="h-7 rounded border border-input bg-background px-1 text-[0.6875rem]" onchange={(event) => {
 							const operation = event.currentTarget.value as ConditionOperator;
 							const coerced = typeForOperation(operation);
 							writeFilter({ conditions: updateCondition(conditionFilter.conditions, index, { operator: { type: coerced ?? row.operator.type, operation } }) });
@@ -1218,11 +1218,11 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 						</select>
 					</div>
 					{#if !VALUELESS_OPERATORS.includes(row.operator.operation)}
-						<input aria-label={m.properties_condition_right_aria({ label: property.label, index: index + 1 })} value={String(row.rightValue ?? '')} class="h-7 rounded border border-input bg-background px-1.5 font-mono text-[0.6875rem]" oninput={(event) => writeFilter({ conditions: updateCondition(conditionFilter.conditions, index, { rightValue: event.currentTarget.value }) })} />
+						<input aria-label={m.properties_condition_right_aria({ label: property.label, index: index + 1 })} value={String(row.rightValue ?? '')} class="h-7 rounded border border-input bg-background px-1 font-mono text-[0.6875rem]" oninput={(event) => writeFilter({ conditions: updateCondition(conditionFilter.conditions, index, { rightValue: event.currentTarget.value }) })} />
 					{/if}
 				</div>
 			{/each}
-			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1.5 text-[0.6875rem] transition-colors hover:bg-muted" onclick={() => writeFilter({ conditions: [...conditionFilter.conditions, newCondition()] })}>
+			<button type="button" class="inline-flex h-6 items-center gap-1 justify-self-start rounded border border-border px-1 text-[0.6875rem] transition-colors hover:bg-muted" onclick={() => writeFilter({ conditions: [...conditionFilter.conditions, newCondition()] })}>
 				<Plus aria-hidden="true" class="size-3" />{m.properties_add_condition()}
 			</button>
 		</div>
@@ -1234,7 +1234,7 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 	<!-- Multi-line is a different element, not an attribute: rows has no
 	     meaning on an input, and an input strips the newlines of a value
 	     that arrived multi-line. -->
-	<textarea id={`property-${fieldID}`} value={stringValue} rows={Math.max(typeOptions.rows ?? 3, stringValue.split('\n').length)} class="rounded-md border border-input bg-background px-2 py-1.5 text-xs" oninput={(event) => onChange(event.currentTarget.value)}></textarea>
+	<textarea id={`property-${fieldID}`} value={stringValue} rows={Math.max(typeOptions.rows ?? 3, stringValue.split('\n').length)} class="h-7 rounded-md border border-input bg-background px-2 py-1 text-xs" oninput={(event) => onChange(event.currentTarget.value)}></textarea>
 	{:else if RENDERED.has(property.kind)}
 		<input id={`property-${fieldID}`} value={stringValue} type={typeOptions.password ? 'password' : 'text'} class="h-7 rounded-md border border-input bg-background px-2 text-xs" oninput={(event) => onChange(event.currentTarget.value)} />
 	{:else}
@@ -1242,11 +1242,11 @@ import { loadSoon, loaderSignature } from '$lib/workflow-editor/loader-cache';
 		     view is what stops a newer pack's field rendering as nothing at all,
 		     which reads as "this node has no such setting" rather than "this
 		     editor is older than this node". -->
-		<div class="grid gap-1 rounded-md border border-dashed border-destructive/40 p-1.5">
+		<div class="grid gap-1 rounded-md border border-dashed border-destructive/40 p-1">
 			<p class="text-[0.6875rem] leading-4 text-destructive">
 				{m.properties_unknown_field_type({ kind: property.kind })}
 			</p>
-			<pre class="overflow-x-auto rounded bg-muted/40 px-1.5 py-1 font-mono text-[0.6875rem]">{stringValue}</pre>
+			<pre class="overflow-x-auto rounded bg-muted/40 px-1 py-1 font-mono text-[0.6875rem]">{stringValue}</pre>
 		</div>
 	{/if}
 </div>

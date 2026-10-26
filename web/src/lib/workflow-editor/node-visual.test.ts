@@ -237,14 +237,16 @@ describe('nodeVisual', () => {
 
 
 describe('nodeChrome', () => {
-	it('uses destructive border for invalid or failed tiles', () => {
-		expect(nodeChromeBorder({ invalid: true })).toBe('var(--destructive)');
-		expect(nodeChromeBorder({ runStatus: 'failed' })).toBe('var(--destructive)');
+	it('uses the error run token for invalid or failed tiles', () => {
+		expect(nodeChromeBorder({ invalid: true })).toBe('var(--kf-run-error)');
+		expect(nodeChromeBorder({ runStatus: 'failed' })).toBe('var(--kf-run-error)');
 	});
 
-	it('uses primary border while a node is running', () => {
-		expect(nodeChromeBorder({ runStatus: 'running' })).toBe('var(--primary)');
-		expect(nodeChromeBorder({ runStatus: 'cancelling' })).toBe('var(--primary)');
+	it('speaks run state in state hues, never the accent (FEAT-r8ph93)', () => {
+		expect(nodeChromeBorder({ runStatus: 'running' })).toBe('var(--kf-run-running)');
+		expect(nodeChromeBorder({ runStatus: 'cancelling' })).toBe('var(--kf-run-warning)');
+		expect(nodeChromeBorder({ runStatus: 'cancelled' })).toBe('var(--kf-run-warning)');
+		expect(nodeChromeBorder({ runStatus: 'succeeded' })).toBe('var(--kf-run-success)');
 	});
 
 	// Selection is one colour on every node (BUG-ywbvfa): the accent's
@@ -262,7 +264,8 @@ describe('nodeChrome', () => {
 		const running = nodeChromeShadow({ runStatus: 'running' });
 		expect(selected).not.toBe(idle);
 		expect(running.length).toBeGreaterThan(idle.length);
-		expect(running).toContain('var(--primary)');
+		expect(running).toContain('var(--kf-run-running)');
+		expect(nodeChromeShadow({ runStatus: 'failed' })).toContain('var(--kf-run-error)');
 		expect(selected).toBe('0 0 0 2px var(--kf-selection-halo), var(--kf-shadow-1)');
 		expect(selected).not.toContain('--node-accent');
 	});

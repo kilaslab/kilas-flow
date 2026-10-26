@@ -33,7 +33,7 @@
 	}
 </script>
 
-<nav aria-label={m.common_workspace_navigation()} class="grid gap-0.5">
+<nav aria-label={m.common_workspace_navigation()} class="grid gap-1">
 	{#each dashboardSections as section (section.href)}
 		{@const current = active(section.href)}
 		{@const Icon = ICONS[section.key]}
@@ -44,9 +44,9 @@
 			aria-label={collapsed ? label : undefined}
 			title={collapsed ? label : undefined}
 			onclick={onNavigate}
-			class="group flex h-8 items-center rounded-md text-[0.8125rem] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring {collapsed
+			class="group flex h-7 items-center rounded-md text-[0.8125rem] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring {collapsed
 				? 'justify-center px-0'
-				: 'gap-2.5 px-2'}"
+				: 'gap-3 px-2'}"
 			class:bg-sidebar-accent={current}
 			class:text-sidebar-accent-foreground={current}
 			class:text-muted-foreground={!current}

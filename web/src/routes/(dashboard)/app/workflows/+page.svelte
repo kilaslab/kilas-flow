@@ -22,6 +22,7 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Dropdown from '$lib/components/ui/dropdown-menu';
 	import { Input } from '$lib/components/ui/input';
+	import { PageHeader } from '$lib/components/ui/page-header';
 	import { activationFailure, activationNotices, dismissNotice, type ActivationNoticeView } from '$lib/workflow-editor/activation';
 	import {
 		buildWorkflowListSearch,
@@ -395,20 +396,19 @@
 	<title>{m.workflows_page_title()}</title>
 </svelte:head>
 
-<section class="mx-auto w-full max-w-5xl">
-	<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-		<div class="min-w-0">
-			<h1 class="text-base font-semibold tracking-tight">{m.nav_workflows()}</h1>
+<section class="mx-auto w-full max-w-(--kf-page-max)">
+	<PageHeader title={m.nav_workflows()}>
+		{#snippet description()}
 			<p class="text-xs text-muted-foreground">
 				{#if !loading && listFailure === null}{m.workflows_in_workspace({ count: allRows.length })}{:else}{m.workflows_subtitle()}{/if}
 			</p>
-		</div>
-		<div class="flex shrink-0 items-center gap-2">
+		{/snippet}
+		{#snippet actions()}
 			<ImportDialog onImported={() => void loadWorkflows()} />
 			<Dialog.Root bind:open={createOpen} onOpenChange={(open) => !open && resetCreateDialog()}>
 			<Dialog.Trigger>
 				{#snippet child({ props })}
-					<Button {...props} size="sm">
+					<Button {...props}>
 						<FilePlus2 aria-hidden="true" />
 						{m.workflows_new()}
 					</Button>
@@ -434,11 +434,11 @@
 				</form>
 			</Dialog.Content>
 		</Dialog.Root>
-		</div>
-	</div>
+		{/snippet}
+	</PageHeader>
 
 	{#if activationError}
-		<p role="alert" class="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">{m.workflows_activation_failed({ message: activationError })}</p>
+		<p role="alert" class="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1 text-xs text-destructive">{m.workflows_activation_failed({ message: activationError })}</p>
 	{/if}
 	<ActivationNotices
 		{notices}
@@ -454,7 +454,7 @@
 		</div>
 		<div class="grid gap-1">
 			<label for="workflow-active" class="text-xs font-medium text-muted-foreground">{m.workflows_state_label()}</label>
-			<select id="workflow-active" bind:value={activeFilter} class="h-7 rounded-md border border-input bg-background px-1.5 text-xs" onchange={() => (listPage = 1)}>
+			<select id="workflow-active" bind:value={activeFilter} class="h-7 rounded-md border border-input bg-background px-1 text-xs" onchange={() => (listPage = 1)}>
 				<option value="all">{m.workflows_state_all()}</option>
 				<option value="active">{m.workflows_state_active()}</option>
 				<option value="draft">{m.workflows_state_draft()}</option>
@@ -463,7 +463,7 @@
 		{#if tagOptions.length > 0}
 			<div class="grid gap-1">
 				<label for="workflow-tag" class="text-xs font-medium text-muted-foreground">{m.workflows_tag_filter_label()}</label>
-				<select id="workflow-tag" bind:value={tagFilter} class="h-7 max-w-40 rounded-md border border-input bg-background px-1.5 text-xs" onchange={() => (listPage = 1)}>
+				<select id="workflow-tag" bind:value={tagFilter} class="h-7 max-w-40 rounded-md border border-input bg-background px-1 text-xs" onchange={() => (listPage = 1)}>
 					<option value="">{m.workflows_tag_filter_all()}</option>
 					{#each tagOptions as tag (tag.toLowerCase())}
 						<option value={tag.toLowerCase()}>{tag}</option>
@@ -473,7 +473,7 @@
 		{/if}
 		<div class="grid gap-1">
 			<label for="workflow-sort" class="text-xs font-medium text-muted-foreground">{m.workflows_sort_label()}</label>
-			<select id="workflow-sort" bind:value={sort} class="h-7 rounded-md border border-input bg-background px-1.5 text-xs" onchange={() => (listPage = 1)}>
+			<select id="workflow-sort" bind:value={sort} class="h-7 rounded-md border border-input bg-background px-1 text-xs" onchange={() => (listPage = 1)}>
 				<option value="updated">{m.workflows_sort_updated()}</option>
 				<option value="created">{m.workflows_sort_created()}</option>
 				<option value="name">{m.workflows_sort_name()}</option>
@@ -481,15 +481,15 @@
 		</div>
 	</div>
 	{#if bulkError}
-		<p role="alert" class="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">{bulkError}</p>
+		<p role="alert" class="mt-4 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1 text-xs text-destructive">{bulkError}</p>
 	{/if}
 	{#if selected.size > 0}
 		<div class="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
 			<p class="text-xs font-medium">{m.workflows_selected({ count: selected.size })}</p>
-			<Button variant="outline" size="sm" class="h-7 text-xs" disabled={bulkBusy} onclick={() => void bulkSetActive(true)}>{m.workflows_activate()}</Button>
-			<Button variant="outline" size="sm" class="h-7 text-xs" disabled={bulkBusy} onclick={() => void bulkSetActive(false)}>{m.workflows_deactivate()}</Button>
-			<Button variant="ghost" size="sm" class="h-7 text-xs text-destructive" disabled={bulkBusy} onclick={() => void bulkDelete()}>{m.workflows_delete()}</Button>
-			<Button variant="ghost" size="sm" class="h-7 text-xs" disabled={bulkBusy} onclick={() => (selected = new Set())}>{m.workflows_clear()}</Button>
+			<Button variant="outline" disabled={bulkBusy} onclick={() => void bulkSetActive(true)}>{m.workflows_activate()}</Button>
+			<Button variant="outline" disabled={bulkBusy} onclick={() => void bulkSetActive(false)}>{m.workflows_deactivate()}</Button>
+			<Button variant="ghost" class="text-destructive" disabled={bulkBusy} onclick={() => void bulkDelete()}>{m.workflows_delete()}</Button>
+			<Button variant="ghost" disabled={bulkBusy} onclick={() => (selected = new Set())}>{m.workflows_clear()}</Button>
 		</div>
 	{/if}
 
@@ -509,32 +509,32 @@
 			{#snippet emptyAction()}
 				{#if allRows.length === 0}
 					<div class="mt-3 flex flex-wrap justify-center gap-2">
-						<Button size="sm" onclick={() => (createOpen = true)}>
+						<Button onclick={() => (createOpen = true)}>
 							<FilePlus2 aria-hidden="true" />
 							{m.workflows_new()}
 						</Button>
 						<ImportDialog onImported={() => void loadWorkflows()} />
 					</div>
 				{:else}
-					<Button class="mt-3" size="sm" variant="outline" onclick={resetListQuery}>{m.workflows_clear_filters()}</Button>
+					<Button class="mt-3" variant="outline" onclick={resetListQuery}>{m.workflows_clear_filters()}</Button>
 				{/if}
 			{/snippet}
-			<div class="overflow-hidden rounded-lg border border-border">
-				<ul aria-label={m.nav_workflows()} class="divide-y divide-border">
-					<li class="flex items-center gap-3 border-b border-border bg-muted/40 px-3 py-1.5">
-						<input type="checkbox" checked={rows.length > 0 && rows.every((entry) => selected.has(entry.id))} onchange={(event) => togglePage(event.currentTarget.checked)} aria-label={m.workflows_select_all()} class="size-3.5 accent-primary" />
-						<span class="text-[0.6875rem] text-muted-foreground">{workflowCountLabel(filtered.length, allRows.length)} · {m.workflows_page_of({ page: currentPage, pages: totalPages })}</span>
-						{#if totalPages > 1}
-							<span class="ml-auto flex items-center gap-1">
-								<Button variant="ghost" size="sm" class="h-6 px-2 text-xs" disabled={currentPage <= 1} onclick={() => (listPage = currentPage - 1)}>{m.workflows_previous()}</Button>
-								<Button variant="ghost" size="sm" class="h-6 px-2 text-xs" disabled={currentPage >= totalPages} onclick={() => (listPage = currentPage + 1)}>{m.workflows_next()}</Button>
-							</span>
-						{/if}
-					</li>
-					{#each rows as workflow (workflow.id)}
-						<li class="flex items-center gap-2 transition-colors hover:bg-muted/50">
-							<input type="checkbox" checked={selected.has(workflow.id)} onchange={(event) => toggleSelected(workflow.id, event.currentTarget.checked)} aria-label={m.workflows_select_row({ name: workflow.name })} class="ml-3 size-3.5 shrink-0 accent-primary" />
-							<a href={`/app/workflows/${workflow.id}`} class="flex h-11 min-w-0 flex-1 items-center gap-3 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring">
+		<div class="overflow-hidden rounded-lg border border-border">
+			<ul aria-label={m.nav_workflows()} class="divide-y divide-border">
+				<li class="flex items-center gap-3 border-b border-border bg-muted/40 px-3 py-1">
+					<input type="checkbox" checked={rows.length > 0 && rows.every((entry) => selected.has(entry.id))} onchange={(event) => togglePage(event.currentTarget.checked)} aria-label={m.workflows_select_all()} class="size-3.5 accent-primary" />
+					<span class="text-[0.6875rem] text-muted-foreground">{workflowCountLabel(filtered.length, allRows.length)} · {m.workflows_page_of({ page: currentPage, pages: totalPages })}</span>
+					{#if totalPages > 1}
+						<span class="ml-auto flex items-center gap-1">
+							<Button variant="ghost" class="h-6 px-2 text-xs" disabled={currentPage <= 1} onclick={() => (listPage = currentPage - 1)}>{m.workflows_previous()}</Button>
+							<Button variant="ghost" class="h-6 px-2 text-xs" disabled={currentPage >= totalPages} onclick={() => (listPage = currentPage + 1)}>{m.workflows_next()}</Button>
+						</span>
+					{/if}
+				</li>
+				{#each rows as workflow (workflow.id)}
+					<li class="flex min-h-(--kf-row-h) items-center gap-2 transition-colors hover:bg-muted/50">
+						<input type="checkbox" checked={selected.has(workflow.id)} onchange={(event) => toggleSelected(workflow.id, event.currentTarget.checked)} aria-label={m.workflows_select_row({ name: workflow.name })} class="ml-3 size-3.5 shrink-0 accent-primary" />
+						<a href={`/app/workflows/${workflow.id}`} class="flex h-(--kf-row-h) min-w-0 flex-1 items-center gap-3 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring">
 								<span aria-hidden="true" class="size-1.5 shrink-0 rounded-full {workflow.active ? 'bg-success' : 'bg-muted-foreground/40'}"></span>
 								<span class="min-w-0 flex-1 truncate text-[0.8125rem] font-medium" title={workflow.name}>{workflow.name}</span>
 								<WorkflowTagChips tags={workflow.tags ?? []} />
@@ -579,9 +579,9 @@
 			</div>
 			{#if totalPages > 1}
 				<div class="mt-4 flex items-center justify-center gap-2">
-					<Button variant="outline" size="sm" disabled={currentPage <= 1} onclick={() => (listPage = currentPage - 1)}>{m.workflows_previous()}</Button>
+					<Button variant="outline" disabled={currentPage <= 1} onclick={() => (listPage = currentPage - 1)}>{m.workflows_previous()}</Button>
 					<span class="text-xs text-muted-foreground">{m.workflows_page_of({ page: currentPage, pages: totalPages })} · {workflowCountLabel(filtered.length, allRows.length)}</span>
-					<Button variant="outline" size="sm" disabled={currentPage >= totalPages} onclick={() => (listPage = currentPage + 1)}>{m.workflows_next()}</Button>
+					<Button variant="outline" disabled={currentPage >= totalPages} onclick={() => (listPage = currentPage + 1)}>{m.workflows_next()}</Button>
 				</div>
 			{/if}
 		</ListStates>

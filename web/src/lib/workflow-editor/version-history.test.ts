@@ -62,6 +62,11 @@ describe('versionRoles', () => {
 	it('gives an ordinary historical revision no badge at all', () => {
 		expect(versionRoles(summary())).toEqual([]);
 	});
+
+	it('renders roles on the shared status map, never the accent (FEAT-r8ph93)', () => {
+		expect(versionRoles(summary({ draft: true })).map((role) => role.status)).toEqual(['draft']);
+		expect(versionRoles(summary({ published: true })).map((role) => role.status)).toEqual(['published']);
+	});
 });
 
 describe('versionTitle', () => {

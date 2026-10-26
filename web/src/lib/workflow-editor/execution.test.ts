@@ -13,7 +13,11 @@ import {
 	latestNodeRuns,
 	nodeRunStatus,
 	parseConsole,
+	statusAccent,
+	statusIcon,
 	statusLabel,
+	statusToken,
+	statusTone,
 	waitingNotice
 } from './execution';
 
@@ -374,6 +378,65 @@ describe('statusLabel', () => {
 		// A trigger token is not a status: no catalog carries one, in either
 		// locale, so it keeps the capitalised token.
 		expect(statusLabel('subworkflow')).toBe('Subworkflow');
+	});
+});
+
+describe('the status→token map (FEAT-r8ph93)', () => {
+	it('puts every run, workflow and revision state on a semantic register', () => {
+		expect(statusToken('succeeded')).toBe('success');
+		expect(statusToken('published')).toBe('success');
+		expect(statusToken('active')).toBe('success');
+		expect(statusToken('failed')).toBe('danger');
+		expect(statusToken('running')).toBe('info');
+		expect(statusToken('queued')).toBe('info');
+		expect(statusToken('waiting')).toBe('info');
+		expect(statusToken('cancelled')).toBe('warning');
+		expect(statusToken('cancelling')).toBe('warning');
+		expect(statusToken('unpublished')).toBe('warning');
+		// Neutral, never the accent: a marker, not a state of health.
+		expect(statusToken('skipped')).toBe('neutral');
+		expect(statusToken('pinned')).toBe('neutral');
+		expect(statusToken('draft')).toBe('neutral');
+		expect(statusToken('paused')).toBe('neutral');
+		expect(statusToken('manual')).toBe('neutral');
+	});
+
+	it('paints badges on the subtle tints and never on the accent or the raw palette', () => {
+		for (const status of [
+			'succeeded', 'failed', 'running', 'queued', 'waiting', 'cancelled', 'cancelling', 'skipped', 'pinned'
+		]) {
+			const tone = statusTone(status);
+			expect(tone, status).not.toMatch(/primary|accent/);
+			expect(tone, status).not.toMatch(/(?:red|green|emerald|violet|amber|neutral|blue|sky)-\d/);
+		}
+		expect(statusTone('succeeded')).toContain('bg-(--kf-success-subtle)');
+		expect(statusTone('failed')).toContain('bg-(--kf-danger-subtle)');
+		expect(statusTone('running')).toContain('bg-(--kf-info-subtle)');
+		expect(statusTone('waiting')).toContain('bg-(--kf-info-subtle)');
+		expect(statusTone('cancelled')).toContain('bg-(--kf-warning-subtle)');
+		expect(statusTone('skipped')).toBe('bg-muted text-muted-foreground border-border');
+	});
+
+	it('paints the canvas in the run-state tokens, never the brand accent', () => {
+		expect(statusAccent('succeeded')).toBe('var(--kf-run-success)');
+		expect(statusAccent('failed')).toBe('var(--kf-run-error)');
+		expect(statusAccent('running')).toBe('var(--kf-run-running)');
+		expect(statusAccent('waiting')).toBe('var(--kf-run-waiting)');
+		expect(statusAccent('cancelled')).toBe('var(--kf-run-warning)');
+		expect(statusAccent('skipped')).toBe('var(--kf-run-disabled)');
+		for (const status of ['succeeded', 'failed', 'running', 'waiting', 'cancelled']) {
+			expect(statusAccent(status), status).not.toContain('primary');
+		}
+	});
+
+	it('pairs a status with a glyph so colour is never the only carrier', () => {
+		for (const status of [
+			'succeeded', 'failed', 'running', 'queued', 'waiting', 'cancelled', 'cancelling', 'skipped', 'pinned', 'draft'
+		]) {
+			expect(statusIcon(status), status).not.toBeNull();
+		}
+		// A status the map does not know gets a dot, not a wrong glyph.
+		expect(statusIcon('manual')).toBeNull();
 	});
 });
 

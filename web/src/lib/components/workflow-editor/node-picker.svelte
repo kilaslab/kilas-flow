@@ -8,6 +8,7 @@
 
 	import { catalogEntries, searchCatalog } from '$lib/workflow-editor/catalog';
 	import { buildPickerRows } from '$lib/workflow-editor/picker-rows';
+	import { railWidth } from '$lib/workflow-editor/rail-width.svelte';
 
 	import NodeIcon from './node-icon.svelte';
 
@@ -144,8 +145,11 @@
 		     assistive technology because Escape and the close button already
 		     serve that path. -->
 		<button type="button" tabindex="-1" aria-hidden="true" class="absolute inset-0 cursor-default" onclick={close}></button>
-		<div bind:this={dialogElement} class="focus-region relative flex max-h-[min(30rem,calc(100dvh-2rem))] w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="node-picker-title" tabindex="-1" onkeydown={handleKeydown}>
-			<div class="focus-within-ring-inset flex items-center gap-2 border-b border-border px-2.5 py-2">
+		<!-- The picker opens at the right rail's remembered width (FEAT-npc3ge):
+		     one rail width settings for the inspector, the version panel and
+		     this picker, clamped to the viewport on small screens. -->
+		<div bind:this={dialogElement} style="width: min({railWidth.px}px, 100%)" class="focus-region relative flex max-h-[min(30rem,calc(100dvh-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="node-picker-title" tabindex="-1" onkeydown={handleKeydown}>
+			<div class="focus-within-ring-inset flex items-center gap-2 border-b border-border px-2 py-2">
 				<Search aria-hidden="true" class="size-4 shrink-0 text-muted-foreground" />
 				<label class="sr-only" for="node-picker-search">{m.canvas_picker_search_label()}</label>
 				<input
@@ -174,7 +178,7 @@
 				{:else}
 					{#each rows.groups as group (group.category)}
 						<div role="group" aria-labelledby={`node-category-${group.category}`}>
-							<h3 id={`node-category-${group.category}`} class="px-2.5 pb-1 pt-2.5 text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">{group.category}</h3>
+							<h3 id={`node-category-${group.category}`} class="px-2 pb-1 pt-2 text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">{group.category}</h3>
 							{#each group.rows as row (row.id)}
 								<button
 									type="button"
@@ -182,15 +186,15 @@
 									role="option"
 									tabindex="-1"
 									aria-selected={row.index === activeIndex}
-									class="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent aria-selected:bg-accent focus-visible:bg-accent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+									class="flex w-full items-center gap-3 rounded-lg px-2 py-1 text-left transition-colors hover:bg-accent aria-selected:bg-accent focus-visible:bg-accent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
 									onclick={() => choose(row.definition)}
 									onmousemove={() => (activeIndex = row.index)}
 								>
-									<NodeIcon definition={row.definition} size="sm" />
+									<NodeIcon definition={row.definition} />
 									<span class="min-w-0 flex-1">
 										<span class="block truncate text-[0.8125rem] font-medium leading-tight">{row.definition.displayName}</span>
 										{#if row.definition.description}
-											<span class="mt-0.5 block truncate text-[0.6875rem] leading-tight text-muted-foreground">{row.definition.description}</span>
+											<span class="mt-1 block truncate text-[0.6875rem] leading-tight text-muted-foreground">{row.definition.description}</span>
 										{/if}
 									</span>
 								</button>
@@ -200,7 +204,7 @@
 				{/if}
 			</div>
 
-			<p class="shrink-0 border-t border-border px-2.5 py-1.5 text-[0.625rem] text-muted-foreground">
+			<p class="shrink-0 border-t border-border px-2 py-1 text-[0.625rem] text-muted-foreground">
 				{m.canvas_picker_footer({ shown: rows.flat.length, total: catalog.length })}
 			</p>
 		</div>

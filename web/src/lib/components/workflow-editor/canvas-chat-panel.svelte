@@ -209,28 +209,28 @@
 		{#each tools as tool (tool.key)}
 			<li class="rounded-md border border-border/70 bg-background/40">
 				<details class="group" open={liveList && tool.status === 'running'}>
-					<summary class="flex cursor-pointer list-none items-center gap-1.5 px-2 py-1 text-[0.6875rem] text-muted-foreground select-none [&::-webkit-details-marker]:hidden">
+					<summary class="flex cursor-pointer list-none items-center gap-2 px-2 py-1 text-[0.6875rem] text-muted-foreground select-none [&::-webkit-details-marker]:hidden">
 						<ChevronRight aria-hidden="true" class="size-3 shrink-0 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" />
-						{#if tool.status === 'running'}
-							<LoaderCircle aria-hidden="true" class="size-3 shrink-0 animate-spin text-primary motion-reduce:animate-none" />
-						{:else if tool.status === 'failed'}
-							<CircleAlert aria-hidden="true" class="size-3 shrink-0 text-destructive" />
-						{:else}
-							<CircleCheck aria-hidden="true" class="size-3 shrink-0 text-primary" />
-						{/if}
+					{#if tool.status === 'running'}
+						<LoaderCircle aria-hidden="true" class="size-3 shrink-0 animate-spin text-info motion-reduce:animate-none" />
+					{:else if tool.status === 'failed'}
+						<CircleAlert aria-hidden="true" class="size-3 shrink-0 text-destructive" />
+					{:else}
+						<CircleCheck aria-hidden="true" class="size-3 shrink-0 text-success" />
+					{/if}
 						<span class="min-w-0 truncate font-medium text-foreground">{toolLabel(tool.name)}</span>
 						{#if tool.status === 'failed'}<span class="text-destructive">· {m.editor_chat_tool_failed()}</span>{/if}
 					</summary>
-					<div class="space-y-1 border-t border-border/70 px-2 py-1.5">
+					<div class="space-y-1 border-t border-border/70 px-2 py-1">
 						{#if tool.input !== undefined}
 							<p class="text-[0.625rem] font-medium tracking-wide text-muted-foreground uppercase">{m.editor_chat_tool_input()}</p>
-							<pre class="max-h-32 overflow-auto rounded bg-background/70 px-1.5 py-1 font-mono text-[0.625rem] leading-4 whitespace-pre-wrap">{preview(tool.input)}</pre>
+							<pre class="max-h-32 overflow-auto rounded bg-background/70 px-1 py-1 font-mono text-[0.625rem] leading-4 whitespace-pre-wrap">{preview(tool.input)}</pre>
 						{/if}
 						{#if tool.status === 'failed'}
-							<pre class="max-h-32 overflow-auto rounded bg-destructive/10 px-1.5 py-1 font-mono text-[0.625rem] leading-4 whitespace-pre-wrap text-destructive">{tool.error}</pre>
+							<pre class="max-h-32 overflow-auto rounded bg-destructive/10 px-1 py-1 font-mono text-[0.625rem] leading-4 whitespace-pre-wrap text-destructive">{tool.error}</pre>
 						{:else if tool.output !== undefined}
 							<p class="text-[0.625rem] font-medium tracking-wide text-muted-foreground uppercase">{m.editor_chat_tool_output()}</p>
-							<pre class="max-h-32 overflow-auto rounded bg-background/70 px-1.5 py-1 font-mono text-[0.625rem] leading-4 whitespace-pre-wrap">{preview(tool.output)}</pre>
+							<pre class="max-h-32 overflow-auto rounded bg-background/70 px-1 py-1 font-mono text-[0.625rem] leading-4 whitespace-pre-wrap">{preview(tool.output)}</pre>
 						{/if}
 					</div>
 				</details>
@@ -248,7 +248,7 @@
 	aria-label={m.editor_chat()}
 	onkeydown={onPanelKeydown}
 >
-	<header class="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
+	<header class="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1">
 		<MessageCircle aria-hidden="true" class="size-3.5 text-muted-foreground" />
 		<h2 class="min-w-0 flex-1 truncate text-xs font-semibold">{m.editor_chat()}</h2>
 		<button
@@ -287,13 +287,13 @@
 	<div
 		bind:this={list}
 		onscroll={onScroll}
-		class="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-2.5 py-2.5"
+		class="min-h-0 flex-1 space-y-3 overflow-y-auto px-2 py-2"
 		data-testid="workflow-chat-messages"
 		aria-live="polite"
 		aria-busy={sending}
 	>
 		{#if messages.length === 0 && !sending}
-			<div class="flex h-full flex-col items-center justify-center gap-1.5 px-4 text-center">
+			<div class="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
 				<MessageCircle aria-hidden="true" class="size-5 text-muted-foreground/70" />
 				<p class="text-xs text-muted-foreground">{m.editor_chat_empty()}</p>
 				{#if hasMemory}
@@ -304,28 +304,28 @@
 
 		{#each messages as message (message.id)}
 			{#if message.role === 'user'}
-				<div class="ml-auto w-fit max-w-[85%] rounded-lg rounded-br-sm bg-primary px-2.5 py-1.5 text-xs leading-5 whitespace-pre-wrap text-primary-foreground" data-role="user">
+				<div class="ml-auto w-fit max-w-[85%] rounded-lg rounded-br-sm bg-primary px-2 py-1 text-xs leading-5 whitespace-pre-wrap text-primary-foreground" data-role="user">
 					{message.text}
 				</div>
 			{:else if message.role === 'assistant'}
-				<div class="max-w-[92%] space-y-1.5" data-role="assistant">
+				<div class="max-w-[92%] space-y-2" data-role="assistant">
 					{#if message.tools.length > 0}
 						{@render toolSteps(message.tools, false)}
 					{/if}
-					<div class="rounded-lg rounded-bl-sm bg-muted px-2.5 py-1.5 text-xs leading-5 text-foreground">
+					<div class="rounded-lg rounded-bl-sm bg-muted px-2 py-1 text-xs leading-5 text-foreground">
 						<ChatMarkdown text={message.text} />
 					</div>
 					{#if message.executionId}
-						<p class="flex items-center gap-1.5 pl-1 text-[0.625rem] text-muted-foreground">
+						<p class="flex items-center gap-2 pl-1 text-[0.625rem] text-muted-foreground">
 							{#if message.seconds !== undefined}<span class="tabular-nums">{m.editor_chat_took({ seconds: String(message.seconds) })}</span><span aria-hidden="true">·</span>{/if}
 							<a class="underline-offset-2 hover:text-foreground hover:underline" href={`/executions/${message.executionId}`}>{m.editor_view_execution()}</a>
 						</p>
 					{/if}
 				</div>
 			{:else}
-				<div class="max-w-[92%] space-y-1 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-xs leading-5 text-destructive" data-role="error">
-					<p class="flex items-start gap-1.5 font-medium">
-						<CircleAlert aria-hidden="true" class="mt-0.5 size-3.5 shrink-0" />
+				<div class="max-w-[92%] space-y-1 rounded-lg border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs leading-5 text-destructive" data-role="error">
+					<p class="flex items-start gap-2 font-medium">
+						<CircleAlert aria-hidden="true" class="mt-1 size-3.5 shrink-0" />
 						<span>{message.node ? m.editor_chat_node_failed({ node: message.node }) : message.text}</span>
 					</p>
 					{#if message.node}
@@ -335,7 +335,7 @@
 						<p class="font-mono text-[0.625rem] leading-4 text-destructive/80">{message.detail}</p>
 					{/if}
 					{#if message.issues && message.issues.length > 0}
-						<ul class="space-y-0.5 pt-0.5">
+						<ul class="space-y-1 pt-0">
 							{#each message.issues as issue, index (index)}
 								<li>
 									{#if issue.nodeID && onFocusIssue}
@@ -361,17 +361,17 @@
 		{/each}
 
 		{#if sending}
-			<div class="max-w-[92%] space-y-1.5" data-testid="workflow-chat-pending">
+			<div class="max-w-[92%] space-y-2" data-testid="workflow-chat-pending">
 				{#if live.tools.length > 0}
 					{@render toolSteps(live.tools, true)}
 				{/if}
 				{#if live.text}
-					<div class="rounded-lg rounded-bl-sm bg-muted px-2.5 py-1.5 text-xs leading-5 text-foreground" data-testid="workflow-chat-streaming">
+					<div class="rounded-lg rounded-bl-sm bg-muted px-2 py-1 text-xs leading-5 text-foreground" data-testid="workflow-chat-streaming">
 						<ChatMarkdown text={live.text} />
 					</div>
 				{:else}
-					<div class="inline-flex items-center gap-2 rounded-lg rounded-bl-sm bg-muted px-2.5 py-2 text-[0.6875rem] text-muted-foreground">
-						<span class="flex gap-0.5" aria-hidden="true">
+					<div class="inline-flex items-center gap-2 rounded-lg rounded-bl-sm bg-muted px-2 py-2 text-[0.6875rem] text-muted-foreground">
+						<span class="flex gap-1" aria-hidden="true">
 							<span class="size-1.5 animate-bounce rounded-full bg-muted-foreground/70 motion-reduce:animate-none"></span>
 							<span class="size-1.5 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:120ms] motion-reduce:animate-none"></span>
 							<span class="size-1.5 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:240ms] motion-reduce:animate-none"></span>
@@ -387,11 +387,11 @@
 	</div>
 
 	{#if dirty && !sending}
-		<p class="shrink-0 border-t border-border bg-warning/10 px-2.5 py-1.5 text-[0.6875rem] leading-4 text-foreground/90" data-testid="workflow-chat-unsaved">
+		<p class="shrink-0 border-t border-border bg-warning/10 px-2 py-1 text-[0.6875rem] leading-4 text-foreground/90" data-testid="workflow-chat-unsaved">
 			{m.editor_chat_unsaved()}
 		</p>
 	{:else if busy && !sending}
-		<p class="shrink-0 border-t border-border px-2.5 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">{m.editor_chat_busy()}</p>
+		<p class="shrink-0 border-t border-border px-2 py-1 text-[0.6875rem] leading-4 text-muted-foreground">{m.editor_chat_busy()}</p>
 	{/if}
 
 	<form
@@ -401,7 +401,7 @@
 			void send();
 		}}
 	>
-		<div class="focus-within-ring flex items-end gap-1.5 rounded-lg border border-border bg-background px-2 py-1.5 transition-colors">
+		<div class="focus-within-ring flex items-end gap-2 rounded-lg border border-border bg-background px-2 py-1 transition-colors">
 			<label class="sr-only" for="workflow-chat-input">{m.editor_chat_placeholder()}</label>
 			<textarea
 				id="workflow-chat-input"
@@ -409,7 +409,7 @@
 				bind:this={input}
 				bind:value={draft}
 				rows="1"
-				class="field-sizing-content max-h-32 min-h-5 min-w-0 flex-1 resize-none bg-transparent text-xs leading-5 focus-delegate placeholder:text-muted-foreground"
+				class="field-sizing-content max-h-32 min-h-6 min-w-0 flex-1 resize-none bg-transparent text-xs leading-5 focus-delegate placeholder:text-muted-foreground"
 				placeholder={m.editor_chat_placeholder()}
 				onkeydown={onKeydown}
 			></textarea>

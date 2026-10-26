@@ -59,7 +59,7 @@
 	<BaseEdge {id} path={geometry[0]} {markerEnd} {style} {interactionWidth} />
 	{#if editable && (hovered || selected)}
 		<EdgeLabel x={geometry[1]} y={geometry[2]} class="nodrag nopan" onmouseenter={enter} onmouseleave={leave}>
-			<div class="flex items-center gap-0.5 rounded-md border border-border bg-popover p-0.5 shadow-md">
+			<div class="flex items-center gap-1 rounded-md border border-border bg-popover p-0 shadow-md">
 				<button
 					type="button"
 					class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1"

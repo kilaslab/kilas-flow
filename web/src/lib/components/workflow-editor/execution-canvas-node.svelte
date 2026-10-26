@@ -95,7 +95,7 @@
 
 <div class="relative" style={`--node-accent: ${accent}`} data-run-status={status} data-selected={selected ? 'true' : undefined}>
 	<div
-		class="kf-node-tile flex items-center justify-center gap-2.5 border bg-card {TILE[visual.shape]}"
+		class="kf-node-tile flex items-center justify-center gap-3 border bg-card {TILE[visual.shape]}"
 		class:opacity-60={!reached}
 		style={`border-color: ${reached ? 'var(--node-accent)' : 'var(--border)'}; box-shadow: ${
 			reached || selected ? shadow : '0 1px 3px oklch(0 0 0 / 30%)'
@@ -133,7 +133,7 @@
 			<p class="truncate text-xs font-semibold leading-tight" class:text-muted-foreground={!reached}>{node.name}</p>
 		{/if}
 		{#if subtitle}
-			<p class="truncate pt-0.5 font-mono text-[0.625rem] leading-tight text-muted-foreground">{subtitle}</p>
+			<p class="truncate pt-0 font-mono text-[0.625rem] leading-tight text-muted-foreground">{subtitle}</p>
 		{/if}
 	</div>
 
@@ -151,7 +151,7 @@
 		{#if showOutputLabels}
 			<!-- Above the wire, as in the editor: centred on the handle the outgoing
 			     edge struck the label through. -->
-			<span class="pointer-events-none absolute left-full ml-2.5 max-w-20 -translate-y-full truncate whitespace-nowrap font-mono text-[0.625rem] text-muted-foreground" style={`top: calc(${top} - 0.375rem)`}>{portLabel(port)}</span>
+			<span class="pointer-events-none absolute left-full ml-3 max-w-20 -translate-y-full truncate whitespace-nowrap font-mono text-[0.625rem] text-muted-foreground" style={`top: calc(${top} - 0.375rem)`}>{portLabel(port)}</span>
 		{/if}
 	{/each}
 

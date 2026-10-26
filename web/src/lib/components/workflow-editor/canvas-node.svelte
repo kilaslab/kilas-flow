@@ -126,9 +126,12 @@
 	// the badge carries it as an alarm; lossy and dropped are notes, not faults.
 	// Warning is never a solid fill on a control and always travels with the
 	// triangle glyph (FEAT-p75n7j), so the lossy badge is an outlined chip.
+	// Solid fills use the *-fill pair, the one the contrast pairs hold at
+	// ≥4.5:1 in both themes — `text-destructive-foreground` on --destructive
+	// fell to 3.38:1 in light (FEAT-r8ph93).
 	const importBadgeClass = $derived(
 		importSeverity === 'blocking'
-			? 'border-background bg-destructive text-destructive-foreground'
+			? 'border-background bg-(--kf-danger-fill) text-(--kf-danger-fill-fg)'
 			: importSeverity === 'lossy'
 				? 'border-warning bg-background text-warning'
 				: 'border-background bg-muted-foreground text-background'
@@ -155,7 +158,7 @@
 					     text), opened detached so a note cannot navigate the editor. -->
 					<a href={run.link} target="_blank" rel="noopener noreferrer nofollow" class="underline underline-offset-2" onclick={(event) => event.stopPropagation()}>{run.text}</a>
 				{:else if run.image}
-					<span class="mx-0.5 inline-flex max-w-full items-center gap-1 truncate rounded border border-current/30 bg-current/10 px-1 font-mono text-[0.625rem]" title={run.text}>🖼 {run.text}</span>
+					<span class="mx-1 inline-flex max-w-full items-center gap-1 truncate rounded border border-current/30 bg-current/10 px-1 font-mono text-[0.625rem]" title={run.text}>🖼 {run.text}</span>
 				{:else if run.bullet}
 					<span class={run.code ? 'font-mono' : run.bold ? 'font-semibold' : ''}><span class="opacity-60">• </span>{run.text}</span>
 				{:else}
@@ -187,7 +190,7 @@
 	>
 		{#if editable}
 			<NodeToolbar position={Position.Top} offset={8}>
-				<div class="nodrag flex items-center gap-0.5 rounded-lg border border-border bg-popover p-0.5 shadow-md">
+				<div class="nodrag flex items-center gap-1 rounded-lg border border-border bg-popover p-0 shadow-md">
 					<button
 						type="button"
 						class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
@@ -210,7 +213,7 @@
 
 		<!-- Card-like tile: accent icon badge on a raised surface so chrome reads at low zoom. -->
 		<div
-			class="kf-node-tile flex items-center justify-center gap-2.5 border bg-card transition-[border-color,box-shadow] {TILE[visual.shape]}"
+			class="kf-node-tile flex items-center justify-center gap-3 border bg-card transition-[border-color,box-shadow] {TILE[visual.shape]}"
 			style={`border-color: ${border}; box-shadow: ${shadow}`}
 		>
 			<span
@@ -233,7 +236,7 @@
 			     accessible name, which Svelte Flow owns; this is the visible cue. -->
 			<span
 				aria-hidden="true"
-				class="absolute -bottom-1 -right-1 grid size-4 place-items-center rounded-full border-2 border-background bg-destructive text-[0.5rem] font-bold text-destructive-foreground"
+				class="absolute -bottom-1 -right-1 grid size-6 place-items-center rounded-full border-2 border-background bg-(--kf-danger-fill) text-(--kf-text-2xs) font-bold text-(--kf-danger-fill-fg)"
 				title={data.validationMessage}
 			>
 				!
@@ -248,7 +251,7 @@
 			<button
 				type="button"
 				data-import-diagnostic={importSeverity}
-				class="nodrag absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center gap-px rounded-full border-2 px-0.5 text-[0.5rem] font-bold {importBadgeClass}"
+				class="nodrag absolute -right-1 -top-1 inline-flex h-6 min-w-6 items-center justify-center gap-1 rounded-full border-2 px-1 text-(--kf-text-2xs) font-bold {importBadgeClass}"
 				title={importIssues.map((issue) => `${DIAGNOSTIC_SEVERITY_LABELS[issue.severity]}: ${issue.reason}`).join(' · ')}
 				aria-label={m.canvas_node_import_badge_aria({ summary: diagnosticSummaryLabel(importIssues), name: node.name })}
 				onclick={() => importReport?.().openReport()}
@@ -279,10 +282,10 @@
 				<p class="truncate text-xs font-semibold leading-tight">{node.name}</p>
 			{/if}
 			{#if capsuleType}
-				<p class="mx-auto mt-0.5 w-fit truncate rounded-full border border-destructive/30 bg-destructive/10 px-1.5 py-px text-[0.625rem] font-medium leading-tight text-destructive" title={m.canvas_node_unsupported_note({ type: capsuleType })}>{m.canvas_node_unsupported()}</p>
+				<p class="mx-auto mt-1 w-fit truncate rounded-full border border-destructive/30 bg-destructive/10 px-1 py-0 text-[0.625rem] font-medium leading-tight text-destructive" title={m.canvas_node_unsupported_note({ type: capsuleType })}>{m.canvas_node_unsupported()}</p>
 			{/if}
 			{#if subtitle}
-				<p class="truncate pt-0.5 font-mono text-[0.625rem] leading-tight text-muted-foreground">{subtitle}</p>
+				<p class="truncate pt-0 font-mono text-[0.625rem] leading-tight text-muted-foreground">{subtitle}</p>
 			{/if}
 		</div>
 
@@ -307,7 +310,7 @@
 				<!-- Above the wire, not centred on it: the edge leaves the handle at
 				     its own vertical centre, and a label sitting there reads as a
 				     strikethrough ("t̶r̶u̶e̶"). -->
-				<span class="pointer-events-none absolute left-full ml-2.5 max-w-20 -translate-y-full truncate whitespace-nowrap font-mono text-[0.625rem] text-muted-foreground" style={`top: calc(${top} - 0.375rem)`}>
+				<span class="pointer-events-none absolute left-full ml-3 max-w-20 -translate-y-full truncate whitespace-nowrap font-mono text-[0.625rem] text-muted-foreground" style={`top: calc(${top} - 0.375rem)`}>
 					{portLabel(port)}
 				</span>
 			{/if}
@@ -353,7 +356,7 @@
 				<button
 					type="button"
 					data-add-attachment={node.id}
-					class="nodrag absolute -translate-x-1/2 grid size-5 place-items-center rounded-full border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-[var(--node-accent)] hover:text-[var(--node-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+					class="nodrag absolute -translate-x-1/2 grid size-6 place-items-center rounded-full border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-[var(--node-accent)] hover:text-[var(--node-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 					style={`left: ${left}; top: calc(100% + ${attachmentRows === null ? '1.25' : `${0.375 + attachmentRows * 1.25}`}rem)`}
 					aria-label={m.canvas_node_attachment_add_aria({ name: node.name, port: portLabel(port) })}
 					onclick={() => actions?.addAttached(node.id, port.name, port.kind)}

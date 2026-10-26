@@ -50,14 +50,14 @@
 	}
 </script>
 
-<div class="grid gap-1.5 rounded-lg border border-border bg-background/40 p-2" data-testid="webhook-address">
+<div class="grid gap-2 rounded-lg border border-border bg-background/40 p-2" data-testid="webhook-address">
 	<p class="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">{m.properties_webhook_url()}</p>
 	{#if address.kind === 'ready'}
-		<div class="flex items-start gap-1.5">
+		<div class="flex items-start gap-2">
 			<!-- Wrapped rather than truncated: the tail of the URL is the minted
 			     route, which is the one part a sender cannot guess. -->
-			<code class="min-w-0 flex-1 break-all rounded border border-border bg-muted/40 px-1.5 py-1 font-mono text-[0.6875rem] leading-4 select-all" data-testid="webhook-url">{address.url}</code>
-			<Button type="button" variant="outline" size="sm" class="h-7 shrink-0 px-2 text-[0.6875rem]" onclick={() => void copy(address.url)}>
+			<code class="min-w-0 flex-1 break-all rounded border border-border bg-muted/40 px-1 py-1 font-mono text-[0.6875rem] leading-4 select-all" data-testid="webhook-url">{address.url}</code>
+			<Button type="button" variant="outline" class="shrink-0 px-2 text-[0.6875rem]" onclick={() => void copy(address.url)}>
 				{#if copied && !copyFailed}
 					<Check aria-hidden="true" class="size-3" />{m.workflows_copied()}
 				{:else}
@@ -70,8 +70,8 @@
 		{/if}
 		<!-- Top-aligned, because the note wraps in the narrow panel and a
 		     centred dot would float between its two lines. -->
-		<p class="flex items-start gap-1.5 text-[0.625rem] leading-4 text-muted-foreground">
-			<span aria-hidden="true" class="mt-[0.3125rem] size-1.5 shrink-0 rounded-full {address.live ? 'bg-success' : 'bg-muted-foreground/40'}"></span>
+		<p class="flex items-start gap-2 text-[0.625rem] leading-4 text-muted-foreground">
+			<span aria-hidden="true" class="mt-1 size-1.5 shrink-0 rounded-full {address.live ? 'bg-success' : 'bg-muted-foreground/40'}"></span>
 			{address.live ? m.properties_webhook_live() : m.properties_webhook_inactive()}
 		</p>
 	{:else if address.kind === 'loading'}
@@ -79,7 +79,7 @@
 	{:else if address.kind === 'unavailable'}
 		<p class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_webhook_unavailable()}</p>
 		{#if onRetry}
-			<Button type="button" variant="outline" size="sm" class="h-7 justify-self-start px-2 text-[0.6875rem]" onclick={onRetry}>{m.common_try_again()}</Button>
+			<Button type="button" variant="outline" class="justify-self-start px-2 text-[0.6875rem]" onclick={onRetry}>{m.common_try_again()}</Button>
 		{/if}
 	{:else if address.kind === 'unbound'}
 		<p class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_webhook_unbound()}</p>

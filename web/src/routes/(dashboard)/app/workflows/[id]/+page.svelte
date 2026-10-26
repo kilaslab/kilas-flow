@@ -562,7 +562,7 @@
 	</a>
 	<p class="min-w-0 max-w-32 flex-1 truncate text-xs font-medium sm:max-w-44">{currentWorkflow?.name ?? m.workflows_loading()}</p>
 	{#if currentWorkflow}
-		<span class="ml-auto flex shrink-0 items-center gap-1.5">
+		<span class="ml-auto flex shrink-0 items-center gap-2">
 			{#if importReport?.source}
 				<!-- The report is reachable for as long as the revision it describes
 				     is on the canvas, and it is the only place the import's verdict
@@ -570,7 +570,7 @@
 				     which the toolbar says before anything is opened. -->
 				<Button
 					variant={importCounts.blocking > 0 ? 'destructive' : 'outline'}
-					size="sm"
+					
 					title={diagnosticSummaryLabel(importIssues)}
 					onclick={() => (reportOpen = true)}
 				>
@@ -593,14 +593,14 @@
 				     says so and offers the way back instead. -->
 				{#if workflow.isError && hasStatus(workflow.error, 404)}
 					<h1 class="font-semibold">{m.workflows_editor_not_found()}</h1>
-					<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{m.workflows_editor_not_found_body()}</p>
+					<p class="mt-1 text-xs leading-5 text-muted-foreground">{m.workflows_editor_not_found_body()}</p>
 					<Button class="mt-4" href="/app/workflows">
 						<ArrowLeft aria-hidden="true" class="size-3.5" />
 						{m.workflows_back_to_workflows()}
 					</Button>
 				{:else}
 					<h1 class="font-semibold">{m.workflows_editor_load_failed()}</h1>
-					<p class="mt-0.5 text-xs leading-5 text-muted-foreground">{message(workflow.isError ? workflow.error : nodeTypes.error)}</p>
+					<p class="mt-1 text-xs leading-5 text-muted-foreground">{message(workflow.isError ? workflow.error : nodeTypes.error)}</p>
 					<div class="mt-4 flex flex-wrap gap-2">
 						<Button variant="outline" onclick={() => { void workflow.refetch(); void nodeTypes.refetch(); }}>{m.common_try_again()}</Button>
 						<Button variant="ghost" href="/app/workflows">{m.workflows_back_to_workflows()}</Button>
@@ -614,19 +614,19 @@
 		     `currentWorkflow` and replace the editor — with the draft and every
 		     unsaved edit inside it — over one 5xx on a window-focus refetch. -->
 		{#if workflow.isError}
-			<div role="alert" class="flex flex-wrap items-center gap-2 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5">
+			<div role="alert" class="flex flex-wrap items-center gap-2 border-b border-destructive/25 bg-destructive/5 px-3 py-1">
 				<p class="min-w-0 flex-1 text-xs leading-5 text-destructive">{m.workflows_editor_stale({ message: message(workflow.error) })}</p>
-				<Button variant="outline" size="sm" onclick={() => void workflow.refetch()}>{m.workflows_refresh()}</Button>
+				<Button variant="outline" onclick={() => void workflow.refetch()}>{m.workflows_refresh()}</Button>
 			</div>
 		{/if}
 		<!-- The server moved while this canvas was dirty. Adopting it silently
 		     would make the next save revert the other writer; ignoring it would
 		     hide that somebody else is editing. So it is offered. -->
 		{#if newerRevision}
-			<div role="status" class="flex flex-wrap items-center gap-2 border-b border-warning/40 bg-warning/10 px-3 py-1.5">
+			<div role="status" class="flex flex-wrap items-center gap-2 border-b border-warning/40 bg-warning/10 px-3 py-1">
 				<p class="min-w-0 flex-1 text-xs leading-5">{m.workflows_newer_revision({ revision: newerRevision.latestVersion.revision })}</p>
-				<Button variant="outline" size="sm" onclick={() => void reloadTheirs()}>{m.workflows_reload_theirs()}</Button>
-				<Button variant="ghost" size="sm" onclick={() => (newerRevision = null)}>{m.workflows_keep_mine()}</Button>
+				<Button variant="outline" onclick={() => void reloadTheirs()}>{m.workflows_reload_theirs()}</Button>
+				<Button variant="ghost" onclick={() => (newerRevision = null)}>{m.workflows_keep_mine()}</Button>
 			</div>
 		{/if}
 		{#key canvasFrom}

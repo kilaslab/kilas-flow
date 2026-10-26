@@ -209,7 +209,8 @@ describe('a resource mapper that lets the model fill a column', () => {
 		const pill = switchOf(markup, 'tempC');
 
 		expect(pill).toContain('border-border');
-		expect(pill).toContain('aria-checked:text-primary');
+		expect(pill).toContain('aria-checked:text-(--kf-accent-text)');
+		expect(pill).toContain('aria-checked:border-(--kf-selection)');
 		expect(pill).not.toMatch(/outline-none|outline-hidden|focus-visible:/);
 		expect(pill).not.toMatch(/#[0-9a-f]{3,6}|rgb\(|(?:red|green|blue|amber|emerald|sky)-\d/);
 	});

@@ -137,7 +137,7 @@
 			{#each BUTTON_VARIANTS as variant (variant)}
 				{@render rowLabel(variant ?? 'default')}
 				{#each STATES as state (state.key)}
-					<div><Button {variant} size="sm" data-force={state.force} disabled={state.disabled}>Button</Button></div>
+					<div><Button {variant} data-force={state.force} disabled={state.disabled}>Button</Button></div>
 				{/each}
 			{/each}
 		</div>
@@ -148,7 +148,7 @@
 				{@render rowLabel(variant)}
 				{#each STATES as state (state.key)}
 					<div>
-						<Button {variant} size="icon-sm" aria-label="Notifications" data-force={state.force} disabled={state.disabled}><Bell /></Button>
+						<Button {variant} size="icon" aria-label="Notifications" data-force={state.force} disabled={state.disabled}><Bell /></Button>
 					</div>
 				{/each}
 			{/each}
@@ -161,7 +161,6 @@
 				{#each STATES as state (state.key)}
 					<div>
 						<Input
-							class="h-7"
 							placeholder="Search"
 							value={row.value}
 							aria-label={`${row.label} ${state.label}`}
@@ -181,7 +180,7 @@
 				{#each STATES as state (state.key)}
 					<div>
 						<Select.Root type="single" value={row.value} disabled={state.disabled}>
-							<Select.Trigger size="sm" class="w-36" aria-label={`${row.label} ${state.label}`} data-force={state.force}>
+							<Select.Trigger class="w-36" aria-label={`${row.label} ${state.label}`} data-force={state.force}>
 								{row.value ? 'All workflows' : 'Choose…'}
 							</Select.Trigger>
 							<Select.Content>
@@ -225,7 +224,7 @@
 			<DropdownMenu.Root open>
 				<DropdownMenu.Trigger>
 					{#snippet child({ props })}
-						<Button {...props} variant="outline" size="sm">Actions</Button>
+						<Button {...props} variant="outline">Actions</Button>
 					{/snippet}
 				</DropdownMenu.Trigger>
 				<DropdownMenu.Content align="start" class="w-48" onOpenAutoFocus={(event) => event.preventDefault()} onCloseAutoFocus={(event) => event.preventDefault()} onInteractOutside={(event) => event.preventDefault()}>
@@ -267,7 +266,7 @@
 			<div bind:this={navPanel} class="w-52 rounded-(--kf-radius-md) border border-sidebar-border bg-sidebar p-2 text-sidebar-foreground" data-testid="nav-panel">
 				<DashboardNav path="/app/workflows" />
 			</div>
-			<div class="grid gap-0.5 pt-2 text-[0.6875rem] text-muted-foreground">
+			<div class="grid gap-1 pt-2 text-[0.6875rem] text-muted-foreground">
 				<span class="flex h-8 items-center">current page</span>
 				<span class="flex h-8 items-center">default</span>
 				<span class="flex h-8 items-center">hover</span>
@@ -299,9 +298,9 @@
 		<div class="grid w-fit gap-4" data-testid="matrix">
 			<div data-theme="light" data-testid="light-subtree" class="grid gap-3 rounded-(--kf-radius-md) border border-border bg-background p-4 text-foreground">
 				<div class="flex items-center gap-2">
-					<Button size="sm">Execute</Button>
-					<Button size="sm" variant="outline">Cancel</Button>
-					<Input class="h-7 w-40" placeholder="Search" aria-label="Search" />
+					<Button>Execute</Button>
+					<Button variant="outline">Cancel</Button>
+					<Input class="w-40" placeholder="Search" aria-label="Search" />
 					<Switch bind:checked={switchOn} aria-label="Active" />
 					<a href="#subtree" class="text-sm text-(--kf-accent-text) underline underline-offset-4">Link</a>
 				</div>
@@ -325,9 +324,9 @@
 				</div>
 			</div>
 			<div data-kf-brand style="--kf-accent-src: #0ea5e9" data-testid="brand-subtree" class="flex items-center gap-2 rounded-(--kf-radius-md) border border-border p-4">
-				<Button size="sm">Execute</Button>
-				<Button size="sm" data-force="hover">Hover</Button>
-				<Button size="sm" variant="outline" data-force="focus focus-visible">Focus</Button>
+				<Button>Execute</Button>
+				<Button data-force="hover">Hover</Button>
+				<Button variant="outline" data-force="focus focus-visible">Focus</Button>
 				<a href="#brand" class="text-sm text-(--kf-accent-text) underline underline-offset-4">Link</a>
 			</div>
 		</div>

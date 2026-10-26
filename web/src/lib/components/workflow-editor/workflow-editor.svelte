@@ -101,6 +101,7 @@
 	import { diagnosticSummaryLabel } from '$lib/workflow-editor/import-diagnostics';
 	import { message as apiMessage } from '$lib/api/http';
 	import PasteReportSheet from './paste-report-sheet.svelte';
+	import RailGrip from './rail-grip.svelte';
 	import { emptyHistory, record as recordHistory, redo as redoHistory, undo as undoHistory, type History as DocumentHistory } from '$lib/workflow-editor/history';
 	import { SHORTCUT_REFERENCE, CANVAS_DELETE_KEYS, editorShortcut, formatKeys, isMacPlatform, isTypingTarget } from '$lib/workflow-editor/shortcuts';
 	import { hasLabelledOutputs } from '$lib/workflow-editor/ports';
@@ -108,6 +109,7 @@
 	import { tidyDocument } from '$lib/workflow-editor/layout';
 	import { fitPaddingBeside, shownSaveError } from '$lib/workflow-editor/save-feedback';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
+	import { railWidth } from '$lib/workflow-editor/rail-width.svelte';
 	import { isAnnotation } from '$lib/workflow-editor/node-visual';
 	import { chatHasMemory, chatTriggerIn, type ChatSendPayload } from '$lib/workflow-editor/chat';
 	import { executeIntent } from '$lib/workflow-editor/run-trigger';
@@ -1392,10 +1394,10 @@
 <svelte:window onkeydown={handleShortcut} />
 
 <section bind:this={editorSection} data-workflow-editor onpaste={onPaste} class="relative flex h-full min-h-0 flex-col bg-background" aria-label={m.editor_aria_label()}>
-	<header class="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-card px-1.5">
+	<header class="flex h-10 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-card px-2">
 		{#if header}
 			{@render header()}
-			<span aria-hidden="true" class="mx-0.5 h-4 w-px shrink-0 bg-border"></span>
+			<span aria-hidden="true" class="mx-1 h-4 w-px shrink-0 bg-border"></span>
 		{/if}
 		{#if !locked}
 			<button type="button" class="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-primary px-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-(--kf-accent-hover) active:bg-(--kf-accent-press) focus-visible:outline-2 focus-visible:outline-offset-2" onclick={() => openPicker(false)}>
@@ -1427,7 +1429,7 @@
 			     would execute the saved draft, not the graph being looked at,
 			     which is the one thing a preview must never be mistaken for.
 			     Primary brand CTA — n8n-style prominence without orange. -->
-			<button type="button" data-testid="toolbar-run" class="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-primary px-2.5 text-xs font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-(--kf-accent-hover) active:bg-(--kf-accent-press) focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-primary" disabled={dirty || running || previewing} aria-describedby={dirty ? 'save-first-hint' : undefined} onclick={() => void run()}>
+			<button type="button" data-testid="toolbar-run" class="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md bg-primary px-2 text-xs font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-(--kf-accent-hover) active:bg-(--kf-accent-press) focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-primary" disabled={dirty || running || previewing} aria-describedby={dirty ? 'save-first-hint' : undefined} onclick={() => void run()}>
 				<Play aria-hidden="true" class="size-3.5" />{running ? m.editor_running() : m.editor_execute()}
 			</button>
 		{/if}
@@ -1462,7 +1464,7 @@
 			{#if canActivate}
 				<span aria-hidden="true" class="size-1.5 rounded-full {active ? 'bg-success' : 'bg-muted-foreground/40'}"></span>
 				<span class="whitespace-nowrap">{active ? m.workflows_state_active() : m.editor_state_inactive()}</span>
-				<span aria-hidden="true" class="mx-0.5 h-3 w-px bg-border"></span>
+				<span aria-hidden="true" class="mx-1 h-3 w-px bg-border"></span>
 			{/if}
 			{#if dirty && !locked}<span aria-hidden="true" class="size-1.5 rounded-full bg-warning"></span>{/if}
 			<span class="hidden whitespace-nowrap sm:inline">{canvasStatus}</span>
@@ -1475,19 +1477,19 @@
 		<!-- Both answers are offered because the editor cannot choose: keeping
 		     this draft may overwrite a colleague's, and reloading discards the
 		     user's own edits. -->
-		<div role="alert" class="flex shrink-0 flex-wrap items-center gap-2 border-b border-warning/30 bg-warning/10 px-3 py-1.5 text-xs">
+		<div role="alert" class="flex shrink-0 flex-wrap items-center gap-2 border-b border-warning/30 bg-warning/10 px-3 py-1 text-xs">
 			<span class="min-w-0 flex-1">{m.editor_conflict_notice()}</span>
-			<button type="button" class="shrink-0 rounded-md border border-border bg-background px-2 py-0.5 font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1" onclick={() => onReloadConflict?.()}>{m.workflows_reload_theirs()}</button>
-			<button type="button" class="shrink-0 rounded-md border border-border bg-background px-2 py-0.5 font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1" onclick={() => onOverwriteConflict?.()}>{m.editor_save_mine_anyway()}</button>
+			<button type="button" class="shrink-0 rounded-md border border-border bg-background px-2 py-0 font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1" onclick={() => onReloadConflict?.()}>{m.workflows_reload_theirs()}</button>
+			<button type="button" class="shrink-0 rounded-md border border-border bg-background px-2 py-0 font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1" onclick={() => onOverwriteConflict?.()}>{m.editor_save_mine_anyway()}</button>
 		</div>
 	{/if}
 	<!-- One banner per failure: a conflict is explained above, and the server's
 	     detail under it only added the two revision ids. -->
 	{#if shownSaveError(saveError, saveConflict)}
-		<p role="alert" class="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">{m.editor_save_failed({ error: saveError ?? '' })}</p>
+		<p role="alert" class="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-1 text-xs text-destructive">{m.editor_save_failed({ error: saveError ?? '' })}</p>
 	{/if}
 	{#if canvasMessage}
-		<p role="status" class="shrink-0 border-b border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+		<p role="status" class="shrink-0 border-b border-border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
 			{canvasMessage}
 			{#if pasteReport && pasteReport.message === canvasMessage}
 				<button type="button" class="ml-2 font-medium text-foreground underline underline-offset-2" onclick={() => (pasteReportOpen = true)}>{m.editor_paste_report_open()}</button>
@@ -1505,22 +1507,22 @@
 			     issues for one node with the same code, and a duplicate key crashed
 			     the render (each_key_duplicate) rather than showing both. -->
 			{#each issues as issue, index (`${issue.code ?? ''}-${issue.nodeID ?? issue.connectionID ?? ''}-${index}`)}
-				<li><button type="button" class="w-full px-3 py-1.5 text-left text-xs text-destructive underline decoration-destructive/30 underline-offset-2 hover:decoration-destructive" onclick={() => focusValidationIssue(issue)}>{issue.message}{#if issue.nodeID} {m.editor_issue_node()}{:else if issue.connectionID} {m.editor_issue_connection()}{/if}</button></li>
+				<li><button type="button" class="w-full px-3 py-1 text-left text-xs text-destructive underline decoration-destructive/30 underline-offset-2 hover:decoration-destructive" onclick={() => focusValidationIssue(issue)}>{issue.message}{#if issue.nodeID} {m.editor_issue_node()}{:else if issue.connectionID} {m.editor_issue_connection()}{/if}</button></li>
 			{/each}
 		</ul>
 	{/if}
 	{#if runError}
-		<p role="alert" class="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">
+		<p role="alert" class="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-1 text-xs text-destructive">
 			{m.editor_run_failed({ error: runError })}
 			{#if lastExecutionId}
 				<a class="ml-2 font-medium underline underline-offset-2" href={`/executions/${lastExecutionId}`}>{m.editor_view_execution()}</a>
 			{/if}
 		</p>
 	{:else if runMessage}
-		<p role="status" class="flex shrink-0 items-center gap-2 border-b border-success/25 bg-success/5 px-3 py-1.5 text-xs text-success">
+		<p role="status" class="flex shrink-0 items-center gap-2 border-b border-success/25 bg-success/5 px-3 py-1 text-xs text-success">
 			<span>{runMessage}</span>
 			{#if lastExecutionId}
-				<a class="font-medium text-primary underline underline-offset-2" href={`/executions/${lastExecutionId}`}>{m.editor_view_execution()}</a>
+				<a class="font-medium text-(--kf-accent-text) underline underline-offset-2" href={`/executions/${lastExecutionId}`}>{m.editor_view_execution()}</a>
 			{/if}
 		</p>
 	{/if}
@@ -1528,7 +1530,7 @@
 	     listening, and it belongs in the destructive register beside the other
 	     things that did not happen. -->
 	{#if activationError}
-		<p role="alert" class="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">{m.workflows_activation_failed({ message: activationError })}</p>
+		<p role="alert" class="shrink-0 border-b border-destructive/25 bg-destructive/5 px-3 py-1 text-xs text-destructive">{m.workflows_activation_failed({ message: activationError })}</p>
 	{/if}
 	<ActivationNotices {notices} onDismiss={(key) => onDismissNotice?.(key)} />
 
@@ -1536,16 +1538,16 @@
 	     and offer the way back in the same breath. Without this strip the only
 	     signal is that every control quietly stopped working. -->
 	{#if preview}
-		<div role="status" class="flex shrink-0 items-center gap-2 border-b border-primary/25 bg-primary/5 px-3 py-1.5 text-xs">
-			<History aria-hidden="true" class="size-3.5 shrink-0 text-primary" />
+		<div role="status" class="flex shrink-0 items-center gap-2 border-b border-info/25 bg-(--kf-info-subtle) px-3 py-1 text-xs">
+			<History aria-hidden="true" class="size-3.5 shrink-0 text-info" />
 			<span class="min-w-0 flex-1 truncate">{m.editor_previewing_note({ revision: preview.revision })}</span>
-			<button type="button" class="shrink-0 rounded-md border border-border bg-background px-2 py-0.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1" onclick={() => (preview = null)}>
+			<button type="button" class="shrink-0 rounded-md border border-border bg-background px-2 py-0 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-1" onclick={() => (preview = null)}>
 				{m.versions_back_to_draft()}
 			</button>
 		</div>
 	{/if}
 
-	<div class="relative flex min-h-0 flex-1 flex-col lg:grid" style={showInspector || selectedUncatalogued ? 'grid-template-columns: minmax(0,1fr) 20rem' : 'grid-template-columns: minmax(0,1fr)'}>
+	<div class="relative flex min-h-0 flex-1 flex-col lg:grid" style={showInspector || selectedUncatalogued ? `grid-template-columns: minmax(0,1fr) ${railWidth.px}px` : 'grid-template-columns: minmax(0,1fr)'}>
 		<!-- tabindex makes this a place focus can land after a node is deleted; -1
 		     keeps it out of the tab sequence. -->
 		<div bind:this={canvasRegion} tabindex="-1" class="focus-region relative min-h-0 flex-1 overflow-hidden" data-testid="workflow-canvas">
@@ -1613,7 +1615,7 @@
 									id="node-rename-input"
 									bind:this={renameInput}
 									bind:value={renameValue}
-									class="h-7 w-full rounded-md border border-primary bg-background px-2 text-xs shadow-md"
+									class="h-7 w-full rounded-md border border-(--kf-selection) bg-background px-2 text-xs shadow-md"
 									onkeydown={(event) => {
 										if (event.key === 'Enter') {
 											event.preventDefault();
@@ -1658,7 +1660,7 @@
 						<button
 							type="button"
 							data-testid="workflow-chat-button"
-							class="pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-semibold text-foreground shadow-lg shadow-black/20 transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2"
+							class="pointer-events-auto inline-flex h-7 pointer-coarse:h-8 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-semibold text-foreground shadow-lg shadow-black/20 transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2"
 							onclick={() => (chatOpen = true)}
 							aria-label={m.editor_chat_open()}
 						>
@@ -1676,7 +1678,7 @@
 					<button
 						type="button"
 						data-testid="canvas-execute"
-						class="pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-lg shadow-black/40 transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
+						class="pointer-events-auto inline-flex h-7 pointer-coarse:h-8 items-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-lg shadow-black/40 transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
 						disabled={dirty || running || previewing}
 						aria-describedby={dirty ? 'save-first-hint' : undefined}
 						onclick={() => void run()}
@@ -1690,7 +1692,7 @@
 			{#if (displayed.nodes?.length ?? 0) === 0 && !locked}
 				<div class="pointer-events-none absolute inset-0 grid place-items-center p-4">
 					<div class="pointer-events-auto text-center">
-						<button type="button" class="mx-auto grid h-17 w-17 place-items-center rounded-l-[2.125rem] rounded-r-lg border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-4" aria-label={m.editor_add_first_step()} onclick={() => openPicker(true)}>
+						<button type="button" class="mx-auto grid h-17 w-17 place-items-center rounded-l-[2.125rem] rounded-r-lg border border-dashed border-border bg-card text-muted-foreground transition-colors hover:border-(--kf-selection) hover:text-(--kf-accent-text) focus-visible:outline-2 focus-visible:outline-offset-4" aria-label={m.editor_add_first_step()} onclick={() => openPicker(true)}>
 							<Plus aria-hidden="true" class="size-5" />
 						</button>
 						<h2 class="mt-3 text-sm font-semibold">{m.editor_empty_title()}</h2>
@@ -1701,27 +1703,29 @@
 		</div>
 
 		{#if showInspector && selectedNode && selectedDefinition}
-			<aside bind:this={inspectorRegion} tabindex="-1" class="focus-region hidden min-h-0 border-l border-border lg:block">
+			<aside bind:this={inspectorRegion} tabindex="-1" class="focus-region relative hidden min-h-0 border-l border-border lg:block">
+				<RailGrip />
 				<div class="flex h-full min-h-0 flex-col">
 					<div class="min-h-0 flex-1">
 						<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} {credentialsLoaded} readOnly={locked} workflowID={document.id} savedNode={selectedSavedNode} {active} upstreamNodeNames={selectedUpstreamNames} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} />
 					</div>
 					{#if selectedResolvedVersion !== null && selectedResolvedVersion !== selectedNode.typeVersion}
-						<p class="shrink-0 border-t border-border px-3 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">{m.editor_resolved_version({ stored: selectedNode.typeVersion, resolved: selectedResolvedVersion })}</p>
+						<p class="shrink-0 border-t border-border px-3 py-1 text-[0.6875rem] leading-4 text-muted-foreground">{m.editor_resolved_version({ stored: selectedNode.typeVersion, resolved: selectedResolvedVersion })}</p>
 					{/if}
 				</div>
 			</aside>
 		{/if}
 		{#if selectedUncatalogued && selectedNode}
-			<aside tabindex="-1" class="focus-region hidden min-h-0 overflow-y-auto border-l border-border bg-card lg:block">
+			<aside tabindex="-1" class="focus-region relative hidden min-h-0 overflow-y-auto border-l border-border bg-card lg:block">
+				<RailGrip />
 				<section aria-label={m.editor_node_details_aria({ name: selectedNode.name })} class="flex h-full min-h-0 flex-col p-3">
-					<p class="flex items-center gap-1.5 text-xs font-semibold">
+					<p class="flex items-center gap-2 text-xs font-semibold">
 						<TriangleAlert aria-hidden="true" class="size-3.5 shrink-0 text-destructive" />
 						{capsuleOrigin ? m.editor_unsupported_node() : m.editor_unknown_node_type()}
 					</p>
 					<p class="mt-1 truncate text-[0.8125rem] font-medium">{selectedNode.name}</p>
 					{#if capsuleOrigin}
-						<dl class="mt-2 grid gap-1 rounded-lg border border-border bg-muted/40 px-2.5 py-2 font-mono text-[0.6875rem] leading-5">
+						<dl class="mt-2 grid gap-1 rounded-lg border border-border bg-muted/40 px-2 py-2 font-mono text-[0.6875rem] leading-5">
 							<div class="flex min-w-0 gap-2"><dt class="shrink-0 text-muted-foreground">type</dt><dd class="min-w-0 flex-1 truncate">{capsuleOrigin.type}</dd></div>
 							{#if capsuleOrigin.version !== undefined && capsuleOrigin.version !== null}
 								<div class="flex min-w-0 gap-2"><dt class="shrink-0 text-muted-foreground">version</dt><dd class="min-w-0 flex-1 truncate">{String(capsuleOrigin.version)}</dd></div>
@@ -1738,24 +1742,24 @@
 
 		{#if narrow.current && propertyPanelOpen && selectedNode && selectedDefinition}
 			<div bind:this={propertyDialog} class="focus-region absolute inset-x-2 bottom-2 z-30 max-h-[min(28rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={m.editor_node_properties_aria({ name: selectedNode.name })} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
-				<div class="flex justify-end border-b border-border px-1.5 py-1"><button bind:this={propertyCloseButton} type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted" aria-label={m.editor_close_properties_aria()} onclick={closePropertyPanel}><X aria-hidden="true" class="size-3.5" /></button></div>
+				<div class="flex justify-end border-b border-border px-1 py-1"><button bind:this={propertyCloseButton} type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted" aria-label={m.editor_close_properties_aria()} onclick={closePropertyPanel}><X aria-hidden="true" class="size-3.5" /></button></div>
 				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} {credentialsLoaded} readOnly={locked} workflowID={document.id} savedNode={selectedSavedNode} {active} upstreamNodeNames={selectedUpstreamNames} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} />
 				{#if selectedResolvedVersion !== null && selectedResolvedVersion !== selectedNode.typeVersion}
-					<p class="border-t border-border px-3 py-1.5 text-[0.6875rem] leading-4 text-muted-foreground">{m.editor_resolved_version({ stored: selectedNode.typeVersion, resolved: selectedResolvedVersion })}</p>
+					<p class="border-t border-border px-3 py-1 text-[0.6875rem] leading-4 text-muted-foreground">{m.editor_resolved_version({ stored: selectedNode.typeVersion, resolved: selectedResolvedVersion })}</p>
 				{/if}
 			</div>
 		{/if}
 		{#if narrow.current && propertyPanelOpen && selectedUncatalogued && selectedNode}
 			<div class="focus-region absolute inset-x-2 bottom-2 z-30 max-h-[min(28rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={m.editor_node_details_aria({ name: selectedNode.name })} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
-				<div class="flex justify-end border-b border-border px-1.5 py-1"><button type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted" aria-label={m.editor_close_details_aria()} onclick={closePropertyPanel}><X aria-hidden="true" class="size-3.5" /></button></div>
+				<div class="flex justify-end border-b border-border px-1 py-1"><button type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted" aria-label={m.editor_close_details_aria()} onclick={closePropertyPanel}><X aria-hidden="true" class="size-3.5" /></button></div>
 				<section aria-label={m.editor_node_details_aria({ name: selectedNode.name })} class="max-h-[min(24rem,calc(100%-3rem))] overflow-y-auto p-3">
-					<p class="flex items-center gap-1.5 text-xs font-semibold">
+					<p class="flex items-center gap-2 text-xs font-semibold">
 						<TriangleAlert aria-hidden="true" class="size-3.5 shrink-0 text-destructive" />
 						{capsuleOrigin ? m.editor_unsupported_node() : m.editor_unknown_node_type()}
 					</p>
 					<p class="mt-1 truncate text-[0.8125rem] font-medium">{selectedNode.name}</p>
 					{#if capsuleOrigin}
-						<dl class="mt-2 grid gap-1 rounded-lg border border-border bg-muted/40 px-2.5 py-2 font-mono text-[0.6875rem] leading-5">
+						<dl class="mt-2 grid gap-1 rounded-lg border border-border bg-muted/40 px-2 py-2 font-mono text-[0.6875rem] leading-5">
 							<div class="flex min-w-0 gap-2"><dt class="shrink-0 text-muted-foreground">type</dt><dd class="min-w-0 flex-1 truncate">{capsuleOrigin.type}</dd></div>
 							{#if capsuleOrigin.version !== undefined && capsuleOrigin.version !== null}
 								<div class="flex min-w-0 gap-2"><dt class="shrink-0 text-muted-foreground">version</dt><dd class="min-w-0 flex-1 truncate">{String(capsuleOrigin.version)}</dd></div>
@@ -1792,7 +1796,7 @@
 				<h2 id="shortcut-title" class="text-sm font-semibold">{m.editor_keyboard_shortcuts()}</h2>
 				<!-- Rendered from the keymap itself, so a shortcut cannot exist in the
 				     handler and be missing from the list a user reads. -->
-				<dl class="mt-3 grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1.5 text-xs">
+				<dl class="mt-3 grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-2 text-xs">
 					{#each SHORTCUT_REFERENCE as shortcut (shortcut.action)}
 						<dt class="font-mono text-muted-foreground">{formatKeys(shortcut.keys, macKeys)}</dt>
 						<dd>{shortcut.label()}</dd>

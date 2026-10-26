@@ -23,5 +23,5 @@
 	</ol>
 {/if}
 {#if truncated}
-	<p class="mt-1.5 text-xs text-muted-foreground">{m.executions_console_truncated()}</p>
+	<p class="mt-2 text-xs text-muted-foreground">{m.executions_console_truncated()}</p>
 {/if}
