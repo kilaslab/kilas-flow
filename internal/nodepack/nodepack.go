@@ -132,6 +132,19 @@ type Parameter struct {
 	Default     any                       `json:"default,omitempty"`
 	Options     []property.PropertyOption `json:"options,omitempty"`
 	TypeOptions *property.TypeOptions     `json:"typeOptions,omitempty"`
+	// LoadOptions fills this property's values from the customer's own
+	// service at edit time, instead of a static `options` list. It is what a
+	// pack for a host API needs for its pickers — channels, agents, tags —
+	// because those live behind the host's API and no binary can know them.
+	//
+	// Allowed on `options` and `multiOptions` properties; a resourceLocator
+	// declares its loader on the list mode it belongs to instead, exactly as
+	// the editor reads it.
+	LoadOptions *property.OptionsLoader `json:"loadOptions,omitempty"`
+	// Modes are a `resourceLocator`'s ways of naming its resource: a typed
+	// value, or a searched list. A list mode carries the LoadOptions it is
+	// filled by.
+	Modes []property.PropertyMode `json:"modes,omitempty"`
 	// Resources and Operations are the values that show this property. Both are
 	// required: an operation name alone does not identify an operation, because
 	// names repeat across resources.
@@ -287,9 +300,15 @@ func Load(pack *Pack) (node.Definition, *routing.Node, error) {
 			},
 		},
 	)
+	// The credential types a loader on any parameter may name: the one this
+	// pack requires, because a binding carries references for exactly that.
+	loadableCredentials := map[string]bool{}
+	if pack.CredentialType != "" {
+		loadableCredentials[pack.CredentialType] = true
+	}
 	seenParameter := map[string]bool{}
 	for _, parameter := range pack.Parameters {
-		declared, err := parameter.definition()
+		declared, err := parameter.definition(loadableCredentials)
 		if err != nil {
 			return node.Definition{}, nil, fmt.Errorf("node pack %q parameter %q: %w", pack.Type, parameter.Key, err)
 		}
@@ -332,9 +351,13 @@ func loadTrigger(pack *Pack, definition node.Definition) (node.Definition, *rout
 		definition.N8NSource = nil
 	}
 
+	loadableCredentials := map[string]bool{}
+	if pack.CredentialType != "" {
+		loadableCredentials[pack.CredentialType] = true
+	}
 	seen := map[string]bool{}
 	for _, parameter := range pack.Parameters {
-		declared, err := parameter.definition()
+		declared, err := parameter.definition(loadableCredentials)
 		if err != nil {
 			return node.Definition{}, nil, fmt.Errorf("node pack %q parameter %q: %w", pack.Type, parameter.Key, err)
 		}
@@ -352,7 +375,7 @@ func loadTrigger(pack *Pack, definition node.Definition) (node.Definition, *rout
 	return definition, nil, nil
 }
 
-func (parameter Parameter) definition() (property.PropertyDefinition, error) {
+func (parameter Parameter) definition(allowedCredentials map[string]bool) (property.PropertyDefinition, error) {
 	if strings.TrimSpace(parameter.Key) == "" {
 		return property.PropertyDefinition{}, fmt.Errorf("a parameter needs a key")
 	}
@@ -362,10 +385,14 @@ func (parameter Parameter) definition() (property.PropertyDefinition, error) {
 	if parameter.Kind == "" {
 		return property.PropertyDefinition{}, fmt.Errorf("a parameter needs a kind")
 	}
+	if err := checkParameterLoader(parameter, allowedCredentials); err != nil {
+		return property.PropertyDefinition{}, err
+	}
 	declared := property.PropertyDefinition{
 		Key: parameter.Key, Label: parameter.Label, Description: parameter.Description,
 		Kind: parameter.Kind, Required: parameter.Required, Default: parameter.Default,
 		Options: parameter.Options, TypeOptions: parameter.TypeOptions,
+		LoadOptions: parameter.LoadOptions, Modes: parameter.Modes,
 	}
 	visibility := property.Visibility{}
 	if len(parameter.Resources) > 0 {
@@ -380,6 +407,67 @@ func (parameter Parameter) definition() (property.PropertyDefinition, error) {
 	}
 	declared.DisplayOptions = visibility
 	return declared, nil
+}
+
+// checkParameterLoader holds the loader rules a pack parameter is bound by:
+// which kinds may load their values at all, that each loader is one this
+// server can honour, and that a loader naming a credential names one this
+// node can actually carry.
+//
+// The credential rule is the same one a `secretCredential` answers to: a
+// binding carries references for exactly the types the pack's definition
+// requires, so a loader naming any other type would send its request
+// unsigned — or worse, with whatever the editor attached — and look
+// configured while it is not.
+func checkParameterLoader(parameter Parameter, allowedCredentials map[string]bool) error {
+	switch parameter.Kind {
+	case property.KindOptions, property.KindMultiOptions:
+	case property.KindResourceLocator:
+		if parameter.LoadOptions != nil {
+			return fmt.Errorf("a resourceLocator loads its list mode's values: declare loadOptions on the mode, not the property")
+		}
+	default:
+		if parameter.LoadOptions != nil {
+			return fmt.Errorf("only options, multiOptions and a resourceLocator's list mode load their values, not %s", parameter.Kind)
+		}
+	}
+	for _, loader := range []*property.OptionsLoader{parameter.LoadOptions} {
+		if loader == nil {
+			continue
+		}
+		if loader.Source != property.LoaderHTTP {
+			// The internal registry is the server's own: names like the
+			// operations cascade and the datastore list are registered by the
+			// binary, not authored by a pack. A pack naming one would either
+			// point at nothing, or at a lookup its tenant never agreed to put
+			// behind this node.
+			return fmt.Errorf("a pack's loadOptions must be an http source; internal loaders are the server's own")
+		}
+		if err := property.ValidateLoader(loader); err != nil {
+			return fmt.Errorf("loadOptions: %w", err)
+		}
+		if loader.CredentialType != "" && !allowedCredentials[loader.CredentialType] {
+			return fmt.Errorf("loadOptions names credential type %q, which this pack does not require; use the pack's own credentialType", loader.CredentialType)
+		}
+	}
+	for _, mode := range parameter.Modes {
+		if mode.LoadOptions == nil {
+			continue
+		}
+		if mode.LoadOptions.Source != property.LoaderHTTP {
+			return fmt.Errorf("mode %q: a pack's loadOptions must be an http source; internal loaders are the server's own", mode.Name)
+		}
+		if err := property.ValidateLoader(mode.LoadOptions); err != nil {
+			return fmt.Errorf("mode %q: %w", mode.Name, err)
+		}
+		if mode.LoadOptions.CredentialType != "" && !allowedCredentials[mode.LoadOptions.CredentialType] {
+			return fmt.Errorf("mode %q names credential type %q, which this pack does not require; use the pack's own credentialType", mode.Name, mode.LoadOptions.CredentialType)
+		}
+	}
+	if err := property.ValidateModes(parameter.Kind, parameter.Modes); err != nil {
+		return err
+	}
+	return nil
 }
 
 func values(names []string) []any {
@@ -518,9 +606,16 @@ func loadModule(pack *Pack) (node.Definition, *routing.Node, error) {
 		outputs = append(outputs, workflow.Port{Name: name, Kind: workflow.ConnectionMain, DisplayName: display})
 	}
 
+	loadableCredentials := map[string]bool{}
+	if pack.CredentialType != "" {
+		loadableCredentials[pack.CredentialType] = true
+	}
+	for _, credential := range module.credentials() {
+		loadableCredentials[credential.Type] = true
+	}
 	parameters := make([]property.PropertyDefinition, 0, len(pack.Parameters))
 	for _, parameter := range pack.Parameters {
-		definition, err := parameter.definition()
+		definition, err := parameter.definition(loadableCredentials)
 		if err != nil {
 			return node.Definition{}, nil, fmt.Errorf("node pack %q: %w", pack.Type, err)
 		}

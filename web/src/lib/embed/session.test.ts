@@ -1,10 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { apiDownload, apiFetch, setEmbedToken } from '$lib/api/http';
-import { SCOPE_ACTIVATE, SCOPE_PUBLISH, acceptEmbedSession, embedControls, sanitizeBranding, scopeAllows, type EmbedSession } from './session.svelte';
+import {
+	SCOPE_ACTIVATE,
+	SCOPE_PUBLISH,
+	EMBED_PROTOCOL_VERSION,
+	acceptEmbedSession,
+	embedControls,
+	expiryNoticePlan,
+	parseExpiry,
+	sanitizeBranding,
+	scopeAllows,
+	type EmbedSession
+} from './session.svelte';
 
 function session(scopes: string[]): EmbedSession {
-	return { token: 't', workflowId: 'wf-1', scopes, branding: {}, locale: 'en', origin: 'https://host.example' };
+	return { token: 't', workflowId: 'wf-1', scopes, branding: {}, locale: 'en', origin: 'https://host.example', expiresAt: null };
 }
 
 describe('scopeAllows', () => {
@@ -238,6 +249,47 @@ describe('accepting the host session', () => {
 		const accepted = acceptEmbedSession({ ...message, locale: 'id' }, 'wf-1', 'https://host.example');
 
 		expect('session' in accepted && accepted.session.locale).toBe('id');
+	});
+
+	describe('expiresAt (protocol v2)', () => {
+		it('reads the expiry the host declared, as epoch milliseconds', () => {
+			const expiresAt = new Date(Date.now() + 600_000).toISOString();
+			const accepted = acceptEmbedSession({ ...message, expiresAt }, 'wf-1', 'https://host.example');
+
+			expect('session' in accepted && accepted.session.expiresAt).toBe(Date.parse(expiresAt));
+		});
+
+		it('treats an absent or malformed expiry as unknown rather than refusing the session', () => {
+			// The expiry only drives a warning; a host backend that predates
+			// protocol v2 (or one whose clock string is off) still gets an
+			// editor — it just cannot be warned about in advance.
+			for (const expiresAt of [undefined, '', 'not a date', 42, null]) {
+				const accepted = acceptEmbedSession({ ...message, expiresAt }, 'wf-1', 'https://host.example');
+				expect('session' in accepted && accepted.session.expiresAt).toBeNull();
+			}
+		});
+
+		it('schedules the warning sixty seconds before expiry', () => {
+			const now = Date.parse('2026-10-25T16:00:00.000Z');
+			const expiresAt = Date.parse('2026-10-25T16:15:00.000Z');
+			expect(expiryNoticePlan(expiresAt, now)).toEqual({ delayMs: 14 * 60_000 });
+		});
+
+		it('warns immediately for a session already inside the window, and never for a nonsense expiry', () => {
+			const now = Date.parse('2026-10-25T16:00:00.000Z');
+			// Inside the window: the host still has a refresh to do.
+			expect(expiryNoticePlan(now + 30_000, now)).toEqual({ delayMs: 0 });
+			// Already past: say so now rather than never.
+			expect(expiryNoticePlan(now - 5_000, now)).toEqual({ delayMs: 0 });
+			expect(expiryNoticePlan(Number.NaN, now)).toBeNull();
+		});
+
+		it('names the protocol the frame speaks', () => {
+			// The version is what tells a host which half of the vocabulary it
+			// may use; bumping it is a protocol event, not a refactor.
+			expect(EMBED_PROTOCOL_VERSION).toBe(2);
+			expect(parseExpiry('2026-10-25T16:15:00.000Z')).toBe(Date.parse('2026-10-25T16:15:00.000Z'));
+		});
 	});
 
 	it('falls back to the base locale for a locale its catalogs do not carry', () => {

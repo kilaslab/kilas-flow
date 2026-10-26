@@ -336,6 +336,67 @@ outbound request without ever passing through a template. Second, a pack names
 a credential type and the operator binds a real credential of that type after
 installation — the pack never sees credential values.
 
+## Loading options from the customer's service
+
+A static `options` list cannot offer the customer's own channels, agents, tags
+or team members: those live behind their API, and no binary can know them. A
+parameter can declare a `loadOptions` block instead, and the editor fills the
+picker at edit time — the request the server makes is the same governed one
+every other outbound call is:
+
+```json
+{
+  "key": "channel",
+  "label": "Channel",
+  "kind": "options",
+  "required": true,
+  "loadOptions": {
+    "source": "http",
+    "method": "GET",
+    "endpoint": "/api/channels",
+    "credentialType": "acmeApi",
+    "itemsPath": "data",
+    "labelTemplate": "{{ name }} ({{ provider }})",
+    "valueField": "id",
+    "dependsOn": []
+  }
+}
+```
+
+- `endpoint` may carry `{{ key }}` placeholders naming the parameters in
+  `dependsOn`; every substituted value is URL-escaped, never concatenated, and
+  a change to a listed parameter refetches the list. `baseUrlParameter` names
+  the parameter holding the service's own base URL, prepended without being
+  escaped.
+- `credentialType` must be the pack's own `credentialType`: the request is
+  signed with the credential the node attached, under the egress policy and
+  the credential's allowed domains. Omit it for an unsigned public list.
+- `itemsPath` walks the response to the list (dot-separated, empty means the
+  response is the list), `valueField` reads each option's value, and
+  `labelTemplate` renders its label from the item's fields.
+- `loadOptions` is allowed on `options` and `multiOptions` parameters. A
+  `resourceLocator` declares modes instead, and carries the loader on its list
+  mode — a typed "by ID" mode has no list to load:
+
+```json
+{
+  "key": "agent",
+  "label": "Agent",
+  "kind": "resourceLocator",
+  "required": true,
+  "modes": [
+    {"name": "id", "label": "By ID", "kind": "string", "pattern": "^a_[0-9]+$", "patternHint": "an agent id, a_<digits>"},
+    {"name": "list", "label": "From list", "kind": "options", "placeholder": "Search agents…",
+     "loadOptions": {"source": "http", "method": "GET", "endpoint": "/api/agents", "credentialType": "acmeApi", "itemsPath": "data", "valueField": "id", "labelTemplate": "{{ name }}"}}
+  ]
+}
+```
+
+A load failure shows inline in the picker, as the reason the server reports —
+a missing credential, a host the policy refuses, a service answering 4xx —
+rather than as an empty list. Internal loaders (`source: "internal"`) are the
+server's own and cannot be named by a pack.
+
 ## Step 5: triggers
 
 A trigger pack declares events instead of resources: one output per event, in
@@ -422,9 +483,10 @@ registration ride along in the `trigger` block:
 The pieces: `webhook` binds the inbound endpoint; each delivery fans out to
 the one port matching its event, and anything unrecognised goes to the
 `catchAll` output rather than being dropped. `hmac` verifies a signature over
-the raw body before an execution exists (the implemented algorithm is
-`sha512`), with the secret from a node parameter (`secretParameter`) or from a
-value the registration captured (`secretCapture`, covered below).
+the raw body before an execution exists (the algorithms are `sha256` and
+`sha512`), with the secret from a node parameter (`secretParameter`), from a
+value the registration captured (`secretCapture`, covered below), or from a
+field of the credential the node carries (`secretCredential`, covered below).
 `lifecycle.set` sends the minted webhook URL to the remote service with the
 method the pack declares (`PUT` in this example, `POST` in the one below) on
 activation when the `autoRegister` parameter is on; `check` and `remove`
@@ -438,10 +500,12 @@ remote service by hand, the editor shows this text with `{{ url }}` filled in.
 
 `kilasflow pack validate` checks a trigger pack the way the server would load
 it, including the trigger rules: the event list and catch-all, the webhook
-declaration, `hmac.algorithm`, and the lifecycle. It refuses a lifecycle
+declaration, the `hmac` scheme (algorithm, encoding, the `signingString`
+template, the preset's exclusivity), and the lifecycle. It refuses a lifecycle
 `check` or `remove` that declares `capture` or reads a `{{ .Captured.<key> }}`
-that `set` does not capture, and an `hmac.secretCapture` that names no captured
-key or sits beside a `secretParameter`. Both trigger examples in this guide
+that `set` does not capture; an `hmac.secretCapture` that names no captured
+key; and any two of `secretParameter`, `secretCapture` and `secretCredential`
+together. Both trigger examples in this guide
 pass it with no issues, as does the shipped WAHA trigger pack. What it cannot
 check is the run-time side: that the credential named by `credentialType` is
 bound on the node, or that the remote service accepts the request.
@@ -605,9 +669,9 @@ customer typed in. A service that generates the secret at registration time
 says so in its answer instead. Capture it and name that key as
 `hmac.secretCapture`, as the pack above does with `"secretCapture": "secret"`.
 
-- At most one of `secretParameter` and `secretCapture` may be set. A pack that
-  names both is refused, because a delivery is verified with one secret; with
-  neither, deliveries are not verified.
+- At most one of `secretParameter`, `secretCapture` and `secretCredential` may
+  be set. A pack that names two is refused, because a delivery is verified
+  with one secret; with none, deliveries are not verified.
 - `secretCapture` must name a key that `lifecycle.set` captures. A pack with no
   lifecycle, or whose `set` does not capture that key, is refused when it
   loads: it would look verified and never be.
@@ -619,6 +683,73 @@ says so in its answer instead. Capture it and name that key as
   workflow is still active. With the registration off, nothing is ever
   captured, which is the same as no secret configured: deliveries are not
   verified, as with an empty `secretParameter`.
+
+#### `secretCredential`: keep the secret out of the workflow document
+
+A `secretParameter` is stored in the workflow document, which is the one place
+a secret does not belong: documents are exported, imported, diffed and read.
+When the service's signing secret is something your customer already keeps in
+a credential — or should — read it from there instead:
+
+```json
+"hmac": {
+  "header": "X-Acme-Signature",
+  "algorithm": "sha256",
+  "secretCredential": {"type": "acmeApi", "field": "signingSecret"}
+}
+```
+
+- `type` must be the pack's own `credentialType`, so the credential the node
+  attaches is the one the delivery verifies with. A pack that names another
+  type is refused when it loads.
+- The field is read per delivery, so a credential rotated on the tenant's side
+  is the secret the sender now signs with, without reactivating anything.
+- A node that carries no credential of that type is treated like an empty
+  `secretParameter`: deliveries are not verified. A credential that *is*
+  carried but cannot be read, or has no such field, refuses every delivery —
+  the node said it verifies, and this delivery is not one it can.
+
+#### The scheme: algorithm, encoding, prefix, signing string, timestamp
+
+Services disagree about everything except the HMAC. The `hmac` block spells
+the scheme your service signs with:
+
+| Field | Values | What it is |
+| --- | --- | --- |
+| `algorithm` | `sha256`, `sha512` | the digest |
+| `encoding` | `hex` (default), `base64` | how the sender writes the digest |
+| `prefix` | any text, e.g. `sha256=` or `v1,` | what stands between the version marker and the digest |
+| `signingString` | a template | what is signed; empty is the raw body |
+| `timestampHeader` | a header name | where the signing timestamp comes from |
+| `toleranceSeconds` | a positive number | how old that timestamp may be |
+
+`signingString` is templated like the lifecycle's requests, over three things:
+the raw body (`{{ .body }}`), the timestamp header's value
+(`{{ .timestamp }}`, which requires naming a `timestampHeader`), and any
+request header (`{{ .header.X-Request-Id }}`). GitHub's scheme is the body
+alone; a `timestamp.body` string covers Stripe-style and Standard Webhooks
+schemes; Slack's is `v0:{{ .timestamp }}:{{ .body }}` with the literal `v0:`
+written out.
+
+A header may carry several signatures, comma-separated, during a secret
+rotation; any one of them matching is a pass. A `toleranceSeconds` turns the
+timestamp into a replay guard: a delivery older (or further ahead) than the
+tolerance is refused before an execution exists, together with a missing,
+malformed or wrong signature.
+
+#### `preset`: `standardWebhooks`
+
+A service that follows [standardwebhooks.com](https://standardwebhooks.com)
+is one word instead of six:
+
+```json
+"hmac": {"preset": "standardWebhooks", "secretCredential": {"type": "acmeApi", "field": "signingSecret"}}
+```
+
+The preset is the whole scheme — `webhook-signature`, sha256, base64, the
+`v1,` prefix, `{{ .timestamp }}.{{ .body }}`, `webhook-timestamp`, a
+300-second tolerance — so naming any scheme field beside it is refused, and
+only the secret is yours to choose.
 
 ## Icons
 

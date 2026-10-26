@@ -34,10 +34,54 @@ export type EmbedSession = {
 	 */
 	locale: Locale;
 	origin: string;
+	/**
+	 * When this token stops working, as epoch milliseconds. Null when the host
+	 * did not say — a session message without `expiresAt` cannot be warned
+	 * about, only refused once the server has refused it.
+	 */
+	expiresAt: number | null;
 };
+
+/**
+ * The postMessage protocol this frame speaks.
+ *
+ * 1 is the original handshake: `embed-ready` answered by one
+ * `embed-session`, then editor events only. 2 adds the token refresh without
+ * reload (`expiresAt`, a repeat `embed-session`), the `session-expiring`,
+ * `unauthorized`, `dirty-changed` and `error` events, and the host commands
+ * with their `command-result` replies. The frame announces its version with
+ * `embed-ready` and ignores unknown fields on every message it reads, so an
+ * older host keeps working against a newer frame.
+ */
+export const EMBED_PROTOCOL_VERSION = 2;
+
+/** How long before expiry the host is told to refresh, in milliseconds. */
+export const EXPIRY_NOTICE_MS = 60_000;
+
+/**
+ * When to warn the host that this session is running out.
+ *
+ * Pure on purpose: the effect that owns the timer only posts the message, so
+ * the arithmetic is testable without a component tree. A session already
+ * inside the warning window (or past its expiry) warns immediately — the host
+ * still has a refresh to do, whenever it starts.
+ */
+export function expiryNoticePlan(expiresAt: number, now: number): { delayMs: number } | null {
+	if (!Number.isFinite(expiresAt)) return null;
+	const delayMs = expiresAt - EXPIRY_NOTICE_MS - now;
+	return { delayMs: Math.max(0, delayMs) };
+}
+
+/** Reads the host's `expiresAt` (an ISO timestamp) as epoch milliseconds. */
+export function parseExpiry(value: unknown): number | null {
+	if (typeof value !== 'string' || value === '') return null;
+	const parsed = Date.parse(value);
+	return Number.isNaN(parsed) ? null : parsed;
+}
 
 const MESSAGE_TYPE = 'kilasflow:embed-session';
 const READY_TYPE = 'kilasflow:embed-ready';
+const EXPIRING_TYPE = 'kilasflow:session-expiring';
 
 /**
  * The parent's origin, taken from `document.referrer`.
@@ -185,7 +229,8 @@ export function acceptEmbedSession(
 			scopes,
 			branding: sanitizeBranding(data.branding),
 			locale,
-			origin
+			origin,
+			expiresAt: parseExpiry(data.expiresAt)
 		}
 	};
 }
@@ -195,6 +240,13 @@ export function acceptEmbedSession(
  *
  * Returns reactive state rather than a promise so the page can render a
  * waiting state, then a denial, then the editor.
+ *
+ * The listener stays up for the frame's whole life, so a second session
+ * message — a host refreshing an expiring token over protocol v2 — swaps the
+ * token in place: `session` changes identity, the token is re-attached, and
+ * the editor (which is not keyed on the session object) keeps its canvas,
+ * selection and viewport. Only the host can mint a replacement, which is why
+ * the frame warns it with `kilasflow:session-expiring` instead of reloading.
  */
 export function embedSession(workflowID: () => string) {
 	let session = $state<EmbedSession | null>(null);
@@ -244,8 +296,9 @@ export function embedSession(workflowID: () => string) {
 
 		window.addEventListener('message', onMessage);
 		// The target origin is explicit. '*' would announce readiness to
-		// whatever page framed this one.
-		window.parent.postMessage({ type: READY_TYPE, workflowId: expectedWorkflow }, expectedOrigin);
+		// whatever page framed this one. The protocol version rides along so
+		// the host knows which half of the vocabulary it may use.
+		window.parent.postMessage({ type: READY_TYPE, workflowId: expectedWorkflow, protocol: EMBED_PROTOCOL_VERSION }, expectedOrigin);
 
 		const timeout = setTimeout(() => {
 			if (!session) {
@@ -260,6 +313,28 @@ export function embedSession(workflowID: () => string) {
 			// The frame is gone: nothing may answer with the token afterwards.
 			setEmbedToken(null);
 		};
+	});
+
+	// Warns the host while it can still do something about it: sixty seconds
+	// before the token expires, the frame posts `session-expiring` so the host
+	// can mint a replacement and `setSession` it over the same channel. A
+	// session that arrives already inside the window warns at once, and a
+	// refresh reschedules the timer for the new expiry.
+	$effect(() => {
+		const current = session;
+		const expiresAt = current?.expiresAt;
+		if (!current || expiresAt === null || expiresAt === undefined) return;
+		const plan = expiryNoticePlan(expiresAt, Date.now());
+		if (!plan) return;
+		const origin = current.origin;
+		const workflowId = current.workflowId;
+		const timer = setTimeout(() => {
+			window.parent.postMessage(
+				{ type: EXPIRING_TYPE, protocol: EMBED_PROTOCOL_VERSION, workflowId, expiresAt: new Date(expiresAt).toISOString() },
+				origin
+			);
+		}, plan.delayMs);
+		return () => clearTimeout(timer);
 	});
 
 	return {

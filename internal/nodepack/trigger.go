@@ -3,14 +3,13 @@ package nodepack
 import (
 	"bytes"
 	"context"
-	"crypto/sha512"
 	"fmt"
-	"hash"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/node"
@@ -64,9 +63,7 @@ type Trigger struct {
 // TriggerHMAC describes signature verification.
 type TriggerHMAC struct {
 	Header string `json:"header"`
-	// Algorithm is the digest. Only sha512 is implemented, which is what WAHA
-	// signs with; anything else is refused at registration rather than
-	// silently accepting every delivery.
+	// Algorithm is the digest: sha256 or sha512.
 	Algorithm string `json:"algorithm"`
 	// SecretParameter names the node parameter holding the shared secret. An
 	// empty secret means the node is not configured for verification, which is
@@ -78,6 +75,73 @@ type TriggerHMAC struct {
 	// nothing captured yet refuses every delivery; with it off, nothing is ever
 	// captured, and that is the same as no secret configured.
 	SecretCapture string `json:"secretCapture,omitempty"`
+	// SecretCredential names, instead of either, a field of a credential the
+	// node carries: the secret never enters the workflow document at all,
+	// which is the storage rule a `secretParameter` breaks. Resolved per
+	// delivery, so a rotated credential is picked up without reactivation.
+	SecretCredential *TriggerSecretCredential `json:"secretCredential,omitempty"`
+	// Encoding is how the sender writes the digest: hex (the default) or
+	// base64.
+	Encoding string `json:"encoding,omitempty"`
+	// Prefix stands between the version marker and the digest in the header,
+	// as GitHub's `sha256=` or Standard Webhooks' `v1,` do.
+	Prefix string `json:"prefix,omitempty"`
+	// SigningString is what is signed, as a `{{ .body }}`-style template over
+	// the raw body, the timestamp header and any request header. Empty is the
+	// raw body alone.
+	SigningString string `json:"signingString,omitempty"`
+	// TimestampHeader names the header the signing string's timestamp comes
+	// from, and the header a tolerance is judged against.
+	TimestampHeader string `json:"timestampHeader,omitempty"`
+	// ToleranceSeconds is how old (or far ahead) that timestamp may be. Zero
+	// means no staleness check.
+	ToleranceSeconds int `json:"toleranceSeconds,omitempty"`
+	// Preset fills every scheme field above from a named scheme, so a pack
+	// for a service that follows it declares one word and its secret. The
+	// only preset is `standardWebhooks`.
+	Preset string `json:"preset,omitempty"`
+}
+
+// TriggerSecretCredential is a signing secret read out of a credential.
+type TriggerSecretCredential struct {
+	// Type is the credential type, spelled as the pack's own
+	// `credentialType` is — the node must carry one of that type for the
+	// delivery to be verified.
+	Type string `json:"type"`
+	// Field is the credential field holding the secret.
+	Field string `json:"field"`
+}
+
+// StandardWebhooksPreset is the scheme standardwebhooks.com specifies: a
+// sha256 over `timestamp.body`, base64, behind a `v1,` prefix, with a
+// unix-seconds timestamp judged against a five-minute tolerance. Several
+// signatures may arrive comma-separated, which is the rotation story.
+const StandardWebhooksPreset = "standardWebhooks"
+
+// hmacPresets are the schemes a pack can name instead of spelling out.
+var hmacPresets = map[string]TriggerHMAC{
+	StandardWebhooksPreset: {
+		Header:           "webhook-signature",
+		Algorithm:        "sha256",
+		Encoding:         "base64",
+		Prefix:           "v1,",
+		SigningString:    "{{ .timestamp }}.{{ .body }}",
+		TimestampHeader:  "webhook-timestamp",
+		ToleranceSeconds: 300,
+	},
+}
+
+// resolved is the scheme a delivery is actually verified with: the preset's
+// values, when one was named, and otherwise the block's own.
+func (hmac *TriggerHMAC) resolved() TriggerHMAC {
+	if hmac.Preset == "" {
+		return *hmac
+	}
+	preset := hmacPresets[hmac.Preset]
+	preset.SecretParameter = hmac.SecretParameter
+	preset.SecretCapture = hmac.SecretCapture
+	preset.SecretCredential = hmac.SecretCredential
+	return preset
 }
 
 // TriggerLifecycle describes optional auto-registration.
@@ -207,17 +271,85 @@ func (trigger *Trigger) validate() error {
 	if trigger.HMAC == nil {
 		return nil
 	}
-	if trigger.HMAC.Algorithm != "sha512" {
-		return fmt.Errorf("hmac algorithm %q is not implemented; use sha512", trigger.HMAC.Algorithm)
-	}
-	if trigger.HMAC.SecretParameter != "" && trigger.HMAC.SecretCapture != "" {
-		return fmt.Errorf("hmac names both a secretParameter and a secretCapture: a delivery is verified with one secret")
+	if err := trigger.HMAC.validate(); err != nil {
+		return err
 	}
 	// A secret nothing captures is never there: the node would refuse every
 	// delivery while its registration is on, and accept every one unsigned
 	// while it is off — a pack that looks verified and never is.
 	if trigger.HMAC.SecretCapture != "" && !trigger.Lifecycle.captures(trigger.HMAC.SecretCapture) {
 		return fmt.Errorf("hmac.secretCapture is %q, which the lifecycle's set does not capture", trigger.HMAC.SecretCapture)
+	}
+	return nil
+}
+
+// validate checks the hmac block's own shape: the scheme fields, the preset's
+// exclusivity, and the one-secret rule. The pack-level halves — that a
+// secretCredential's type is the pack's own credentialType — live where the
+// pack is known, in RegisterTrigger.
+func (hmac *TriggerHMAC) validate() error {
+	scheme := hmac.resolved()
+
+	if hmac.Preset != "" {
+		if _, known := hmacPresets[hmac.Preset]; !known {
+			return fmt.Errorf("hmac preset %q is not one this build carries; the only preset is %s", hmac.Preset, StandardWebhooksPreset)
+		}
+		// A preset is the whole scheme in one word; a block that names one and
+		// then also spells a scheme field is two schemes disagreeing, and the
+		// one that runs is whichever half won.
+		for _, own := range []struct {
+			field  string
+			set    bool
+			setter string
+		}{
+			{"header", hmac.Header != "", "header"},
+			{"algorithm", hmac.Algorithm != "", "algorithm"},
+			{"encoding", hmac.Encoding != "", "encoding"},
+			{"prefix", hmac.Prefix != "", "prefix"},
+			{"signingString", hmac.SigningString != "", "signingString"},
+			{"timestampHeader", hmac.TimestampHeader != "", "timestampHeader"},
+			{"toleranceSeconds", hmac.ToleranceSeconds != 0, "toleranceSeconds"},
+		} {
+			if own.set {
+				return fmt.Errorf("hmac names both the %s preset and %s; the preset is the whole scheme, so say only the secret", hmac.Preset, own.setter)
+			}
+		}
+	} else {
+		if scheme.Algorithm != "sha256" && scheme.Algorithm != "sha512" {
+			return fmt.Errorf("hmac algorithm %q is not implemented; use sha256 or sha512", scheme.Algorithm)
+		}
+		if scheme.Encoding != "" && scheme.Encoding != "hex" && scheme.Encoding != "base64" {
+			return fmt.Errorf("hmac encoding %q is not implemented; use hex or base64", scheme.Encoding)
+		}
+		if strings.TrimSpace(scheme.Header) == "" {
+			return fmt.Errorf("hmac needs the header the signature arrives in")
+		}
+		if err := webhook.CheckSigningString(scheme.SigningString, scheme.TimestampHeader); err != nil {
+			return fmt.Errorf("hmac signingString: %w", err)
+		}
+		if hmac.ToleranceSeconds < 0 {
+			return fmt.Errorf("hmac toleranceSeconds cannot be negative")
+		}
+		if hmac.ToleranceSeconds > 0 && hmac.TimestampHeader == "" {
+			return fmt.Errorf("hmac names a tolerance with no timestampHeader to judge")
+		}
+	}
+
+	secrets := 0
+	if hmac.SecretParameter != "" {
+		secrets++
+	}
+	if hmac.SecretCapture != "" {
+		secrets++
+	}
+	if hmac.SecretCredential != nil {
+		secrets++
+		if strings.TrimSpace(hmac.SecretCredential.Type) == "" || strings.TrimSpace(hmac.SecretCredential.Field) == "" {
+			return fmt.Errorf("hmac.secretCredential names a type and a field, and needs both")
+		}
+	}
+	if secrets > 1 {
+		return fmt.Errorf("hmac names a secretParameter, a secretCapture and a secretCredential together: a delivery is verified with one secret")
 	}
 	return nil
 }
@@ -396,11 +528,18 @@ func (trigger *Trigger) TriggerKind() webhook.TriggerKind {
 	if trigger.HMAC == nil {
 		return kind
 	}
-	verify := webhook.HMACVerifier(trigger.HMAC.Header,
-		func() hash.Hash { return sha512.New() },
-		func(delivery webhook.Delivery) (string, error) {
-			return trigger.secretOf(delivery), nil
-		})
+	scheme := trigger.HMAC.resolved()
+	verify := webhook.HMACSchemeVerifier(webhook.HMACScheme{
+		Header:          scheme.Header,
+		Algorithm:       scheme.Algorithm,
+		Encoding:        scheme.Encoding,
+		Prefix:          scheme.Prefix,
+		SigningString:   scheme.SigningString,
+		TimestampHeader: scheme.TimestampHeader,
+		Tolerance:       time.Duration(scheme.ToleranceSeconds) * time.Second,
+	}, func(delivery webhook.Delivery) (string, error) {
+		return trigger.secretOf(delivery)
+	})
 	// Verification is per node, not per node type: a node with no secret
 	// configured is not verified at all.
 	//
@@ -418,7 +557,13 @@ func (trigger *Trigger) TriggerKind() webhook.TriggerKind {
 	// deliveries would let anybody who has the URL inject events. So it
 	// refuses them until the secret is there.
 	kind.Verify = func(delivery webhook.Delivery) error {
-		if trigger.secretOf(delivery) != "" {
+		secret, err := trigger.secretOf(delivery)
+		if err != nil {
+			// A credential the block names but cannot read is a configured
+			// verification that failed, not one that is off.
+			return err
+		}
+		if secret != "" {
 			return verify(delivery)
 		}
 		if trigger.awaitsCapturedSecret(delivery) {
@@ -432,7 +577,14 @@ func (trigger *Trigger) TriggerKind() webhook.TriggerKind {
 	// that never had a secret to check — the state every imported workflow
 	// arrives in.
 	kind.Verifies = func(delivery webhook.Delivery) bool {
-		return trigger.secretOf(delivery) != ""
+		secret, err := trigger.secretOf(delivery)
+		if err != nil {
+			// The secret is configured but unreadable in this probe; the
+			// deliveries themselves are refused, which is what
+			// webhook.require_auth wants to hear about.
+			return true
+		}
+		return secret != ""
 	}
 	return kind
 }
@@ -446,16 +598,40 @@ func (trigger *Trigger) awaitsCapturedSecret(delivery webhook.Delivery) bool {
 		webhook.LifecycleEnabled(delivery.Binding.Parameters, trigger.Lifecycle.EnabledParameter)
 }
 
-// secretOf is the secret a delivery is verified with: the value the
-// registration captured, when the trigger names one, and otherwise the node's
-// parameter. Never the parameter as a fallback for a capture — a tenant's
-// parameter is not the secret the service signs with.
-func (trigger *Trigger) secretOf(delivery webhook.Delivery) string {
+// secretOf is the secret a delivery is verified with: the field of the
+// credential the node carries, when the trigger names one; the value the
+// registration captured, when it names one of those; and otherwise the node's
+// parameter. Never one as a fallback for another — a delivery is verified
+// with one secret, whichever the block names.
+//
+// The credential path is per delivery on purpose: a credential rotated on the
+// tenant's side is the secret the sender now signs with, and an activation
+// boundary is not part of that story. A credential the block names but the
+// node does not carry reads as no secret configured — the same as an empty
+// parameter — while a credential that is carried but cannot be read is a
+// refusal: that node said it verifies, and this delivery is not one it can.
+func (trigger *Trigger) secretOf(delivery webhook.Delivery) (string, error) {
+	if credential := trigger.HMAC.SecretCredential; credential != nil {
+		references, _ := delivery.Binding.Parameters["$credentials"].(map[string]any)
+		id, _ := references[credential.Type].(string)
+		if strings.TrimSpace(id) == "" {
+			return "", nil
+		}
+		fields, err := delivery.Fields(credential.Type)
+		if err != nil {
+			return "", fmt.Errorf("the %s credential this endpoint verifies with could not be read", credential.Type)
+		}
+		secret := strings.TrimSpace(fields[credential.Field])
+		if secret == "" {
+			return "", fmt.Errorf("the %s credential has no %s field to verify with", credential.Type, credential.Field)
+		}
+		return secret, nil
+	}
 	if trigger.HMAC.SecretCapture != "" {
-		return strings.TrimSpace(delivery.Binding.Captured[trigger.HMAC.SecretCapture])
+		return strings.TrimSpace(delivery.Binding.Captured[trigger.HMAC.SecretCapture]), nil
 	}
 	secret, _ := delivery.Binding.Parameters[trigger.HMAC.SecretParameter].(string)
-	return strings.TrimSpace(secret)
+	return strings.TrimSpace(secret), nil
 }
 
 // RegisterTrigger installs a trigger pack's runtime halves.
@@ -480,6 +656,23 @@ func RegisterTrigger(
 	trigger := pack.Trigger
 	if err := triggers.Register(pack.Type, pack.Version, trigger); err != nil {
 		return err
+	}
+	// The secret a `secretCredential` names is read out of the node's own
+	// credential, and a binding carries references for exactly the types the
+	// pack's definition requires — so a type the pack does not declare is a
+	// secret no delivery can ever resolve, and a pack that looks verified and
+	// never is.
+	// HMAC itself is optional: a trigger pack with no signature verification
+	// config registers the same way one with it does.
+	if trigger.HMAC != nil {
+		if credential := trigger.HMAC.SecretCredential; credential != nil {
+			if pack.CredentialType == "" {
+				return fmt.Errorf("node pack %q: hmac.secretCredential reads a credential field, but the pack declares no credentialType", pack.Type)
+			}
+			if credential.Type != pack.CredentialType {
+				return fmt.Errorf("node pack %q: hmac.secretCredential names type %q, but the pack's credentialType is %q", pack.Type, credential.Type, pack.CredentialType)
+			}
+		}
 	}
 	// The delivery shape is per node *type*, not per version: two versions of
 	// one trigger receive the same envelope from the same service. The second

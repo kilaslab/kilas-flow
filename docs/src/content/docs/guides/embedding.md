@@ -150,7 +150,12 @@ const session = await tenant.client.createEmbedSession({
 
 Minting is cheap, so mint per page load and re-check entitlement each
 time. A default-length (fifteen-minute) token is also the point at which a
-long editing session re-verifies the user is still allowed.
+long editing session re-verifies the user is still allowed — and since
+protocol v2 it does so without losing the user's work: sixty seconds before
+expiry the editor posts `session-expiring`, the host mints a replacement and
+hands it over with the SDK's `setSession`, and the editor swaps the token in
+place instead of reloading (see
+[the postMessage protocol](#the-postmessage-protocol-v2)).
 
 #### Publish and activate authority
 
@@ -220,6 +225,50 @@ The handshake is origin-checked both ways: the editor announces itself,
 and only then is the token posted — to the editor's exact origin, never
 `'*'`. A handshake that does not complete in fifteen seconds calls
 `onError`; tearing the iframe down is the host's decision.
+
+#### The postMessage protocol, v2
+
+The channel between host and frame is a versioned protocol. The frame
+announces its version with `kilasflow:embed-ready` (`protocol: 2`), and the
+SDK exports `EMBED_PROTOCOL_VERSION` for the version it speaks. Every
+message in both directions names an exact target origin, and every message
+received is checked against `event.origin` (and, on the host side, that it
+came from the iframe itself) before its payload is read.
+
+Frame → host events:
+
+| Message | When |
+| --- | --- |
+| `ready { protocol }` | the frame loaded and completed the handshake |
+| `workflow-saved { revision }` | a save (or restore) stored a revision |
+| `workflow-published { versionId, revision }` | a revision was pinned as the one production traffic runs |
+| `execution-started { executionId }` | a run was queued |
+| `execution-finished { executionId, status }` | a run reached a terminal state |
+| `dirty-changed { dirty }` | the canvas gained or lost unsaved edits — what a host's leave-guard reads |
+| `session-expiring { expiresAt }` | sixty seconds before the token expires |
+| `unauthorized` | the server refused the token; only a new session recovers |
+| `error { code, message }` | a load, save or run failed (`code` names the family) |
+
+Host → frame, beyond the one `kilasflow:embed-session` of the handshake:
+
+- **A second `kilasflow:embed-session`** is a token refresh. The frame
+  re-attaches the token in place — the editor is not reloaded, and the
+  canvas, selection and viewport survive. The mount message carries
+  `expiresAt`, which is what the frame's `session-expiring` warning is
+  scheduled from; the SDK's `editor.setSession(newSession)` posts it.
+- **Commands** — `editor.save()`, `editor.run()` and
+  `editor.focusNode(nodeId)` — post `kilasflow:command { requestId, command }`,
+  and the frame answers `kilasflow:command-result { requestId, … }` to the
+  host's verified origin. The SDK resolves the promise on that reply:
+  `{ ok: true, saved, dirty, revision? }` from `save`,
+  `{ ok: true, executionId, status }` from `run` (which settles at the run's
+  terminal state — watch the events for progress), and a refusal carries
+  `{ ok: false, code, message }` (`forbidden`, `conflict`, `unknown-node`,
+  …). Commands sent to a frame that announced protocol 1 are rejected by the
+  SDK immediately rather than left hanging.
+
+An older host against a newer frame keeps working: the frame ignores fields
+it does not read, and everything version 2 added is additive.
 
 **Language.** `mountWorkflowEditor({ locale })` decides which language the
 editor's own chrome renders in, and the frame stamps `<html lang>` from it.

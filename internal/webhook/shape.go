@@ -3,6 +3,8 @@ package webhook
 import (
 	"bytes"
 	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -14,7 +16,10 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/kilaslab/kilas-flow/internal/repository"
@@ -510,21 +515,199 @@ func parseForm(body string) (map[string]any, error) {
 	return decoded, nil
 }
 
-// HMACVerifier refuses a delivery whose signature does not match the raw body.
+// HMACScheme is one service's signature scheme, every knob of it, as a pack
+// names them on a trigger's `hmac` block.
+//
+// The zero values are the simplest scheme: the raw body, hex, no prefix, no
+// timestamp — which is what WAHA's X-Webhook-Hmac is, and what a scheme with
+// only Header and Algorithm left describes.
+type HMACScheme struct {
+	// Header carries the signature. A delivery without it is refused.
+	Header string
+	// Algorithm is the digest: sha256 or sha512.
+	Algorithm string
+	// Encoding is how the sender wrote the digest: hex (the default) or
+	// base64. Hex compares case-insensitively, as it always has; base64 is
+	// case-sensitive and is compared exactly.
+	Encoding string
+	// Prefix stands between the version marker and the digest, as GitHub's
+	// `sha256=` or Standard Webhooks' `v1,` do. A prefix ending in a comma
+	// marks a scheme whose entries are `v1,<digest>` pairs, so the comma
+	// splitting one delivery's several signatures from each other also splits
+	// each pair in two — the pair is re-joined before it is checked.
+	Prefix string
+	// SigningString is what is signed, as a `{{ .body }}`-style template over
+	// the raw body (`{{ .body }}`), the timestamp header's value
+	// (`{{ .timestamp }}`) and any request header (`{{ .header.X-Name }}`).
+	// Empty is the raw body alone.
+	SigningString string
+	// TimestampHeader names the header `{{ .timestamp }}` reads, which is
+	// also the header Tolerance judges. Signing a timestamp and refusing a
+	// stale one is what closes the replay window a bare body signature leaves
+	// open.
+	TimestampHeader string
+	// Tolerance is how old (or far ahead) the timestamp may be. Zero means no
+	// staleness check.
+	Tolerance time.Duration
+}
+
+// hmacReference matches one `{{ .… }}` placeholder in a signing string. The
+// house style is the lifecycle template's — a leading dot, one pass, never the
+// expression evaluator — with a charset that also admits header names, whose
+// hyphens a field name never carries.
+var hmacReference = regexp.MustCompile(`\{\{\s*\.([A-Za-z0-9_.-]+)\s*\}\}`)
+
+// anyPlaceholder matches every `{{ … }}` a signing string carries, so one
+// that is not a placeholder this scheme reads — an expression, a mis-spelled
+// field — is refused rather than signed over as literal text.
+var anyPlaceholder = regexp.MustCompile(`\{\{[^{}]*\}\}`)
+
+// CheckSigningString refuses a template the verifier could not honour: a name
+// that is not the body, the timestamp, or a header, and a timestamp the
+// scheme has no header to read.
+//
+// It runs where the pack is validated, so an author hears about a typo in
+// `{{ .boday }}` at authoring time rather than as a refused delivery.
+func CheckSigningString(template, timestampHeader string) error {
+	for _, span := range anyPlaceholder.FindAllStringIndex(template, -1) {
+		placeholder := template[span[0]:span[1]]
+		match := hmacReference.FindStringSubmatch(placeholder)
+		if match == nil || match[0] != placeholder {
+			return fmt.Errorf("the signing string may carry only {{ .body }}, {{ .timestamp }} and {{ .header.<name> }} placeholders, not %s", placeholder)
+		}
+		key := match[1]
+		switch {
+		case key == "body":
+		case key == "timestamp":
+			if timestampHeader == "" {
+				return fmt.Errorf("the signing string reads {{ .timestamp }}, which needs the header it comes from: name a timestampHeader")
+			}
+		case strings.HasPrefix(key, "header."):
+			if strings.TrimSpace(key[len("header."):]) == "" {
+				return fmt.Errorf("the signing string reads a header with no name")
+			}
+		default:
+			return fmt.Errorf("the signing string may name only the body, the timestamp and header values, not {{ .%s }}", key)
+		}
+	}
+	return nil
+}
+
+// renderSigningString builds what this delivery is signed over, substituting
+// once so a value is never rescanned. A header the request does not carry
+// renders as the empty string — that is what the sender signed when they
+// signed without it, and a signature computed any other way simply does not
+// match.
+func renderSigningString(template string, delivery Delivery, timestamp string) (string, error) {
+	if strings.TrimSpace(template) == "" {
+		return string(delivery.RawBody), nil
+	}
+	var out strings.Builder
+	last := 0
+	for _, match := range hmacReference.FindAllStringSubmatchIndex(template, -1) {
+		out.WriteString(template[last:match[0]])
+		last = match[1]
+		key := template[match[2]:match[3]]
+		switch {
+		case key == "body":
+			out.Write(delivery.RawBody)
+		case key == "timestamp":
+			out.WriteString(timestamp)
+		case strings.HasPrefix(key, "header."):
+			name := key[len("header."):]
+			if delivery.Request == nil {
+				continue
+			}
+			out.WriteString(delivery.Request.Header.Get(name))
+		default:
+			return "", fmt.Errorf("the signing string names {{ .%s }}, which this delivery cannot provide", key)
+		}
+	}
+	out.WriteString(template[last:])
+	return out.String(), nil
+}
+
+// signatureCandidates splits one signature header into the digests it
+// carries. Services that rotate their secret send several at once, and any one
+// of them matching is a pass — the sender is proving knowledge of a secret
+// this endpoint still accepts, whichever of the two it is.
+//
+// A declared prefix is load-bearing: a scheme behind `v1,` accepts only
+// `v1,<digest>` pairs (the comma inside the prefix splits each pair in two, so
+// the pair is re-joined), and a scheme behind `sha256=` accepts only tokens
+// carrying it. A bare digest under either is a header this scheme did not
+// send.
+func signatureCandidates(value, prefix string) []string {
+	joined := strings.HasSuffix(prefix, ",")
+	version := strings.TrimSuffix(prefix, ",")
+
+	var candidates []string
+	tokens := strings.Split(value, ",")
+	for index := 0; index < len(tokens); index++ {
+		token := strings.TrimSpace(tokens[index])
+		if joined {
+			if token != version || index+1 >= len(tokens) {
+				continue
+			}
+			if digest := strings.TrimSpace(tokens[index+1]); digest != "" {
+				candidates = append(candidates, digest)
+			}
+			index++
+			continue
+		}
+		if prefix != "" {
+			if !strings.HasPrefix(token, prefix) {
+				continue
+			}
+			token = token[len(prefix):]
+		}
+		if token != "" {
+			candidates = append(candidates, token)
+		}
+	}
+	return candidates
+}
+
+// parseSignedTimestamp reads a timestamp header: unix seconds, which is what
+// Standard Webhooks sends, or RFC 3339 for the services that spell it out.
+func parseSignedTimestamp(value string) (time.Time, bool) {
+	if seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil {
+		return time.Unix(seconds, 0), true
+	}
+	if parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(value)); err == nil {
+		return parsed, true
+	}
+	return time.Time{}, false
+}
+
+// signatureMatches compares one candidate against the expected digest in
+// constant time, case-insensitively for hex and exactly for base64, whose
+// alphabet is its case.
+func signatureMatches(candidate, expected, encoding string) bool {
+	if encoding == "base64" {
+		return hmac.Equal([]byte(candidate), []byte(expected))
+	}
+	return hmac.Equal([]byte(strings.ToLower(candidate)), []byte(strings.ToLower(expected)))
+}
+
+// HMACSchemeVerifier refuses a delivery whose signature does not match its
+// scheme: missing, malformed, stale, or signed by somebody else.
 //
 // It is what the raw-body capture exists for. Both WAHA's X-Webhook-Hmac and
-// the owner's own trigger sign the exact bytes, and a body that has been
-// decoded and re-marshalled does not hash to the same value — so before the
-// bytes were carried this check could not be written at all, only approximated.
+// Standard Webhooks' `v1,` signatures are over the exact bytes, and a body
+// that has been decoded and re-marshalled does not hash to the same value —
+// so before the bytes were carried this check could not be written at all,
+// only approximated.
 //
-// The comparison is constant-time, and a missing or malformed signature is a
-// refusal rather than a pass: a verifier that accepts an absent signature
-// verifies nothing.
-func HMACVerifier(header string, newHash func() hash.Hash, secret func(Delivery) (string, error)) Verifier {
+// A missing or malformed signature is a refusal rather than a pass: a
+// verifier that accepts an absent signature verifies nothing. A timestamp
+// outside the tolerance is refused with it, because it is a replay of a
+// delivery that was signed earlier, by whoever kept the bytes.
+func HMACSchemeVerifier(scheme HMACScheme, secret func(Delivery) (string, error)) Verifier {
 	return func(delivery Delivery) error {
-		provided := strings.TrimSpace(delivery.Request.Header.Get(header))
+		provided := strings.TrimSpace(delivery.Request.Header.Get(scheme.Header))
 		if provided == "" {
-			return fmt.Errorf("this endpoint requires a %s signature", header)
+			return fmt.Errorf("this endpoint requires a %s signature", scheme.Header)
 		}
 		key, err := secret(delivery)
 		if err != nil {
@@ -533,12 +716,55 @@ func HMACVerifier(header string, newHash func() hash.Hash, secret func(Delivery)
 		if key == "" {
 			return fmt.Errorf("this endpoint has no signing secret configured")
 		}
-		mac := hmac.New(newHash, []byte(key))
-		mac.Write(delivery.RawBody)
-		expected := hex.EncodeToString(mac.Sum(nil))
-		if !hmac.Equal([]byte(strings.ToLower(provided)), []byte(expected)) {
-			return fmt.Errorf("the %s signature does not match the request body", header)
+
+		timestamp := ""
+		if scheme.TimestampHeader != "" {
+			timestamp = strings.TrimSpace(delivery.Request.Header.Get(scheme.TimestampHeader))
+			if timestamp == "" {
+				return fmt.Errorf("this endpoint requires a %s timestamp", scheme.TimestampHeader)
+			}
+			if scheme.Tolerance > 0 {
+				at, ok := parseSignedTimestamp(timestamp)
+				if !ok {
+					return fmt.Errorf("the %s timestamp cannot be read as unix seconds or RFC 3339", scheme.TimestampHeader)
+				}
+				if drift := time.Since(at); drift > scheme.Tolerance || drift < -scheme.Tolerance {
+					return fmt.Errorf("the %s timestamp is outside this endpoint's tolerance, so the delivery is a replay", scheme.TimestampHeader)
+				}
+			}
 		}
-		return nil
+
+		signed, err := renderSigningString(scheme.SigningString, delivery, timestamp)
+		if err != nil {
+			return err
+		}
+
+		var newHash func() hash.Hash
+		switch scheme.Algorithm {
+		case "sha256":
+			newHash = sha256.New
+		case "sha512":
+			newHash = sha512.New
+		default:
+			// Unreachable behind pack validation, which is the point of
+			// refusing an unknown algorithm at registration: it names a
+			// scheme this build cannot verify, and silently accepting every
+			// delivery is what an unverified endpoint is.
+			return fmt.Errorf("hmac algorithm %q is not implemented; use sha256 or sha512", scheme.Algorithm)
+		}
+		mac := hmac.New(newHash, []byte(key))
+		mac.Write([]byte(signed))
+		digest := mac.Sum(nil)
+
+		expected := hex.EncodeToString(digest)
+		if scheme.Encoding == "base64" {
+			expected = base64.StdEncoding.EncodeToString(digest)
+		}
+		for _, candidate := range signatureCandidates(provided, scheme.Prefix) {
+			if signatureMatches(candidate, expected, scheme.Encoding) {
+				return nil
+			}
+		}
+		return fmt.Errorf("the %s signature does not match the request body", scheme.Header)
 	}
 }

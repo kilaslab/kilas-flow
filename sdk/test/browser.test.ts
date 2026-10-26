@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { mountWorkflowEditor, subscribeExecutionEvents, type EditorEvent } from '../src/browser.js';
+import { EMBED_PROTOCOL_VERSION, mountWorkflowEditor, subscribeExecutionEvents, type EditorEvent } from '../src/browser.js';
 
 const EDITOR_ORIGIN = 'https://flows.example';
 
@@ -30,6 +30,22 @@ function fakeFrameWindow() {
 function postedTo(frameWindow: Window): [unknown, string][] {
 	const post = frameWindow.postMessage as unknown as { mock: { calls: [unknown, string][] } };
 	return post.mock.calls;
+}
+
+/** Clears the frame-window postMessage mock between phases of a test. */
+function clearPosted(frameWindow: Window): void {
+	(frameWindow.postMessage as unknown as ReturnType<typeof vi.fn>).mockClear();
+}
+
+/** Completes the handshake: the frame announces itself, protocol v2 by default. */
+function announce(frameWindow: Window, protocol = EMBED_PROTOCOL_VERSION): void {
+	window.dispatchEvent(
+		new MessageEvent('message', {
+			origin: EDITOR_ORIGIN,
+			source: frameWindow,
+			data: { type: 'kilasflow:embed-ready', workflowId: 'wf-1', ...(protocol ? { protocol } : {}) }
+		})
+	);
 }
 
 function mount(options: Partial<Parameters<typeof mountWorkflowEditor>[0]> = {}) {
@@ -215,6 +231,169 @@ describe('mountWorkflowEditor', () => {
 		// Cleanly means nothing was mounted and nothing is pending: no
 		// iframe to handshake, no timer to fire, no listener left behind.
 		expect(container.querySelector('iframe')).toBeNull();
+	});
+});
+
+describe('mountWorkflowEditor protocol v2', () => {
+	it('carries the protocol and the expiry with the session, and reports the frame version on ready', () => {
+		const events: EditorEvent[] = [];
+		const initial = session();
+		const { mounted, frameWindow } = mount({ session: initial, onEvent: (event) => events.push(event) });
+
+		announce(frameWindow);
+
+		const [payload, targetOrigin] = postedTo(frameWindow)[0]!;
+		expect(payload).toMatchObject({ type: 'kilasflow:embed-session', protocol: EMBED_PROTOCOL_VERSION, expiresAt: initial.expiresAt });
+		expect(targetOrigin).toBe(EDITOR_ORIGIN);
+		expect(events[0]).toMatchObject({ type: 'ready', protocol: EMBED_PROTOCOL_VERSION });
+		mounted.unmount();
+	});
+
+	it('setSession swaps the token without reloading the frame', () => {
+		const { mounted, frameWindow } = mount();
+		announce(frameWindow);
+		clearPosted(frameWindow);
+
+		const replacement = session({ token: 'kfe1.c.d', expiresAt: new Date(Date.now() + 900_000).toISOString() });
+		mounted.setSession(replacement);
+
+		// One more session message to the same frame at the same exact
+		// origin — and the frame's src is untouched, which is what "without
+		// a reload" means from the host's side.
+		expect(postedTo(frameWindow)).toHaveLength(1);
+		const [payload, targetOrigin] = postedTo(frameWindow)[0]!;
+		expect(payload).toMatchObject({ type: 'kilasflow:embed-session', token: 'kfe1.c.d', expiresAt: replacement.expiresAt });
+		expect(targetOrigin).toBe(EDITOR_ORIGIN);
+		expect(mounted.iframe.src).toBe(`${EDITOR_ORIGIN}/embed/wf-1`);
+		mounted.unmount();
+	});
+
+	it('setSession refuses a session it cannot use', () => {
+		const { mounted, frameWindow } = mount();
+		// Before the handshake completed, there is no listener on the other
+		// side: the message would be lost, so it is a host error instead.
+		expect(() => mounted.setSession(session({ token: 'late' }))).toThrow(/handshake/);
+
+		announce(frameWindow);
+		expect(() => mounted.setSession(session({ token: '' }))).toThrow(/token/);
+		// A token minted for another workflow would be refused by the frame's
+		// own check; saying so here names the mistake where it was made.
+		expect(() => mounted.setSession(session({ token: 'ok', embedUrl: '/embed/wf-9' }))).toThrow(/wf-9/);
+		expect(postedTo(frameWindow)).toHaveLength(1); // only the handshake's session message
+		mounted.unmount();
+	});
+
+	it('sends commands with a request id and resolves the origin-checked reply', async () => {
+		const onEvent = vi.fn();
+		const { mounted, frameWindow } = mount({ onEvent });
+		announce(frameWindow);
+		clearPosted(frameWindow);
+		onEvent.mockClear();
+
+		const saving = mounted.save();
+		const [payload, targetOrigin] = postedTo(frameWindow)[0]!;
+		expect(payload).toMatchObject({ type: 'kilasflow:command', protocol: EMBED_PROTOCOL_VERSION, command: 'save' });
+		expect(typeof (payload as { requestId: string }).requestId).toBe('string');
+		expect(targetOrigin).toBe(EDITOR_ORIGIN);
+
+		const requestId = (payload as { requestId: string }).requestId;
+		window.dispatchEvent(
+			new MessageEvent('message', {
+				origin: EDITOR_ORIGIN,
+				source: frameWindow,
+				data: { type: 'kilasflow:command-result', requestId, ok: true, saved: true, dirty: false, revision: 4 }
+			})
+		);
+		await expect(saving).resolves.toEqual({ ok: true, saved: true, dirty: false, revision: 4 });
+		// The reply is plumbing for the promise, not an event for the host.
+		expect(onEvent).not.toHaveBeenCalled();
+		mounted.unmount();
+	});
+
+	it('ignores a command reply from another origin, and one it did not ask for', async () => {
+		vi.useFakeTimers();
+		const { mounted, frameWindow } = mount({ commandTimeoutMs: 1000 });
+		announce(frameWindow);
+		clearPosted(frameWindow);
+
+		const focusing = mounted.focusNode('webhook');
+		// Attached before the timers advance, so the rejection is expected the
+		// moment it fires rather than observed afterwards.
+		const refused = expect(focusing).rejects.toThrow(/did not answer/);
+		const requestId = (postedTo(frameWindow)[0]![0] as { requestId: string }).requestId;
+
+		window.dispatchEvent(
+			new MessageEvent('message', {
+				origin: 'https://evil.example',
+				source: frameWindow,
+				data: { type: 'kilasflow:command-result', requestId, ok: true }
+			})
+		);
+		window.dispatchEvent(
+			new MessageEvent('message', {
+				origin: EDITOR_ORIGIN,
+				source: frameWindow,
+				data: { type: 'kilasflow:command-result', requestId: 'cmd-not-mine', ok: true }
+			})
+		);
+		await vi.advanceTimersByTimeAsync(1500);
+		await refused;
+		mounted.unmount();
+	});
+
+	it('rejects a command that times out, and another sent to a protocol-1 frame', async () => {
+		vi.useFakeTimers();
+		const first = mount({ commandTimeoutMs: 1000 });
+		announce(first.frameWindow);
+		const refused = expect(first.mounted.save()).rejects.toThrow(/did not answer the save command/);
+		await vi.advanceTimersByTimeAsync(1500);
+		await refused;
+		first.mounted.unmount();
+
+		// A frame that announced no protocol version carries no commands at
+		// all: refused up front rather than left hanging forever.
+		const second = mount();
+		announce(second.frameWindow, 0);
+		await expect(second.mounted.run()).rejects.toThrow(/protocol/);
+		await expect(second.mounted.focusNode('x')).rejects.toThrow(/protocol/);
+		second.mounted.unmount();
+	});
+
+	it('rejects commands sent before the handshake and pending ones on unmount', async () => {
+		const { mounted, frameWindow } = mount();
+
+		await expect(mounted.save()).rejects.toThrow(/not ready/);
+
+		announce(frameWindow);
+		const running = mounted.focusNode('trigger');
+		mounted.unmount();
+		await expect(running).rejects.toThrow(/unmounted/);
+	});
+
+	it('forwards the protocol v2 events as they arrive', () => {
+		const events: EditorEvent[] = [];
+		const { mounted, frameWindow } = mount({ onEvent: (event) => events.push(event) });
+		announce(frameWindow);
+
+		for (const data of [
+			{ type: 'kilasflow:dirty-changed', workflowId: 'wf-1', dirty: true },
+			{ type: 'kilasflow:session-expiring', workflowId: 'wf-1', expiresAt: '2026-10-25T16:00:00.000Z' },
+			{ type: 'kilasflow:unauthorized', workflowId: 'wf-1' },
+			{ type: 'kilasflow:workflow-published', workflowId: 'wf-1', versionId: 'ver-8', revision: 8 },
+			{ type: 'kilasflow:error', workflowId: 'wf-1', code: 'save-failed', message: '409 — stale revision' }
+		]) {
+			window.dispatchEvent(new MessageEvent('message', { origin: EDITOR_ORIGIN, source: frameWindow, data }));
+		}
+
+		expect(events.slice(1).map((event) => event.type)).toEqual([
+			'dirty-changed',
+			'session-expiring',
+			'unauthorized',
+			'workflow-published',
+			'error'
+		]);
+		expect(events.at(-1)).toMatchObject({ code: 'save-failed', message: '409 — stale revision' });
+		mounted.unmount();
 	});
 });
 

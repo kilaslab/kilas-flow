@@ -23,6 +23,21 @@ export interface EmbedSessionHandle {
 	datastoreId?: string;
 }
 
+/**
+ * The postMessage protocol this SDK speaks with the embedded editor.
+ *
+ * Version 2 is everything version 1 was — the `embed-ready` handshake, one
+ * `embed-session` reply, editor events — plus a token refresh that swaps the
+ * session without reloading the frame (`setSession`, with `expiresAt` warned
+ * about by a `session-expiring` event sixty seconds ahead), the
+ * `unauthorized`, `dirty-changed` and `error` events, a typed
+ * `workflow-published`, and the `save` / `run` / `focusNode` commands. The
+ * frame announces its own version with `embed-ready`; commands are refused
+ * up front when the frame did not announce at least 2, rather than leaving a
+ * promise that nothing will ever answer.
+ */
+export const EMBED_PROTOCOL_VERSION = 2;
+
 export interface MountOptions {
 	/** Element the iframe is appended to. */
 	container: HTMLElement;
@@ -50,22 +65,83 @@ export interface MountOptions {
 	onError?: (error: Error) => void;
 	/** How long to wait for the editor to announce itself. Default 15s. */
 	handshakeTimeoutMs?: number;
+	/**
+	 * How long a command (`save`, `focusNode`) may go unanswered before its
+	 * promise rejects. Default 15s.
+	 *
+	 * `run` is the exception: it resolves at the run's terminal state, which
+	 * is however long the workflow takes, so it is never timed out unless a
+	 * value is given here — watch `execution-started` / `execution-finished`
+	 * for progress instead.
+	 */
+	commandTimeoutMs?: number;
 }
 
 /** Messages the embedded editor sends to its host. */
 export type EditorEvent =
-	| { type: 'ready'; workflowId: string }
+	| { type: 'ready'; workflowId: string; /** The frame's protocol version; 1 when the frame did not say. */ protocol: number }
 	| { type: 'workflow-saved'; workflowId: string; revision: number }
+	/** A revision was pinned as the one production traffic runs. */
+	| { type: 'workflow-published'; workflowId: string; versionId: string; revision: number }
 	| { type: 'execution-started'; workflowId: string; executionId: string }
-	| { type: 'execution-finished'; workflowId: string; executionId: string; status: string };
+	| { type: 'execution-finished'; workflowId: string; executionId: string; status: string }
+	/** The canvas gained or lost unsaved edits (`dirty` is the new state). */
+	| { type: 'dirty-changed'; workflowId: string; dirty: boolean }
+	/**
+	 * The session token is sixty seconds from expiring (or already past it).
+	 * Mint a fresh session and hand it over with `setSession` — the editor is
+	 * not reloaded and the user's work survives.
+	 */
+	| { type: 'session-expiring'; workflowId: string; expiresAt: string }
+	/**
+	 * The server refused the token outright. Nothing this frame can do will
+	 * recover it: mint a new session and `setSession` it, or unmount.
+	 */
+	| { type: 'unauthorized'; workflowId: string }
+	/** Something the editor tried failed; `code` names the family. */
+	| { type: 'error'; workflowId: string; code: string; message?: string };
+
+/** A command the host sent was refused; `code` names the refusal. */
+export type CommandFailure = { ok: false; code: string; message?: string; dirty?: boolean };
+
+export type SaveResult = { ok: true; saved: boolean; dirty: boolean; revision?: number } | CommandFailure;
+
+export type RunResult = { ok: true; executionId: string | null; status?: string } | CommandFailure;
+
+export type FocusResult = { ok: true } | CommandFailure;
 
 export interface MountedEditor {
 	iframe: HTMLIFrameElement;
+	/**
+	 * Swaps the session's token without reloading the editor.
+	 *
+	 * For a host that listened to `session-expiring` (or `unauthorized`): mint
+	 * the replacement on the backend and hand it over. The frame re-attaches
+	 * the token in place — the canvas, the selection and the viewport survive,
+	 * and nothing the user was doing is interrupted.
+	 */
+	setSession(session: EmbedSessionHandle): void;
+	/**
+	 * Saves the canvas. Resolves when the save has settled: `saved` is false
+	 * when there was nothing to save, `ok: false` when the save was refused
+	 * (`code: 'conflict'` names a newer server revision).
+	 */
+	save(): Promise<SaveResult>;
+	/**
+	 * Runs the workflow exactly as the editor's own Execute button does
+	 * (saving first when the canvas is dirty). Resolves at the run's terminal
+	 * state with the execution id — which is null when the workflow is a chat
+	 * graph and the frame opened the chat panel instead.
+	 */
+	run(): Promise<RunResult>;
+	/** Selects a node and opens its inspector; refuses an id not on the canvas. */
+	focusNode(nodeId: string): Promise<FocusResult>;
 	/** Removes the iframe and every listener and timer it installed. */
 	unmount(): void;
 }
 
 const MESSAGE_PREFIX = 'kilasflow:';
+const DEFAULT_COMMAND_TIMEOUT_MS = 15_000;
 
 /**
  * Mounts the embedded editor in an iframe and performs the session handshake.
@@ -111,6 +187,63 @@ export function mountWorkflowEditor(options: MountOptions): MountedEditor {
 
 	let settled = false;
 	let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
+	/** The frame's protocol version, learned from its `embed-ready` announcement. */
+	let frameProtocol = 1;
+	/** Commands awaiting a reply, by request id. */
+	const pending = new Map<
+		string,
+		{ resolve: (value: never) => void; reject: (error: Error) => void; timer?: ReturnType<typeof setTimeout> }
+	>();
+	let commandSequence = 0;
+
+	function postSessionMessage(session: EmbedSessionHandle): void {
+		iframe.contentWindow?.postMessage(
+			{
+				type: 'kilasflow:embed-session',
+				protocol: EMBED_PROTOCOL_VERSION,
+				token: session.token,
+				workflowId,
+				scopes: session.scopes,
+				expiresAt: session.expiresAt,
+				branding: session.branding ?? {},
+				locale: options.locale
+			},
+			// Explicit target origin. '*' would hand the token to whatever
+			// document happened to occupy the frame.
+			editorOrigin
+		);
+	}
+
+	function failPending(error: Error): void {
+		for (const entry of pending.values()) {
+			if (entry.timer) clearTimeout(entry.timer);
+			entry.reject(error);
+		}
+		pending.clear();
+	}
+
+	function sendCommand<T>(
+		command: string,
+		args: Record<string, unknown> = {},
+		timeoutMs: number | undefined = options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
+	): Promise<T> {
+		if (!settled) return Promise.reject(new Error(`The editor is not ready yet; wait for the ready event before calling ${command}().`));
+		if (frameProtocol < EMBED_PROTOCOL_VERSION) {
+			return Promise.reject(new Error(`The embedded editor speaks postMessage protocol ${frameProtocol}, which carries no commands.`));
+		}
+		const requestId = `cmd-${++commandSequence}`;
+		return new Promise<T>((resolve, reject) => {
+			const entry = { resolve: resolve as (value: never) => void, reject, timer: undefined as ReturnType<typeof setTimeout> | undefined };
+			if (timeoutMs !== undefined && timeoutMs > 0) {
+				entry.timer = setTimeout(() => {
+					pending.delete(requestId);
+					reject(new Error(`The editor did not answer the ${command} command within ${timeoutMs}ms.`));
+				}, timeoutMs);
+			}
+			pending.set(requestId, entry);
+			iframe.contentWindow?.postMessage({ type: 'kilasflow:command', protocol: EMBED_PROTOCOL_VERSION, requestId, command, ...args }, editorOrigin);
+		});
+	}
 
 	function onMessage(event: MessageEvent) {
 		// Origin first, before the payload is inspected at all.
@@ -124,21 +257,23 @@ export function mountWorkflowEditor(options: MountOptions): MountedEditor {
 
 		if (name === 'embed-ready') {
 			settled = true;
+			frameProtocol = typeof data?.protocol === 'number' ? data.protocol : 1;
 			if (handshakeTimer) clearTimeout(handshakeTimer);
-			iframe.contentWindow?.postMessage(
-				{
-					type: 'kilasflow:embed-session',
-					token: session.token,
-					workflowId,
-					scopes: session.scopes,
-					branding: session.branding ?? {},
-					locale: options.locale
-				},
-				// Explicit target origin. '*' would hand the token to whatever
-				// document happened to occupy the frame.
-				editorOrigin
-			);
-			options.onEvent?.({ type: 'ready', workflowId });
+			postSessionMessage(session);
+			options.onEvent?.({ type: 'ready', workflowId, protocol: frameProtocol });
+			return;
+		}
+
+		if (name === 'command-result') {
+			// Protocol plumbing, not a host event: routed to the promise it
+			// answers, and never forwarded to onEvent.
+			const requestId = typeof data?.requestId === 'string' ? data.requestId : '';
+			const entry = pending.get(requestId);
+			if (!entry) return;
+			pending.delete(requestId);
+			if (entry.timer) clearTimeout(entry.timer);
+			const { requestId: _requestId, type: _type, protocol: _protocol, ...result } = data as Record<string, unknown>;
+			(entry.resolve as (value: unknown) => void)(result);
 			return;
 		}
 
@@ -155,9 +290,33 @@ export function mountWorkflowEditor(options: MountOptions): MountedEditor {
 
 	return {
 		iframe,
+		setSession(next: EmbedSessionHandle) {
+			if (!next?.token) throw new Error('setSession needs a session with a token');
+			if (!settled) throw new Error('setSession cannot run before the editor has completed its handshake.');
+			// The frame is open on one workflow; a token minted for another
+			// would be refused by the frame's own check, so say so here where
+			// the mistake was made.
+			const named = workflowIdFrom(next);
+			if (named && named !== workflowId) {
+				throw new Error(`setSession cannot swap to a session for workflow ${named} while the editor is open on ${workflowId}.`);
+			}
+			postSessionMessage(next);
+		},
+		save() {
+			return sendCommand<SaveResult>('save');
+		},
+		run() {
+			// No default timeout: a run resolves at its terminal state, which
+			// is however long the workflow takes. The frame always replies.
+			return sendCommand<RunResult>('run', {}, options.commandTimeoutMs);
+		},
+		focusNode(nodeId: string) {
+			return sendCommand<FocusResult>('focusNode', { nodeId });
+		},
 		unmount() {
 			window.removeEventListener('message', onMessage);
 			if (handshakeTimer) clearTimeout(handshakeTimer);
+			failPending(new Error('The editor was unmounted before it answered.'));
 			iframe.remove();
 		}
 	};

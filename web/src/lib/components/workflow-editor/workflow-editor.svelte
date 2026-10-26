@@ -1288,6 +1288,35 @@
 	}
 
 	/**
+	 * Runs what is on the canvas for a host outside the component — the embed
+	 * protocol's `run` command. Exactly the toolbar's Execute: unsaved edits
+	 * are saved first, and the returned execution is the run's terminal state
+	 * (undefined when the button would have opened Chat instead, or the save
+	 * it needed did not take).
+	 */
+	export async function runDraft(): Promise<ExecutionResource | void> {
+		if (dirty) {
+			await save();
+			await tick();
+			if (dirty) return;
+		}
+		return await run();
+	}
+
+	/**
+	 * Selects a node and opens its inspector, as a double click does — the
+	 * embed protocol's `focusNode` command. False when no such node is on the
+	 * canvas, so the host's promise can say so instead of silently panning
+	 * nowhere.
+	 */
+	export function focusNode(nodeID: string): boolean {
+		const present = (displayed.nodes ?? []).some((node) => node.id === nodeID);
+		if (!present) return false;
+		openNode(nodeID);
+		return true;
+	}
+
+	/**
 	 * Cmd+S from wherever the user is. A field that commits on blur or change
 	 * (a JSON parameter, a key name) still holds its last edit while it has
 	 * focus, so it is made to let go and take focus back before the draft is
@@ -1309,15 +1338,10 @@
 	 * does — instead of the key doing nothing on a dirty canvas.
 	 */
 	async function executeFromKeyboard() {
-		if (dirty) {
-			await save();
-			await tick();
-			if (dirty) return;
-		}
-		await run();
+		await runDraft();
 	}
 
-	async function run() {
+	async function run(): Promise<ExecutionResource | void> {
 		if (hideRun || dirty || running || previewing) return;
 		const intent = executeIntent(displayed.nodes ?? [], definitions, selectedNodeIDs);
 		if (intent.action === 'open-chat') {
@@ -1325,9 +1349,10 @@
 			return;
 		}
 		try {
-			await onRun(intent.triggerNodeId ? { triggerNodeId: intent.triggerNodeId } : undefined);
+			return await onRun(intent.triggerNodeId ? { triggerNodeId: intent.triggerNodeId } : undefined);
 		} catch {
 			// The host records runError; Execute must not become an unhandled rejection.
+			return undefined;
 		}
 	}
 

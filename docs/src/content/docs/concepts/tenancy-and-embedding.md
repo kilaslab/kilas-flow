@@ -215,15 +215,22 @@ both.
                                   │                          ┌──────────────┐
                                   │◀── postMessage           │  loads,      │
                                   │    'kilasflow:embed-ready'│  announces  │
-                                  │                          └──────────────┘
+                                  │     (protocol: 2)        └──────────────┘
                                   │
                                   ├── postMessage
                                   │   { type: 'kilasflow:embed-session',
-                                  │     token }
+                                  │     token, expiresAt }
                                   │   targetOrigin = editor's exact origin
                                   │
                                   │◀── 'ready' | 'workflow-saved'
+                                  │    'workflow-published'
                                   │    'execution-started' | 'execution-finished'
+                                  │    'dirty-changed'
+                                  │    'session-expiring' (60s before expiry)
+                                  │    'unauthorized' | 'error'
+                                  │
+                                  ├── a second 'kilasflow:embed-session'
+                                  │   refreshes the token without a reload
 ```
 
 Every message is posted to an explicit target origin, never `'*'` — `'*'` would

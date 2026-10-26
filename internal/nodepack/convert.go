@@ -90,6 +90,16 @@ type DeclarativeProperty struct {
 	Show        map[string][]string   `json:"show,omitempty"`
 	Routing     *DeclarativeRouting   `json:"routing,omitempty"`
 	TypeOptions *property.TypeOptions `json:"typeOptions,omitempty"`
+	// LoadOptions is the pack form, carried as-is: a transcription that
+	// could observe a picker's request can describe it declaratively, which
+	// is the only form this project can honour. An n8n `loadOptionsMethod`
+	// (a JavaScript function name) has no transcription and is refused by the
+	// report, never silently dropped.
+	LoadOptions *property.OptionsLoader `json:"loadOptions,omitempty"`
+	// Modes are a resourceLocator's ways of naming its resource, in the pack
+	// form. A locator whose list mode names a loader is transcribable; one
+	// whose list is produced by code is not, and says so in the report.
+	Modes []property.PropertyMode `json:"modes,omitempty"`
 }
 
 // DeclarativeOption is one value of an options property. On the `operation`
@@ -670,6 +680,8 @@ func convertParameters(src *DeclarativeNode, resources []DeclarativeOption, buil
 			parameter.Default = declared.Default
 			parameter.Options = options
 			parameter.TypeOptions = declared.TypeOptions
+			parameter.LoadOptions = declared.LoadOptions
+			parameter.Modes = declared.Modes
 		} else {
 			if first, ok := firstKind[declared.Key]; ok && first != declared.Kind && !strings.HasSuffix(first, "!") {
 				report.note("parameter %q is declared as %s and %s by different operations; generated as %s",
