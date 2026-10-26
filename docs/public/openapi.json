@@ -1431,6 +1431,15 @@
           "documentationUrl": {
             "type": "string"
           },
+          "eventCatalogue": {
+            "items": {
+              "$ref": "#/components/schemas/EventDefinition"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "group": {
             "items": {
               "type": "string"
@@ -1439,6 +1448,9 @@
               "array",
               "null"
             ]
+          },
+          "hostEvents": {
+            "$ref": "#/components/schemas/HostEventDeclaration"
           },
           "icon": {
             "$ref": "#/components/schemas/NodeIcon"
@@ -1940,6 +1952,23 @@
         },
         "required": [
           "value",
+          "type"
+        ],
+        "type": "object"
+      },
+      "EventDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "sample": {},
+          "schema": {},
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
           "type"
         ],
         "type": "object"
@@ -2638,6 +2667,27 @@
           "version",
           "authEnabled"
         ],
+        "type": "object"
+      },
+      "HostEventDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "eventPath": {
+            "type": "string"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "parameter": {
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "ImportIssue": {
@@ -3907,6 +3957,125 @@
         "required": [
           "label",
           "value"
+        ],
+        "type": "object"
+      },
+      "PublishEventFilter": {
+        "additionalProperties": false,
+        "properties": {
+          "executionId": {
+            "description": "The execution a duplicate was collapsed with, when it is known.",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "duplicate",
+              "inactive"
+            ],
+            "type": "string"
+          },
+          "workflowId": {
+            "description": "The workflow that was considered.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflowId",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "PublishEventInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/PublishEventInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "eventId": {
+            "description": "The host's own identifier for this event. When Idempotency-Key is absent it is the idempotency key, and it deduplicates per workflow either way: publishing the same eventId again reaches each workflow once within a five-minute window.",
+            "maxLength": 128,
+            "type": "string"
+          },
+          "occurredAt": {
+            "description": "When the event happened on the host's clock. Absent means the server stamps the publish time.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "payload": {
+            "description": "The event's body, carried through to each workflow as the trigger item's payload."
+          },
+          "type": {
+            "description": "The event type, exactly as triggers subscribe to it.",
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "PublishEventMatch": {
+        "additionalProperties": false,
+        "properties": {
+          "executionId": {
+            "description": "The queued execution, followable on the event stream.",
+            "type": "string"
+          },
+          "workflowId": {
+            "description": "The workflow that queued an execution.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflowId",
+          "executionId"
+        ],
+        "type": "object"
+      },
+      "PublishEventResult": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/PublishEventResult.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "filtered": {
+            "description": "Workflows that were considered and did not run, with the reason.",
+            "items": {
+              "$ref": "#/components/schemas/PublishEventFilter"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "matched": {
+            "description": "One entry per workflow that queued an execution.",
+            "items": {
+              "$ref": "#/components/schemas/PublishEventMatch"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "matched",
+          "filtered"
         ],
         "type": "object"
       },
@@ -7174,6 +7343,70 @@
         "summary": "Create an embed session",
         "tags": [
           "Embed"
+        ]
+      }
+    },
+    "/api/v1/events": {
+      "post": {
+        "description": "Publishes one event and queues an execution for every active workflow whose event trigger lists the event's type, running each workflow's active revision. This is the recommended host → workflow path: one request reaches every listening workflow, where a webhook route is per workflow and POST /workflows/{id}/run runs the latest revision and ignores activation. The response names what ran. An event nobody listens for is accepted and matches nothing. Send Idempotency-Key to make a retry safe; without one, an eventId in the body is the idempotency key, and deduplicates per workflow either way. 1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means no idempotency.",
+        "operationId": "publish-event",
+        "parameters": [
+          {
+            "description": "1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means the body's eventId is used, when there is one.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "description": "1-255 printable ASCII characters. A retry carrying the same key and the same request is answered with the first request's outcome and repeats no side effect, marked with Idempotent-Replayed: true. The same key with a different request or resource is refused with 409. Keys are per tenant and are remembered for idempotency.retention. An empty header means the body's eventId is used, when there is one.",
+              "maxLength": 255,
+              "minLength": 1,
+              "pattern": "^[!-~]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishEventInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishEventResult"
+                }
+              }
+            },
+            "description": "Accepted",
+            "headers": {
+              "Idempotent-Replayed": {
+                "schema": {
+                  "description": "true when this response replays an earlier request with the same Idempotency-Key; absent on a first response.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Publish a host event",
+        "tags": [
+          "Events"
         ]
       }
     },

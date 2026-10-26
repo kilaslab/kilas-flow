@@ -9,7 +9,7 @@ sidebar:
 
 > **Generated reference — KilasFlow `0.1.0-dev`.** Produced from the node catalogue a real binary serves at `GET /api/v1/node-types`, not hand-written. The per-type counts and every table below are the committed output, and `make generate-node-catalogue-check` fails when the catalogue changes without a regeneration.
 
-A default install serves **76 distinct node types** across **83 type-and-version pairs**: 72 types (77 pairs) compiled into the binary and 4 types (6 pairs) from the declarative packs it ships with. This page lists every one — the index table first, then a section per type with its parameters, ports, credential requirements and the n8n node it maps to. What a version *resolves to* is in [the node registry](/concepts/node-registry/); what a parameter *does* at run time is in each node's own documentation, where it carries one.
+A default install serves **77 distinct node types** across **84 type-and-version pairs**: 73 types (78 pairs) compiled into the binary and 4 types (6 pairs) from the declarative packs it ships with. This page lists every one — the index table first, then a section per type with its parameters, ports, credential requirements and the n8n node it maps to. What a version *resolves to* is in [the node registry](/concepts/node-registry/); what a parameter *does* at run time is in each node's own documentation, where it carries one.
 
 The catalogue a particular install serves can be smaller: a type scoped to other tenants is absent from `GET /node-types` by design (see [Tenant-scoped nodes](/guides/tenant-scoped-nodes/)), and an install with `KILASFLOW_PACKS_DIR` set serves its packs beside these. Ask your own instance for the truth: `curl -s $KILASFLOW_HOST/api/v1/node-types | jq -r '.[].type'`.
 
@@ -48,6 +48,7 @@ The catalogue a particular install serves can be smaller: a type scoped to other
 | [`kilasflow.googleSheets`](#kilasflowgooglesheets) | Google Sheets | 1 | Files | builtin | — |
 | [`kilasflow.googleSheetsTool`](#kilasflowgooglesheetstool) | Google Sheets Tool | 1 | AI | builtin | — |
 | [`kilasflow.googleSheetsTrigger`](#kilasflowgooglesheetstrigger) | Google Sheets Trigger | 1 | Triggers | builtin | — |
+| [`kilasflow.hostEvent`](#kilasflowhostevent) | Host Event | 1 | Triggers | builtin | — |
 | [`kilasflow.httpRequest`](#kilasflowhttprequest) | HTTP Request | 1 | Core | builtin | `n8n-nodes-base.httpRequest`, `@aldinokemal2104/n8n-nodes-gowa.gowa`, `n8n-nodes-gowa.gowa` |
 | [`kilasflow.httpTool`](#kilasflowhttptool) | HTTP Request Tool | 1 | AI | builtin | `@n8n/n8n-nodes-langchain.toolHttpRequest` |
 | [`kilasflow.if`](#kilasflowif) | IF | 1 | Core | builtin | `n8n-nodes-base.if` |
@@ -900,6 +901,26 @@ Parameters:
 | `options.valueRender` | options | no | `UNFORMATTED_VALUE` |  Options: `UNFORMATTED_VALUE`, `FORMATTED_VALUE`, `FORMULA`. |
 | `options.dateTimeRenderOption` | options | no | `FORMATTED_STRING` |  Options: `FORMATTED_STRING`, `SERIAL_NUMBER`. |
 | `pollTimes` | collection | no | — |  |
+
+## kilasflow.hostEvent
+
+Starts a workflow when the host publishes an event this trigger listens for.
+
+| | |
+| --- | --- |
+| Display name | Host Event |
+| Category | Triggers (trigger) |
+| Versions | `1` |
+| Inputs | — |
+| Outputs | `main` (main) |
+| Credentials | — |
+| n8n equivalent | — |
+
+Parameters:
+
+| Parameter | Kind | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `events` | multiOptions | yes | — | The host event types this workflow starts for. The list is offered by the node packs this server carries that declare a host event catalogue — the host's own product pack is the usual author — and every active workflow listening for a published type runs when it is published. |
 
 ## kilasflow.httpRequest
 

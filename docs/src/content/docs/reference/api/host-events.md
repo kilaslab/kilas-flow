@@ -25,11 +25,62 @@ Parameters:
 
 Request body: `application/json` — `PublishEventInputBody` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `eventId` | no | `string` | The host's own identifier for this event. When Idempotency-Key is absent it is the idempotency key, and it deduplicates per workflow either way: publishing the same eventId again reaches each workflow once within a five-minute window. |
+| `occurredAt` | no | `string` | When the event happened on the host's clock. Absent means the server stamps the publish time. |
+| `payload` | no |  | The event's body, carried through to each workflow as the trigger item's payload. |
+| `type` | yes | `string` | The event type, exactly as triggers subscribe to it. |
+
 Responses:
 
 | Status | Description | Body |
 | --- | --- | --- |
 | `202` | Accepted | `application/json` — `PublishEventResult` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `PublishEventResult` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `filtered` | yes | `array or null` | Workflows that were considered and did not run, with the reason. |
+| `matched` | yes | `array or null` | One entry per workflow that queued an execution. |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "type": "string"
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "filtered": [
+    {
+      "executionId": "string",
+      "reason": "duplicate",
+      "workflowId": "string"
+    }
+  ],
+  "matched": [
+    {
+      "executionId": "string",
+      "workflowId": "string"
+    }
+  ]
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/events" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"type":"string"}'
+```
 
 Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
