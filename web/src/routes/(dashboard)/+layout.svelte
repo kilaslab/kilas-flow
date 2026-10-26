@@ -15,7 +15,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Sheet from '$lib/components/ui/sheet';
 	import { EDITOR_SIDEBAR_BREAKPOINT, isEditorRoute, sidebarCollapsed as collapsedFor } from '$lib/dashboard/sidebar';
-	import { dashboardSections, sectionForPath, sectionLabel } from '$lib/dashboard/nav-sections';
+	import { sectionForPath, sectionLabel } from '$lib/dashboard/nav-sections';
 	import * as m from '$lib/paraglide/messages.js';
 	import { DEFAULT_THEME_COLOR, watchThemeColor } from '$lib/design-system/theme-color';
 	import { mediaQuery } from '$lib/workflow-editor/media.svelte';
@@ -158,20 +158,16 @@
 				</Sheet.Content>
 			</Sheet.Root>
 
+		<!-- The top bar carries only the breadcrumb (FEAT-npc3ge): a location
+		     trail, deliberately without links. Section navigation is the
+		     sidebar's one job and every detail route keeps its own back
+		     control, so a clickable crumb would be a second link named exactly
+		     like the sidebar's — two affordances pretending to be one. The
+		     trail states the current section, then the item's id. -->
 		<nav aria-label={m.common_breadcrumb()} class="min-w-0 flex-1">
 			<ol class="flex min-w-0 items-center gap-1 text-xs">
-				<li class="shrink-0">
-					<a href="/" class="rounded font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2">KilasFlow</a>
-				</li>
-				<li aria-hidden="true" class="shrink-0 text-muted-foreground/60">/</li>
-				<li class="shrink-0">
-					<a
-						href={dashboardSections.find((entry) => entry.key === section)?.href ?? '/'}
-						aria-current={detailCrumb ? undefined : 'page'}
-						class="rounded font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2"
-					>
-						{sectionLabel(section)}
-					</a>
+				<li class="shrink-0 truncate font-medium text-muted-foreground" aria-current={detailCrumb ? undefined : 'page'}>
+					{sectionLabel(section)}
 				</li>
 				{#if detailCrumb}
 					<li aria-hidden="true" class="shrink-0 text-muted-foreground/60">/</li>

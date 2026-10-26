@@ -144,6 +144,18 @@ describe('design budget: rows, controls, one width (FEAT-npc3ge)', () => {
 		expect(controlHeightViolations(scans)).toEqual([]);
 	});
 
+	it('the top-bar breadcrumb is a location trail, never a second link named like the sidebar\'s', () => {
+		// The i18n proof queries the sidebar\'s section link strictly
+		// (getByRole link, exact name), so a clickable crumb — named exactly
+		// like the section it belongs to — is a duplicate affordance, not a
+		// second navigation. The trail states where you are; the sidebar and
+		// each detail route\'s own back control do the moving.
+		const source = readFileSync(join(SRC, 'routes/(dashboard)/+layout.svelte'), 'utf8');
+		const trail = source.slice(source.indexOf('common_breadcrumb()'), source.indexOf('</nav>', source.indexOf('common_breadcrumb()')));
+		expect(trail, 'the breadcrumb markup is found').toContain('sectionLabel(section)');
+		expect(trail).not.toMatch(/<a[\s>]/);
+	});
+
 	it('the rules can fail', () => {
 		const fixture = (file: string, source: string) => ({ file: join(SRC, file), scan: scanSvelte(join(SRC, file), source) });
 		expect(controlHeightViolations([fixture('x.svelte', '<button class="h-9">x</button>')])).toHaveLength(1);
