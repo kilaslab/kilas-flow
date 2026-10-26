@@ -157,6 +157,26 @@ const EXCLUDED: Record<string, string> = {
 	// internal/api/events_test.go.
 	'kilasflow.hostEvent@1':
 		'needs a host to publish the event; covered in internal/hostevents and internal/api/events_test.go',
+	// The file & format utilities are pure Go with no outbound traffic, so
+	// they would run headless — the natural tier is the run coverage above,
+	// as a Manual → Set → Convert to File → Compression chain. That workflow
+	// belongs to a follow-up change; the nodes are covered at the unit level
+	// in nodes/fileformat_test.go and nodes/editimage_test.go, where the file
+	// bytes, the pixels and the digests are asserted.
+	'kilasflow.convertToFile@1':
+		'pure-Go transform; unit-covered in nodes/fileformat_test.go — the run-tier workflow belongs to a follow-up change',
+	'kilasflow.compression@1':
+		'pure-Go transform; unit-covered in nodes/fileformat_test.go — the run-tier workflow belongs to a follow-up change',
+	'kilasflow.html@1':
+		'pure-Go transform; unit-covered in nodes/fileformat_test.go — the run-tier workflow belongs to a follow-up change',
+	'kilasflow.markdown@1':
+		'pure-Go transform; unit-covered in nodes/fileformat_test.go — the run-tier workflow belongs to a follow-up change',
+	'kilasflow.xml@1':
+		'pure-Go transform; unit-covered in nodes/fileformat_test.go — the run-tier workflow belongs to a follow-up change',
+	'kilasflow.crypto@1':
+		'pure-Go transform; unit-covered in nodes/fileformat_test.go — the run-tier workflow belongs to a follow-up change',
+	'kilasflow.editImage@1':
+		'pure-Go transform; unit-covered in nodes/editimage_test.go — the run-tier workflow belongs to a follow-up change',
 };
 
 interface CatalogueEntry {
