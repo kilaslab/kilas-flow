@@ -123,6 +123,13 @@ type ModelRequest struct {
 	// OpenAI-compatible API also reads ("none" turns its thinking off).
 	// Empty sends nothing and leaves the provider's default.
 	ReasoningEffort string
+	// ResponseFormat asks the provider for a particular output shape, as the
+	// OpenAI API's `response_format.type` spells it — "json_object" being the
+	// one a structured answer needs. Empty sends nothing and the model
+	// answers in plain text. It is a transport instruction rather than a
+	// sampling knob, which is why it is a word rather than a pointer: there
+	// is no meaningful zero to preserve.
+	ResponseFormat string
 	// Timeout bounds one attempt, the way a provider's own timeout option
 	// does. It is a transport concern the adapter applies, not a bound on
 	// the whole conversation: an agent that takes three tool turns is three

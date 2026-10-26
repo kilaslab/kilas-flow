@@ -227,3 +227,72 @@ func TestParserRetriesAnOutOfRangeScore(t *testing.T) {
 		t.Errorf("repair turn = %q, want it to name the score and its maximum", repair.Content)
 	}
 }
+
+// TestParseOutputSchemaWrapsAnItemListItemsSchema is the Item List Output
+// Parser: the author describes one item and the model is held to a list of
+// them — the item's shape validated per member, by the same validator every
+// other schema goes through.
+func TestParseOutputSchemaWrapsAnItemListItemsSchema(t *testing.T) {
+	t.Parallel()
+
+	fromSchema, retries, err := ai.ParseOutputSchema(map[string]any{
+		ai.OutputParserSchemaTypeKey: ai.OutputSchemaItemList,
+		ai.OutputParserSchemaKey:     `{"type":"object","properties":{"sku":{"type":"string"}},"required":["sku"],"additionalProperties":false}`,
+	})
+	if err != nil {
+		t.Fatalf("ParseOutputSchema(item list from a schema) error = %v", err)
+	}
+	if retries != ai.DefaultOutputMaxRetries {
+		t.Errorf("retries = %d, want the default", retries)
+	}
+	if fromSchema["type"] != "array" {
+		t.Fatalf("schema = %#v, want an array at the top", fromSchema)
+	}
+	for name, value := range map[string]string{
+		"a list of matching items": `[{"sku":"A"},{"sku":"B"}]`,
+		"an empty list":            `[]`,
+	} {
+		if err := ai.ValidateValue(fromSchema, decode(t, value), "output"); err != nil {
+			t.Errorf("%s: ValidateValue(%s) = %v", name, value, err)
+		}
+	}
+	for name, value := range map[string]string{
+		"not a list":                `{"sku":"A"}`,
+		"a member missing the key":  `[{}]`,
+		"a member with a stray key": `[{"sku":"A","qty":2}]`,
+	} {
+		if err := ai.ValidateValue(fromSchema, decode(t, value), "output"); err == nil {
+			t.Errorf("%s: ValidateValue(%s) accepted it", name, value)
+		}
+	}
+
+	fromExample, _, err := ai.ParseOutputSchema(map[string]any{
+		ai.OutputParserSchemaTypeKey: ai.OutputSchemaItemList,
+		ai.OutputParserExampleKey:    `{"sku":"A","qty":2}`,
+	})
+	if err != nil {
+		t.Fatalf("ParseOutputSchema(item list from an example) error = %v", err)
+	}
+	if err := ai.ValidateValue(fromExample, decode(t, `[{"sku":"B","qty":3}]`), "output"); err != nil {
+		t.Errorf("ValidateValue(a list shaped like the example) = %v", err)
+	}
+	if err := ai.ValidateValue(fromExample, decode(t, `[{"sku":"B"}]`), "output"); err == nil {
+		t.Error("ValidateValue accepted a list missing a property the example carries")
+	}
+}
+
+// TestParseOutputSchemaNamesTheItemListRequirements: an item-list parser with
+// neither field, and an unknown source naming the third option it could have
+// used.
+func TestParseOutputSchemaNamesTheItemListRequirements(t *testing.T) {
+	t.Parallel()
+
+	_, _, err := ai.ParseOutputSchema(map[string]any{ai.OutputParserSchemaTypeKey: ai.OutputSchemaItemList})
+	if err == nil || !strings.Contains(err.Error(), "item list") {
+		t.Fatalf("ParseOutputSchema() = %v, want the item-list requirement named", err)
+	}
+	_, _, err = ai.ParseOutputSchema(map[string]any{ai.OutputParserSchemaTypeKey: "telepathy"})
+	if err == nil || !strings.Contains(err.Error(), ai.OutputSchemaItemList) {
+		t.Fatalf("ParseOutputSchema() = %v, want the unknown source to name the options", err)
+	}
+}

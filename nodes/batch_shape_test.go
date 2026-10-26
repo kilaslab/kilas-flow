@@ -17,17 +17,18 @@ import (
 // continue-on-fail the runner otherwise splits a node into one-item calls, and
 // each of these then computes something plausible and wrong for every item.
 var batchShapedNodes = map[string]string{
-	nodes.AggregateNodeType:        "folds every item into one",
-	nodes.SummarizeNodeType:        "groups and counts across items",
-	nodes.LimitNodeType:            "keeps the first or last N of the batch",
-	nodes.RemoveDuplicatesNodeType: "compares items with each other",
-	nodes.SortNodeType:             "orders the batch",
-	nodes.JSCodeNodeType:           "the body sees $input.all()",
-	nodes.ForeignCodeNodeType:      "the body sees the whole batch",
-	nodes.RespondNodeType:          "answers the caller once, with the first item or all of them",
-	nodes.CodeNodeType:             "runs once for all items by default",
-	nodes.ExecuteWorkflowNodeType:  "calls the workflow once with all items by default",
-	nodes.GoogleSheetsNodeType:     "reads the sheet once and writes the batch in one request, and fails as one operation",
+	nodes.AggregateNodeType:          "folds every item into one",
+	nodes.SummarizeNodeType:          "groups and counts across items",
+	nodes.LimitNodeType:              "keeps the first or last N of the batch",
+	nodes.RemoveDuplicatesNodeType:   "compares items with each other",
+	nodes.SortNodeType:               "orders the batch",
+	nodes.JSCodeNodeType:             "the body sees $input.all()",
+	nodes.ForeignCodeNodeType:        "the body sees the whole batch",
+	nodes.RespondNodeType:            "answers the caller once, with the first item or all of them",
+	nodes.CodeNodeType:               "runs once for all items by default",
+	nodes.ExecuteWorkflowNodeType:    "calls the workflow once with all items by default",
+	nodes.GoogleSheetsNodeType:       "reads the sheet once and writes the batch in one request, and fails as one operation",
+	nodes.ChainSummarizationNodeType: "answers once for the whole batch in its together mode",
 }
 
 // perItemNodes are the native nodes an item is the unit of work for: one item
@@ -38,8 +39,11 @@ var perItemNodes = map[string]bool{
 	nodes.FilterNodeType: true, nodes.GmailNodeType: true, nodes.GoogleDriveNodeType: true, "kilasflow.httpRequest": true,
 	"kilasflow.if": true, nodes.MySQLNodeType: true, nodes.NoOpNodeType: true, nodes.PostgresNodeType: true,
 	"kilasflow.set": true, nodes.SplitOutNodeType: true, nodes.SQLiteNodeType: true, nodes.StopAndErrorNodeType: true,
-	nodes.SwitchNodeType: true, nodes.VectorStorePGVectorNodeType: true, nodes.WaitNodeType: true,
+	"kilasflow.switch": true, nodes.VectorStorePGVectorNodeType: true, nodes.WaitNodeType: true,
 	nodes.AgentNodeType: true, nodes.ChainNodeType: true, nodes.DocumentLoaderNodeType: true,
+	nodes.OpenAIAppNodeType: true, nodes.GoogleGeminiAppNodeType: true,
+	nodes.InformationExtractorNodeType: true, nodes.TextClassifierNodeType: true,
+	nodes.ChainRetrievalQaNodeType: true, nodes.SentimentAnalysisNodeType: true,
 }
 
 // Every native node the runner could split into one-item calls is classified,

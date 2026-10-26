@@ -41,10 +41,23 @@ func RegisterAll(registry *node.Registry) error {
 		// saved workflow on the generic type keeps running unchanged.
 		openAIChatModelNode(),
 		openRouterChatModelNode(),
+		// The provider app nodes: a model named on the node itself rather than
+		// wired in as a sub-node, which is the shape most imported templates
+		// reach a model through.
+		openAIAppNode(),
+		googleGeminiAppNode(),
 		memoryNode(),
 		httpToolNode(),
 		agentNode(),
 		chainLlmNode(),
+		// The root chains: prompt assemblies over the same model port and
+		// schema plumbing the Basic LLM Chain runs, each its own type because
+		// an imported workflow names each one.
+		informationExtractorNode(),
+		textClassifierNode(),
+		chainSummarizationNode(),
+		chainRetrievalQaNode(),
+		sentimentAnalysisNode(),
 		calculatorNode(),
 		calculatorToolNode(),
 		workflowToolNode(),

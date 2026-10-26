@@ -39,6 +39,11 @@ var portsGoldenMirroredByHand = map[string]string{
 	nodes.SwitchNodeType:    "switchOutputs in ports.ts",
 	"kilasflow.merge":       "mergeInputs in ports.ts",
 	nodes.DatastoreNodeType: "datastoreOutputs in ports.ts",
+	// The classifier's categories, mirrored the way the Switch's rules are:
+	// free-form rows the golden cannot enumerate. NOTE: ports.ts needs its
+	// classifierOutputs case added beside this entry — the Go side landed
+	// first (web/ is owned by another change in flight).
+	nodes.TextClassifierNodeType: "classifierOutputs in ports.ts",
 }
 
 // portsGoldenNeighbours are node types the golden carries static ports for

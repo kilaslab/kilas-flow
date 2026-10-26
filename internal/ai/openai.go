@@ -200,6 +200,9 @@ func (model *OpenAICompatible) post(ctx context.Context, request ModelRequest, s
 		FrequencyPenalty: request.FrequencyPenalty, PresencePenalty: request.PresencePenalty,
 		MaxTokens: request.MaxTokens, ReasoningEffort: request.ReasoningEffort,
 	}
+	if request.ResponseFormat != "" {
+		payload.ResponseFormat = &responseFormat{Type: request.ResponseFormat}
+	}
 	if stream {
 		// A provider reports token usage on a streamed run only when asked to.
 		// Without this the final chunk carries no `usage` object, every
@@ -427,17 +430,26 @@ func (model *OpenAICompatible) statusError(response *http.Response) error {
 }
 
 type chatRequest struct {
-	Model            string         `json:"model"`
-	Messages         []wireMessage  `json:"messages"`
-	Tools            []wireTool     `json:"tools,omitempty"`
-	Temperature      *float64       `json:"temperature,omitempty"`
-	TopP             *float64       `json:"top_p,omitempty"`
-	FrequencyPenalty *float64       `json:"frequency_penalty,omitempty"`
-	PresencePenalty  *float64       `json:"presence_penalty,omitempty"`
-	MaxTokens        int            `json:"max_tokens,omitempty"`
-	ReasoningEffort  string         `json:"reasoning_effort,omitempty"`
-	Stream           bool           `json:"stream,omitempty"`
-	StreamOptions    *streamOptions `json:"stream_options,omitempty"`
+	Model            string          `json:"model"`
+	Messages         []wireMessage   `json:"messages"`
+	Tools            []wireTool      `json:"tools,omitempty"`
+	Temperature      *float64        `json:"temperature,omitempty"`
+	TopP             *float64        `json:"top_p,omitempty"`
+	FrequencyPenalty *float64        `json:"frequency_penalty,omitempty"`
+	PresencePenalty  *float64        `json:"presence_penalty,omitempty"`
+	MaxTokens        int             `json:"max_tokens,omitempty"`
+	ReasoningEffort  string          `json:"reasoning_effort,omitempty"`
+	ResponseFormat   *responseFormat `json:"response_format,omitempty"`
+	Stream           bool            `json:"stream,omitempty"`
+	StreamOptions    *streamOptions  `json:"stream_options,omitempty"`
+}
+
+// responseFormat is the `response_format` object of the chat-completions API,
+// carried as a pointer so an absent instruction sends no key at all: several
+// OpenAI-compatible endpoints refuse the object outright even with a value
+// they would otherwise ignore.
+type responseFormat struct {
+	Type string `json:"type"`
 }
 
 // streamOptions asks the provider for the accounting it otherwise withholds.

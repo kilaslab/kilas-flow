@@ -168,7 +168,19 @@ export const LIVE_SERVICE: string[] = [];
 // Explicit, justified exclusions from every tier. Empty: everything the
 // server advertises is either executed, validated, or live-served above.
 export const MATRIX_EXCLUDED: Record<string, string> = {
-	// No exclusions. When a node needs one, add `"type@version": "why"`.
+	// Provider app nodes and the root chains execute a real model call: the
+	// stub tier cannot fake the provider, and the live tier needs a model
+	// endpoint (the local-model suite covers the agent path; these nodes are
+	// covered at the unit level in nodes/openai_app_test.go and
+	// nodes/ai_chains_test.go — parameter surface, request shape, response
+	// mapping, error paths).
+	'kilasflow.openAi@1': 'needs a live model endpoint; unit-covered in nodes/openai_app_test.go',
+	'kilasflow.googleGemini@1': 'needs a live model endpoint; unit-covered in nodes/openai_app_test.go',
+	'kilasflow.informationExtractor@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
+	'kilasflow.textClassifier@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
+	'kilasflow.chainSummarization@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
+	'kilasflow.chainRetrievalQa@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
+	'kilasflow.sentimentAnalysis@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
 };
 
 // One live comparison case per node family with an n8n counterpart. The

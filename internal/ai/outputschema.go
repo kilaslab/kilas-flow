@@ -51,6 +51,12 @@ const (
 const (
 	OutputSchemaJSONSchema = "jsonSchema"
 	OutputSchemaExample    = "exampleJson"
+	// OutputSchemaItemList describes one item of a list: the schema the model
+	// is shown is the item's, and the schema its answer is held to wraps it in
+	// an array. That is n8n's Item List Output Parser — a parser whose answer
+	// is a list of homogeneous items — as a third source on the one parser
+	// node rather than a node of its own.
+	OutputSchemaItemList = "itemList"
 )
 
 // ParseOutputSchema reads a parser descriptor's output shape. The shape is
@@ -82,8 +88,31 @@ func ParseOutputSchema(parameters map[string]any) (schema map[string]any, maxRet
 			return nil, 0, fmt.Errorf("exampleJson is not valid JSON: %w", err)
 		}
 		schema = inferJSONSchema(example)
+	case OutputSchemaItemList:
+		// Either field may describe the item; both are read so an import
+		// carrying either spelling finds its item shape honoured.
+		var itemSchema map[string]any
+		raw, rawErr := schemaText(parameters[OutputParserSchemaKey])
+		if strings.TrimSpace(raw) == "" || rawErr != nil {
+			var exampleErr error
+			raw, exampleErr = schemaText(parameters[OutputParserExampleKey])
+			if strings.TrimSpace(raw) == "" || exampleErr != nil {
+				return nil, 0, fmt.Errorf("jsonSchema or exampleJson is required when the schema type is item list")
+			}
+			var example any
+			if err := json.Unmarshal([]byte(raw), &example); err != nil {
+				return nil, 0, fmt.Errorf("exampleJson is not valid JSON: %w", err)
+			}
+			itemSchema = inferJSONSchema(example)
+		} else if parsed, parseErr := parseJSONSchema([]byte(raw)); parseErr != nil {
+			return nil, 0, parseErr
+		} else {
+			itemSchema = parsed
+		}
+		schema = map[string]any{"type": "array", "items": itemSchema}
 	default:
-		return nil, 0, fmt.Errorf("schemaType must be %q or %q", OutputSchemaJSONSchema, OutputSchemaExample)
+		return nil, 0, fmt.Errorf("schemaType must be %q, %q, or %q",
+			OutputSchemaJSONSchema, OutputSchemaExample, OutputSchemaItemList)
 	}
 	maxRetries = DefaultOutputMaxRetries
 	// An explicit zero disables retries; an absent value takes the default.

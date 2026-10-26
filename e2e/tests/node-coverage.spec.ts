@@ -127,7 +127,18 @@ const RUN_FAILURE_COVERAGE = ['kilasflow.embeddings@1', 'kilasflow.extractFromFi
 // server advertises is either run or refused above. An entry here must name
 // its reason, so the list cannot silently accumulate bare node types.
 const EXCLUDED: Record<string, string> = {
-	// No exclusions. When a node needs one, add `"type@version": "why"`.
+	// Provider app nodes and the root chains execute a real model call: no
+	// headless stub can fake the provider. Unit-covered in
+	// nodes/openai_app_test.go and nodes/ai_chains_test.go (parameter
+	// surface, request shape, response mapping, error paths); the local-model
+	// agent suite exercises the underlying adapter.
+	'kilasflow.openAi@1': 'needs a live model endpoint; unit-covered in nodes/openai_app_test.go',
+	'kilasflow.googleGemini@1': 'needs a live model endpoint; unit-covered in nodes/openai_app_test.go',
+	'kilasflow.informationExtractor@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
+	'kilasflow.textClassifier@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
+	'kilasflow.chainSummarization@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
+	'kilasflow.chainRetrievalQa@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
+	'kilasflow.sentimentAnalysis@1': 'needs a live model endpoint; unit-covered in nodes/ai_chains_test.go',
 };
 
 interface CatalogueEntry {
