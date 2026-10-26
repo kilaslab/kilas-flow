@@ -383,7 +383,7 @@ every tenant can open every file the server can.
 ## The built-in catalogue
 
 <!-- generated:credential-types -->
-17 credential types ship.
+18 credential types ship.
 <!-- /generated:credential-types -->
 
 They are all declared in one place, and node packs do not add credential types

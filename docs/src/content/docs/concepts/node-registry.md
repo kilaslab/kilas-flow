@@ -11,7 +11,7 @@ life, which is what makes compiled graphs and the metadata served to the editor
 deterministic.
 
 <!-- generated:catalogue-size -->
-A default install serves 69 distinct node types across 76 type-and-version pairs: 65 types (70 pairs) compiled into the binary, counting the `kilasflow.unsupported` import placeholder for nodes KilasFlow does not implement, and 4 types (6 pairs) from the declarative packs it ships with.
+A default install serves 76 distinct node types across 83 type-and-version pairs: 72 types (77 pairs) compiled into the binary, counting the `kilasflow.unsupported` import placeholder for nodes KilasFlow does not implement, and 4 types (6 pairs) from the declarative packs it ships with.
 <!-- /generated:catalogue-size -->
 
 A pack loaded from `packs.dir` adds to that. The list of record is
