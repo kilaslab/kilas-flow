@@ -191,6 +191,13 @@ export const MATRIX_EXCLUDED: Record<string, string> = {
 	// against fake SMTP and IMAP servers.
 	'kilasflow.emailSend@1': 'needs a live SMTP server; unit-covered in nodes/email_test.go and internal/mail',
 	'kilasflow.emailReadImap@1': 'needs a live IMAP server; unit-covered in nodes/email_test.go and internal/mail',
+	// The host-event trigger starts from an event a host publishes through the
+	// tenant-authenticated events API, not from anything a workflow-shaped run
+	// can feed it. Covered where that surface lives: the fan-out and item
+	// shape in internal/hostevents, the endpoint and its idempotency in
+	// internal/api/events_test.go.
+	'kilasflow.hostEvent@1':
+		'needs a host to publish the event; covered in internal/hostevents and internal/api/events_test.go',
 };
 
 // One live comparison case per node family with an n8n counterpart. The

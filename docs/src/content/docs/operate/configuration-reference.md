@@ -544,6 +544,132 @@ secret — while an IP allow-list alone does not. The refusal is a 403 that
 names the workflow and the fix, and hosted form pages face the same gate
 (a CORS preflight does not, because it cannot carry a credential).
 
+## metrics
+
+Metrics configures the opt-in Prometheus endpoint.
+
+Off by default, and off is a deployment where nothing about the server's
+own behaviour is exposed: no second listener, no series collected. When it
+is on, the endpoint is served on its own listener, deliberately never on
+the public API — the series carry tenant labels and queue depths, which are
+the operator's to share, not the API's.
+
+The section name is one word because envKeyToPath treats the first
+underscore as the section separator, so a two-word section could never be
+set from the environment.
+
+### metrics.enabled
+
+- Type: `bool`
+- Default: `false`
+- Environment: `KILASFLOW_METRICS_ENABLED`
+- Required: no
+
+Enabled turns the endpoint on: a second listener serving the text
+exposition format on Host:Port, on every process role, so the workers
+that actually run executions report too.
+
+### metrics.host
+
+- Type: `string`
+- Default: `'127.0.0.1'`
+- Environment: `KILASFLOW_METRICS_HOST`
+- Required: no
+
+Host is the address the metrics listener binds to. The default is
+loopback, because the series are for the operator's scraper on the same
+host or network, and an internet-facing bind is a deployment's explicit
+decision to make.
+
+### metrics.port
+
+- Type: `integer`
+- Default: `9090`
+- Environment: `KILASFLOW_METRICS_PORT`
+- Required: no
+
+Port is the port the metrics listener binds to. Required when the
+endpoint is enabled.
+
+### metrics.tenant_label
+
+- Type: `string`
+- Default: `'off'`
+- Environment: `KILASFLOW_METRICS_TENANT_LABEL`
+- Required: no
+
+TenantLabel decides whether the tenant-scoped series carry a tenant
+label: "off" records none, "on" records one per tenant unbounded, and
+"top" records one for the top-N tenants by observation count and folds
+the rest into tenant="other". A label per tenant is a cardinality
+decision only the operator can make, which is why none is the default.
+
+### metrics.top_tenants
+
+- Type: `integer`
+- Default: `10`
+- Environment: `KILASFLOW_METRICS_TOP_TENANTS`
+- Required: no
+
+TopTenants is how many tenants keep their own label when tenant_label
+is "top".
+
+## ratelimit
+
+RateLimit bounds how much of each ingress one tenant can drive: webhook
+deliveries, the run API and the events API. One tenant flooding any of them
+starves the others through the shared queue, so the allowance is per
+tenant and per surface, and a refusal happens before any execution or
+delivery claim exists.
+
+The section name is one word because envKeyToPath treats the first
+underscore as the section separator, so a two-word section could never be
+set from the environment.
+
+### ratelimit.store
+
+- Type: `string`
+- Default: `'memory'`
+- Environment: `KILASFLOW_RATELIMIT_STORE`
+- Required: no
+
+Store is where the buckets live: "memory" for a single process, or
+"database" to share one allowance across every process of a deployment
+— the only right answer when several server processes sit behind a load
+balancer, because separate in-memory buckets each grant the full rate.
+
+### ratelimit.run_per_minute
+
+- Type: `integer`
+- Default: `120`
+- Environment: `KILASFLOW_RATELIMIT_RUN_PER_MINUTE`
+- Required: no
+
+RunPerMinute is how many manual runs one tenant may queue per minute,
+through POST /workflows/{id}/run. The number is also the burst: the
+bucket holds a full minute's allowance and refills at a sixtieth of it
+per second.
+
+### ratelimit.webhook_per_minute
+
+- Type: `integer`
+- Default: `600`
+- Environment: `KILASFLOW_RATELIMIT_WEBHOOK_PER_MINUTE`
+- Required: no
+
+WebhookPerMinute is how many inbound webhook deliveries one tenant's
+endpoints accept per minute.
+
+### ratelimit.events_per_minute
+
+- Type: `integer`
+- Default: `600`
+- Environment: `KILASFLOW_RATELIMIT_EVENTS_PER_MINUTE`
+- Required: no
+
+EventsPerMinute is how many events one tenant may publish per minute,
+through POST /events.
+
 ## embed
 
 Embed configures the iframe editor surface.

@@ -176,11 +176,24 @@ whatever worker is free. There is no tenant-to-worker pinning.
 
 ## Multi-tenant capacity
 
-- **No per-tenant quotas exist yet.** A tenant is a row with no configuration
-  beyond which node types it may see; one customer's hundred concurrent runs
-  occupy the same workers and connections as any other customer's. Plan
-  capacity for the sum of tenants, and police abuse at the host's own
-  boundary if you must police it somewhere.
+- **Each tenant's ingress is rate limited; the shared queue is not.** The
+  `ratelimit` section bounds, per tenant, how many webhook deliveries
+  (`webhook_per_minute`, default 600), manual runs (`run_per_minute`, default
+  120) and published events (`events_per_minute`, default 600) may be
+  admitted per minute — one customer's flood is answered `429` with
+  `Retry-After` and the `rate_limited` problem code before any execution
+  exists. With more than one server process behind a load balancer, set
+  `ratelimit.store: database` so the processes share one allowance;
+  in-memory buckets would each grant the full rate. Per-tenant *overrides*
+  of these defaults arrive with the tenant-settings surface; the
+  deployment-wide defaults stand alone.
+- **Worker capacity is shared, not per tenant.** A tenant is a row with no
+  configuration beyond which node types it may see; one customer's hundred
+  concurrent runs occupy the same workers and connections as any other
+  customer's. Plan capacity for the sum of tenants, and watch
+  `kilasflow_executions_running` against `kilasflow_execution_worker_capacity`
+  on the [metrics endpoint](/operate/metrics/) to know when to raise
+  `execution.max_concurrent`.
 - **The JavaScript sidecar, if enabled, runs one Node process per tenant**
   with every allowlisted package in it, and `sidecar.max_processes` (default
   16) caps how many live at once — a wait beyond the cap queues until a
@@ -216,9 +229,11 @@ whatever worker is free. There is no tenant-to-worker pinning.
 
 - **Provision**: tenant rows are operator-managed — there is no self-service
   signup endpoint. `POST /api/v1/tenants` (operator key) creates the customer;
-  the first API key per tenant is minted at the store layer, because key
-  creation is scoped to the caller's own tenant. Your backend holds that key;
-  the end user never sees it.
+  the first API key per tenant is minted by the operator through
+  `POST /api/v1/tenants/{id}/api-keys`, because key creation is scoped to the
+  caller's own tenant. Your backend holds that key; the end user never sees
+  it. The whole sequence is
+  [Tenants, provisioning and identity](/operate/tenants/).
 - **Operate**: your backend mints embed sessions per page load, re-checking
   entitlement each time. The whole path is
   [Embedding and multi-tenancy](/guides/embedding/).

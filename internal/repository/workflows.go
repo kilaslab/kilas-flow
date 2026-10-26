@@ -89,6 +89,10 @@ type GORMWorkflowStore struct {
 	// polls extracts leased poll triggers from a document so activating a
 	// Gmail or Drive trigger starts ticking it.
 	polls PollExtractor
+	// hostEvents extracts host-event subscriptions from a document, so
+	// activating a workflow whose triggers listen for published events makes
+	// them reachable through the events API.
+	hostEvents HostEventExtractor
 	// subworkflows extracts the workflows a document calls, so activation can
 	// refuse a caller whose target is not live. Nil leaves the check off.
 	subworkflows SubworkflowExtractor
@@ -540,6 +544,11 @@ func (store *GORMWorkflowStore) publish(ctx context.Context, tenant TenantScope,
 				return err
 			}
 		}
+		if store.hostEvents != nil {
+			if err := syncHostEventSubscriptions(tx, tenant.ID, model.ID, version.ID, store.hostEvents(storedVersion.Document)); err != nil {
+				return err
+			}
+		}
 		return appendPublishEvent(tx, tenant, model.ID, version.ID, workflow.PublishActionPublished, ActorFrom(ctx), reason)
 	})
 	if err != nil {
@@ -702,6 +711,11 @@ func (store *GORMWorkflowStore) Deactivate(ctx context.Context, tenant TenantSco
 			if err := removeWebhookBindings(tx, tenant.ID, workflowID); err != nil {
 				return err
 			}
+			// Subscriptions too: an inactive workflow must stop hearing events
+			// the moment it goes offline, not on the next publish that misses it.
+			if err := removeHostEventSubscriptions(tx, tenant.ID, workflowID); err != nil {
+				return err
+			}
 			if store.schedules != nil {
 				// The document, not an empty list: deactivation removes the
 				// rows this workflow's own triggers own and leaves any created
@@ -758,8 +772,12 @@ func (store *GORMWorkflowStore) Delete(ctx context.Context, tenant TenantScope, 
 		if err := deleteWorkflowTags(tx, tenant.ID, workflowID); err != nil {
 			return err
 		}
-		// It must stop answering immediately.
-		return removeWebhookBindings(tx, tenant.ID, workflowID)
+		// It must stop answering immediately, and stop hearing events just
+		// as immediately.
+		if err := removeWebhookBindings(tx, tenant.ID, workflowID); err != nil {
+			return err
+		}
+		return removeHostEventSubscriptions(tx, tenant.ID, workflowID)
 	})
 }
 

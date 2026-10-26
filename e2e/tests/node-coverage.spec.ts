@@ -150,6 +150,13 @@ const EXCLUDED: Record<string, string> = {
 	// the MIME assembly and the UID watermark.
 	'kilasflow.emailSend@1': 'needs a live SMTP server; unit-covered in nodes/email_test.go and internal/mail',
 	'kilasflow.emailReadImap@1': 'needs a live IMAP server; unit-covered in nodes/email_test.go and internal/mail',
+	// The host-event trigger starts from an event a host publishes through the
+	// tenant-authenticated events API; no item a run can hand it exercises
+	// the node, so the coverage lives where the surface does: the fan-out and
+	// item shape in internal/hostevents, the endpoint and its idempotency in
+	// internal/api/events_test.go.
+	'kilasflow.hostEvent@1':
+		'needs a host to publish the event; covered in internal/hostevents and internal/api/events_test.go',
 };
 
 interface CatalogueEntry {

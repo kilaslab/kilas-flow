@@ -17,7 +17,7 @@ When the two disagree, compare versions: every page here states the server versi
 
 ## Operations
 
-82 operations, all under `/api/v1`, in 11 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
+83 operations, all under `/api/v1`, in 12 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
 
 | Group | Operations | Contents |
 | --- | --- | --- |
@@ -26,6 +26,7 @@ When the two disagree, compare versions: every page here states the server versi
 | [Credentials](/reference/api/credentials/) | 9 | Credential types and stored credentials. Reads never return values. |
 | [Authentication and keys](/reference/api/auth/) | 7 | Sessions, API keys, and stream tickets. |
 | [Schedules](/reference/api/schedules/) | 4 | Cron-style triggers owned by a workflow. |
+| [Host events](/reference/api/host-events/) | 1 | The recommended host → workflow path: publish one event, every active workflow listening for it runs. |
 | [Node types](/reference/api/nodes/) | 5 | The node catalogue, icons, load-options, load-schema, and the expression grammar. |
 | [Datastores](/reference/api/datastores/) | 18 | Tenant-owned row stores: tables, columns, rows, and CSV import and export. |
 | [Tenants and accounts](/reference/api/tenants/) | 10 | Operator surface: tenants, their users, and keys minted for another tenant. |
@@ -39,5 +40,8 @@ Two behaviours are worth knowing before reading any operation page, because they
 
 - [Errors](/reference/api/errors/) — every non-success response is an RFC 9457 problem document, and workflow compile failures carry a structured `WorkflowValidationIssue`.
 - [Events](/reference/api/events/) — the server-sent event types and the `Last-Event-ID` resume behaviour, which an OpenAPI document describes the endpoint of but not the vocabulary carried over it.
+- [Pagination](/reference/api/pagination/) — the two cursor conventions the listing operations use, which endpoints use which, and the SDK helpers that page for you.
 - [Webhooks](/reference/api/webhooks/) — the inbound `/webhook/{route}` surface, whose behaviour is defined by the trigger node rather than by a route definition.
 - [API contract and stability](/reference/api-contract/) — what `/api/v1` promises, what it explicitly does not, and how to tell whether an upgrade will break you.
+
+The document itself is downloadable: [openapi.json](/openapi.json) (OpenAPI 3.1, KilasFlow `0.1.0-dev` — the same version this page's banner names, because both come from the one run that generated these pages). Point a client generator, a diff tool or an editor at it instead of a running server when that is what you have.

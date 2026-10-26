@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"gorm.io/gorm/schema"
+
+	"github.com/kilaslab/kilas-flow/internal/ratelimit"
 )
 
 // Every model names its table through the namer so database.table_prefix
@@ -82,5 +84,38 @@ func TestWorkflowTagsTableNameSurvivesTheNamerRoundTrip(t *testing.T) {
 	}
 	if got := (workflowTagModel{}).TableName(schema.NamingStrategy{TablePrefix: "kflow_"}); got != "kflow_workflow_tags" {
 		t.Fatalf("kflow_ prefix: TableName = %q, want kflow_workflow_tags", got)
+	}
+}
+
+func TestHostEventSubscriptionsTableNameSurvivesTheNamerRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	if got := (hostEventSubscriptionModel{}).TableName(schema.NamingStrategy{}); got != "host_event_subscriptions" {
+		t.Fatalf("empty prefix: TableName = %q, want host_event_subscriptions", got)
+	}
+	if got := (hostEventSubscriptionModel{}).TableName(schema.NamingStrategy{TablePrefix: "kflow_"}); got != "kflow_host_event_subscriptions" {
+		t.Fatalf("kflow_ prefix: TableName = %q, want kflow_host_event_subscriptions", got)
+	}
+}
+
+func TestHostEventDeliveriesTableNameSurvivesTheNamerRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	if got := (hostEventDeliveryModel{}).TableName(schema.NamingStrategy{}); got != "host_event_deliveries" {
+		t.Fatalf("empty prefix: TableName = %q, want host_event_deliveries", got)
+	}
+	if got := (hostEventDeliveryModel{}).TableName(schema.NamingStrategy{TablePrefix: "kflow_"}); got != "kflow_host_event_deliveries" {
+		t.Fatalf("kflow_ prefix: TableName = %q, want kflow_host_event_deliveries", got)
+	}
+}
+
+func TestRateLimitBucketsTableNameSurvivesTheNamerRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	if got := (ratelimit.BucketModel{}).TableName(schema.NamingStrategy{}); got != "rate_limit_buckets" {
+		t.Fatalf("empty prefix: TableName = %q, want rate_limit_buckets", got)
+	}
+	if got := (ratelimit.BucketModel{}).TableName(schema.NamingStrategy{TablePrefix: "kflow_"}); got != "kflow_rate_limit_buckets" {
+		t.Fatalf("kflow_ prefix: TableName = %q, want kflow_rate_limit_buckets", got)
 	}
 }

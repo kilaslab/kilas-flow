@@ -239,11 +239,19 @@ type Authentication struct {
 }
 ```
 
-The point is that a new credential type needs no Go change. `wahaApi` is
-`{header, "X-Api-Key", "{{ apiKey }}"}` and nothing else. And a type that does
+The point is that how a type authenticates is *data*, not a switch on the
+type ID somewhere in a request path: `wahaApi` is
+`{header, "X-Api-Key", "{{ apiKey }}"}` and nothing else. A type that does
 not authenticate an HTTP request at all — `postgres`, `mysql`, `sqlite` —
 declares no descriptor, so application refuses it by *absence* rather than by
 falling through a default branch, which is a better error anyway.
+
+One boundary that follows, stated once because the pack documentation leans
+on it: **a new named credential type is a Go change** — a `Type` value added
+to `internal/credentials/builtin.go` — and a node pack cannot add one; it
+names a type that already exists. Pack authors pick from the generic HTTP
+types, and the choice is guided in
+[Credentials for your API](/guides/build-nodes-for-your-api/#credentials-for-your-api).
 
 The five placements:
 
@@ -429,7 +437,10 @@ unchanged; nothing on this server reads it.
 Every ID and every field key is byte-identical to what an earlier version of this
 catalogue held, because a stored credential row is keyed by that ID and its
 sealed payload by those keys. Changing one makes an existing credential stop
-resolving with no way to recover it.
+resolving with no way to recover it. The per-type field reference — every
+field, which are secret, and what an empty `allowedDomains` list means — is
+generated from the live catalogue as
+[Credential types](/reference/credential-types/).
 
 A `Registry` type holds them rather than a bare map, so the catalogue validates
 its entries — a type marking an undeclared field as secret is refused, as is a
@@ -437,7 +448,9 @@ duplicate ID or an unknown property kind. Unlike the
 [node registry](/concepts/node-registry/), though, it is not assembled in the
 composition root: it is a package-level singleton built in a variable
 initialiser, which panics if the built-in types are invalid, and nothing in
-startup registers a credential type. A pack cannot contribute one today.
+startup registers a credential type. A pack cannot contribute one: it names a
+type that exists, and the generic HTTP types are what a pack's own API usually
+needs.
 
 A type states what an empty `allowedDomains` means for it. `DefaultDomains` is a
 fixed list, for a service at one address (`openAiApi`, `openRouterApi`, the

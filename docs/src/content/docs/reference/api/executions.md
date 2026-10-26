@@ -34,6 +34,55 @@ Responses:
 | `200` | OK | `application/json` — `ExecutionListResource` |
 | `default` | Error | `application/problem+json` |
 
+Fields of the `ExecutionListResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `items` | yes | `array or null` | — |
+| `nextCursor` | no | `string` | Pass back as ?cursor= to read the next page |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "items": [
+    {
+      "durationMs": 0,
+      "finishedAt": "2026-01-02T15:04:05Z",
+      "id": "string",
+      "parentExecutionId": "string",
+      "startedAt": "2026-01-02T15:04:05Z",
+      "status": "string",
+      "trigger": "string",
+      "triggerNodeId": "string",
+      "workflowId": "string",
+      "workflowVersionId": "string"
+    }
+  ],
+  "nextCursor": "string"
+}
+```
+
+:::code
+
+```sh title="curl"
+curl -X GET "$KILASFLOW_HOST/api/v1/executions" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+```ts title="TypeScript"
+// import { KilasFlowClient } from "@kilasflow/sdk/server";
+for await (const execution of client.iterateExecutions({ workflowId })) {
+  console.log(execution.id, execution.status);
+}
+```
+
+```go title="Go"
+resp, err := http.Get(baseURL + "/api/v1/executions?workflowId=" + url.QueryEscape(workflowId) + "&limit=100")
+```
+
+:::
+
 Embed: Allow with `workflow:read` — the query must name the session’s workflow (`workflowId`).
 
 ## Get a workflow execution (`get-execution`)
@@ -54,6 +103,85 @@ Responses:
 | --- | --- | --- |
 | `200` | OK | `application/json` — `ExecutionResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `ExecutionResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `approvalUrl` | no | `string` | The approval page, for a run waiting on an approval only |
+| `cancellationRequestedAt` | no | `string` | — |
+| `error` | no |  | — |
+| `finishedAt` | no | `string` | — |
+| `id` | yes | `string` | — |
+| `input` | no |  | — |
+| `nodeRuns` | yes | `array or null` | — |
+| `output` | no |  | — |
+| `parentExecutionId` | no | `string` | The execution that called this one, for a sub-workflow run |
+| `resumeAt` | no | `string` | When a run waiting on a timer resumes on its own |
+| `resumeUrl` | no | `string` | — |
+| `startedAt` | yes | `string` | — |
+| `status` | yes | `string` | — |
+| `trigger` | yes | `string` | — |
+| `triggerNodeId` | no | `string` | The trigger node this run started from, when one workflow declares several |
+| `workflowId` | yes | `string` | — |
+| `workflowVersionId` | yes | `string` | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "approvalUrl": "https://flows.example",
+  "cancellationRequestedAt": "2026-01-02T15:04:05Z",
+  "error": null,
+  "finishedAt": "2026-01-02T15:04:05Z",
+  "id": "string",
+  "input": null,
+  "nodeRuns": [
+    {
+      "attempt": 0,
+      "console": null,
+      "error": null,
+      "finishedAt": "2026-01-02T15:04:05Z",
+      "input": null,
+      "nodeId": "string",
+      "output": null,
+      "response": null,
+      "runIndex": 0,
+      "sequence": 0,
+      "startedAt": "2026-01-02T15:04:05Z",
+      "status": "string"
+    }
+  ],
+  "output": null,
+  "parentExecutionId": "string",
+  "resumeAt": "2026-01-02T15:04:05Z",
+  "resumeUrl": "https://flows.example",
+  "startedAt": "2026-01-02T15:04:05Z",
+  "status": "string",
+  "trigger": "string",
+  "triggerNodeId": "string",
+  "workflowId": "string",
+  "workflowVersionId": "string"
+}
+```
+
+:::code
+
+```sh title="curl"
+curl -X GET "$KILASFLOW_HOST/api/v1/executions/{id}" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+```ts title="TypeScript"
+// import { KilasFlowClient } from "@kilasflow/sdk/server";
+const execution = await client.getExecution(executionId);
+```
+
+```go title="Go"
+resp, err := http.Get(baseURL + "/api/v1/executions/" + url.PathEscape(executionId))
+```
+
+:::
 
 Embed: Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to.
 
@@ -76,6 +204,53 @@ Responses:
 | `202` | Accepted | `application/json` — `ExecutionRequestResource` |
 | `default` | Error | `application/problem+json` |
 
+Fields of the `ExecutionRequestResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `createdAt` | yes | `string` | — |
+| `id` | yes | `string` | — |
+| `input` | no |  | — |
+| `status` | yes | `string` | — |
+| `trigger` | yes | `string` | — |
+| `triggerNodeId` | no | `string` | — |
+| `workflowId` | yes | `string` | — |
+| `workflowVersionId` | yes | `string` | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "createdAt": "2026-01-02T15:04:05Z",
+  "id": "string",
+  "input": null,
+  "status": "string",
+  "trigger": "string",
+  "triggerNodeId": "string",
+  "workflowId": "string",
+  "workflowVersionId": "string"
+}
+```
+
+:::code
+
+```sh title="curl"
+curl -X POST "$KILASFLOW_HOST/api/v1/executions/{id}/cancel" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+```ts title="TypeScript"
+// import { KilasFlowClient } from "@kilasflow/sdk/server";
+await client.cancelExecution(executionId);
+```
+
+```go title="Go"
+req, _ := http.NewRequest(http.MethodPost, baseURL+"/api/v1/executions/"+url.PathEscape(executionId)+"/cancel", nil)
+resp, err := http.DefaultClient.Do(req)
+```
+
+:::
+
 Embed: Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to.
 
 ## Retry a finished execution (`retry-execution`)
@@ -97,6 +272,72 @@ Responses:
 | `201` | Created | `application/json` — `ExecutionResource` |
 | `default` | Error | `application/problem+json` |
 
+Fields of the `ExecutionResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `approvalUrl` | no | `string` | The approval page, for a run waiting on an approval only |
+| `cancellationRequestedAt` | no | `string` | — |
+| `error` | no |  | — |
+| `finishedAt` | no | `string` | — |
+| `id` | yes | `string` | — |
+| `input` | no |  | — |
+| `nodeRuns` | yes | `array or null` | — |
+| `output` | no |  | — |
+| `parentExecutionId` | no | `string` | The execution that called this one, for a sub-workflow run |
+| `resumeAt` | no | `string` | When a run waiting on a timer resumes on its own |
+| `resumeUrl` | no | `string` | — |
+| `startedAt` | yes | `string` | — |
+| `status` | yes | `string` | — |
+| `trigger` | yes | `string` | — |
+| `triggerNodeId` | no | `string` | The trigger node this run started from, when one workflow declares several |
+| `workflowId` | yes | `string` | — |
+| `workflowVersionId` | yes | `string` | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "approvalUrl": "https://flows.example",
+  "cancellationRequestedAt": "2026-01-02T15:04:05Z",
+  "error": null,
+  "finishedAt": "2026-01-02T15:04:05Z",
+  "id": "string",
+  "input": null,
+  "nodeRuns": [
+    {
+      "attempt": 0,
+      "console": null,
+      "error": null,
+      "finishedAt": "2026-01-02T15:04:05Z",
+      "input": null,
+      "nodeId": "string",
+      "output": null,
+      "response": null,
+      "runIndex": 0,
+      "sequence": 0,
+      "startedAt": "2026-01-02T15:04:05Z",
+      "status": "string"
+    }
+  ],
+  "output": null,
+  "parentExecutionId": "string",
+  "resumeAt": "2026-01-02T15:04:05Z",
+  "resumeUrl": "https://flows.example",
+  "startedAt": "2026-01-02T15:04:05Z",
+  "status": "string",
+  "trigger": "string",
+  "triggerNodeId": "string",
+  "workflowId": "string",
+  "workflowVersionId": "string"
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/executions/{id}/retry" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
 Embed: Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to.
 
 ## Evaluate an expression against an execution (`eval-expression`)
@@ -113,12 +354,52 @@ Parameters:
 
 Request body: `application/json` — `EvalExpressionInputBody` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `expression` | yes | `string` | The expression to evaluate. A template carrying {{ }} delimiters is evaluated exactly as a document parameter is; without them the whole text is taken as the expression body. |
+| `item` | no | `integer` | Which item of that run's input is $json, counted from 0 as $itemIndex counts them. Defaults to 0. Needs nodeId. |
+| `nodeId` | no | `string` | The node whose parameters the expression stands in for: $json is an item the node received, $input its run's input, and every earlier node is read as it stood when that run started. Omit it to read the run through $node alone. |
+| `run` | no | `integer` | Which run of the node, counted from 0 as $runIndex counts them: a delivery the runner pruned is not a run. Defaults to the last run that received items. Needs nodeId. |
+
 Responses:
 
 | Status | Description | Body |
 | --- | --- | --- |
 | `200` | OK | `application/json` — `EvalExpressionResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `EvalExpressionResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `type` | yes | `string` | The JSON shape the value has |
+| `value` | yes |  | The evaluated result |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "expression": "string"
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "type": "string",
+  "value": null
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/executions/{id}/eval" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"expression":"string"}'
+```
 
 Embed: Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to.
 
@@ -142,5 +423,10 @@ Responses:
 | --- | --- | --- |
 | `200` | OK | `text/event-stream` |
 | `default` | Error | `application/problem+json` |
+
+```sh
+curl -X GET "$KILASFLOW_HOST/api/v1/executions/{id}/events" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
 
 Embed: Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to.

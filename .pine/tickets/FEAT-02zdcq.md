@@ -1,7 +1,7 @@
 ---
 id: FEAT-02zdcq
 title: 'Build nodes for your API: choosing a path, OpenAPI-generated packs, credentials for your API, app-fired signed triggers'
-status: todo
+status: done
 priority: medium
 labels:
     - docs
@@ -167,3 +167,7 @@ Related tickets: FEAT-bp59m4, FEAT-c81kp3, FEAT-cwz4ac, FEAT-de8d4c, FEAT-znm60y
 # Related Files
 
 # Attachments
+
+# Progress
+
+Implemented 2026-10-26: guides/build-nodes-for-your-api covering the three authoring paths (declarative packs / OpenAPI-generated / sidecar), worked example from the real pack format, credentials, publishing via operator directory. Pack-loading AC verified end-to-end against a real binary (pack dir layout fixed to the loader's expectations). Gates: docs-build 63 pages ok.

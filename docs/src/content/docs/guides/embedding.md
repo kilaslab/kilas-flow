@@ -43,9 +43,11 @@ alone.
 
 A customer signs up in your product. Your operator has already provisioned
 their KilasFlow tenant (tenant rows are operator-managed — there is no
-self-service signup endpoint — and the first key per tenant is minted at
-the store layer, because key creation is scoped to the caller's own
-tenant). Your backend holds that key; the end user never sees it.
+self-service signup endpoint — and the first key per tenant is minted by the
+operator through `POST /api/v1/tenants/{id}/api-keys`, because key creation
+is scoped to the caller's own tenant; see
+[Tenants, provisioning and identity](/operate/tenants/)). Your backend holds
+that key; the end user never sees it.
 
 ### 1. Provision the workflow server-side
 
@@ -195,8 +197,8 @@ with them — publishing and activation stay with the tenant-wide key.
 
 The SDK is not on npm yet, so the import below resolves only after building it
 from the checkout: `cd sdk && pnpm install && pnpm build`, then
-`pnpm add file:/path/to/kilas-flow/sdk` in the host. See the
-[SDK README](https://github.com/kilaslab/kilas-flow/blob/main/sdk/README.md).
+`pnpm add file:/path/to/kilas-flow/sdk` in the host. The pre-release install
+path, entry points and protocol are [Using the host SDK](/guides/sdk/).
 
 ```js
 import { mountWorkflowEditor, subscribeExecutionEvents } from '@kilasflow/sdk/browser';
@@ -304,6 +306,42 @@ is terminal. Ticket minting and execution polling both re-check
 that the execution belongs to the tenant's workflow first — a ticket for
 another customer's run would be a cross-tenant read.
 
+### Host events: one publish, every listening workflow
+
+The webhook above is the right shape when one workflow owns one endpoint. A
+host that raises **domain events** — a message received, a contact tagged, a
+booking created — and wants *every* workflow listening for one to run has a
+better path: publish the event, let KilasFlow fan it out.
+
+```js
+const outcome = await tenantClient.publishEvent(
+  { eventId: message.id, type: 'message.received', payload: message },
+  { idempotencyKey: `message:${message.id}` }
+);
+// outcome.matched: [{workflowId, executionId}] — what ran
+// outcome.filtered: [{workflowId, reason}] — duplicates and deactivations
+```
+
+This is the recommended host → workflow path, for three reasons a webhook
+cannot match. One request reaches every active workflow whose event trigger
+lists the type, where a webhook route is per workflow and `POST
+/workflows/{id}/run` is per workflow too — and a run call executes the latest
+revision, ignoring activation, which is not what production traffic should
+do. Each matched workflow runs its **active** revision, started from the
+trigger that heard the event. And the publish is idempotent: an
+`Idempotency-Key` (or the event's own `eventId`) answers a retry with the
+first outcome, and per workflow the `eventId` collapses a retried publish
+within a five-minute window even when the two carries different keys.
+
+Workflows subscribe with the built-in **Host Event** trigger, whose picker
+lists the event types a node pack on the server declares — the host's own
+product pack is the usual author, and [the pack
+guide](/guides/node-authoring/) shows the catalogue that also gives the
+editor a schema and a sample per event. A pack trigger can opt its own events
+in directly with the same catalogue. The trigger item is the event document
+— `{type, payload, occurredAt, eventId}` — so a workflow branches on
+`{{ $json.type }}` and reads `{{ $json.payload }}`.
+
 ## What runs where
 
 Backend calls carry the tenant key; browser calls carry the embed token.
@@ -324,6 +362,7 @@ until somebody deliberately permits it.
 | Manage datastores | API key | Provisioning and schema stay with the backend key — no embed scope grants them, ever |
 | Load / save the one workflow | Embed token | Needs `workflow:read` / `workflow:write` |
 | Run the one workflow | Embed token | Needs `workflow:run` |
+| Publish a host event | API key | Fans out across the tenant's workflows, so it is backend work; refused to embed sessions and scoped keys |
 | List executions of the one workflow | Embed token | Needs `workflow:read`, with `workflowId` equal to the session's |
 | Read one datastore's rows | Embed token | Needs `datastore:read` on a session minted for that datastore |
 | Write one datastore's rows | Embed token | Needs `datastore:write`, which implies `datastore:read` |
@@ -503,8 +542,13 @@ datastore the backend provisioned.
 ## Operator checklist
 
 - `KILASFLOW_AUTH_ENABLED=true` with a 32-byte auth signing key, or
-  every request resolves to the shared `default` tenant and the two
-  keys below are theatre.
+  every request resolves to the shared `default` tenant and the keys below
+  are theatre.
+- `KILASFLOW_AUTH_OPERATOR_KEY` set to a `kfa1_<hex>_<secret>` key, if your
+  product provisions tenants itself — tenant rows, their users and their
+  first API keys are minted through it, and without it there is no API path
+  to any of the three ([provisioning](/operate/tenants/)). Registration
+  happens at boot and the log names it.
 - `KILASFLOW_EMBED_SIGNING_KEY` exactly 32 bytes (base64, hex, or raw),
   or embedding answers 503.
 - `KILASFLOW_EMBED_ALLOWED_ORIGINS` listing every origin that frames

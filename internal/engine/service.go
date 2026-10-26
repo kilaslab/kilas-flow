@@ -15,6 +15,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/credentials"
 	"github.com/kilaslab/kilas-flow/internal/events"
 	"github.com/kilaslab/kilas-flow/internal/execution"
+	"github.com/kilaslab/kilas-flow/internal/metrics"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
@@ -96,6 +97,12 @@ type ServiceDeps struct {
 	// must never be a prerequisite for durable persistence or for a run to
 	// succeed, so a nil broker simply publishes nothing.
 	Events *events.Broker
+	// Metrics receives the execution and node-run series the operator's
+	// scraper reads. Nil is the documented off state: no series is collected
+	// and nothing about a run changes. A nil *metrics.Registry must not be
+	// boxed into this interface — see the composition root, which passes
+	// either the registry or a nil interface.
+	Metrics metrics.Observer
 	// Environment is the allowlisted `$env` map. The service never reads the
 	// process environment itself, so what a workflow can see is decided once,
 	// at composition.
@@ -182,6 +189,7 @@ type Service struct {
 	credentials            CredentialStore
 	staticData             StaticDataStore
 	events                 *events.Broker
+	metrics                metrics.Observer
 	environment            map[string]string
 	workerID               string
 	defaultTimeout         time.Duration
@@ -209,6 +217,9 @@ type Service struct {
 	log        *slog.Logger
 	// executionLogLevel is the normalized ServiceDeps.ExecutionLogLevel.
 	executionLogLevel string
+	// capacity is the worker pool size Start was given, for the metrics
+	// gauge that reports it. Zero until Start runs.
+	capacity int
 }
 
 func NewService(deps ServiceDeps) (*Service, error) {
@@ -238,6 +249,7 @@ func NewService(deps ServiceDeps) (*Service, error) {
 		sweepInterval = time.Minute
 	}
 	service := &Service{
+		metrics:                deps.Metrics,
 		log:                    logger,
 		executionLogLevel:      normalizeExecutionLogLevel(deps.ExecutionLogLevel),
 		executions:             deps.Executions,
@@ -320,6 +332,11 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 	if err != nil || !claimed {
 		return claimed, err
 	}
+	// The claim is the one moment queue latency is knowable: StartedAt is the
+	// queue time, and the claim is the first instant a worker held it.
+	if service.metrics != nil {
+		service.metrics.ExecutionClaimed(record.TenantID, string(record.Trigger), time.Since(record.StartedAt))
+	}
 	tenant := repository.TenantScope{ID: record.TenantID}
 	if record.Status == execution.StatusCancelling {
 		now := time.Now().UTC()
@@ -362,6 +379,9 @@ func (service *Service) runOnce(ctx context.Context, workerID string) (bool, err
 		TenantID: record.TenantID, ExecutionID: record.ID, WorkflowID: record.WorkflowID,
 		Type: events.ExecutionStarted, Status: execution.StatusRunning,
 	})
+	if service.metrics != nil {
+		service.metrics.ExecutionStarted(record.TenantID, string(record.Trigger))
+	}
 	runCtx, cancel := service.runBudget(ctx, document)
 	service.activeMu.Lock()
 	service.active[record.ID] = cancel
@@ -750,6 +770,14 @@ func (writer *traceWriter) sink(index int, run NodeRun) {
 	if writer == nil {
 		return
 	}
+	// Observed before the persistence the method is named for: a live row that
+	// cannot be written is still a node that ran, and a duration histogram
+	// that silently dropped every failed write would read as faster than
+	// reality.
+	if writer.service.metrics != nil && !run.FinishedAt.IsZero() {
+		writer.service.metrics.NodeRun(writer.record.TenantID,
+			writer.nodeTypes[run.NodeID], run.FinishedAt.Sub(run.StartedAt))
+	}
 	rows, err := writer.service.traceRows(writer.record, writer.nodeTypes, writer.seqBase+index, []NodeRun{run})
 	if err != nil {
 		writer.service.log.Debug("live progress row could not be rendered", "execution", writer.record.ID, "node", run.NodeID, "error", err)
@@ -832,6 +860,7 @@ func (service *Service) Start(ctx context.Context, maxConcurrent int) error {
 		return fmt.Errorf("engine max concurrent executions must be positive")
 	}
 	service.startOnce.Do(func() {
+		service.capacity = maxConcurrent
 		for index := 1; index <= maxConcurrent; index++ {
 			workerID := fmt.Sprintf("%s-%d", service.workerID, index)
 			service.workers.Add(1)
@@ -976,6 +1005,23 @@ func (service *Service) Wake() {
 	}
 }
 
+// InFlight reports how many executions this process is running right now.
+//
+// For the metrics gauge that reads against the worker pool's size: both are
+// per-process numbers, so a scrape of each process says how close that
+// process is to its own ceiling.
+func (service *Service) InFlight() int {
+	service.activeMu.Lock()
+	defer service.activeMu.Unlock()
+	return len(service.active)
+}
+
+// Capacity reports the worker pool size Start was given, zero before Start.
+// The counterpart of InFlight for the same gauge family.
+func (service *Service) Capacity() int {
+	return service.capacity
+}
+
 func (service *Service) run(ctx context.Context, record execution.Record, document workflow.Document, resume resumeURLs, trace *traceWriter) (Result, error) {
 	return service.runWithStack(ctx, record, document, []string{record.WorkflowID}, resume, trace)
 }
@@ -1102,6 +1148,21 @@ func (service *Service) QueuePolled(ctx context.Context, tenantID, workflowID, v
 	record, err := service.executions.QueueTriggered(ctx,
 		repository.TenantScope{ID: tenantID}, workflowID, versionID,
 		execution.TriggerPoll, triggerNodeID, payload)
+	if err != nil {
+		return execution.Record{}, err
+	}
+	service.Wake()
+	return record, nil
+}
+
+// QueueHostEvent persists a queued execution for one published host event.
+//
+// The fan-out lives in internal/hostevents; this is the one queue step it
+// lands on, shaped like the schedule and poll steps so every triggered path
+// into the durable queue reads the same.
+func (service *Service) QueueHostEvent(ctx context.Context, tenant repository.TenantScope, workflowID, versionID, triggerNodeID string, payload json.RawMessage) (execution.Record, error) {
+	record, err := service.executions.QueueTriggered(ctx, tenant, workflowID, versionID,
+		execution.TriggerHostEvent, triggerNodeID, payload)
 	if err != nil {
 		return execution.Record{}, err
 	}

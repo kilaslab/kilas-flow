@@ -46,6 +46,9 @@ const OPERATION_COVERAGE = {
 	'workflow-diagnostics': 'getWorkflowDiagnostics',
 	'validate-workflow-document': 'validateWorkflowDocument',
 	'duplicate-workflow': 'duplicateWorkflow',
+	// The host → workflow path: one event, every active workflow listening
+	// for it. The operation the embedding guides point a host's backend at.
+	'publish-event': 'publishEvent',
 	'list-executions': 'listExecutions',
 	'get-execution': 'getExecution',
 	'cancel-execution': 'cancelExecution',

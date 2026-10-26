@@ -49,6 +49,8 @@ type Config struct {
 	Auth        Auth         `koanf:"auth"`
 	Outbound    OutboundHTTP `koanf:"outbound"`
 	Webhook     Webhook      `koanf:"webhook"`
+	Metrics     Metrics      `koanf:"metrics"`
+	RateLimit   RateLimit    `koanf:"ratelimit"`
 	Embed       Embed        `koanf:"embed"`
 	Branding    Branding     `koanf:"branding"`
 	Execution   Execution    `koanf:"execution"`
@@ -466,6 +468,78 @@ type Webhook struct {
 	// (a CORS preflight does not, because it cannot carry a credential).
 	// Env: KILASFLOW_WEBHOOK_REQUIRE_AUTH. Default: false.
 	RequireAuth bool `koanf:"require_auth"`
+}
+
+// Metrics configures the opt-in Prometheus endpoint.
+//
+// Off by default, and off is a deployment where nothing about the server's
+// own behaviour is exposed: no second listener, no series collected. When it
+// is on, the endpoint is served on its own listener, deliberately never on
+// the public API — the series carry tenant labels and queue depths, which are
+// the operator's to share, not the API's.
+//
+// The section name is one word because envKeyToPath treats the first
+// underscore as the section separator, so a two-word section could never be
+// set from the environment.
+type Metrics struct {
+	// Enabled turns the endpoint on: a second listener serving the text
+	// exposition format on Host:Port, on every process role, so the workers
+	// that actually run executions report too.
+	// Env: KILASFLOW_METRICS_ENABLED. Default: false.
+	Enabled bool `koanf:"enabled"`
+	// Host is the address the metrics listener binds to. The default is
+	// loopback, because the series are for the operator's scraper on the same
+	// host or network, and an internet-facing bind is a deployment's explicit
+	// decision to make.
+	// Env: KILASFLOW_METRICS_HOST. Default: "127.0.0.1".
+	Host string `koanf:"host"`
+	// Port is the port the metrics listener binds to. Required when the
+	// endpoint is enabled.
+	// Env: KILASFLOW_METRICS_PORT. Default: 9090.
+	Port int `koanf:"port"`
+	// TenantLabel decides whether the tenant-scoped series carry a tenant
+	// label: "off" records none, "on" records one per tenant unbounded, and
+	// "top" records one for the top-N tenants by observation count and folds
+	// the rest into tenant="other". A label per tenant is a cardinality
+	// decision only the operator can make, which is why none is the default.
+	// Env: KILASFLOW_METRICS_TENANT_LABEL. Default: "off".
+	TenantLabel string `koanf:"tenant_label"`
+	// TopTenants is how many tenants keep their own label when tenant_label
+	// is "top".
+	// Env: KILASFLOW_METRICS_TOP_TENANTS. Default: 10.
+	TopTenants int `koanf:"top_tenants"`
+}
+
+// RateLimit bounds how much of each ingress one tenant can drive: webhook
+// deliveries, the run API and the events API. One tenant flooding any of them
+// starves the others through the shared queue, so the allowance is per
+// tenant and per surface, and a refusal happens before any execution or
+// delivery claim exists.
+//
+// The section name is one word because envKeyToPath treats the first
+// underscore as the section separator, so a two-word section could never be
+// set from the environment.
+type RateLimit struct {
+	// Store is where the buckets live: "memory" for a single process, or
+	// "database" to share one allowance across every process of a deployment
+	// — the only right answer when several server processes sit behind a load
+	// balancer, because separate in-memory buckets each grant the full rate.
+	// Env: KILASFLOW_RATELIMIT_STORE. Default: "memory".
+	Store string `koanf:"store"`
+	// RunPerMinute is how many manual runs one tenant may queue per minute,
+	// through POST /workflows/{id}/run. The number is also the burst: the
+	// bucket holds a full minute's allowance and refills at a sixtieth of it
+	// per second.
+	// Env: KILASFLOW_RATELIMIT_RUN_PER_MINUTE. Default: 120.
+	RunPerMinute int `koanf:"run_per_minute"`
+	// WebhookPerMinute is how many inbound webhook deliveries one tenant's
+	// endpoints accept per minute.
+	// Env: KILASFLOW_RATELIMIT_WEBHOOK_PER_MINUTE. Default: 600.
+	WebhookPerMinute int `koanf:"webhook_per_minute"`
+	// EventsPerMinute is how many events one tenant may publish per minute,
+	// through POST /events.
+	// Env: KILASFLOW_RATELIMIT_EVENTS_PER_MINUTE. Default: 600.
+	EventsPerMinute int `koanf:"events_per_minute"`
 }
 
 // Embed configures the iframe editor surface.
@@ -1009,6 +1083,19 @@ func Default() Config {
 			MaxBodyBytes:    1 << 20,
 			ResponseTimeout: 30 * time.Second,
 			RequireAuth:     false,
+		},
+		Metrics: Metrics{
+			Enabled:     false,
+			Host:        "127.0.0.1",
+			Port:        9090,
+			TenantLabel: "off",
+			TopTenants:  10,
+		},
+		RateLimit: RateLimit{
+			Store:            "memory",
+			RunPerMinute:     120,
+			WebhookPerMinute: 600,
+			EventsPerMinute:  600,
 		},
 		Embed: Embed{
 			SigningKeyEnv: "KILASFLOW_EMBED_SIGNING_KEY",
@@ -1653,6 +1740,67 @@ func (c Config) Validate() error {
 
 	if err := validateSidecar(c.Sidecar); err != nil {
 		return err
+	}
+	if err := validateMetrics(c.Metrics); err != nil {
+		return err
+	}
+	if err := validateRateLimit(c.RateLimit); err != nil {
+		return err
+	}
+	return nil
+}
+
+// rateLimitPerMinuteCeiling is the highest allowance a rate accepts. A number
+// above it is not a rate limit anyone meant to configure, and reading it as
+// one would ship a limit that never refuses.
+const rateLimitPerMinuteCeiling = 1_000_000
+
+// validateRateLimit refuses a rate limit configuration that cannot mean what
+// it says. Unlike the opt-in sections there is no switch: the rates always
+// apply, so they are always validated.
+func validateRateLimit(cfg RateLimit) error {
+	switch cfg.Store {
+	case "memory", "database":
+	default:
+		return fmt.Errorf("ratelimit.store %q is not one of memory, database", cfg.Store)
+	}
+	for _, rate := range []struct {
+		name      string
+		perMinute int
+	}{
+		{"ratelimit.run_per_minute", cfg.RunPerMinute},
+		{"ratelimit.webhook_per_minute", cfg.WebhookPerMinute},
+		{"ratelimit.events_per_minute", cfg.EventsPerMinute},
+	} {
+		// One is the floor for the same reason the login limiter refuses an
+		// off-by-zero: a rate that can be switched off by a typo is one that
+		// will be, silently. An operator who wants no limit sets a ceiling
+		// they mean, not a zero that reads as a misconfiguration.
+		if rate.perMinute < 1 || rate.perMinute > rateLimitPerMinuteCeiling {
+			return fmt.Errorf("%s %d must be 1-%d", rate.name, rate.perMinute, rateLimitPerMinuteCeiling)
+		}
+	}
+	return nil
+}
+
+// validateMetrics refuses a metrics configuration that cannot work. It runs
+// only when the endpoint is enabled: a declined endpoint is a deployment
+// where none of these values is read, so a stray value there must not refuse
+// a boot.
+func validateMetrics(cfg Metrics) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		return fmt.Errorf("metrics.port %d is not a port; choose 1-65535", cfg.Port)
+	}
+	switch cfg.TenantLabel {
+	case "off", "on", "top":
+	default:
+		return fmt.Errorf("metrics.tenant_label %q is not one of off, on, top", cfg.TenantLabel)
+	}
+	if cfg.TenantLabel == "top" && cfg.TopTenants < 1 {
+		return fmt.Errorf("metrics.top_tenants %d must be at least 1 when tenant_label is top", cfg.TopTenants)
 	}
 	return nil
 }

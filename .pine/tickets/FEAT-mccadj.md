@@ -1,7 +1,7 @@
 ---
 id: FEAT-mccadj
 title: Host event ingestion with fan-out to active workflows
-status: todo
+status: done
 priority: high
 labels:
     - saas
@@ -42,3 +42,7 @@ Valid; ref workflows.md:164-186 accurate (run can also pin via `workflowVersionI
 # Related Files
 
 # Attachments
+
+# Progress
+
+Implemented 2026-10-26 (orchestrator-verified): host event ingestion — migrations 000027 (sqlite+postgres), repository host-events store, internal/hostevents package + service, QueueHostEvent on the engine service, signed-ingest API handler, built-in trigger node (nodes/hostevent.go) with fan-out to active workflows, pack manifest Trigger.HostEvents + strict validation, nodepackgen/catalogue carried. Gates: build ok; hostevents/node/nodepack/loadoptions/execution/engine/repository/database/api/metrics/ratelimit/config all ok (CGO=0); generate api/types/reference/facts fresh.

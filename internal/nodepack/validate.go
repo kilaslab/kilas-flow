@@ -307,7 +307,9 @@ var (
 	operationKeys  = []string{"name", "description", "method", "url", "sends", "output", "pagination"}
 	parameterKeys  = []string{"key", "label", "description", "kind", "required", "default", "options", "typeOptions", "loadOptions", "modes", "resources", "operations"}
 	provenanceKeys = []string{"tool", "source", "sourceTitle", "sourceVersion", "sourceDigest"}
-	triggerKeys    = []string{"events", "catchAll", "eventPath", "shape", "webhook", "hmac", "lifecycle", "media", "notice", "sourceNode"}
+	triggerKeys    = []string{"events", "catchAll", "eventPath", "shape", "webhook", "hmac", "lifecycle", "media", "notice", "hostEvents", "sourceNode"}
+	hostEventKeys  = []string{"catalogue"}
+	eventKeys      = []string{"type", "title", "schema", "sample"}
 )
 
 // checkUnknownFields lists every field the strict decoder would refuse, with
@@ -356,6 +358,23 @@ func checkUnknownFields(raw map[string]json.RawMessage, filename string) []Issue
 			fail("$.trigger", "%v", err)
 		} else {
 			failUnknown(blob, triggerKeys, "$.trigger", filename, &issues)
+			var block map[string]json.RawMessage
+			if err := json.Unmarshal(blob, &block); err == nil {
+				if inner, ok := block["hostEvents"]; ok && trigger.HostEvents != nil {
+					failUnknown(inner, hostEventKeys, "$.trigger.hostEvents", filename, &issues)
+					var hostEvents map[string]json.RawMessage
+					if err := json.Unmarshal(inner, &hostEvents); err == nil {
+						if catalogue, ok := hostEvents["catalogue"]; ok {
+							var entries []map[string]json.RawMessage
+							if err := json.Unmarshal(catalogue, &entries); err == nil {
+								for i, entry := range entries {
+									failUnknownMap(entry, eventKeys, fmt.Sprintf("$.trigger.hostEvents.catalogue[%d]", i), filename, &issues)
+								}
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 	if blob, ok := raw["resources"]; ok {

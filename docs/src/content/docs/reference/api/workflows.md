@@ -25,12 +25,184 @@ Parameters:
 
 Request body: `application/json` — `WorkflowDocumentInput` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `baseVersionId` | no | `string` | Latest version ID the editor saved from; a save from a stale revision is refused with 409 |
+| `connections` | yes | `array or null` | — |
+| `name` | yes | `string` | — |
+| `nodes` | yes | `array or null` | — |
+| `pinData` | no | `object` | Node output the author pinned, keyed by node name: a run feeds a node's pinned items as its output instead of executing the node |
+| `schemaVersion` | yes | `integer` | — |
+| `settings` | yes | `object` | — |
+| `tags` | no | `array or null` | Optional labels that group workflows. At most 20; each 1 to 24 characters with no leading or trailing whitespace, no comma and no control character; unique ignoring case. Order and case are kept. The list filters by one with ?tag= |
+
 Responses:
 
 | Status | Description | Body |
 | --- | --- | --- |
 | `201` | Created | `application/json` — `WorkflowResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `WorkflowResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `active` | yes | `boolean` | — |
+| `activeVersion` | no | `WorkflowVersionResource` | — |
+| `activeVersion.createdAt` | yes | `string` | — |
+| `activeVersion.document` | yes | `Document` | — |
+| `activeVersion.document.connections` | yes | `array or null` | — |
+| `activeVersion.document.id` | yes | `string` | — |
+| `activeVersion.document.name` | yes | `string` | — |
+| `activeVersion.document.nodes` | yes | `array or null` | — |
+| `activeVersion.document.pinData` | no | `object` | — |
+| `activeVersion.document.schemaVersion` | yes | `integer` | — |
+| `activeVersion.document.settings` | yes | `object` | — |
+| `activeVersion.document.tags` | no | `array or null` | — |
+| `activeVersion.id` | yes | `string` | — |
+| `activeVersion.revision` | yes | `integer` | — |
+| `activeVersion.schemaVersion` | yes | `integer` | — |
+| `activeVersion.workflowId` | yes | `string` | — |
+| `createdAt` | yes | `string` | — |
+| `id` | yes | `string` | — |
+| `latestVersion` | yes | `WorkflowVersionResource` | — |
+| `latestVersion.createdAt` | yes | `string` | — |
+| `latestVersion.document` | yes | `Document` | — |
+| `latestVersion.document.connections` | yes | `array or null` | — |
+| `latestVersion.document.id` | yes | `string` | — |
+| `latestVersion.document.name` | yes | `string` | — |
+| `latestVersion.document.nodes` | yes | `array or null` | — |
+| `latestVersion.document.pinData` | no | `object` | — |
+| `latestVersion.document.schemaVersion` | yes | `integer` | — |
+| `latestVersion.document.settings` | yes | `object` | — |
+| `latestVersion.document.tags` | no | `array or null` | — |
+| `latestVersion.id` | yes | `string` | — |
+| `latestVersion.revision` | yes | `integer` | — |
+| `latestVersion.schemaVersion` | yes | `integer` | — |
+| `latestVersion.workflowId` | yes | `string` | — |
+| `name` | yes | `string` | — |
+| `updatedAt` | yes | `string` | — |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "connections": [
+    {
+      "id": "string",
+      "kind": "string",
+      "source": {
+        "nodeId": "string",
+        "port": "string"
+      },
+      "target": {
+        "nodeId": "string",
+        "port": "string"
+      }
+    }
+  ],
+  "name": "string",
+  "nodes": [
+    {
+      "credentials": {},
+      "disabled": false,
+      "id": "string",
+      "name": "string",
+      "parameters": {},
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "settings": {},
+      "type": "string",
+      "typeVersion": 1
+    }
+  ],
+  "schemaVersion": 0,
+  "settings": {}
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "active": false,
+  "activeVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "createdAt": "2026-01-02T15:04:05Z",
+  "id": "string",
+  "latestVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "name": "string",
+  "updatedAt": "2026-01-02T15:04:05Z"
+}
+```
+
+:::code
+
+```sh title="curl"
+curl -X POST "$KILASFLOW_HOST/api/v1/workflows" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"connections":[{"id":"string","kind":"string","source":{"nodeId":"string","port":"string"},"target":{"nodeId":"string","port":"string"}}],"name":"string","nodes":[{"credentials":{},"disabled":false,"id":"string","name":"string","parameters":{},"position":{"x":0,"y":0},"settings":{},"type":"string","typeVersion":1}],"schemaVersion":0,"settings":{}}'
+```
+
+```ts title="TypeScript"
+// import { KilasFlowClient } from "@kilasflow/sdk/server";
+const workflow = await client.createWorkflow(document);
+```
+
+```go title="Go"
+payload, _ := json.Marshal(document)
+resp, err := http.Post(baseURL+"/api/v1/workflows", "application/json", bytes.NewReader(payload))
+```
+
+:::
 
 Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
 
@@ -42,12 +214,106 @@ Compiles the supplied document with the same compiler activation uses and answer
 
 Request body: `application/json` — `WorkflowDocumentInput` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `baseVersionId` | no | `string` | Latest version ID the editor saved from; a save from a stale revision is refused with 409 |
+| `connections` | yes | `array or null` | — |
+| `name` | yes | `string` | — |
+| `nodes` | yes | `array or null` | — |
+| `pinData` | no | `object` | Node output the author pinned, keyed by node name: a run feeds a node's pinned items as its output instead of executing the node |
+| `schemaVersion` | yes | `integer` | — |
+| `settings` | yes | `object` | — |
+| `tags` | no | `array or null` | Optional labels that group workflows. At most 20; each 1 to 24 characters with no leading or trailing whitespace, no comma and no control character; unique ignoring case. Order and case are kept. The list filters by one with ?tag= |
+
 Responses:
 
 | Status | Description | Body |
 | --- | --- | --- |
 | `200` | OK | `application/json` — `ValidateWorkflowResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `ValidateWorkflowResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `diagnostics` | yes | `array or null` | What the compiler refused, stated as the import report states it: severity blocking, the node where one is named, and the reason |
+| `valid` | yes | `boolean` | True when the document compiles and would run |
+| `warnings` | no | `array or null` | What this server could not check, such as a Go Code node it has no toolchain to compile. A warning never makes the document invalid |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "connections": [
+    {
+      "id": "string",
+      "kind": "string",
+      "source": {
+        "nodeId": "string",
+        "port": "string"
+      },
+      "target": {
+        "nodeId": "string",
+        "port": "string"
+      }
+    }
+  ],
+  "name": "string",
+  "nodes": [
+    {
+      "credentials": {},
+      "disabled": false,
+      "id": "string",
+      "name": "string",
+      "parameters": {},
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "settings": {},
+      "type": "string",
+      "typeVersion": 1
+    }
+  ],
+  "schemaVersion": 0,
+  "settings": {}
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "diagnostics": [
+    {
+      "field": "string",
+      "nodeId": "string",
+      "nodeName": "string",
+      "reason": "string",
+      "severity": "blocking",
+      "type": "string",
+      "typeVersion": 1
+    }
+  ],
+  "valid": false,
+  "warnings": [
+    {
+      "field": "string",
+      "nodeId": "string",
+      "reason": "string"
+    }
+  ]
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/workflows/validate" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"connections":[{"id":"string","kind":"string","source":{"nodeId":"string","port":"string"},"target":{"nodeId":"string","port":"string"}}],"name":"string","nodes":[{"credentials":{},"disabled":false,"id":"string","name":"string","parameters":{},"position":{"x":0,"y":0},"settings":{},"type":"string","typeVersion":1}],"schemaVersion":0,"settings":{}}'
+```
 
 Embed: Allow with `workflow:read` — a dry run that compiles the supplied document and saves nothing.
 
@@ -72,6 +338,24 @@ Responses:
 | `200` | OK | `application/json` — `array or null` |
 | `default` | Error | `application/problem+json` |
 
+:::code
+
+```sh title="curl"
+curl -X GET "$KILASFLOW_HOST/api/v1/workflows" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+```ts title="TypeScript"
+// import { KilasFlowClient } from "@kilasflow/sdk/server";
+const workflows = await client.listWorkflows();
+```
+
+```go title="Go"
+resp, err := http.Get(baseURL + "/api/v1/workflows?limit=100")
+```
+
+:::
+
 Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
 
 ## Get a workflow (`get-workflow`)
@@ -92,6 +376,122 @@ Responses:
 | --- | --- | --- |
 | `200` | OK | `application/json` — `WorkflowResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `WorkflowResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `active` | yes | `boolean` | — |
+| `activeVersion` | no | `WorkflowVersionResource` | — |
+| `activeVersion.createdAt` | yes | `string` | — |
+| `activeVersion.document` | yes | `Document` | — |
+| `activeVersion.document.connections` | yes | `array or null` | — |
+| `activeVersion.document.id` | yes | `string` | — |
+| `activeVersion.document.name` | yes | `string` | — |
+| `activeVersion.document.nodes` | yes | `array or null` | — |
+| `activeVersion.document.pinData` | no | `object` | — |
+| `activeVersion.document.schemaVersion` | yes | `integer` | — |
+| `activeVersion.document.settings` | yes | `object` | — |
+| `activeVersion.document.tags` | no | `array or null` | — |
+| `activeVersion.id` | yes | `string` | — |
+| `activeVersion.revision` | yes | `integer` | — |
+| `activeVersion.schemaVersion` | yes | `integer` | — |
+| `activeVersion.workflowId` | yes | `string` | — |
+| `createdAt` | yes | `string` | — |
+| `id` | yes | `string` | — |
+| `latestVersion` | yes | `WorkflowVersionResource` | — |
+| `latestVersion.createdAt` | yes | `string` | — |
+| `latestVersion.document` | yes | `Document` | — |
+| `latestVersion.document.connections` | yes | `array or null` | — |
+| `latestVersion.document.id` | yes | `string` | — |
+| `latestVersion.document.name` | yes | `string` | — |
+| `latestVersion.document.nodes` | yes | `array or null` | — |
+| `latestVersion.document.pinData` | no | `object` | — |
+| `latestVersion.document.schemaVersion` | yes | `integer` | — |
+| `latestVersion.document.settings` | yes | `object` | — |
+| `latestVersion.document.tags` | no | `array or null` | — |
+| `latestVersion.id` | yes | `string` | — |
+| `latestVersion.revision` | yes | `integer` | — |
+| `latestVersion.schemaVersion` | yes | `integer` | — |
+| `latestVersion.workflowId` | yes | `string` | — |
+| `name` | yes | `string` | — |
+| `updatedAt` | yes | `string` | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "active": false,
+  "activeVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "createdAt": "2026-01-02T15:04:05Z",
+  "id": "string",
+  "latestVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "name": "string",
+  "updatedAt": "2026-01-02T15:04:05Z"
+}
+```
+
+:::code
+
+```sh title="curl"
+curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+```ts title="TypeScript"
+// import { KilasFlowClient } from "@kilasflow/sdk/server";
+const workflow = await client.getWorkflow(workflowId);
+```
+
+```go title="Go"
+resp, err := http.Get(baseURL + "/api/v1/workflows/" + url.PathEscape(workflowId))
+```
+
+:::
 
 Embed: Allow with `workflow:read` — on the session’s workflow only.
 
@@ -114,6 +514,11 @@ Responses:
 | `200` | OK | `application/json` — `array or null` |
 | `default` | Error | `application/problem+json` |
 
+```sh
+curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}/webhooks" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
 Embed: Allow with `workflow:read` — on the session’s workflow only.
 
 ## Save a workflow draft (`update-workflow`)
@@ -132,12 +537,186 @@ Parameters:
 
 Request body: `application/json` — `WorkflowDocumentInput` (required)
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `baseVersionId` | no | `string` | Latest version ID the editor saved from; a save from a stale revision is refused with 409 |
+| `connections` | yes | `array or null` | — |
+| `name` | yes | `string` | — |
+| `nodes` | yes | `array or null` | — |
+| `pinData` | no | `object` | Node output the author pinned, keyed by node name: a run feeds a node's pinned items as its output instead of executing the node |
+| `schemaVersion` | yes | `integer` | — |
+| `settings` | yes | `object` | — |
+| `tags` | no | `array or null` | Optional labels that group workflows. At most 20; each 1 to 24 characters with no leading or trailing whitespace, no comma and no control character; unique ignoring case. Order and case are kept. The list filters by one with ?tag= |
+
 Responses:
 
 | Status | Description | Body |
 | --- | --- | --- |
 | `200` | OK | `application/json` — `WorkflowResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `WorkflowResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `active` | yes | `boolean` | — |
+| `activeVersion` | no | `WorkflowVersionResource` | — |
+| `activeVersion.createdAt` | yes | `string` | — |
+| `activeVersion.document` | yes | `Document` | — |
+| `activeVersion.document.connections` | yes | `array or null` | — |
+| `activeVersion.document.id` | yes | `string` | — |
+| `activeVersion.document.name` | yes | `string` | — |
+| `activeVersion.document.nodes` | yes | `array or null` | — |
+| `activeVersion.document.pinData` | no | `object` | — |
+| `activeVersion.document.schemaVersion` | yes | `integer` | — |
+| `activeVersion.document.settings` | yes | `object` | — |
+| `activeVersion.document.tags` | no | `array or null` | — |
+| `activeVersion.id` | yes | `string` | — |
+| `activeVersion.revision` | yes | `integer` | — |
+| `activeVersion.schemaVersion` | yes | `integer` | — |
+| `activeVersion.workflowId` | yes | `string` | — |
+| `createdAt` | yes | `string` | — |
+| `id` | yes | `string` | — |
+| `latestVersion` | yes | `WorkflowVersionResource` | — |
+| `latestVersion.createdAt` | yes | `string` | — |
+| `latestVersion.document` | yes | `Document` | — |
+| `latestVersion.document.connections` | yes | `array or null` | — |
+| `latestVersion.document.id` | yes | `string` | — |
+| `latestVersion.document.name` | yes | `string` | — |
+| `latestVersion.document.nodes` | yes | `array or null` | — |
+| `latestVersion.document.pinData` | no | `object` | — |
+| `latestVersion.document.schemaVersion` | yes | `integer` | — |
+| `latestVersion.document.settings` | yes | `object` | — |
+| `latestVersion.document.tags` | no | `array or null` | — |
+| `latestVersion.id` | yes | `string` | — |
+| `latestVersion.revision` | yes | `integer` | — |
+| `latestVersion.schemaVersion` | yes | `integer` | — |
+| `latestVersion.workflowId` | yes | `string` | — |
+| `name` | yes | `string` | — |
+| `updatedAt` | yes | `string` | — |
+
+Request (minimal — required fields only):
+
+```json
+{
+  "connections": [
+    {
+      "id": "string",
+      "kind": "string",
+      "source": {
+        "nodeId": "string",
+        "port": "string"
+      },
+      "target": {
+        "nodeId": "string",
+        "port": "string"
+      }
+    }
+  ],
+  "name": "string",
+  "nodes": [
+    {
+      "credentials": {},
+      "disabled": false,
+      "id": "string",
+      "name": "string",
+      "parameters": {},
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "settings": {},
+      "type": "string",
+      "typeVersion": 1
+    }
+  ],
+  "schemaVersion": 0,
+  "settings": {}
+}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "active": false,
+  "activeVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "createdAt": "2026-01-02T15:04:05Z",
+  "id": "string",
+  "latestVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "name": "string",
+  "updatedAt": "2026-01-02T15:04:05Z"
+}
+```
+
+:::code
+
+```sh title="curl"
+curl -X PUT "$KILASFLOW_HOST/api/v1/workflows/{id}" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{"connections":[{"id":"string","kind":"string","source":{"nodeId":"string","port":"string"},"target":{"nodeId":"string","port":"string"}}],"name":"string","nodes":[{"credentials":{},"disabled":false,"id":"string","name":"string","parameters":{},"position":{"x":0,"y":0},"settings":{},"type":"string","typeVersion":1}],"schemaVersion":0,"settings":{}}'
+```
+
+```ts title="TypeScript"
+// import { KilasFlowClient } from "@kilasflow/sdk/server";
+const workflow = await client.updateWorkflow(workflowId, document);
+```
+
+```go title="Go"
+payload, _ := json.Marshal(document)
+req, _ := http.NewRequest(http.MethodPut, baseURL+"/api/v1/workflows/"+url.PathEscape(workflowId), bytes.NewReader(payload))
+req.Header.Set("Content-Type", "application/json")
+resp, err := http.DefaultClient.Do(req)
+```
+
+:::
 
 Embed: Allow with `workflow:write` — on the session’s workflow only.
 
@@ -160,6 +739,11 @@ Responses:
 | `204` | No Content |  |
 | `default` | Error | `application/problem+json` |
 
+```sh
+curl -X DELETE "$KILASFLOW_HOST/api/v1/workflows/{id}" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
 Embed: Deny — an embed session cannot delete a workflow.
 
 ## Queue a manual workflow run (`run-workflow`)
@@ -177,12 +761,76 @@ Parameters:
 
 Request body: `application/json` — `RunWorkflowInputBody`
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `input` | no |  | Optional manual-run input JSON |
+| `triggerNodeId` | no | `string` | Trigger node this manual run starts from. Omit to run every trigger. |
+| `workflowVersionId` | no | `string` | Revision to run. Omit to run the workflow's latest revision. |
+
 Responses:
 
 | Status | Description | Body |
 | --- | --- | --- |
 | `202` | Accepted | `application/json` — `ExecutionRequestResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `ExecutionRequestResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `createdAt` | yes | `string` | — |
+| `id` | yes | `string` | — |
+| `input` | no |  | — |
+| `status` | yes | `string` | — |
+| `trigger` | yes | `string` | — |
+| `triggerNodeId` | no | `string` | — |
+| `workflowId` | yes | `string` | — |
+| `workflowVersionId` | yes | `string` | — |
+
+Request (minimal — required fields only):
+
+```json
+{}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "createdAt": "2026-01-02T15:04:05Z",
+  "id": "string",
+  "input": null,
+  "status": "string",
+  "trigger": "string",
+  "triggerNodeId": "string",
+  "workflowId": "string",
+  "workflowVersionId": "string"
+}
+```
+
+:::code
+
+```sh title="curl"
+curl -X POST "$KILASFLOW_HOST/api/v1/workflows/{id}/run" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{}'
+```
+
+```ts title="TypeScript"
+// import { KilasFlowClient } from "@kilasflow/sdk/server";
+const { id: executionId } = await client.runWorkflow(workflowId, input);
+```
+
+```go title="Go"
+payload, _ := json.Marshal(map[string]any{"input": input})
+req, _ := http.NewRequest(http.MethodPost, baseURL+"/api/v1/workflows/"+url.PathEscape(workflowId)+"/run", bytes.NewReader(payload))
+resp, err := http.DefaultClient.Do(req) // 202: follow the execution on the event stream
+```
+
+:::
 
 Embed: Allow with `workflow:run` — on the session’s workflow only.
 
@@ -201,12 +849,129 @@ Parameters:
 
 Request body: `application/json` — `DuplicateWorkflowInputBody`
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `name` | no | `string` | Name for the copy; defaults to the source name followed by (copy) |
+
 Responses:
 
 | Status | Description | Body |
 | --- | --- | --- |
 | `201` | Created | `application/json` — `WorkflowResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `WorkflowResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `active` | yes | `boolean` | — |
+| `activeVersion` | no | `WorkflowVersionResource` | — |
+| `activeVersion.createdAt` | yes | `string` | — |
+| `activeVersion.document` | yes | `Document` | — |
+| `activeVersion.document.connections` | yes | `array or null` | — |
+| `activeVersion.document.id` | yes | `string` | — |
+| `activeVersion.document.name` | yes | `string` | — |
+| `activeVersion.document.nodes` | yes | `array or null` | — |
+| `activeVersion.document.pinData` | no | `object` | — |
+| `activeVersion.document.schemaVersion` | yes | `integer` | — |
+| `activeVersion.document.settings` | yes | `object` | — |
+| `activeVersion.document.tags` | no | `array or null` | — |
+| `activeVersion.id` | yes | `string` | — |
+| `activeVersion.revision` | yes | `integer` | — |
+| `activeVersion.schemaVersion` | yes | `integer` | — |
+| `activeVersion.workflowId` | yes | `string` | — |
+| `createdAt` | yes | `string` | — |
+| `id` | yes | `string` | — |
+| `latestVersion` | yes | `WorkflowVersionResource` | — |
+| `latestVersion.createdAt` | yes | `string` | — |
+| `latestVersion.document` | yes | `Document` | — |
+| `latestVersion.document.connections` | yes | `array or null` | — |
+| `latestVersion.document.id` | yes | `string` | — |
+| `latestVersion.document.name` | yes | `string` | — |
+| `latestVersion.document.nodes` | yes | `array or null` | — |
+| `latestVersion.document.pinData` | no | `object` | — |
+| `latestVersion.document.schemaVersion` | yes | `integer` | — |
+| `latestVersion.document.settings` | yes | `object` | — |
+| `latestVersion.document.tags` | no | `array or null` | — |
+| `latestVersion.id` | yes | `string` | — |
+| `latestVersion.revision` | yes | `integer` | — |
+| `latestVersion.schemaVersion` | yes | `integer` | — |
+| `latestVersion.workflowId` | yes | `string` | — |
+| `name` | yes | `string` | — |
+| `updatedAt` | yes | `string` | — |
+
+Request (minimal — required fields only):
+
+```json
+{}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "active": false,
+  "activeVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "createdAt": "2026-01-02T15:04:05Z",
+  "id": "string",
+  "latestVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "name": "string",
+  "updatedAt": "2026-01-02T15:04:05Z"
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/workflows/{id}/duplicate" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{}'
+```
 
 Embed: Deny — a copy is a new workflow, outside any session’s single-workflow authority.
 
@@ -229,6 +994,130 @@ Responses:
 | `200` | OK | `application/json` — `ActivationResource` |
 | `default` | Error | `application/problem+json` |
 
+Fields of the `ActivationResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `active` | yes | `boolean` | — |
+| `activeVersion` | no | `WorkflowVersionResource` | — |
+| `activeVersion.createdAt` | yes | `string` | — |
+| `activeVersion.document` | yes | `Document` | — |
+| `activeVersion.document.connections` | yes | `array or null` | — |
+| `activeVersion.document.id` | yes | `string` | — |
+| `activeVersion.document.name` | yes | `string` | — |
+| `activeVersion.document.nodes` | yes | `array or null` | — |
+| `activeVersion.document.pinData` | no | `object` | — |
+| `activeVersion.document.schemaVersion` | yes | `integer` | — |
+| `activeVersion.document.settings` | yes | `object` | — |
+| `activeVersion.document.tags` | no | `array or null` | — |
+| `activeVersion.id` | yes | `string` | — |
+| `activeVersion.revision` | yes | `integer` | — |
+| `activeVersion.schemaVersion` | yes | `integer` | — |
+| `activeVersion.workflowId` | yes | `string` | — |
+| `createdAt` | yes | `string` | — |
+| `id` | yes | `string` | — |
+| `latestVersion` | yes | `WorkflowVersionResource` | — |
+| `latestVersion.createdAt` | yes | `string` | — |
+| `latestVersion.document` | yes | `Document` | — |
+| `latestVersion.document.connections` | yes | `array or null` | — |
+| `latestVersion.document.id` | yes | `string` | — |
+| `latestVersion.document.name` | yes | `string` | — |
+| `latestVersion.document.nodes` | yes | `array or null` | — |
+| `latestVersion.document.pinData` | no | `object` | — |
+| `latestVersion.document.schemaVersion` | yes | `integer` | — |
+| `latestVersion.document.settings` | yes | `object` | — |
+| `latestVersion.document.tags` | no | `array or null` | — |
+| `latestVersion.id` | yes | `string` | — |
+| `latestVersion.revision` | yes | `integer` | — |
+| `latestVersion.schemaVersion` | yes | `integer` | — |
+| `latestVersion.workflowId` | yes | `string` | — |
+| `name` | yes | `string` | — |
+| `notices` | yes | `array or null` | — |
+| `updatedAt` | yes | `string` | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "active": false,
+  "activeVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "createdAt": "2026-01-02T15:04:05Z",
+  "id": "string",
+  "latestVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "name": "string",
+  "notices": [
+    {
+      "message": "string",
+      "nodeId": "string",
+      "nodeType": "string"
+    }
+  ],
+  "updatedAt": "2026-01-02T15:04:05Z"
+}
+```
+
+:::code
+
+```sh title="curl"
+curl -X POST "$KILASFLOW_HOST/api/v1/workflows/{id}/activate" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+```ts title="TypeScript"
+// import { KilasFlowClient } from "@kilasflow/sdk/server";
+await client.activateWorkflow(workflowId);
+```
+
+```go title="Go"
+resp, err := http.Post(baseURL+"/api/v1/workflows/"+url.PathEscape(workflowId)+"/activate", "application/json", nil)
+```
+
+:::
+
 Embed: Allow with `workflow:activate` only — on the session’s workflow, through the same compile and catalogue checks as the dashboard. No other scope grants it: activation registers deployment-wide triggers, so a host opts in by minting the scope.
 
 ## Deactivate workflow (`deactivate-workflow`)
@@ -249,6 +1138,109 @@ Responses:
 | --- | --- | --- |
 | `200` | OK | `application/json` — `WorkflowResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `WorkflowResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `active` | yes | `boolean` | — |
+| `activeVersion` | no | `WorkflowVersionResource` | — |
+| `activeVersion.createdAt` | yes | `string` | — |
+| `activeVersion.document` | yes | `Document` | — |
+| `activeVersion.document.connections` | yes | `array or null` | — |
+| `activeVersion.document.id` | yes | `string` | — |
+| `activeVersion.document.name` | yes | `string` | — |
+| `activeVersion.document.nodes` | yes | `array or null` | — |
+| `activeVersion.document.pinData` | no | `object` | — |
+| `activeVersion.document.schemaVersion` | yes | `integer` | — |
+| `activeVersion.document.settings` | yes | `object` | — |
+| `activeVersion.document.tags` | no | `array or null` | — |
+| `activeVersion.id` | yes | `string` | — |
+| `activeVersion.revision` | yes | `integer` | — |
+| `activeVersion.schemaVersion` | yes | `integer` | — |
+| `activeVersion.workflowId` | yes | `string` | — |
+| `createdAt` | yes | `string` | — |
+| `id` | yes | `string` | — |
+| `latestVersion` | yes | `WorkflowVersionResource` | — |
+| `latestVersion.createdAt` | yes | `string` | — |
+| `latestVersion.document` | yes | `Document` | — |
+| `latestVersion.document.connections` | yes | `array or null` | — |
+| `latestVersion.document.id` | yes | `string` | — |
+| `latestVersion.document.name` | yes | `string` | — |
+| `latestVersion.document.nodes` | yes | `array or null` | — |
+| `latestVersion.document.pinData` | no | `object` | — |
+| `latestVersion.document.schemaVersion` | yes | `integer` | — |
+| `latestVersion.document.settings` | yes | `object` | — |
+| `latestVersion.document.tags` | no | `array or null` | — |
+| `latestVersion.id` | yes | `string` | — |
+| `latestVersion.revision` | yes | `integer` | — |
+| `latestVersion.schemaVersion` | yes | `integer` | — |
+| `latestVersion.workflowId` | yes | `string` | — |
+| `name` | yes | `string` | — |
+| `updatedAt` | yes | `string` | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "active": false,
+  "activeVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "createdAt": "2026-01-02T15:04:05Z",
+  "id": "string",
+  "latestVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "name": "string",
+  "updatedAt": "2026-01-02T15:04:05Z"
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/workflows/{id}/deactivate" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
 
 Embed: Allow with `workflow:activate` only — on the session’s workflow. `workflow:publish` does not grant it: taking a workflow offline is the activation switch.
 
@@ -273,6 +1265,45 @@ Responses:
 | `200` | OK | `application/json` — `WorkflowVersionListResource` |
 | `default` | Error | `application/problem+json` |
 
+Fields of the `WorkflowVersionListResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `items` | yes | `array or null` | — |
+| `nextCursor` | no | `string` | Pass back as ?cursor= to read the next page |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "items": [
+    {
+      "actorKeyId": "string",
+      "actorKind": "user",
+      "actorLabel": "string",
+      "actorMeta": [
+        "string"
+      ],
+      "createdAt": "2026-01-02T15:04:05Z",
+      "createdBy": "string",
+      "draft": false,
+      "id": "string",
+      "label": "string",
+      "published": false,
+      "revision": 0,
+      "schemaVersion": 0,
+      "workflowId": "string"
+    }
+  ],
+  "nextCursor": "string"
+}
+```
+
+```sh
+curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}/versions" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
 Embed: Allow with `workflow:read` — on the session’s workflow only.
 
 ## Get one workflow revision (`get-workflow-version`)
@@ -295,6 +1326,73 @@ Responses:
 | `200` | OK | `application/json` — `WorkflowVersionResource` |
 | `default` | Error | `application/problem+json` |
 
+Fields of the `WorkflowVersionResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `createdAt` | yes | `string` | — |
+| `document` | yes | `Document` | — |
+| `document.connections` | yes | `array or null` | — |
+| `document.id` | yes | `string` | — |
+| `document.name` | yes | `string` | — |
+| `document.nodes` | yes | `array or null` | — |
+| `document.pinData` | no | `object` | — |
+| `document.schemaVersion` | yes | `integer` | — |
+| `document.settings` | yes | `object` | — |
+| `document.tags` | no | `array or null` | — |
+| `id` | yes | `string` | — |
+| `revision` | yes | `integer` | — |
+| `schemaVersion` | yes | `integer` | — |
+| `workflowId` | yes | `string` | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "createdAt": "2026-01-02T15:04:05Z",
+  "document": {
+    "connections": [
+      {
+        "id": "string",
+        "kind": "string",
+        "source": {},
+        "target": {}
+      }
+    ],
+    "id": "string",
+    "name": "string",
+    "nodes": [
+      {
+        "credentials": {},
+        "disabled": false,
+        "id": "string",
+        "name": "string",
+        "parameters": {},
+        "position": {},
+        "settings": {},
+        "type": "string",
+        "typeVersion": 1
+      }
+    ],
+    "pinData": {},
+    "schemaVersion": 0,
+    "settings": {},
+    "tags": [
+      "string"
+    ]
+  },
+  "id": "string",
+  "revision": 0,
+  "schemaVersion": 0,
+  "workflowId": "string"
+}
+```
+
+```sh
+curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}/versions/{versionId}" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
 Embed: Allow with `workflow:read` — on the session’s workflow only.
 
 ## Publish one workflow revision (`publish-workflow-version`)
@@ -313,12 +1411,129 @@ Parameters:
 
 Request body: `application/json` — `PublishVersionInputBody`
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `reason` | no | `string` | Why this revision was published or restored, recorded in the audit trail |
+
 Responses:
 
 | Status | Description | Body |
 | --- | --- | --- |
 | `200` | OK | `application/json` — `WorkflowResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `WorkflowResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `active` | yes | `boolean` | — |
+| `activeVersion` | no | `WorkflowVersionResource` | — |
+| `activeVersion.createdAt` | yes | `string` | — |
+| `activeVersion.document` | yes | `Document` | — |
+| `activeVersion.document.connections` | yes | `array or null` | — |
+| `activeVersion.document.id` | yes | `string` | — |
+| `activeVersion.document.name` | yes | `string` | — |
+| `activeVersion.document.nodes` | yes | `array or null` | — |
+| `activeVersion.document.pinData` | no | `object` | — |
+| `activeVersion.document.schemaVersion` | yes | `integer` | — |
+| `activeVersion.document.settings` | yes | `object` | — |
+| `activeVersion.document.tags` | no | `array or null` | — |
+| `activeVersion.id` | yes | `string` | — |
+| `activeVersion.revision` | yes | `integer` | — |
+| `activeVersion.schemaVersion` | yes | `integer` | — |
+| `activeVersion.workflowId` | yes | `string` | — |
+| `createdAt` | yes | `string` | — |
+| `id` | yes | `string` | — |
+| `latestVersion` | yes | `WorkflowVersionResource` | — |
+| `latestVersion.createdAt` | yes | `string` | — |
+| `latestVersion.document` | yes | `Document` | — |
+| `latestVersion.document.connections` | yes | `array or null` | — |
+| `latestVersion.document.id` | yes | `string` | — |
+| `latestVersion.document.name` | yes | `string` | — |
+| `latestVersion.document.nodes` | yes | `array or null` | — |
+| `latestVersion.document.pinData` | no | `object` | — |
+| `latestVersion.document.schemaVersion` | yes | `integer` | — |
+| `latestVersion.document.settings` | yes | `object` | — |
+| `latestVersion.document.tags` | no | `array or null` | — |
+| `latestVersion.id` | yes | `string` | — |
+| `latestVersion.revision` | yes | `integer` | — |
+| `latestVersion.schemaVersion` | yes | `integer` | — |
+| `latestVersion.workflowId` | yes | `string` | — |
+| `name` | yes | `string` | — |
+| `updatedAt` | yes | `string` | — |
+
+Request (minimal — required fields only):
+
+```json
+{}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "active": false,
+  "activeVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "createdAt": "2026-01-02T15:04:05Z",
+  "id": "string",
+  "latestVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "name": "string",
+  "updatedAt": "2026-01-02T15:04:05Z"
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/workflows/{id}/versions/{versionId}/publish" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{}'
+```
 
 Embed: Allow with `workflow:publish` only — on the session’s workflow; `workflow:write` alone is refused. Publishing pins the revision production traffic runs, so a host opts in by minting the scope.
 
@@ -338,12 +1553,129 @@ Parameters:
 
 Request body: `application/json` — `PublishVersionInputBody`
 
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `reason` | no | `string` | Why this revision was published or restored, recorded in the audit trail |
+
 Responses:
 
 | Status | Description | Body |
 | --- | --- | --- |
 | `200` | OK | `application/json` — `WorkflowResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `WorkflowResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `active` | yes | `boolean` | — |
+| `activeVersion` | no | `WorkflowVersionResource` | — |
+| `activeVersion.createdAt` | yes | `string` | — |
+| `activeVersion.document` | yes | `Document` | — |
+| `activeVersion.document.connections` | yes | `array or null` | — |
+| `activeVersion.document.id` | yes | `string` | — |
+| `activeVersion.document.name` | yes | `string` | — |
+| `activeVersion.document.nodes` | yes | `array or null` | — |
+| `activeVersion.document.pinData` | no | `object` | — |
+| `activeVersion.document.schemaVersion` | yes | `integer` | — |
+| `activeVersion.document.settings` | yes | `object` | — |
+| `activeVersion.document.tags` | no | `array or null` | — |
+| `activeVersion.id` | yes | `string` | — |
+| `activeVersion.revision` | yes | `integer` | — |
+| `activeVersion.schemaVersion` | yes | `integer` | — |
+| `activeVersion.workflowId` | yes | `string` | — |
+| `createdAt` | yes | `string` | — |
+| `id` | yes | `string` | — |
+| `latestVersion` | yes | `WorkflowVersionResource` | — |
+| `latestVersion.createdAt` | yes | `string` | — |
+| `latestVersion.document` | yes | `Document` | — |
+| `latestVersion.document.connections` | yes | `array or null` | — |
+| `latestVersion.document.id` | yes | `string` | — |
+| `latestVersion.document.name` | yes | `string` | — |
+| `latestVersion.document.nodes` | yes | `array or null` | — |
+| `latestVersion.document.pinData` | no | `object` | — |
+| `latestVersion.document.schemaVersion` | yes | `integer` | — |
+| `latestVersion.document.settings` | yes | `object` | — |
+| `latestVersion.document.tags` | no | `array or null` | — |
+| `latestVersion.id` | yes | `string` | — |
+| `latestVersion.revision` | yes | `integer` | — |
+| `latestVersion.schemaVersion` | yes | `integer` | — |
+| `latestVersion.workflowId` | yes | `string` | — |
+| `name` | yes | `string` | — |
+| `updatedAt` | yes | `string` | — |
+
+Request (minimal — required fields only):
+
+```json
+{}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "active": false,
+  "activeVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "createdAt": "2026-01-02T15:04:05Z",
+  "id": "string",
+  "latestVersion": {
+    "createdAt": "2026-01-02T15:04:05Z",
+    "document": {
+      "connections": [
+        {}
+      ],
+      "id": "string",
+      "name": "string",
+      "nodes": [
+        {}
+      ],
+      "pinData": {},
+      "schemaVersion": 0,
+      "settings": {},
+      "tags": [
+        "string"
+      ]
+    },
+    "id": "string",
+    "revision": 0,
+    "schemaVersion": 0,
+    "workflowId": "string"
+  },
+  "name": "string",
+  "updatedAt": "2026-01-02T15:04:05Z"
+}
+```
+
+```sh
+curl -X POST "$KILASFLOW_HOST/api/v1/workflows/{id}/versions/{versionId}/restore" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{}'
+```
 
 Embed: Allow with `workflow:write` — on the session’s workflow only.
 
@@ -366,6 +1698,11 @@ Responses:
 | `200` | OK | `application/json` — `array or null` |
 | `default` | Error | `application/problem+json` |
 
+```sh
+curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}/publish-events" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
 Embed: Allow with `workflow:read` — on the session’s workflow only.
 
 ## Read a revision's import report (`workflow-diagnostics`)
@@ -387,5 +1724,44 @@ Responses:
 | --- | --- | --- |
 | `200` | OK | `application/json` — `WorkflowDiagnosticsResource` |
 | `default` | Error | `application/problem+json` |
+
+Fields of the `WorkflowDiagnosticsResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `importedAt` | no | `string` | — |
+| `issues` | yes | `array or null` | — |
+| `revision` | yes | `integer` | — |
+| `source` | no | `string` | — |
+| `versionId` | yes | `string` | — |
+| `workflowId` | yes | `string` | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "importedAt": "2026-01-02T15:04:05Z",
+  "issues": [
+    {
+      "field": "string",
+      "nodeId": "string",
+      "nodeName": "string",
+      "reason": "string",
+      "severity": "blocking",
+      "type": "string",
+      "typeVersion": 1
+    }
+  ],
+  "revision": 0,
+  "source": "string",
+  "versionId": "string",
+  "workflowId": "string"
+}
+```
+
+```sh
+curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}/diagnostics" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
 
 Embed: Allow with `workflow:read` — on the session’s workflow only.
