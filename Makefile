@@ -351,18 +351,20 @@ generate-skills-command-reference-check: ## Fail if the router skill's command r
 
 # The docs state facts about the product that a person cannot keep right by hand:
 # how many node types a default install serves (concepts/node-registry.md and
-# start/what-kilasflow-is.md), what each exit code means (reference/cli.md) and
-# how many credential types ship (concepts/credentials.md). Each is written
+# start/what-kilasflow-is.md), what each exit code means (reference/cli.md),
+# how many credential types ship (concepts/credentials.md) and how many
+# operations the HTTP API serves (reference/api-contract.md, counted from the
+# handler registrations the OpenAPI document is generated from). Each is written
 # between <!-- generated:... --> markers by scripts/docs-facts from the package
-# that owns it (internal/shippedcatalogue, internal/cli, internal/credentials),
-# so a node added or an exit code changed moves the pages in the same change.
-# Needs the Go toolchain and nothing else.
+# that owns it (internal/shippedcatalogue, internal/cli, internal/credentials,
+# internal/api/handlers), so a node added or an exit code changed moves the
+# pages in the same change. Needs the Go toolchain and nothing else.
 .PHONY: generate-docs-facts
-generate-docs-facts: ## Regenerate the docs' exit-code tables, catalogue size and credential-type count
+generate-docs-facts: ## Regenerate the docs' exit-code tables, catalogue size, credential-type and API-operation counts
 	$(GO) run ./scripts/docs-facts
 
 .PHONY: generate-docs-facts-check
-generate-docs-facts-check: ## Fail if the docs' exit-code tables, catalogue size or credential-type count are stale
+generate-docs-facts-check: ## Fail if the docs' exit-code tables, catalogue size or credential-type and API-operation counts are stale
 	$(GO) run ./scripts/docs-facts --check
 
 # The bundle's own gate, and the design's G5. Two halves, because the drift it

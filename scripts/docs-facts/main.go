@@ -18,8 +18,10 @@
 // refuses a page whose markers are absent or ambiguous rather than guessing
 // where a section ends. The facts come from the Go packages that own them
 // (internal/shippedcatalogue for the node catalogue, internal/cli for the exit
-// codes, internal/credentials for the credential types), not from a copy of
-// them here.
+// codes, internal/credentials for the credential types) or, for the API
+// operation count, from the huma registrations in internal/api/handlers that
+// the OpenAPI document itself is generated from — never from a copy of them
+// here.
 //
 // This command lives in its own directory for the same reason
 // scripts/skills-index does: scripts/config-reference.go already declares
@@ -33,6 +35,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/kilaslab/kilas-flow/internal/cli"
@@ -50,6 +53,9 @@ const (
 
 	credentialsBegin = "<!-- generated:credential-types -->"
 	credentialsEnd   = "<!-- /generated:credential-types -->"
+
+	apiOperationsBegin = "<!-- generated:api-operations -->"
+	apiOperationsEnd   = "<!-- /generated:api-operations -->"
 
 	// regenerate is what a stale page is told to run.
 	regenerate = "make generate-docs-facts"
@@ -114,7 +120,56 @@ func facts() ([]fact, error) {
 				// declared, and that packs add none, is its own claim to keep.
 				return fmt.Sprintf("%d credential types ship.", len(credentials.Default().List())), nil
 			}},
+		{name: "api operations", path: "docs/src/content/docs/reference/api-contract.md",
+			begin: apiOperationsBegin, end: apiOperationsEnd,
+			body: func() (string, error) {
+				// The handlers live in the repository being documented, so the
+				// root is resolved here rather than threaded through run().
+				root, err := splice.RepoRoot()
+				if err != nil {
+					return "", err
+				}
+				return apiOperationsSentence(root)
+			}},
 	}, nil
+}
+
+// operationID matches a huma operation registration in the handler source:
+// OperationID: "list-tenants", with whatever gofmt spacing the block ended
+// with. The literal is the same string the OpenAPI document reports as the
+// operation id, so counting distinct literals counts the operation surface.
+var operationID = regexp.MustCompile(`OperationID:\s+"([^"]+)"`)
+
+// apiOperationsSentence states how many operations the HTTP API serves, counted
+// from the registrations the OpenAPI document is generated from — the same grep
+// the contract page tells a reader to run by hand. Needs no binary, like every
+// other fact here.
+func apiOperationsSentence(root string) (string, error) {
+	dir := filepath.Join(root, "internal", "api", "handlers")
+	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil {
+		return "", fmt.Errorf("list %s: %w", dir, err)
+	}
+	ids := make(map[string]bool)
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", file, err)
+		}
+		for _, match := range operationID.FindAllStringSubmatch(string(raw), -1) {
+			ids[match[1]] = true
+		}
+	}
+	if len(ids) == 0 {
+		// An empty sweep means the registrations moved, not that the product
+		// lost its API; rendering "0 operations" would be the drift this
+		// command exists to prevent.
+		return "", fmt.Errorf("no OperationID registrations found under %s — did the handlers move?", dir)
+	}
+	return fmt.Sprintf("The document a server serves holds %d operations, all under `/api/v1`.", len(ids)), nil
 }
 
 // apply renders every fact into its page under root. With check it writes

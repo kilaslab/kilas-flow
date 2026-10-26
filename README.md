@@ -122,8 +122,9 @@ cover every key.
 
 ## Documentation
 
-The documentation is an Astro Starlight site in [`docs/`](docs). Serve it with
-`make docs`. It isn't hosted anywhere yet, so read it in the tree:
+The documentation is an Astro Starlight site in [`docs/`](docs), published at
+<https://kilaslab.github.io/kilas-flow/>. Serve it locally with `make docs`, or
+read it in the tree:
 
 | Topic | Start here |
 | --- | --- |

@@ -1,7 +1,7 @@
 ---
 id: FEAT-pfwjzk
 title: llms.txt and agent-readable docs; drift gates for counts quoted in prose; versioning policy
-status: todo
+status: done
 priority: low
 labels:
     - docs
@@ -28,3 +28,7 @@ Coding agents are a first-class audience: the binary embeds a skills bundle and 
 # Related Files
 
 # Attachments
+
+# Progress
+
+Implemented 2026-10-25: llms.txt generated at the site root (starlight-llms-txt), prose counts drift-gated via scripts/docs-facts (extended with operation-count coverage + new tests); gate rides the existing generate-docs-facts-check in CI's drift job (docs-build itself stays Go-free by design). Gates: facts-check 5 pages up to date, planted-drift test fails correctly, go test scripts/docs-facts ok.

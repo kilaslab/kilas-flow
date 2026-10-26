@@ -1,7 +1,7 @@
 ---
 id: FEAT-dn6s8s
 title: White-label, localisation and go-live from the host UI
-status: todo
+status: done
 priority: low
 labels:
     - docs
@@ -57,3 +57,7 @@ Related (from the audit): FEAT-15k49d (done), FEAT-a3dwj2 (todo)
 the file references above.
 
 # Attachments
+
+# Progress
+
+Implemented 2026-10-25: guides/white-label.md documenting what the embed surface ships today, with an explicit 'Not shipped yet' section (no light mode FEAT-yrnkz0, no fonts, exact hideRun/hideSave semantics). Gates as above.

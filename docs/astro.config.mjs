@@ -2,6 +2,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
+import starlightLlmsTxt from 'starlight-llms-txt';
 import { satteri } from '@astrojs/markdown-satteri';
 import { baseLinks } from './plugins/base-links.mjs';
 
@@ -15,19 +16,23 @@ import { baseLinks } from './plugins/base-links.mjs';
 // target, or any embed directive, and nothing here should ever be.
 
 // A project GitHub Pages site is served from a subpath — `/<repo>/` — while a
-// local `astro dev` serves from the root. Astro needs both `site` and `base` to
-// be right or every generated asset URL is correct in one of those and broken in
-// the other, which is the single most common way this deployment fails and the
-// most annoying to notice, because local preview looks perfect.
+// rootless `astro dev` serves from the root. Astro needs both `site` and `base`
+// to be right or every generated asset URL is correct in one of those and broken
+// in the other, which is the single most common way this deployment fails and
+// the most annoying to notice, because local preview looks perfect.
 //
-// Rather than hardcode the repository name, both come from the environment. The
-// CI job sets them from `actions/configure-pages`, which derives them from the
-// repository actually being built. That matters here more than it usually would:
-// the site is served from a subpath whose name belongs to the deployment rather
-// than to this file, so any name written down here would be a guess, and a wrong
-// guess produces a site whose every stylesheet 404s.
-const site = process.env.DOCS_SITE || undefined;
-const base = process.env.DOCS_BASE || undefined;
+// Both now default to the Pages URL of the repository this project publishes
+// from — `kilaslab/kilas-flow`, as go.mod, the README and the CI workflow name
+// it — so a bare `make docs-build` produces the same URLs the deployment serves,
+// sitemap included (Starlight's built-in sitemap integration skips itself until
+// `site` is set, which is why the site was sitemap-less for as long as these
+// were undefined). The environment still wins: the CI job sets both from
+// `actions/configure-pages`, which derives them from the repository actually
+// being built, so publishing from a fork or a renamed repository needs no edit
+// here. The git remote has been known to lie about the name (`k-flow` vs
+// `kilas-flow`), which is why the override exists at all.
+const site = process.env.DOCS_SITE || 'https://kilaslab.github.io';
+const base = process.env.DOCS_BASE || '/kilas-flow';
 
 export default defineConfig({
 	site,
@@ -59,6 +64,14 @@ export default defineConfig({
 					href: 'https://github.com/kilaslab/kilas-flow',
 				},
 			],
+
+			// Every page's "Edit this page" link opens the page's source at the
+			// commit CI builds from. Starlight appends the page's file path
+			// relative to this project's root (src/content/docs/…), so the base
+			// names the docs/ directory in the repository and nothing deeper.
+			editLink: {
+				baseUrl: 'https://github.com/kilaslab/kilas-flow/edit/main/docs',
+			},
 
 			// Starlight always stamps `data-theme` on `<html>`, and with the stock
 			// components the value follows the operating system. The product does
@@ -111,6 +124,32 @@ export default defineConfig({
 			],
 
 			plugins: [
+				// Coding agents are a first-class audience of this product — the
+				// binary embeds a skills bundle and serves the same verbs over an
+				// MCP server — so the site publishes itself to them too. This
+				// plugin serves /llms.txt (a curated table of contents), and
+				// /llms-full.txt with every page's body, per llmstxt.org. The
+				// integrator path leads: a host's engineer lands on the start
+				// track and the embedding guide before the operator material,
+				// and an agent reading the site gets the same order.
+				starlightLlmsTxt({
+					promote: [
+						'index*',
+						'start/**',
+						'guides/embedding',
+						'concepts/tenancy-and-embedding',
+					],
+					details:
+						'The documentation describes the system that exists on main — features not yet shipped are marked as such rather than omitted. Counts the prose quotes (node types, operations, credential types) are generated from the product by scripts/docs-facts and cannot drift.',
+					optionalLinks: [
+						{
+							label: 'Agent skills bundle',
+							url: 'https://github.com/kilaslab/kilas-flow/tree/main/skills',
+							description:
+								'Fifteen skills embedded in the binary; `kilasflow skills install --target claude` (or codex, agents) installs them for a coding agent. `kilasflow mcp serve` exposes the same verbs over stdio.',
+						},
+					],
+				}),
 				// A later ticket renaming or moving a page must not be able to leave a
 				// link pointing at nothing. This fails `astro build`, so the CI job
 				// below catches it before a reader does. It runs on build only —

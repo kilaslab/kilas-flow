@@ -257,6 +257,67 @@ func TestMissingTableRowsSeesARemovedRowAndIgnoresOtherTables(t *testing.T) {
 	}
 }
 
+// The contract page quotes the operation count in prose. The sentence is
+// generated now, and it has to agree with the handler registrations the
+// OpenAPI document is generated from — the same count the page tells a reader
+// to grep for by hand.
+func TestFactsCoverTheOperationCountOfTheContractPage(t *testing.T) {
+	list, err := facts()
+	if err != nil {
+		t.Fatalf("facts() error = %v", err)
+	}
+	const path = "docs/src/content/docs/reference/api-contract.md"
+	for _, entry := range list {
+		if entry.path != path {
+			continue
+		}
+		root, err := splice.RepoRoot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "The document a server serves holds " + strconv.Itoa(operationIDCount(t, root)) + " operations"
+		body, err := entry.body()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(body, want) {
+			t.Fatalf("the contract page's sentence is %q, want it to open with %q", body, want)
+		}
+
+		return
+	}
+	t.Fatalf("facts() has no section for %s", path)
+}
+
+// operationIDCount is the number of distinct operation ids registered in the
+// handler source — the same sweep apiOperationsSentence makes, restated here so
+// the test compares the sentence against the source rather than against itself.
+func operationIDCount(t *testing.T, root string) int {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(root, "internal", "api", "handlers", "*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, match := range operationID.FindAllStringSubmatch(string(raw), -1) {
+			ids[match[1]] = true
+		}
+	}
+	if len(ids) == 0 {
+		t.Fatal("no OperationID registrations found — the handlers moved?")
+	}
+
+	return len(ids)
+}
+
 // The committed pages are the real subject: this is the same comparison
 // `make generate-docs-facts-check` makes, run by `go test ./...` so a node added
 // in one change cannot reach main with the docs' size untouched.

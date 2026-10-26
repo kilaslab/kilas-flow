@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-## The API is unauthenticated
+## The API is unauthenticated by default
 
 Nothing under `/api/v1` requires a credential unless the operator turns
 identity on (`auth.enabled`, with a signing key and a bootstrapped account on
