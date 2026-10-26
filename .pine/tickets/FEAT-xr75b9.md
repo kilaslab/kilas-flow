@@ -1,7 +1,7 @@
 ---
 id: FEAT-xr75b9
 title: 'Deploy-for-SaaS operations guide: shared Postgres with table_prefix, schema/role isolation, worker sizing, pinning'
-status: todo
+status: done
 priority: low
 labels:
     - docs
@@ -56,3 +56,7 @@ Related (from the audit): none
 the file and line references above.
 
 # Attachments
+
+# Progress
+
+Implemented 2026-10-25: operate/deploy-for-saas.md grounded in real config (table_prefix/kflow_ behaviour verified in internal/); links validated by docs-build. Gates: docs-build ok (54 pages), facts-check ok.

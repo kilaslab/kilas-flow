@@ -1,7 +1,7 @@
 ---
 id: FEAT-v2nenc
 title: Publish the docs site at a stable URL (sitemap, robots, edit links, README link)
-status: todo
+status: doing
 priority: high
 labels:
     - docs
@@ -56,3 +56,7 @@ Related (from the audit): FEAT-nxxbs5 (done), BUG-b4cb1c (todo)
 the steps above.
 
 # Attachments
+
+# Progress
+
+Site-side done 2026-10-25: sitemap (@astrojs/sitemap), robots.txt, README link, domain override verified (DOCS_SITE). REMAINING (repo settings, owner action): DOCS_PUBLISH=true env + GitHub Pages source=GitHub Actions so /docs pages actually answer; documented in contributing.md. In-app Help menu link deferred (web/ lane).

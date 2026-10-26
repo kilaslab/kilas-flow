@@ -166,7 +166,8 @@ The only deployment that genuinely isolates KilasFlow from its host database
 is a dedicated schema owned by a role with no rights outside it, with
 `search_path` set on the KilasFlow connection. A guard inside the process
 stops KilasFlow's own SQL nodes and nothing else; only database privileges
-stop everything else.
+stop everything else. The schema, role and DSN recipe, and the SaaS topology
+around it, are on [Deploy for SaaS](/operate/deploy-for-saas/).
 
 ## Health endpoints
 
@@ -187,16 +188,10 @@ deliberate:
   that `/ready` is public: the block therefore discloses the installation's
   total datastore count to anyone who can reach the port.
 
-Note that the `Code` node needs a Go toolchain at run time and the distroless
-image does not have one. The server reports the node as unavailable through
-the node catalogue rather than failing at execution time, so the editor can
-say so.
-
-For the same reason in reverse, the opt-in JavaScript sidecar needs Node 24 in
-the image and the operator's community packages installed beside the binary:
-the catalogue is read from them at boot, so **every** process role that boots
-with `sidecar.enabled` must carry both. See
-[JavaScript sidecar](/operate/javascript-sidecar/).
+The opt-in JavaScript sidecar needs Node 24 in the image and the operator's
+community packages installed beside the binary: the catalogue is read from
+them at boot, so **every** process role that boots with `sidecar.enabled`
+must carry both. See [JavaScript sidecar](/operate/javascript-sidecar/).
 
 The Code (JavaScript) node needs nothing in the image: its engine is linked into
 the binary. It runs each script in a worker process the server starts from its

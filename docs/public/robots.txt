@@ -1,0 +1,8 @@
+# Served at the site root. The Sitemap directive is an absolute URL, so it
+# names the deployment this repository publishes to — a project GitHub Pages
+# site under kilaslab.github.io/kilas-flow, the same default astro.config.mjs
+# sets. A deployment overriding DOCS_SITE must move this line with it.
+User-agent: *
+Allow: /
+
+Sitemap: https://kilaslab.github.io/kilas-flow/sitemap-index.xml

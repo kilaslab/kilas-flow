@@ -72,18 +72,39 @@ setup, so a design change in the product could break the documentation build.
 The two can therefore drift — if you change a colour in one, change it in the
 other.
 
-## Decisions deliberately left open
+## Versioning policy
 
-**Versioned documentation.** Starlight has no built-in versioning, and the
-product has not cut a release tag yet. A versioning scheme designed before there
-are two versions to serve is a guess at which of them readers will want, so this
-site documents one version — the current state of `main` — and the decision is
-recorded here as open rather than settled by default.
+**Until the first release tag, this site documents one version: the current
+state of `main`.** A page therefore describes what a build from `main` does,
+and a feature that is planned but not shipped is marked plainly rather than
+described as working — the rule above.
 
-**Where the site is published.** The build is wired for a GitHub Pages project
-site, whose `site` and `base` are read from the environment rather than written
-into `astro.config.mjs`. That is not fussiness: a project Pages site is served
-from a subpath, and hardcoding the wrong repository name produces a site that is
-perfect in local preview and has a broken stylesheet in production. Publishing
-also requires GitHub Pages to be enabled for the repository, which is a
-one-time settings change nobody can make from a commit.
+From the first release tag, the site serves two views through
+[Starlight Versions](https://starlight.astro.build/guides/versioning/): the
+newest tag as the default view, and `main` as the "next" view. A release is
+made by tagging; docs for that release are the `main` tree at the tag, so
+there is no docs freeze and no release branch to backport into. Fixes to a
+released version's docs are cherry-picked to the versioned copy and land on
+`main` in the same change.
+
+What this rules out deliberately: versioning before there are two versions to
+serve. A scheme designed against one version is a guess at which distinctions
+readers will want, and maintaining `latest`/`next` overhead while `main` is
+the only installable artifact buys nothing. The mechanism (the
+`starlight-versions` plugin and a `src/content/docs/v<n>/` tree) is known and
+small; adopting it is a single change once the first tag exists, not a
+migration.
+
+## Where the site is published
+
+The site's address is
+`https://kilaslab.github.io/kilas-flow/` — a project GitHub Pages site. The
+build is wired for it: `site` and `base` default to that address in
+`astro.config.mjs` (the environment can still override both, and CI does), so
+a local build emits the sitemap and asset URLs exactly as the deployment
+serves them, and `public/robots.txt` points crawlers at the sitemap. Turning
+the deployment on is not a commit: it needs GitHub Pages enabled for the
+repository with its source set to GitHub Actions, and `DOCS_PUBLISH = true`
+in the repository's Actions variables — a one-time settings change nobody can
+make from a pull request. Until it is made, the address is reserved but not
+answering, and the README's tree links are the working copy.
