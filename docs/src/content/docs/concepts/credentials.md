@@ -403,6 +403,7 @@ today:
 | `telegramApi` | Telegram Bot API |
 | `wahaApi` | WAHA |
 | `openAiApi` | OpenAI |
+| `googleGeminiApi` | Google Gemini (the OpenAI-compatible `generativelanguage.googleapis.com/v1beta/openai` endpoint) |
 | `openRouterApi` | OpenRouter |
 | `googleDriveOAuth2Api` | Google Drive, signed in with OAuth2; the client ID and secret are your own Google Cloud project's or the platform app's |
 | `gmailOAuth2` | Gmail, signed in with OAuth2; the client ID and secret are your own Google Cloud project's or the platform app's |
