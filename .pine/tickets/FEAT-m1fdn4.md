@@ -1,7 +1,7 @@
 ---
 id: FEAT-m1fdn4
 title: Host SDK documentation on the site (guide + TypeDoc reference); accurate install and operation counts
-status: todo
+status: done
 priority: medium
 labels:
     - docs
@@ -54,3 +54,7 @@ Related (from the audit): BUG-b4cb1c, FEAT-3taswf
 the steps above.
 
 # Attachments
+
+# Progress
+
+Implemented 2026-10-26: reference/sdk.md generated from sdk/src + package.json by scripts/generate-sdk-reference.mjs (82 client methods, drift-gated via generate-sdk-reference-check — TypeDoc deliberately not introduced; mirrors the repo's generated-reference pattern). Install instructions honest: not on npm, vendored/source. Subcommand-banner + scaffold credentialType defaults = product-code follow-ups (sibling lane).
