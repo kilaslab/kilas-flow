@@ -45,7 +45,7 @@
   "devDependencies": {
     "jsdom": "^30.0.1",
     "orval": "^8.27.0",
-    "typescript": "5.9.3",
+    "typescript": "6.0.3",
     "vitest": "^4.1.11",
     "yaml": "2.9.0"
   }
