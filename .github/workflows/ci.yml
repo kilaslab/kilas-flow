@@ -501,7 +501,7 @@ jobs:
 
       - name: Upload visual results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: visual-regression
           path: |
@@ -525,7 +525,7 @@ jobs:
       # The runner's default docker driver cannot produce a manifest list, so a
       # multi-platform build needs a container builder even when, as here, the
       # result is discarded rather than exported.
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       # The same target release.yml builds from, minus the push. A break here is a
       # break in the release path.
