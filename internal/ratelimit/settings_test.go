@@ -47,6 +47,31 @@ func TestARateLimitSettingMustBeWithinTheDeploymentBounds(t *testing.T) {
 	}
 }
 
+// A capacity lowered at runtime applies at once: a bucket filled under the old
+// capacity is capped to the new one even when no time has passed.
+func TestALoweredCapacityAppliesWithoutWaitingForARefill(t *testing.T) {
+	now := time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	memory := NewMemoryStore()
+	if ok, _, _ := memory.Spend(ctx, "acme", BucketRun, 100, 100.0/60, now); !ok {
+		t.Fatal("first spend at capacity 100 refused")
+	}
+	if ok, _, _ := memory.Spend(ctx, "acme", BucketRun, 1, 1.0/60, now); !ok {
+		t.Fatal("first spend at capacity 1 refused")
+	}
+	if ok, _, _ := memory.Spend(ctx, "acme", BucketRun, 1, 1.0/60, now); ok {
+		t.Error("memory store: a second spend at the lowered capacity 1 was allowed")
+	}
+
+	held := &BucketModel{Tokens: 99, UpdatedAt: now}
+	if ok, _ := settle(held, 1, 1.0/60, now); !ok {
+		t.Fatal("settle: first spend at capacity 1 refused")
+	}
+	if ok, _ := settle(held, 1, 1.0/60, now); ok {
+		t.Error("database store: a second spend at the lowered capacity 1 was allowed")
+	}
+}
+
 // staticLoader serves fixed documents, one per tenant.
 type staticLoader map[string]string
 

@@ -15,7 +15,8 @@ import (
 const SettingsSection = "rateLimit"
 
 // MaxPerMinute is the largest per-minute allowance a tenant setting may hold.
-// It mirrors config.rateLimitPerMinuteCeiling, so a tenant override can never
+// It equals config.rateLimitPerMinuteCeiling (internal/config pins the two
+// together in a test), so a tenant override can never
 // exceed what the deployment configuration itself would accept.
 const MaxPerMinute = 1_000_000
 

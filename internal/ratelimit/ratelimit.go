@@ -166,9 +166,12 @@ func (store *MemoryStore) Spend(_ context.Context, tenantID, bucketName string, 
 		store.buckets[key] = held
 	} else if elapsed := now.Sub(held.updated).Seconds(); elapsed > 0 {
 		held.tokens += elapsed * refillPerSecond
-		if held.tokens > capacity {
-			held.tokens = capacity
-		}
+	}
+	// Capped on every spend, not only after a refill: a tenant setting can
+	// lower the capacity at runtime, and a bucket filled under the old one
+	// must not keep spending above the new one.
+	if held.tokens > capacity {
+		held.tokens = capacity
 	}
 	held.updated = now
 	if held.tokens >= 1 {
