@@ -8,7 +8,7 @@
 --
 -- The file still has to exist and contain a statement: every migration version
 -- ships for both dialects, so the same binary is at the same schema version
--- whichever database it opened, and the runner refuses an empty file. This one
--- matches no row.
+-- whichever database it opened, and TestEveryMigrationShipsBothDirectionsForBothDialects
+-- refuses a file with no statement. This one matches no row.
 
 UPDATE `workflow_versions` SET `created_by` = `created_by` WHERE 1 = 0;

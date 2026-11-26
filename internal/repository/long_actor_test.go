@@ -35,7 +35,7 @@ func longActorDocument(id string) workflow.Document {
 //
 // The key label is multibyte on purpose: PostgreSQL measures varchar in
 // characters, and the API caps the label in characters, so a 255-character
-// label that is 510 bytes long must still fit.
+// label that is more than 255 bytes long must still fit.
 func TestALongActorLabelIsStoredWholeOnEveryDriver(t *testing.T) {
 	keyLabel := strings.Repeat("ключ-", longActorLabelLength/5)
 	email := strings.Repeat("a", longActorLabelLength-len("@example.com")) + "@example.com"

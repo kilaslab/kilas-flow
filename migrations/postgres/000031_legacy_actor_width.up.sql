@@ -9,7 +9,7 @@
 -- varying(64)" on PostgreSQL (BUG-ykxfbe). SQLite does not enforce varchar
 -- lengths and never saw it.
 --
--- 255 is the width actor_label already has on both tables (000029), so the
+-- 255 is the width actor_label already has on both tables (000019), so the
 -- legacy copy and the full label now hold exactly the same value. Widening a
 -- varchar is a catalogue-only change on PostgreSQL: no row is rewritten and
 -- no index is rebuilt, so the lock it takes is brief.
