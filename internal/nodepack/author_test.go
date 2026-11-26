@@ -108,6 +108,10 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
+	if err := installPackCredentialFixture(); err != nil {
+		fmt.Fprintf(os.Stderr, "nodepack tests: install the pack credential type fixture: %v\n", err)
+		os.Exit(1)
+	}
 	os.Exit(m.Run())
 }
 

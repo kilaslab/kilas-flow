@@ -392,6 +392,10 @@ func run(args []string) error {
 		Deliveries: webhookTriggers, Lifecycles: webhookLifecycles,
 		Executors: executorRegistry, Options: optionLoader,
 		Modules: modulePacks, Context: ctx,
+		// A directory pack's credentialTypes extend the global catalogue
+		// here, once, before anything reads credentials.Default(); the
+		// sidecar below extends it next, and nothing does afterwards.
+		Credentials: credentials.Default(),
 	}, cfg.Packs.Dir); err != nil {
 		return fmt.Errorf("load directory node packs: %w", err)
 	}

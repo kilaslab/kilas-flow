@@ -48,6 +48,12 @@ type Pack struct {
 	DocumentationURL string               `json:"documentationUrl,omitempty"`
 	// CredentialType is the credential this pack authenticates with.
 	CredentialType string `json:"credentialType,omitempty"`
+	// CredentialTypes are credential types this pack declares for itself, each
+	// named `<type>.<word>` (see credentialtypes.go). Only a directory pack's
+	// declarations are registered: LoadDir adds them to the deployment's
+	// credential registry before installing any pack. Register, the embedded
+	// path, does not — an embedded pack's types belong in the built-in list.
+	CredentialTypes []CredentialType `json:"credentialTypes,omitempty"`
 	// VisibleTo scopes this pack's node type to a set of tenants, by ID. An
 	// absent field means every tenant, which is what every pack did before
 	// this field existed; an empty list is refused, because it would read
@@ -594,7 +600,7 @@ func Register(definitions *node.Registry, routes *routing.Registry, executors Ex
 // so the executor applies exactly what the operator approved.
 func loadModule(pack *Pack) (node.Definition, *routing.Node, error) {
 	module := pack.Module
-	if issues := checkModule(pack, defaultCredentialLookup); len(issues) > 0 {
+	if issues := checkModule(pack, withOwnCredentialTypes(pack, defaultCredentialLookup)); len(issues) > 0 {
 		return node.Definition{}, nil, fmt.Errorf("node pack %q: %s", pack.Type, issues[0].Message)
 	}
 	limits, err := module.limits()

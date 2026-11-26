@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kilaslab/kilas-flow/internal/credentials"
 	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/property"
@@ -55,11 +56,17 @@ func Validate(pack *Pack, filename string) []Issue {
 		return []Issue{{File: filename, Path: "$", Message: "a node pack is required"}}
 	}
 	issues := checkStructure(pack, filename)
+	// The pack's own credential types are checked for every kind of pack,
+	// module packs included, and before anything that might return early.
+	for _, issue := range checkCredentialTypes(pack) {
+		issue.File = filename
+		issues = append(issues, issue)
+	}
 	// A module pack's own rules are reported in full rather than one at a
 	// time: the tool exists so an author fixes every problem in one pass, and
 	// Load — which has to return one error — would report only the first.
 	if pack.Module != nil {
-		for _, issue := range checkModule(pack, defaultCredentialLookup) {
+		for _, issue := range checkModule(pack, withOwnCredentialTypes(pack, defaultCredentialLookup)) {
 			issue.File = filename
 			issues = append(issues, issue)
 		}
@@ -298,7 +305,7 @@ func checkStructure(pack *Pack, filename string) []Issue {
 }
 
 var (
-	packKeys       = []string{"type", "version", "displayName", "description", "category", "icon", "iconColor", "subtitle", "documentationUrl", "credentialType", "visibleTo", "requestDefaults", "trigger", "parameters", "resources", "generator", "module", "sourcePackage", "sourceNode"}
+	packKeys       = []string{"type", "version", "displayName", "description", "category", "icon", "iconColor", "subtitle", "documentationUrl", "credentialType", "credentialTypes", "visibleTo", "requestDefaults", "trigger", "parameters", "resources", "generator", "module", "sourcePackage", "sourceNode"}
 	moduleKeys     = []string{"file", "sha256", "abi", "mode", "outputs", "capabilities", "credentials", "limits"}
 	moduleOutKeys  = []string{"name", "displayName"}
 	moduleCredKeys = []string{"type", "required"}
@@ -310,6 +317,10 @@ var (
 	triggerKeys    = []string{"events", "catchAll", "eventPath", "shape", "webhook", "hmac", "lifecycle", "media", "notice", "hostEvents", "sourceNode"}
 	hostEventKeys  = []string{"catalogue"}
 	eventKeys      = []string{"type", "title", "schema", "sample"}
+	// credentialTypeKeys and credentialFieldKeys are a pack's credential type
+	// declaration (CredentialType, CredentialField).
+	credentialTypeKeys  = []string{"id", "displayName", "description", "fields", "authenticate", "test", "defaultDomains", "defaultDomainsFrom"}
+	credentialFieldKeys = []string{"key", "label", "description", "kind", "required", "default", "options", "typeOptions", "secret"}
 )
 
 // checkUnknownFields lists every field the strict decoder would refuse, with
@@ -409,6 +420,51 @@ func checkUnknownFields(raw map[string]json.RawMessage, filename string) []Issue
 							var parsed routing.Pagination
 							if err := strictDecode(pagination, &parsed); err != nil {
 								fail(at+".pagination", "%v", err)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if blob, ok := raw["credentialTypes"]; ok {
+		var declared []map[string]json.RawMessage
+		if err := json.Unmarshal(blob, &declared); err == nil {
+			for i, credentialType := range declared {
+				base := fmt.Sprintf("$.credentialTypes[%d]", i)
+				failUnknownMap(credentialType, credentialTypeKeys, base, filename, &issues)
+				if authenticate, ok := credentialType["authenticate"]; ok {
+					var parsed credentials.Authentication
+					if err := strictDecode(authenticate, &parsed); err != nil {
+						fail(base+".authenticate", "%v", err)
+					}
+				}
+				if test, ok := credentialType["test"]; ok {
+					var parsed credentials.TestRequest
+					if err := strictDecode(test, &parsed); err != nil {
+						fail(base+".test", "%v", err)
+					}
+				}
+				var fields []map[string]json.RawMessage
+				if list, ok := credentialType["fields"]; ok && json.Unmarshal(list, &fields) == nil {
+					for j, field := range fields {
+						at := fmt.Sprintf("%s.fields[%d]", base, j)
+						failUnknownMap(field, credentialFieldKeys, at, filename, &issues)
+						if typeOptions, ok := field["typeOptions"]; ok {
+							var parsed property.TypeOptions
+							if err := strictDecode(typeOptions, &parsed); err != nil {
+								fail(at+".typeOptions", "%v", err)
+							}
+						}
+						if options, ok := field["options"]; ok {
+							var list []json.RawMessage
+							if json.Unmarshal(options, &list) == nil {
+								for k, option := range list {
+									var parsed property.PropertyOption
+									if err := strictDecode(option, &parsed); err != nil {
+										fail(fmt.Sprintf("%s.options[%d]", at, k), "%v", err)
+									}
+								}
 							}
 						}
 					}

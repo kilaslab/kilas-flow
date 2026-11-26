@@ -189,7 +189,7 @@ function renderCredentialTypes(credentialTypes, version) {
 	lines.push('');
 	lines.push(`> **Generated reference — KilasFlow \`${version}\`.** Produced from the credential-type catalogue a real binary serves at \`GET /api/v1/credential-types\`, not hand-written.`);
 	lines.push('');
-	lines.push(`**${credentialTypes.length} credential types ship**, and a node pack adds none — it names one of these. The concepts page covers [how a credential is stored, scoped and tested](/concepts/credentials/); this page is the per-type field reference an integrator or editor renders a form from.`);
+	lines.push(`**${credentialTypes.length} credential types ship**; a directory node pack can declare more of its own ([credential types in a pack](/reference/node-packs/#credential-types)), and the server that loads it lists those too. The concepts page covers [how a credential is stored, scoped and tested](/concepts/credentials/); this page is the per-type field reference an integrator or editor renders a form from.`);
 	lines.push('');
 	lines.push('| ID | Name | Fields | Testable |');
 	lines.push('| --- | --- | --- | --- |');

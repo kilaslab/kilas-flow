@@ -54,7 +54,7 @@ else is refused with a diagnostic naming the operation.
 `nodepackgen scaffold` writes a minimal working pack directory: one resource,
 one operation, one credential reference, shaped after the Telegram pack. Left
 at its defaults it names a credential type called `exampleApi`, which is not
-in the catalogue and never can be — a pack cannot add a credential type — so
+in the catalogue and which the scaffold does not declare — so
 pass the two flags that make it real: the credential type your API
 authenticates with and its base URL. [Build nodes for your
 API](/guides/build-nodes-for-your-api/) covers choosing the type; the
@@ -254,11 +254,12 @@ nodepackgen: packs are valid
 ## Step 4: credentials
 
 Credentials are where a pack meets a decision it cannot make alone: **which
-existing credential type does your API authenticate with?** A pack cannot add
-a credential type — the catalogue is declared in Go
-(`internal/credentials/builtin.go`) and nothing in startup lets a pack
-contribute one — so the pack names a type that already exists. For most APIs
-that is one of the generic HTTP types, and `httpHeaderAuth` (a fixed header
+credential type does your API authenticate with?** Either name a built-in
+type, or declare your own in the manifest's `credentialTypes` block (see
+[Declaring your own credential
+type](/guides/build-nodes-for-your-api/#declaring-your-own-credential-type)
+and [Credential types](/reference/node-packs/#credential-types)). For most APIs
+a built-in generic HTTP type is enough, and `httpHeaderAuth` (a fixed header
 whose name is a field) is the one to reach for first:
 
 ```json
