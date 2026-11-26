@@ -106,7 +106,7 @@
 	const liveStatus = $derived(latestExecutionStatus(live.events));
 	const status = $derived(liveStatus ?? execution.data?.status ?? 'queued');
 	// Who queued a manual run or a retry; trigger-started runs name nobody.
-	const runActor = $derived(actorName(execution.data?.actorKind, execution.data?.actorLabel, execution.data?.actorId));
+	const runActor = $derived(actorName(execution.data?.actorKind, execution.data?.actorLabel));
 	const stoppable = $derived(status === 'running' || status === 'queued' || status === 'waiting' || status === 'cancelling');
 	// Only an approval wait gets the approval page; a timer says when it resumes.
 	const waiting = $derived(waitingNotice(execution.data ?? {}));

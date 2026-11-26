@@ -30,8 +30,12 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   `actorLabel` and the host's identifier as the new `actorId`; the version
   panel shows it as "{name} (embedded)". Executions now carry `actorKind`,
   `actorLabel`, `actorKeyId` and `actorId` for manual runs and retries,
-  whoever queued them. The actor is host-asserted, never verified. Migration
-  000029 adds the columns with no backfill.
+  whoever queued them. The actor is host-asserted, never verified, and
+  `actorId` is returned to anyone who can read the workflow's history, so
+  hosts should send an opaque id rather than an email. Migration 000029 adds
+  the columns with no backfill. Rolling it back drops `actor_id` and the
+  execution actor columns, but revisions and publish events already written
+  with actor kind `embed` keep that kind.
 - Credential key rotation. `security.secondary_encryption_key_env` (default
   `KILASFLOW_ENCRYPTION_KEY_SECONDARY`) holds the previous key during a
   rotation: it opens what it sealed and seals nothing. `kilasflow

@@ -2,7 +2,9 @@
 --
 -- The kind and label columns on revisions and publish events predate this
 -- migration and stay; an 'embed' kind already written there keeps naming the
--- session it came from, minus the host's identifier for its user.
+-- session it came from, minus the host's identifier for its user. Rows
+-- written with actor_kind 'embed' therefore remain after a rollback, and a
+-- build that predates this migration reads them with a kind it does not list.
 
 ALTER TABLE `executions` DROP COLUMN `actor_id`;
 

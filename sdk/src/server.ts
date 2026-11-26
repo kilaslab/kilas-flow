@@ -135,7 +135,10 @@ export interface EmbedSessionRequest {
 	 * runs the session causes, so version history can say who acted.
 	 *
 	 * `id` is your own stable identifier for the user: 1 to 128 letters,
-	 * digits and `. _ - : @ | + / =`. `displayName` is what KilasFlow shows: at
+	 * digits and `. _ - : @ | + / =`. Use an opaque id rather than an email:
+	 * the API returns it to anyone who can read the workflow's history or
+	 * executions, and the token payload is readable by whoever holds it.
+	 * `displayName` is what KilasFlow shows: at
 	 * most 64 letters, digits, spaces and simple punctuation, without leading
 	 * or trailing spaces. Anything else is refused with a 422.
 	 *
