@@ -42,6 +42,7 @@ strict decoder. Required unless marked optional.
 | `subtitle` | no | Template over the node's own parameters only — `{{ $parameter.<key> }}`. Anything else is refused. |
 | `documentationUrl` | no | Link shown in the editor. |
 | `credentialType` | no | Credential type this pack authenticates with, named by string. The operator binds a real credential after installation; the pack never carries one. |
+| `credentialTypes` | no | Credential types this pack declares for itself, each with `id`, `displayName`, `fields`, and optionally `description`, `authenticate`, `test`, `defaultDomains` or `defaultDomainsFrom`. Directory packs only. See [Credential types](#credential-types). |
 | `visibleTo` | no | Tenant IDs this pack's node type is visible to. Absent means every tenant; an empty list is refused. See [Tenant-scoped nodes](/guides/tenant-scoped-nodes/). |
 | `module` | no | Makes this a module pack: a WebAssembly module beside the manifest. See [Module packs](#module-packs). Mutually exclusive with `resources` and `trigger`. |
 | `requestDefaults` | yes | `baseURL`, plus `headers`/`qs`/`body`/`path` shared by every operation. Templates over non-secret `$credentials` fields. |
@@ -104,6 +105,28 @@ highlighting, and needs `editorLanguage`: one of `javaScript`, `go`,
 `python` or `json`. A code parameter never switches to expression mode,
 because a `{{ }}` or a leading `=` in a program is part of the program.
 
+## Credential types
+
+A pack may declare credential types of its own in `credentialTypes`. Each entry:
+
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `id` | yes | `<pack type>.<word>`, letters and digits after the dot, at most 64 characters. Immutable once released. |
+| `displayName` | yes | The form's title in the credential picker. |
+| `description` | no | Shown under the title. |
+| `fields` | yes | At least one field: `key`, `label`, `kind` (`string`, `number`, `boolean`, `options`), and optionally `description`, `required`, `default` (a string), `options` (options fields only), `typeOptions` (`password` masks a readable field), `secret` (never returned by the API; implies masked). |
+| `authenticate` | no | `placement` (`header`, `query`, `basicAuth`, `bearer`, `path`, `custom`) with `name`/`value` templates over the type's own fields as `{{ key }}`, or `user`/`password` field names for `basicAuth`. Absent means the type does not sign requests. |
+| `test` | no | `method`, `url` (a `{{ key }}` template), `expectStatusBelow` (0–599), `forbiddenNote`. |
+| `defaultDomains` / `defaultDomainsFrom` | no | The host scope when the owner saved none: a fixed host list, or the name of a non-secret field holding a URL. Not both. |
+
+The loader registers every directory pack's types before it installs any pack,
+so one pack may name another's type. Two installed packs declaring the same ID
+must declare it identically; a differing declaration, an ID the deployment
+already registered, and an embedded (compiled-in) pack's declarations are not
+accepted. The semantics, the immutability contract and the boot-refusal matrix
+are in [Credential types from node
+packs](/concepts/credentials/#credential-types-from-node-packs).
+
 ## Install and distribution
 
 Each immediate subdirectory of the packs directory (`packs.dir`,
@@ -147,7 +170,7 @@ Unknown field — usually `properties` where the schema wants `parameters`, or
 a routing block at the wrong depth:
 
 ```text
-pack.json: $.: unknown field "properties": want one of type, version, displayName, description, category, icon, iconColor, subtitle, documentationUrl, credentialType, visibleTo, requestDefaults, trigger, parameters, resources, generator
+pack.json: $.: unknown field "properties": want one of type, version, displayName, description, category, icon, iconColor, subtitle, documentationUrl, credentialType, credentialTypes, visibleTo, requestDefaults, trigger, parameters, resources, generator, module, sourcePackage, sourceNode
 ```
 
 Reserved type namespace — only built-in nodes may use it:

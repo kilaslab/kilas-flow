@@ -1,6 +1,6 @@
 ---
 title: Build nodes for your API
-description: Choose between the five extension paths, write the smallest pack that really runs, pick a credential type that exists, and publish it to an operator-configured directory.
+description: Choose between the five extension paths, write the smallest pack that really runs, pick or declare a credential type, and publish it to an operator-configured directory.
 ---
 
 "Add nodes for my product's API" is the advertised extension path, and it is
@@ -50,10 +50,12 @@ The decision, as a walk:
 `nodepackgen scaffold` writes a pack directory, and the two flags that matter
 for "my API" are the credential type and the base URL. Left at their defaults,
 the scaffold names a credential type called `exampleApi` — which is not in the
-catalogue, and never can be: a pack cannot add a credential type, so no
-credential of that type can ever be bound, and a workflow that uses the node
-is refused at validation with `node "p" requires a exampleApi credential`.
-Name a type that exists and the scaffold's output runs end to end:
+catalogue, and the scaffold does not declare it, so no credential of that type
+can ever be bound, and a workflow that uses the node is refused at validation
+with `node "p" requires a exampleApi credential`. Name a type that exists (or
+declare your own, see [Declaring your own credential
+type](#declaring-your-own-credential-type)) and the scaffold's output runs end
+to end:
 
 ```sh
 $ nodepackgen scaffold -dir ./packs/acme \
@@ -98,15 +100,38 @@ Two rules shape what the rest of the pack can do with the credential:
   type that has one (`wahaApi` names `baseUrl`, which is why the WAHA pack
   templates `{{ $credentials.baseUrl }}` and works).
 
-And one answer to the question the audit found the docs disagreeing on:
-**a pack cannot add a credential type.** A new *named* type — one that shows
-up in the credential picker as its own form — is a Go change in
-`internal/credentials/builtin.go`: a `Type` value declaring fields, which are
-secret, how it authenticates, and where an empty `allowedDomains` may send it.
-The registry is built in a package initialiser and nothing in startup lets a
-pack contribute one. Until your type lands, the generic types above cover the
-APIs a pack can call; see [Credentials](/concepts/credentials/) for the whole
-catalogue and the storage and scoping rules.
+### Declaring your own credential type
+
+When a generic type is not enough — the operator should see an "Acme API" form
+with a base URL, a key that never comes back, and a **Test** button that proves
+the key works — a directory pack declares its own named type in
+`credentialTypes` and names it as its `credentialType`:
+
+```json
+"credentialType": "pack.acme.api",
+"credentialTypes": [{
+  "id": "pack.acme.api", "displayName": "Acme API",
+  "fields": [
+    {"key": "baseUrl", "label": "Base URL", "kind": "string", "required": true, "default": "https://api.acme.example"},
+    {"key": "apiKey", "label": "API key", "kind": "string", "required": true, "secret": true}
+  ],
+  "authenticate": {"placement": "header", "name": "X-Api-Key", "value": "{{ apiKey }}"},
+  "test": {"method": "GET", "url": "{{ baseUrl }}/v1/me"},
+  "defaultDomainsFrom": "baseUrl"
+}]
+```
+
+The ID is the pack's `type` plus one word (`pack.acme` → `pack.acme.api`), and
+it is immutable once released: stored credentials are keyed by it, so a changed
+declaration gets a new ID. Keep `baseUrl` readable (not `secret`) so the pack's
+templates can read `{{ $credentials.baseUrl }}`, and name it in
+`defaultDomainsFrom` so the credential is scoped to that host — without a scope
+an embedded editor refuses the credential. `nodepackgen validate` checks the
+block and names each problem's path. The full rules, the field-to-type mapping
+and what refuses a boot are in
+[Credential types from node packs](/concepts/credentials/#credential-types-from-node-packs);
+the storage and scoping rules for every credential are in
+[Credentials](/concepts/credentials/).
 
 ## Calling your API over a private network
 
