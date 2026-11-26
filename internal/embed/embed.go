@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Scope names one permission an embed session may carry.
@@ -155,6 +156,47 @@ func (branding Branding) WithDefaults(defaults Branding) Branding {
 	return branding
 }
 
+// Actor names the host's user acting through a session.
+//
+// It is host-asserted: the host backend that mints the session says who its
+// user is, and KilasFlow signs that claim into the token so a browser cannot
+// change it afterwards. KilasFlow never verifies it against an identity
+// provider, so it is attribution for audit trails, not authentication.
+type Actor struct {
+	ID          string `json:"id" doc:"The host's own stable identifier for its user: 1 to 128 letters, digits, and . _ - : @ | + / =. Host-asserted, never verified."`
+	DisplayName string `json:"displayName,omitempty" doc:"The name KilasFlow shows for this user: at most 64 letters, digits, spaces, and simple punctuation, without leading or trailing spaces."`
+}
+
+const (
+	// MaxActorIDLength bounds Actor.ID.
+	MaxActorIDLength = 128
+	// MaxActorDisplayNameLength bounds Actor.DisplayName in runes. It is also
+	// the width of the legacy label columns the name is copied into
+	// (workflow_versions.created_by, workflow_publish_events.actor).
+	MaxActorDisplayNameLength = 64
+)
+
+var (
+	actorIDPattern   = regexp.MustCompile(`^[A-Za-z0-9._:@|+/=\-]{1,128}$`)
+	actorNamePattern = regexp.MustCompile(`^[\p{L}\p{M}\p{N} .,'&()@+\-_]+$`)
+)
+
+// Validate refuses an actor that could not be recorded or rendered safely.
+func (actor Actor) Validate() error {
+	if !actorIDPattern.MatchString(actor.ID) {
+		return fmt.Errorf("actor id must be 1 to 128 characters of letters, digits, and . _ - : @ | + / =")
+	}
+	name := actor.DisplayName
+	if name == "" {
+		return nil
+	}
+	if utf8.RuneCountInString(name) > MaxActorDisplayNameLength ||
+		strings.TrimSpace(name) != name || !actorNamePattern.MatchString(name) {
+		return fmt.Errorf("actor display name must be at most 64 letters, digits, spaces, and simple punctuation, without leading or trailing spaces")
+	}
+	return nil
+}
+
 // Session is one issued embed authorization.
 //
 // A session names exactly one subject: the workflow it may open, or the
@@ -184,6 +226,11 @@ type Session struct {
 	// the strictest possible confinement rather than as no confinement: such a
 	// session may reference nothing it did not already have.
 	Confinement Confinement `json:"cfn,omitempty"`
+	// Actor is the host user this session acts for, when the host named one.
+	// It is host-asserted and signed, never verified: it attributes writes and
+	// runs in the audit trail and grants nothing. A token minted before this
+	// field existed, or without an actor, carries nil.
+	Actor *Actor `json:"act,omitempty"`
 }
 
 // Allows reports whether the session carries a scope.
@@ -405,6 +452,9 @@ type Request struct {
 	// empty value confines the session to nothing, which is the safe reading
 	// for a workflow that has never been published by a trusted caller.
 	Confinement Confinement
+	// Actor is the host user the session acts for; nil mints an unnamed
+	// session. See Actor.
+	Actor *Actor
 	// SessionID is supplied by the caller in tests; production leaves it empty
 	// and the issuer generates one.
 	SessionID string
@@ -431,6 +481,14 @@ func (issuer *Issuer) Issue(request Request) (Session, string, error) {
 	}
 	if err := request.Branding.Validate(); err != nil {
 		return Session{}, "", err
+	}
+	var actor *Actor
+	if request.Actor != nil {
+		if err := request.Actor.Validate(); err != nil {
+			return Session{}, "", err
+		}
+		named := *request.Actor
+		actor = &named
 	}
 	// The deployment defaults fill what the session leaves blank. They exist for
 	// the header an embedded editor draws, and only a workflow session has an
@@ -461,6 +519,7 @@ func (issuer *Issuer) Issue(request Request) (Session, string, error) {
 		Scopes:      scopes, Origin: NormalizeOrigin(request.Origin),
 		IssuedAt: now, ExpiresAt: now.Add(lifetime), Branding: branding,
 		Confinement: request.Confinement.normalized(request.WorkflowID),
+		Actor:       actor,
 	}
 	token, err := issuer.sign(session)
 	if err != nil {

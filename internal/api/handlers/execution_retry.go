@@ -70,8 +70,9 @@ func (handler *Executions) Retry(ctx context.Context, input *executionPathInput)
 	// trigger node is checked against it before anything is queued, so a retry
 	// is held to exactly the rules its first run was. It keeps its original's
 	// trigger: a retried webhook run is a production run, and keeps the
-	// workflow's static data as one.
-	created, err := handler.history.QueueRetry(ctx, tenant, record, workflow.CatalogFor(handler.catalog, tenant.ID))
+	// workflow's static data as one. It records who asked for the retry, not
+	// who queued the original.
+	created, err := handler.history.QueueRetry(audited(ctx, ""), tenant, record, workflow.CatalogFor(handler.catalog, tenant.ID))
 	if err != nil {
 		return nil, handler.retryProblem(ctx, err)
 	}

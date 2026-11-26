@@ -41,12 +41,15 @@ type VersionPage struct {
 // actorContextKey carries the identity a write should be attributed to.
 type actorContextKey struct{}
 
-// The two kinds an audit row records. They name the authentication path rather
+// The kinds an audit row records. They name the authentication path rather
 // than a role, because that is the fact the row can be trusted to carry: a
-// person signed in, or an API key presented itself.
+// person signed in, an API key presented itself, or an embed session minted by
+// a host acted. An embed actor's label and ID are what the host asserted when
+// it minted the session; KilasFlow signed them but never verified them.
 const (
-	ActorKindUser = "user"
-	ActorKindKey  = "key"
+	ActorKindUser  = "user"
+	ActorKindKey   = "key"
+	ActorKindEmbed = "embed"
 )
 
 // Actor is the identity a workflow write is attributed to.
@@ -64,6 +67,9 @@ type Actor struct {
 	// KeyID is the key's identifier. It is empty for a session, which has no
 	// key, and it is what still names the actor when two keys share a label.
 	KeyID string
+	// ID is the host's own identifier for the user an embed session acts for.
+	// It is empty for every other kind, and never doubles as KeyID.
+	ID string
 	// Meta is what the caller reported using to make the write, today the
 	// skills an agent listed in X-KilasFlow-Skills-Used. It is stored as JSON
 	// on the revision the write creates.
@@ -72,7 +78,7 @@ type Actor struct {
 
 // empty reports whether anything at all is known about the caller.
 func (actor Actor) empty() bool {
-	return actor.Kind == "" && actor.Label == "" && actor.KeyID == "" && len(actor.Meta) == 0
+	return actor.Kind == "" && actor.Label == "" && actor.KeyID == "" && actor.ID == "" && len(actor.Meta) == 0
 }
 
 // WithActor tags a context with the identity responsible for a write.
@@ -190,6 +196,9 @@ func versionSummary(model workflowVersionModel, latestRevision int, publishedID 
 	}
 	if model.ActorKeyID != nil {
 		summary.ActorKeyID = *model.ActorKeyID
+	}
+	if model.ActorID != nil {
+		summary.ActorID = *model.ActorID
 	}
 	summary.ActorMeta = decodeActorMeta(model.ActorMeta)
 	return summary
@@ -311,6 +320,9 @@ func appendVersion(tx *gorm.DB, tenant TenantScope, model workflowModel, definit
 	if actor.KeyID != "" {
 		version.ActorKeyID = &actor.KeyID
 	}
+	if actor.ID != "" {
+		version.ActorID = &actor.ID
+	}
 	if err := tx.Create(&version).Error; err != nil {
 		return workflowVersionModel{}, fmt.Errorf("create workflow version: %w", err)
 	}
@@ -365,7 +377,7 @@ func (store *GORMWorkflowStore) ListPublishEvents(ctx context.Context, tenant Te
 			WorkflowID: model.WorkflowID, VersionID: model.VersionID,
 			Action: workflow.PublishAction(model.Action), Actor: model.Actor,
 			ActorKind: model.ActorKind, ActorLabel: model.ActorLabel, ActorKeyID: model.ActorKeyID,
-			Reason: model.Reason, CreatedAt: model.CreatedAt,
+			ActorID: model.ActorID, Reason: model.Reason, CreatedAt: model.CreatedAt,
 		})
 	}
 	return events, nil
@@ -376,7 +388,7 @@ func appendPublishEvent(tx *gorm.DB, tenant TenantScope, workflowID, versionID s
 		TenantID: tenant.ID, WorkflowID: workflowID, VersionID: versionID,
 		Action: string(action), Actor: actor.Label, Reason: reason,
 		ActorKind: actor.Kind, ActorLabel: actor.Label, ActorKeyID: actor.KeyID,
-		CreatedAt: time.Now().UTC(),
+		ActorID: actor.ID, CreatedAt: time.Now().UTC(),
 	}
 	if err := tx.Create(&event).Error; err != nil {
 		return fmt.Errorf("record workflow publish event: %w", err)

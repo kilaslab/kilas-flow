@@ -193,9 +193,10 @@ type WorkflowVersionSummaryResource struct {
 	SchemaVersion int       `json:"schemaVersion"`
 	Label         string    `json:"label,omitempty" doc:"What a person called this revision, when one was named"`
 	CreatedBy     string    `json:"createdBy,omitempty" doc:"Who saved this revision, where the author is known"`
-	ActorKind     string    `json:"actorKind,omitempty" enum:"user,key" doc:"What kind of caller saved this revision: user for a signed-in person, key for an API key. Absent when the write predates attribution or arrived unauthenticated."`
-	ActorLabel    string    `json:"actorLabel,omitempty" doc:"The actor's email address or API key name, where one is known"`
+	ActorKind     string    `json:"actorKind,omitempty" enum:"user,key,embed" doc:"What kind of caller saved this revision: user for a signed-in person, key for an API key, embed for an embed session. Absent when the write predates attribution or arrived unauthenticated."`
+	ActorLabel    string    `json:"actorLabel,omitempty" doc:"The actor's email address, API key name, or the display name a host gave its embed session's user, where one is known"`
 	ActorKeyID    string    `json:"actorKeyId,omitempty" doc:"Identifier of the API key that saved this revision, so a reused key name still names the key that acted. Absent for a session."`
+	ActorID       string    `json:"actorId,omitempty" doc:"The host's identifier for the user an embed session acted for, as the host asserted it when minting the session. Not verified by KilasFlow. Absent for every other kind."`
 	ActorMeta     []string  `json:"actorMeta,omitempty" doc:"What the caller reported using to make the write, from the X-KilasFlow-Skills-Used header"`
 	CreatedAt     time.Time `json:"createdAt"`
 	Draft         bool      `json:"draft" doc:"True for the newest revision, the one an editor is working on"`
@@ -214,9 +215,10 @@ type WorkflowPublishEventResource struct {
 	VersionID  string    `json:"versionId" doc:"For a restore, the revision that was restored from"`
 	Action     string    `json:"action" enum:"published,unpublished,restored"`
 	Actor      string    `json:"actor,omitempty" doc:"Who acted, where the actor is known"`
-	ActorKind  string    `json:"actorKind,omitempty" enum:"user,key" doc:"What kind of caller acted: user for a signed-in person, key for an API key. Absent when the publish predates attribution or arrived unauthenticated."`
-	ActorLabel string    `json:"actorLabel,omitempty" doc:"The actor's email address or API key name, where one is known"`
+	ActorKind  string    `json:"actorKind,omitempty" enum:"user,key,embed" doc:"What kind of caller acted: user for a signed-in person, key for an API key, embed for an embed session. Absent when the publish predates attribution or arrived unauthenticated."`
+	ActorLabel string    `json:"actorLabel,omitempty" doc:"The actor's email address, API key name, or the display name a host gave its embed session's user, where one is known"`
 	ActorKeyID string    `json:"actorKeyId,omitempty" doc:"Identifier of the API key that acted. Absent for a session."`
+	ActorID    string    `json:"actorId,omitempty" doc:"The host's identifier for the user an embed session acted for, as the host asserted it when minting the session. Not verified by KilasFlow. Absent for every other kind."`
 	Reason     string    `json:"reason,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
 }
@@ -370,6 +372,10 @@ type ExecutionResource struct {
 	StartedAt               time.Time         `json:"startedAt"`
 	FinishedAt              *time.Time        `json:"finishedAt,omitempty"`
 	CancellationRequestedAt *time.Time        `json:"cancellationRequestedAt,omitempty"`
+	ActorKind               string            `json:"actorKind,omitempty" enum:"user,key,embed" doc:"Who queued this run, for a manual run or a retry: user for a signed-in person, key for an API key, embed for an embed session. Absent for trigger-started runs and runs queued before attribution."`
+	ActorLabel              string            `json:"actorLabel,omitempty" doc:"Who queued this run, for a manual run or a retry: the email address, API key name, or embed display name, where one is known. Absent for trigger-started runs and runs queued before attribution."`
+	ActorKeyID              string            `json:"actorKeyId,omitempty" doc:"Who queued this run, for a manual run or a retry: the identifier of the API key. Absent for trigger-started runs and runs queued before attribution."`
+	ActorID                 string            `json:"actorId,omitempty" doc:"Who queued this run, for a manual run or a retry: the host's identifier for an embed session's user, host-asserted and not verified. Absent for trigger-started runs and runs queued before attribution."`
 	// ResumeURL is the machine resume link for a waiting execution,
 	// ApprovalURL its human page when it waits on an approval, and ResumeAt
 	// when a timer wait continues on its own. All are present only while the
@@ -623,7 +629,7 @@ func (handler *Workflows) ListVersions(ctx context.Context, input *listWorkflowV
 			ID: summary.ID, WorkflowID: summary.WorkflowID, Revision: summary.Revision,
 			SchemaVersion: summary.SchemaVersion, Label: summary.Label, CreatedBy: summary.CreatedBy,
 			ActorKind: summary.ActorKind, ActorLabel: summary.ActorLabel, ActorKeyID: summary.ActorKeyID,
-			ActorMeta: summary.ActorMeta,
+			ActorID: summary.ActorID, ActorMeta: summary.ActorMeta,
 			CreatedAt: summary.CreatedAt, Draft: summary.Draft, Published: summary.Published,
 		})
 	}
@@ -679,7 +685,7 @@ func (handler *Workflows) ListPublishEvents(ctx context.Context, input *workflow
 		items = append(items, WorkflowPublishEventResource{
 			WorkflowID: event.WorkflowID, VersionID: event.VersionID, Action: string(event.Action),
 			Actor: event.Actor, ActorKind: event.ActorKind, ActorLabel: event.ActorLabel, ActorKeyID: event.ActorKeyID,
-			Reason: event.Reason, CreatedAt: event.CreatedAt,
+			ActorID: event.ActorID, Reason: event.Reason, CreatedAt: event.CreatedAt,
 		})
 	}
 	return &workflowPublishEventListOutput{Body: items}, nil
@@ -941,10 +947,12 @@ func (handler *Workflows) Run(ctx context.Context, input *runWorkflowInput) (*ru
 		// first: the guardrail that holds every queue path to a tenant-scoped
 		// catalogue reads the argument, and a variable it cannot follow would
 		// be an obligation it cannot check.
+		// The run records who queued it. The actor is not part of the
+		// idempotency fingerprint: a replay returns the run as first recorded.
 		if versionID == "" {
-			created, err = handler.executions.QueueManualLatest(ctx, tenant, input.ID, workflow.CatalogFor(handler.catalog, tenant.ID), triggerNodeID, payload)
+			created, err = handler.executions.QueueManualLatest(audited(ctx, ""), tenant, input.ID, workflow.CatalogFor(handler.catalog, tenant.ID), triggerNodeID, payload)
 		} else {
-			created, err = handler.executions.QueueManualVersion(ctx, tenant, input.ID, versionID, workflow.CatalogFor(handler.catalog, tenant.ID), triggerNodeID, payload)
+			created, err = handler.executions.QueueManualVersion(audited(ctx, ""), tenant, input.ID, versionID, workflow.CatalogFor(handler.catalog, tenant.ID), triggerNodeID, payload)
 		}
 		if err != nil {
 			return idempotency.Response{}, err
@@ -1148,6 +1156,8 @@ func executionSummaryResource(record execution.Record) ExecutionSummary {
 		Status: record.Status, Trigger: record.Trigger, TriggerNodeID: record.TriggerNodeID,
 		ParentExecutionID: record.ParentExecutionID,
 		StartedAt:         record.StartedAt, FinishedAt: record.FinishedAt,
+		ActorKind: record.ActorKind, ActorLabel: record.ActorLabel,
+		ActorKeyID: record.ActorKeyID, ActorID: record.ActorID,
 	}
 	if record.FinishedAt != nil {
 		duration := record.FinishedAt.Sub(record.StartedAt).Milliseconds()
@@ -1167,7 +1177,9 @@ func executionResource(record execution.Record) ExecutionResource {
 		Input: execution.Redact(record.Input), Output: execution.Redact(record.Output),
 		Error: execution.Redact(record.Error), StartedAt: record.StartedAt, FinishedAt: record.FinishedAt,
 		CancellationRequestedAt: record.CancellationRequestedAt,
-		NodeRuns:                make([]ExecutionNodeRunResource, 0, len(record.NodeRuns)),
+		ActorKind:               record.ActorKind, ActorLabel: record.ActorLabel,
+		ActorKeyID: record.ActorKeyID, ActorID: record.ActorID,
+		NodeRuns: make([]ExecutionNodeRunResource, 0, len(record.NodeRuns)),
 	}
 	for _, nodeRun := range record.NodeRuns {
 		resource.NodeRuns = append(resource.NodeRuns, ExecutionNodeRunResource{
