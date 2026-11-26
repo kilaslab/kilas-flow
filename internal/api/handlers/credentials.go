@@ -804,6 +804,38 @@ func (handler *Credentials) storedForTest(ctx context.Context, tenant repository
 // among them: a different port on the same host can be a different service.
 var targetFields = []string{"host", "port", "baseUrl", "url"}
 
+// storedTargetFields is targetFields plus what this type itself says points
+// the secret somewhere: the field its default scope is read from, and every
+// readable field its test URL is built from. A node pack names its own fields,
+// so the fixed list alone would let an edit to `apiHost` aim a stored key at a
+// host the caller just typed.
+func storedTargetFields(credentialType credentials.Type) []string {
+	keys := append([]string(nil), targetFields...)
+	seen := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		seen[key] = true
+	}
+	add := func(key string) {
+		if key != "" && !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
+		}
+	}
+	add(credentialType.DefaultDomainsFrom)
+	if credentialType.Test != nil {
+		secret := make(map[string]bool, len(credentialType.Secrets))
+		for _, key := range credentialType.Secrets {
+			secret[key] = true
+		}
+		for _, key := range credentials.TemplateFields(credentialType.Test.URL) {
+			if !secret[key] {
+				add(key)
+			}
+		}
+	}
+	return keys
+}
+
 // mergeStoredSecrets replaces every redaction placeholder with its stored value.
 //
 // Field by field, the way Update already merges them. Passing the submitted
@@ -836,7 +868,8 @@ func (handler *Credentials) mergeStoredSecrets(ctx context.Context, tenant repos
 	if err != nil {
 		return nil, nil, handler.problem(ctx, err)
 	}
-	for _, key := range targetFields {
+	credentialType, _ := credentials.Default().Get(stored.Type)
+	for _, key := range storedTargetFields(credentialType) {
 		if strings.TrimSpace(fields[key]) != strings.TrimSpace(storedFields[key]) {
 			return nil, nil, huma.Error422UnprocessableEntity(
 				"this edit changes " + key + ", so a stored secret cannot be used to test it: " +

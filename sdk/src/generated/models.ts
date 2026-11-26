@@ -632,6 +632,8 @@ export interface Field {
   description?: string;
   key: string;
   label: string;
+  /** Hidden on screen while typed; true for every secret field and for a readable field the type masks */
+  masked?: boolean;
   required: boolean;
   secret: boolean;
 }

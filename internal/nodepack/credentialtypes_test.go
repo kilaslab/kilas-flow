@@ -20,6 +20,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/routing"
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/wasmpack"
 	"github.com/kilaslab/kilas-flow/internal/webhook"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
@@ -180,13 +181,20 @@ func TestAPackCredentialTypeWorksWhereverABuiltInTypeDoes(t *testing.T) {
 		if found == nil {
 			t.Fatal("credentials.List() does not contain pack.acme.api, so GET /credential-types would not list it")
 		}
-		secret := map[string]bool{}
+		secret, masked := map[string]bool{}, map[string]bool{}
 		for _, field := range found.Fields {
 			secret[field.Key] = field.Secret
+			masked[field.Key] = field.Masked
 		}
 		want := map[string]bool{"baseUrl": false, "accountId": false, "apiKey": true}
 		if !reflect.DeepEqual(secret, want) || found.DisplayName != "Acme API" || found.DefaultDomainsFrom != "baseUrl" {
 			t.Fatalf("listed definition = %#v, want Acme API with secret flags %v", *found, want)
+		}
+		// The editor masks what the API says is masked: the secret key, and
+		// the account ID the type masks while keeping it readable.
+		wantMasked := map[string]bool{"baseUrl": false, "accountId": true, "apiKey": true}
+		if !reflect.DeepEqual(masked, wantMasked) {
+			t.Fatalf("masked flags = %v, want %v", masked, wantMasked)
 		}
 	})
 
@@ -377,7 +385,7 @@ func TestLoadDirCredentialTypeCollisions(t *testing.T) {
 		t.Parallel()
 		err := loadAcmePacks(t, newBuiltinCredentialRegistry(t), map[string]*nodepack.Pack{
 			"acme-v1": acmePack(),
-			"acme-v2": secondVersion(func(declared *nodepack.CredentialType) { declared.Fields[2].Secret = false }),
+			"acme-v2": secondVersion(func(declared *nodepack.CredentialType) { declared.Fields[0].Label = "Acme base URL" }),
 		})
 		if err == nil || !strings.Contains(err.Error(), `"acme-v1"`) || !strings.Contains(err.Error(), `"acme-v2"`) ||
 			!strings.Contains(err.Error(), "immutable") {
@@ -418,6 +426,47 @@ func TestLoadDirCredentialTypeCollisions(t *testing.T) {
 			t.Fatal("an invalid declaration was registered")
 		}
 	})
+}
+
+// TestAModulePackCanUseASiblingPacksCredentialType is the proof of the
+// two-pass load: the module pack sorts first, names a type only the later
+// directory declares, and the registry is private, so neither the directory
+// order nor the process-wide registry can be what makes it resolve.
+func TestAModulePackCanUseASiblingPacksCredentialType(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	moduleManifest(t, dir, "a-module", []byte("\x00asm\x01\x00\x00\x00"), func(manifest map[string]any) {
+		manifest["module"].(map[string]any)["credentials"] = []any{map[string]any{"type": "pack.beta.api", "required": true}}
+	})
+	sibling := nodepack.Scaffold(nodepack.ScaffoldOptions{Type: "pack.beta", DisplayName: "Beta", CredentialType: "pack.beta.api"})
+	declared := acmeCredentialType()
+	declared.ID, declared.DisplayName = "pack.beta.api", "Beta API"
+	sibling.CredentialTypes = []nodepack.CredentialType{declared}
+	if err := nodepack.WritePackDir(filepath.Join(dir, "b-beta"), sibling); err != nil {
+		t.Fatalf("WritePackDir() error = %v", err)
+	}
+	if _, found := credentials.Default().Get("pack.beta.api"); found {
+		t.Fatal("pack.beta.api is in the process-wide registry, so this test would prove nothing")
+	}
+
+	set := installDirDeps(safehttp.DefaultPolicy())
+	if err := set.executors.Register(wasmpack.ExecutorID, engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return nil, nil
+		})); err != nil {
+		t.Fatal(err)
+	}
+	modules := &recordingModules{}
+	deps := set.deps()
+	deps.Modules = modules
+	deps.Credentials = newBuiltinCredentialRegistry(t)
+	if err := nodepack.LoadDir(deps, dir); err != nil {
+		t.Fatalf("LoadDir() error = %v", err)
+	}
+	if len(modules.specs) != 1 {
+		t.Fatalf("approved %d module specs, want 1", len(modules.specs))
+	}
 }
 
 // TestPackCredentialTypeRefusals: each rule is reported at its own JSON path.
@@ -475,7 +524,41 @@ func TestPackCredentialTypeRefusals(t *testing.T) {
 			first(p).DefaultDomainsFrom = ""
 			first(p).DefaultDomains = []string{"api.acme.example/v1"}
 		}, "$.credentialTypes[0].defaultDomains[0]", "host name"},
-		"own type undeclared": {func(p *nodepack.Pack) { p.CredentialType = "pack.acme.other" }, "$.credentialType", "must declare it under credentialTypes"},
+		"own type undeclared":   {func(p *nodepack.Pack) { p.CredentialType = "pack.acme.other" }, "$.credentialType", "must declare it under credentialTypes"},
+		"readable header value": {func(p *nodepack.Pack) { first(p).Authenticate.Value = "{{ accountId }}" }, "$.credentialTypes[0].authenticate.value", `field "accountId" signs with its value, so it must be declared secret`},
+		"readable bearer value": {func(p *nodepack.Pack) {
+			*first(p).Authenticate = credentials.Authentication{Placement: "bearer", Value: "{{ baseUrl }}"}
+		}, "$.credentialTypes[0].authenticate.value", `field "baseUrl" signs with its value`},
+		"readable basic password": {func(p *nodepack.Pack) {
+			*first(p).Authenticate = credentials.Authentication{Placement: "basicAuth", User: "accountId", Password: "baseUrl"}
+		}, "$.credentialTypes[0].authenticate.password", `field "baseUrl" signs with its value`},
+		"custom value not JSON": {func(p *nodepack.Pack) {
+			*first(p).Authenticate = credentials.Authentication{Placement: "custom", Value: "{{ apiKey }}"}
+		}, "$.credentialTypes[0].authenticate.value", "must be a JSON object"},
+		"custom extra key": {func(p *nodepack.Pack) {
+			*first(p).Authenticate = credentials.Authentication{Placement: "custom", Value: `{"headers": {"X-Key": "{{ apiKey }}"}, "body": "x"}`}
+		}, "$.credentialTypes[0].authenticate.value", `only headers and qs, not "body"`},
+		"test method":         {func(p *nodepack.Pack) { first(p).Test.Method = "DELETE" }, "$.credentialTypes[0].test.method", "GET, HEAD or POST"},
+		"wildcard over a TLD": {func(p *nodepack.Pack) { first(p).DefaultDomainsFrom = ""; first(p).DefaultDomains = []string{"*.com"} }, "$.credentialTypes[0].defaultDomains[0]", "whole top-level domain"},
+		"domain with a port": {func(p *nodepack.Pack) {
+			first(p).DefaultDomainsFrom = ""
+			first(p).DefaultDomains = []string{"api.acme.example:443"}
+		}, "$.credentialTypes[0].defaultDomains[0]", "port"},
+		"domain with scheme": {func(p *nodepack.Pack) {
+			first(p).DefaultDomainsFrom = ""
+			first(p).DefaultDomains = []string{"https://api.acme.example"}
+		}, "$.credentialTypes[0].defaultDomains[0]", "scheme"},
+		"domain with space": {func(p *nodepack.Pack) {
+			first(p).DefaultDomainsFrom = ""
+			first(p).DefaultDomains = []string{"api acme.example"}
+		}, "$.credentialTypes[0].defaultDomains[0]", "space"},
+		"wildcard over an IP": {func(p *nodepack.Pack) {
+			first(p).DefaultDomainsFrom = ""
+			first(p).DefaultDomains = []string{"*.10.0.0.1"}
+		}, "$.credentialTypes[0].defaultDomains[0]", "IP address"},
+		"pack without a type":   {func(p *nodepack.Pack) { p.Type = "" }, "$.credentialTypes", "needs a type"},
+		"pack type with spaces": {func(p *nodepack.Pack) { p.Type = " pack.acme" }, "$.credentialTypes", "needs a type without surrounding spaces"},
+		"reserved pack type":    {func(p *nodepack.Pack) { p.Type = node.BuiltinPrefix + "acme" }, "$.credentialTypes", "reserved"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -512,6 +595,75 @@ func TestPackCredentialTypeRefusals(t *testing.T) {
 			assertPackIssue(t, nodepack.ValidateBytes(raw, nodepack.ManifestName), testCase.path, testCase.want)
 		})
 	}
+}
+
+// TestPackCredentialTypeShapesThatAreAccepted: the rules refuse what is unsafe
+// and nothing else.
+func TestPackCredentialTypeShapesThatAreAccepted(t *testing.T) {
+	t.Parallel()
+
+	for name, mutate := range map[string]func(*nodepack.Pack){
+		"a subdomain wildcard": func(p *nodepack.Pack) {
+			p.CredentialTypes[0].DefaultDomainsFrom = ""
+			p.CredentialTypes[0].DefaultDomains = []string{"*.acme.example", "api.acme.example"}
+		},
+		"a custom template of headers and qs": func(p *nodepack.Pack) {
+			*p.CredentialTypes[0].Authenticate = credentials.Authentication{Placement: "custom", Value: `{"headers": {"X-Key": "{{ apiKey }}"}, "qs": {"key": "{{ apiKey }}"}}`}
+		},
+		"basic auth with a readable user": func(p *nodepack.Pack) {
+			*p.CredentialTypes[0].Authenticate = credentials.Authentication{Placement: "basicAuth", User: "accountId", Password: "apiKey"}
+		},
+		"a header name templated over a readable field": func(p *nodepack.Pack) {
+			p.CredentialTypes[0].Authenticate.Name = "X-{{ accountId }}"
+		},
+		"a HEAD probe": func(p *nodepack.Pack) { p.CredentialTypes[0].Test.Method = "head" },
+		// A pack whose type is a prefix of a longer name only owns one word after
+		// its own type, so `pack` may name `pack.acme.api` without declaring it.
+		"a deeper name outside the one-word namespace": func(p *nodepack.Pack) {
+			p.Type = "pack"
+			p.CredentialType = "pack.acme.api"
+			p.CredentialTypes = nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			pack := acmePack()
+			mutate(pack)
+			if issues := nodepack.Validate(pack, nodepack.ManifestName); len(issues) != 0 {
+				t.Fatalf("Validate() = %v, want clean", issues)
+			}
+		})
+	}
+}
+
+// TestATriggerSecretFromAPackTypeMustBeSecret: the HMAC signing secret is read
+// out of a credential field, and a readable field would hand it to anyone who
+// can read the credential.
+func TestATriggerSecretFromAPackTypeMustBeSecret(t *testing.T) {
+	t.Parallel()
+
+	manifest := func(field string) []byte {
+		return []byte(`{
+			"type": "pack.acmeSigned", "version": 1, "displayName": "Acme Signed", "category": "Triggers",
+			"credentialType": "pack.acmeSigned.api",
+			"credentialTypes": [{"id": "pack.acmeSigned.api", "displayName": "Acme signing", "fields": [
+				{"key": "accountId", "label": "Account ID", "kind": "string"},
+				{"key": "signingSecret", "label": "Signing secret", "kind": "string", "secret": true}
+			]}],
+			"trigger": {
+				"events": ["message"], "catchAll": "other", "eventPath": "event", "shape": "bodyAsItem",
+				"webhook": {"name": "default", "staticPath": "acme-signed", "method": "POST"},
+				"hmac": {"header": "X-Signature", "algorithm": "sha256", "secretCredential": {"type": "pack.acmeSigned.api", "field": "` + field + `"}}
+			}
+		}`)
+	}
+	if issues := nodepack.ValidateBytes(manifest("signingSecret"), nodepack.ManifestName); len(issues) != 0 {
+		t.Fatalf("ValidateBytes(secret field) = %v, want clean", issues)
+	}
+	assertPackIssue(t, nodepack.ValidateBytes(manifest("accountId"), nodepack.ManifestName),
+		"$.trigger.hmac.secretCredential.field", `field "accountId" signs with its value`)
+	assertPackIssue(t, nodepack.ValidateBytes(manifest("missing"), nodepack.ManifestName),
+		"$.trigger.hmac.secretCredential.field", "is not declared")
 }
 
 func assertPackIssue(t *testing.T, issues []nodepack.Issue, path, want string) {
