@@ -274,8 +274,10 @@ type workflowVersionModel struct {
 	// the author of most writes is genuinely unknowable. A NOT NULL column
 	// would force this code to invent an author, and an invented author in an
 	// audit trail is worse than an absent one.
-	Label     *string `gorm:"size:255"`
-	CreatedBy *string `gorm:"size:64"`
+	Label *string `gorm:"size:255"`
+	// CreatedBy is as wide as ActorLabel (000031): it holds the same label, a
+	// key's name or a user's email, both of which can be 255 characters long.
+	CreatedBy *string `gorm:"size:255"`
 	// ActorKind, ActorLabel and ActorKeyID are who wrote the revision: 'user'
 	// for a signed-in person, 'key' for an API key, with the key's name and its
 	// identifier beside it. All three are nullable for the same reason Label
@@ -320,8 +322,9 @@ type workflowPublishEventModel struct {
 	Action string `gorm:"not null;size:32"`
 	// Actor and Reason are empty rather than null when unknown: an audit row is
 	// always written, and a caller that supplied neither should still leave the
-	// trace that something happened.
-	Actor  string `gorm:"not null;size:64;default:''"`
+	// trace that something happened. Actor is as wide as ActorLabel (000031)
+	// because it holds the same label.
+	Actor  string `gorm:"not null;size:255;default:''"`
 	Reason string `gorm:"not null;size:255;default:''"`
 	// ActorKind, ActorLabel and ActorKeyID are who acted, in the same
 	// vocabulary workflow_versions uses: 'user' for a signed-in person, 'key'
