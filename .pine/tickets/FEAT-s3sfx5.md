@@ -1,7 +1,7 @@
 ---
 id: FEAT-s3sfx5
 title: Actor identity in embed sessions
-status: testing
+status: done
 priority: medium
 labels:
     - saas
@@ -9,7 +9,7 @@ labels:
     - audit
 parent: EPIC-7c3ry9
 created: "2026-09-23T02:07:00Z"
-updated: "2026-11-26T07:35:00Z"
+updated: "2026-11-26T07:52:25Z"
 ---
 
 # Description
@@ -44,3 +44,112 @@ Valid, but the plumbing is half there. Versions and publish events already carry
 # Related Files
 
 # Attachments
+
+## Work Evidence
+
+Recorded from commits by `pine close --evidence --commit` on 2026-11-26.
+
+- Commits (9):
+  - `f05d6950` — FEAT-s3sfx5: record review follow-ups in the ticket notes
+  - `c2405275` — FEAT-s3sfx5: never display the host's actor id; document its exposure
+  - `c754b36d` — FEAT-s3sfx5: publish actor limits in the schema; cover pinned runs, retries and triggers
+  - `7d889e7c` — chore(pine): FEAT-s3sfx5 to testing with implementation notes
+  - `ebdd927b` — FEAT-s3sfx5: name who queued a run on the execution detail page
+  - `053d5739` — FEAT-s3sfx5: document naming the acting user in embed sessions
+  - `c253e3b4` — FEAT-s3sfx5: show the embed actor in version history; SDK forwards actor
+  - `b6d11337` — FEAT-s3sfx5: test embed actor signing, recording, and the HTTP flow
+  - `04e63f37` — FEAT-s3sfx5: sign a host-asserted actor into embed sessions and record it
+- Files changed:
+
+```
+f05d6950 FEAT-s3sfx5: record review follow-ups in the ticket notes
+
+ .pine/tickets/FEAT-s3sfx5.md | 1 +
+ 1 file changed, 1 insertion(+)
+c2405275 FEAT-s3sfx5: never display the host's actor id; document its exposure
+
+ CHANGELOG.md                                          |  8 ++++++--
+ docs/src/content/docs/guides/embedding.md             | 17 ++++++++++++-----
+ migrations/postgres/000029_embed_actor.down.sql       |  4 +++-
+ migrations/sqlite/000029_embed_actor.down.sql         |  4 +++-
+ sdk/src/server.ts                                     |  5 ++++-
+ web/src/lib/workflow-editor/version-history.test.ts   | 19 +++++++++++--------
+ web/src/lib/workflow-editor/version-history.ts        | 17 +++++++++--------
+ .../routes/(dashboard)/executions/[id]/+page.svelte   |  2 +-
+ 8 files changed, 49 insertions(+), 27 deletions(-)
+c754b36d FEAT-s3sfx5: publish actor limits in the schema; cover pinned runs, retries and triggers
+
+ docs/public/openapi.json                     |  6 ++-
+ docs/src/content/docs/reference/api/embed.md |  2 +-
+ internal/api/embed_actor_test.go             | 74 ++++++++++++++++++++++++++--
+ internal/embed/embed.go                      |  8 ++-
+ internal/repository/embed_actor_test.go      | 28 +++++++++++
+ sdk/src/generated/models.ts                  | 12 ++++-
+ web/src/lib/api/generated/models/actor.ts    | 12 ++++-
+ 7 files changed, 130 insertions(+), 12 deletions(-)
+7d889e7c chore(pine): FEAT-s3sfx5 to testing with implementation notes
+
+ .pine/tickets/FEAT-s3sfx5.md | 17 +++++++++++++----
+ 1 file changed, 13 insertions(+), 4 deletions(-)
+ebdd927b FEAT-s3sfx5: name who queued a run on the execution detail page
+
+ web/src/routes/(dashboard)/executions/[id]/+page.svelte | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+053d5739 FEAT-s3sfx5: document naming the acting user in embed sessions
+
+ CHANGELOG.md                                      |  9 +++
+ docs/public/openapi.json                          | 85 +++++++++++++++++++++--
+ docs/src/content/docs/guides/embedding.md         | 31 ++++++++-
+ docs/src/content/docs/reference/api/embed.md      |  3 +
+ docs/src/content/docs/reference/api/executions.md | 20 ++++++
+ docs/src/content/docs/reference/api/workflows.md  |  1 +
+ sdk/CHANGELOG.md                                  |  7 ++
+ 7 files changed, 149 insertions(+), 7 deletions(-)
+c253e3b4 FEAT-s3sfx5: show the embed actor in version history; SDK forwards actor
+
+ sdk/src/generated/models.ts                        | 67 ++++++++++++++++++++--
+ sdk/src/server.ts                                  | 18 ++++++
+ sdk/test/server.test.ts                            | 18 ++++++
+ web/messages/en/versions.json                      |  2 +
+ web/messages/id/versions.json                      |  2 +
+ web/src/lib/api/generated/models/actor.ts          | 14 +++++
+ .../lib/api/generated/models/embedSessionBody.ts   |  3 +
+ .../lib/api/generated/models/executionResource.ts  |  9 +++
+ .../generated/models/executionResourceActorKind.ts | 19 ++++++
+ .../lib/api/generated/models/executionSummary.ts   |  9 +++
+ .../generated/models/executionSummaryActorKind.ts  | 19 ++++++
+ web/src/lib/api/generated/models/index.ts          |  3 +
+ .../models/workflowPublishEventResource.ts         |  6 +-
+ .../workflowPublishEventResourceActorKind.ts       |  3 +-
+ .../models/workflowVersionSummaryResource.ts       |  6 +-
+ .../workflowVersionSummaryResourceActorKind.ts     |  3 +-
+ .../workflow-editor/version-panel.svelte           |  4 +-
+ .../lib/workflow-editor/version-history.test.ts    | 40 +++++++++++++
+ web/src/lib/workflow-editor/version-history.ts     | 25 +++++++-
+ 19 files changed, 254 insertions(+), 16 deletions(-)
+b6d11337 FEAT-s3sfx5: test embed actor signing, recording, and the HTTP flow
+
+ internal/api/embed_actor_test.go        | 177 ++++++++++++++++++++++++++++++++
+ internal/repository/embed_actor_test.go | 111 ++++++++++++++++++++
+ 2 files changed, 288 insertions(+)
+04e63f37 FEAT-s3sfx5: sign a host-asserted actor into embed sessions and record it
+
+ internal/api/handlers/actor.go                  |  26 ++++--
+ internal/api/handlers/embed.go                  |   2 +
+ internal/api/handlers/execution_retry.go        |   5 +-
+ internal/api/handlers/executions.go             |   4 +
+ internal/api/handlers/workflows.go              |  30 +++++--
+ internal/embed/embed.go                         |  59 +++++++++++++
+ internal/embed/embed_actor_test.go              | 105 ++++++++++++++++++++++++
+ internal/embed/embed_test.go                    |   3 +
+ internal/execution/records.go                   |   8 ++
+ internal/repository/executions.go               |  11 +++
+ internal/repository/models.go                   |  10 +++
+ internal/repository/workflow_history.go         |  26 ++++--
+ internal/workflow/lifecycle.go                  |   6 +-
+ migrations/postgres/000029_embed_actor.down.sql |  17 ++++
+ migrations/postgres/000029_embed_actor.up.sql   |  29 +++++++
+ migrations/sqlite/000029_embed_actor.down.sql   |  17 ++++
+ migrations/sqlite/000029_embed_actor.up.sql     |  29 +++++++
+ 17 files changed, 362 insertions(+), 25 deletions(-)
+```
