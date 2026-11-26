@@ -32,6 +32,7 @@ import type {
   SetUserPasswordInputBody,
   TenantDeletionResource,
   TenantResource,
+  UpdateTenantInputBody,
   UserResource
 } from '../models';
 
@@ -461,7 +462,107 @@ export function createGetTenant<TData = Awaited<ReturnType<typeof getTenant>>, T
 
 
 
-export type createTenantApiKeyResponse201 = {
+export type updateTenantResponse200 = {
+  data: TenantResource
+  status: 200
+}
+
+export type updateTenantResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type updateTenantResponseSuccess = (updateTenantResponse200) & {
+  headers: Headers;
+};
+export type updateTenantResponseError = (updateTenantResponseDefault) & {
+  headers: Headers;
+};
+
+export type updateTenantResponse = (updateTenantResponseSuccess | updateTenantResponseError)
+
+export const getUpdateTenantUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/tenants/${id}`
+}
+
+/**
+ * Changes a tenant's settings. The body's settings object is merged into the stored one section by section, as a JSON merge patch (RFC 7396): a section set to null is removed, so the tenant falls back to the deployment configuration for it; an object is merged field by field, and a field set to null is removed. A section or field this server does not accept is refused with tenant_settings_unknown_key, a value its section rejects with tenant_settings_invalid, both as 422 with one error per problem located at body.settings.<section>.<field>; a patch with any problem writes nothing. A write that changes the document bumps settingsVersion by one, and an unchanged one keeps it. A change applies at once on the process that served it and within 5 s on every other process. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused. Sections this server accepts: rateLimit.
+ * @summary Update a tenant's settings
+ */
+export const updateTenant = async (id: string,
+    updateTenantInputBody: NonReadonly<UpdateTenantInputBody>, options?: Parameters<typeof apiFetch>[1]): Promise<updateTenantResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+return apiFetch<updateTenantResponse>(getUpdateTenantUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateTenantInputBody)
+  }
+);}
+
+
+
+
+
+export const getUpdateTenantMutationKey = () => ['updateTenant'] as const;
+
+export const getUpdateTenantMutationOptions = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof updateTenant>>, TError,UpdateTenantMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+): CreateMutationOptions<Awaited<ReturnType<typeof updateTenant>>, TError,UpdateTenantMutationVariables, TContext> => {
+
+const mutationKey = getUpdateTenantMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateTenant>>, UpdateTenantMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateTenant(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateTenantMutationResult = NonNullable<Awaited<ReturnType<typeof updateTenant>>>
+    export type UpdateTenantMutationBody = NonReadonly<UpdateTenantInputBody>
+    export type UpdateTenantMutationError = ErrorType<ErrorModel>
+    export type UpdateTenantMutationVariables = {id: string;data: NonReadonly<UpdateTenantInputBody>}
+
+    /**
+ * @summary Update a tenant's settings
+ */
+export const createUpdateTenant = <TError = ErrorType<ErrorModel>,
+    TContext = unknown>(options?: () => { mutation?:CreateMutationOptions<Awaited<ReturnType<typeof updateTenant>>, TError,UpdateTenantMutationVariables, TContext>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient): CreateMutationResult<
+        Awaited<ReturnType<typeof updateTenant>>,
+        TError,
+        UpdateTenantMutationVariables,
+        TContext
+      > => {
+      return createMutation(() => ({ ...getUpdateTenantMutationOptions(options?.()) }), queryClient);
+    }
+    export type createTenantApiKeyResponse201 = {
   data: CreatedAPIKeyResource
   status: 201
 }

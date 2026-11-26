@@ -114,6 +114,7 @@ const OPERATION_COVERAGE = {
 	'list-tenants': 'listTenants',
 	'create-tenant': 'createTenant',
 	'get-tenant': 'getTenant',
+	'update-tenant': 'updateTenant',
 	// The one operation here that is irreversible, and the only one a caller
 	// confirms by repeating it: it reports zero counts once nothing is left.
 	'delete-tenant': 'deleteTenant',

@@ -1319,12 +1319,21 @@ export interface ListTenantUsersOutputBody {
   items: UserResource[] | null;
 }
 
+/**
+ * The tenant's settings, one object per section. A section that is absent falls back to the deployment configuration.
+ */
+export type TenantResourceSettings = {[key: string]: unknown};
+
 export interface TenantResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   createdAt: string;
   id: string;
   name: string;
+  /** The tenant's settings, one object per section. A section that is absent falls back to the deployment configuration. */
+  settings: TenantResourceSettings;
+  /** Counts the writes that changed settings; 0 means they have never been written */
+  settingsVersion: number;
   /** Accounts this tenant holds */
   userCount: number;
 }
@@ -1803,6 +1812,18 @@ export interface UpdateRowsOutputBody {
   matched: number;
   /** @nullable */
   rows: UpdateRowsOutputBodyRowsItem[] | null;
+}
+
+/**
+ * A merge patch over the tenant's settings: one object per section, null to remove a section or a field
+ */
+export type UpdateTenantInputBodySettings = {[key: string]: unknown};
+
+export interface UpdateTenantInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** A merge patch over the tenant's settings: one object per section, null to remove a section or a field */
+  settings?: UpdateTenantInputBodySettings;
 }
 
 /**
@@ -5549,6 +5570,64 @@ export const getTenant = async (id: string, options?: RequestInit): Promise<getT
 
   const data: getTenantResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as getTenantResponse
+}
+
+
+
+export type updateTenantResponse200 = {
+  data: TenantResource
+  status: 200
+}
+
+export type updateTenantResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type updateTenantResponseSuccess = (updateTenantResponse200) & {
+  headers: Headers;
+};
+export type updateTenantResponseError = (updateTenantResponseDefault) & {
+  headers: Headers;
+};
+
+export type updateTenantResponse = (updateTenantResponseSuccess | updateTenantResponseError)
+
+export const getUpdateTenantUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/tenants/${id}`
+}
+
+/**
+ * Changes a tenant's settings. The body's settings object is merged into the stored one section by section, as a JSON merge patch (RFC 7396): a section set to null is removed, so the tenant falls back to the deployment configuration for it; an object is merged field by field, and a field set to null is removed. A section or field this server does not accept is refused with tenant_settings_unknown_key, a value its section rejects with tenant_settings_invalid, both as 422 with one error per problem located at body.settings.<section>.<field>; a patch with any problem writes nothing. A write that changes the document bumps settingsVersion by one, and an unchanged one keeps it. A change applies at once on the process that served it and within 5 s on every other process. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused. Sections this server accepts: rateLimit.
+ * @summary Update a tenant's settings
+ */
+export const updateTenant = async (id: string,
+    updateTenantInputBody: NonReadonly<UpdateTenantInputBody>, options?: RequestInit): Promise<updateTenantResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getUpdateTenantUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateTenantInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: updateTenantResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as updateTenantResponse
 }
 
 

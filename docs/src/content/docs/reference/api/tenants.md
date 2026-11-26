@@ -39,6 +39,8 @@ Response (skeleton — every field, placeholder values):
       "createdAt": "2026-01-02T15:04:05Z",
       "id": "string",
       "name": "string",
+      "settings": {},
+      "settingsVersion": 0,
       "userCount": 0
     }
   ]
@@ -81,6 +83,8 @@ Fields of the `TenantResource` body:
 | `createdAt` | yes | `string` | — |
 | `id` | yes | `string` | — |
 | `name` | yes | `string` | — |
+| `settings` | yes | `object` | The tenant's settings, one object per section. A section that is absent falls back to the deployment configuration. |
+| `settingsVersion` | yes | `integer` | Counts the writes that changed settings; 0 means they have never been written |
 | `userCount` | yes | `integer` | Accounts this tenant holds |
 
 Request (minimal — required fields only):
@@ -99,6 +103,8 @@ Response (skeleton — every field, placeholder values):
   "createdAt": "2026-01-02T15:04:05Z",
   "id": "string",
   "name": "string",
+  "settings": {},
+  "settingsVersion": 0,
   "userCount": 0
 }
 ```
@@ -152,6 +158,8 @@ Fields of the `TenantResource` body:
 | `createdAt` | yes | `string` | — |
 | `id` | yes | `string` | — |
 | `name` | yes | `string` | — |
+| `settings` | yes | `object` | The tenant's settings, one object per section. A section that is absent falls back to the deployment configuration. |
+| `settingsVersion` | yes | `integer` | Counts the writes that changed settings; 0 means they have never been written |
 | `userCount` | yes | `integer` | Accounts this tenant holds |
 
 Response (skeleton — every field, placeholder values):
@@ -161,6 +169,8 @@ Response (skeleton — every field, placeholder values):
   "createdAt": "2026-01-02T15:04:05Z",
   "id": "string",
   "name": "string",
+  "settings": {},
+  "settingsVersion": 0,
   "userCount": 0
 }
 ```
@@ -168,6 +178,72 @@ Response (skeleton — every field, placeholder values):
 ```sh
 curl -X GET "$KILASFLOW_HOST/api/v1/tenants/{id}" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+
+## Update a tenant's settings (`update-tenant`)
+
+`PATCH /api/v1/tenants/{id}`
+
+Changes a tenant's settings. The body's settings object is merged into the stored one section by section, as a JSON merge patch (RFC 7396): a section set to null is removed, so the tenant falls back to the deployment configuration for it; an object is merged field by field, and a field set to null is removed. A section or field this server does not accept is refused with tenant_settings_unknown_key, a value its section rejects with tenant_settings_invalid, both as 422 with one error per problem located at body.settings.<section>.<field>; a patch with any problem writes nothing. A write that changes the document bumps settingsVersion by one, and an unchanged one keeps it. A change applies at once on the process that served it and within 5 s on every other process. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused. Sections this server accepts: rateLimit.
+
+Parameters:
+
+| Name | In | Required | Type | Description |
+| --- | --- | --- | --- | --- |
+| `id` | path | yes | string | Tenant ID |
+
+Request body: `application/json` — `UpdateTenantInputBody` (required)
+
+Request fields:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `settings` | no | `object` | A merge patch over the tenant's settings: one object per section, null to remove a section or a field |
+
+Responses:
+
+| Status | Description | Body |
+| --- | --- | --- |
+| `200` | OK | `application/json` — `TenantResource` |
+| `default` | Error | `application/problem+json` |
+
+Fields of the `TenantResource` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `createdAt` | yes | `string` | — |
+| `id` | yes | `string` | — |
+| `name` | yes | `string` | — |
+| `settings` | yes | `object` | The tenant's settings, one object per section. A section that is absent falls back to the deployment configuration. |
+| `settingsVersion` | yes | `integer` | Counts the writes that changed settings; 0 means they have never been written |
+| `userCount` | yes | `integer` | Accounts this tenant holds |
+
+Request (minimal — required fields only):
+
+```json
+{}
+```
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "createdAt": "2026-01-02T15:04:05Z",
+  "id": "string",
+  "name": "string",
+  "settings": {},
+  "settingsVersion": 0,
+  "userCount": 0
+}
+```
+
+```sh
+curl -X PATCH "$KILASFLOW_HOST/api/v1/tenants/{id}" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{}'
 ```
 
 Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.

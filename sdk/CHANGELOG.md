@@ -7,6 +7,16 @@ until the server surface it targets is considered stable; see `README.md`.
 
 ## Unreleased
 
+- **Additive**: `updateTenant(tenantId, { settings })` — `PATCH
+  /api/v1/admin/tenants/{id}`, the operator's per-tenant settings. `settings`
+  is a merge patch over the stored document, section by section, with `null`
+  removing a field or a section. Refusals are 422 problems whose `errors[]`
+  carry `value.code` `tenant_settings_unknown_key` or
+  `tenant_settings_invalid` and a `location` naming the key. The first section
+  is `rateLimit` (`runPerMinute`, `webhookPerMinute`, `eventsPerMinute`).
+  `TenantResource` gains `settings` (an object, `{}` when unset) and
+  `settingsVersion`; a client that builds a `TenantResource` literal in
+  TypeScript must add both.
 - **Breaking**: `deleteCredential` now rejects with a `409` problem when a
   workflow's draft or published version still attaches the credential,
   instead of deleting it. The method's signature is unchanged; the server's

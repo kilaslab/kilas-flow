@@ -67,6 +67,7 @@ import type {
 	TestPayloadBody,
 	UpdateRowsInputBody,
 	UpdateRowsOutputBody,
+	UpdateTenantInputBody,
 	UpsertRowInputBody,
 	UpsertRowOutputBody,
 	UserResource,
@@ -740,6 +741,24 @@ export class KilasFlowClient {
 	/** Reads one tenant, such as the resource a create answered with. */
 	getTenant(tenantId: string, signal?: AbortSignal): Promise<TenantResource> {
 		return this.#transport.request('GET', `/tenants/${encodeURIComponent(tenantId)}`, { signal });
+	}
+
+	/**
+	 * Changes a tenant's settings and answers with the tenant as stored. The
+	 * `settings` object is a merge patch, section by section: an object is
+	 * merged field by field, and `null` removes a field or a whole section so
+	 * the tenant falls back to the deployment configuration. A section or
+	 * field the server does not accept is refused with
+	 * `tenant_settings_unknown_key`, a value its section rejects with
+	 * `tenant_settings_invalid` (both 422), and nothing is written. Each change
+	 * bumps `settingsVersion`; it applies at once on the serving process and
+	 * within 5 seconds on every other one. Needs the operator credential.
+	 *
+	 * @example
+	 * await server.updateTenant('acme', { settings: { rateLimit: { runPerMinute: 30 } } });
+	 */
+	updateTenant(tenantId: string, input: UpdateTenantInputBody, signal?: AbortSignal): Promise<TenantResource> {
+		return this.#transport.request('PATCH', `/tenants/${encodeURIComponent(tenantId)}`, { body: input, signal });
 	}
 
 	/**

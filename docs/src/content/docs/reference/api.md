@@ -17,7 +17,7 @@ When the two disagree, compare versions: every page here states the server versi
 
 ## Operations
 
-83 operations, all under `/api/v1`, in 12 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
+84 operations, all under `/api/v1`, in 12 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
 
 | Group | Operations | Contents |
 | --- | --- | --- |
@@ -29,7 +29,7 @@ When the two disagree, compare versions: every page here states the server versi
 | [Host events](/reference/api/host-events/) | 1 | The recommended host → workflow path: publish one event, every active workflow listening for it runs. |
 | [Node types](/reference/api/nodes/) | 5 | The node catalogue, icons, load-options, load-schema, and the expression grammar. |
 | [Datastores](/reference/api/datastores/) | 18 | Tenant-owned row stores: tables, columns, rows, and CSV import and export. |
-| [Tenants and accounts](/reference/api/tenants/) | 10 | Operator surface: tenants, their users, and keys minted for another tenant. |
+| [Tenants and accounts](/reference/api/tenants/) | 11 | Operator surface: tenants, their users, and keys minted for another tenant. |
 | [Interop](/reference/api/interop/) | 3 | Import and export workflows across formats. |
 | [Embed](/reference/api/embed/) | 1 | Mint a session that confines an embedded editor to one workflow. |
 | [System](/reference/api/system/) | 2 | Health and readiness. |
