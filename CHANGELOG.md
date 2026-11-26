@@ -23,6 +23,15 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- Actor identity in embed sessions. `POST /embed-sessions` accepts an optional
+  `actor: {id, displayName}` (id 1 to 128 characters, display name at most 64),
+  signed into the token. Revisions, publish events and manual runs or retries
+  the session causes record it as actor kind `embed`, with the display name as
+  `actorLabel` and the host's identifier as the new `actorId`; the version
+  panel shows it as "{name} (embedded)". Executions now carry `actorKind`,
+  `actorLabel`, `actorKeyId` and `actorId` for manual runs and retries,
+  whoever queued them. The actor is host-asserted, never verified. Migration
+  000029 adds the columns with no backfill.
 - Credential key rotation. `security.secondary_encryption_key_env` (default
   `KILASFLOW_ENCRYPTION_KEY_SECONDARY`) holds the previous key during a
   rotation: it opens what it sealed and seals nothing. `kilasflow

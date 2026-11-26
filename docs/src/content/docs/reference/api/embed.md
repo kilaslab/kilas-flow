@@ -23,6 +23,9 @@ Request fields:
 
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
+| `actor` | no | `Actor` | The host user this session acts for. Signed into the token and recorded as an embed actor on the revisions, publish events, and manual runs the session causes. Host-asserted: KilasFlow does not verify it. Omit it for an unnamed session. |
+| `actor.displayName` | no | `string` | The name KilasFlow shows for this user: at most 64 letters, digits, spaces, and simple punctuation, without leading or trailing spaces. |
+| `actor.id` | yes | `string` | The host's own stable identifier for its user: 1 to 128 letters, digits, and . _ - : @ \| + / =. Host-asserted, never verified. |
 | `branding` | no | `Branding` | Validated white-label values; never markup |
 | `branding.accent` | no | `string` | — |
 | `branding.hideRun` | no | `boolean` | — |
