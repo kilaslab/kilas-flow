@@ -20,6 +20,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/routing"
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
+	"github.com/kilaslab/kilas-flow/internal/wasmpack"
 	"github.com/kilaslab/kilas-flow/internal/webhook"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
@@ -180,13 +181,20 @@ func TestAPackCredentialTypeWorksWhereverABuiltInTypeDoes(t *testing.T) {
 		if found == nil {
 			t.Fatal("credentials.List() does not contain pack.acme.api, so GET /credential-types would not list it")
 		}
-		secret := map[string]bool{}
+		secret, masked := map[string]bool{}, map[string]bool{}
 		for _, field := range found.Fields {
 			secret[field.Key] = field.Secret
+			masked[field.Key] = field.Masked
 		}
 		want := map[string]bool{"baseUrl": false, "accountId": false, "apiKey": true}
 		if !reflect.DeepEqual(secret, want) || found.DisplayName != "Acme API" || found.DefaultDomainsFrom != "baseUrl" {
 			t.Fatalf("listed definition = %#v, want Acme API with secret flags %v", *found, want)
+		}
+		// The editor masks what the API says is masked: the secret key, and
+		// the account ID the type masks while keeping it readable.
+		wantMasked := map[string]bool{"baseUrl": false, "accountId": true, "apiKey": true}
+		if !reflect.DeepEqual(masked, wantMasked) {
+			t.Fatalf("masked flags = %v, want %v", masked, wantMasked)
 		}
 	})
 
@@ -418,6 +426,47 @@ func TestLoadDirCredentialTypeCollisions(t *testing.T) {
 			t.Fatal("an invalid declaration was registered")
 		}
 	})
+}
+
+// TestAModulePackCanUseASiblingPacksCredentialType is the proof of the
+// two-pass load: the module pack sorts first, names a type only the later
+// directory declares, and the registry is private, so neither the directory
+// order nor the process-wide registry can be what makes it resolve.
+func TestAModulePackCanUseASiblingPacksCredentialType(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	moduleManifest(t, dir, "a-module", []byte("\x00asm\x01\x00\x00\x00"), func(manifest map[string]any) {
+		manifest["module"].(map[string]any)["credentials"] = []any{map[string]any{"type": "pack.beta.api", "required": true}}
+	})
+	sibling := nodepack.Scaffold(nodepack.ScaffoldOptions{Type: "pack.beta", DisplayName: "Beta", CredentialType: "pack.beta.api"})
+	declared := acmeCredentialType()
+	declared.ID, declared.DisplayName = "pack.beta.api", "Beta API"
+	sibling.CredentialTypes = []nodepack.CredentialType{declared}
+	if err := nodepack.WritePackDir(filepath.Join(dir, "b-beta"), sibling); err != nil {
+		t.Fatalf("WritePackDir() error = %v", err)
+	}
+	if _, found := credentials.Default().Get("pack.beta.api"); found {
+		t.Fatal("pack.beta.api is in the process-wide registry, so this test would prove nothing")
+	}
+
+	set := installDirDeps(safehttp.DefaultPolicy())
+	if err := set.executors.Register(wasmpack.ExecutorID, engine.ExecutorFunc(
+		func(context.Context, workflow.IRNode, workflow.NodeInput, engine.Request) (workflow.NodeOutput, error) {
+			return nil, nil
+		})); err != nil {
+		t.Fatal(err)
+	}
+	modules := &recordingModules{}
+	deps := set.deps()
+	deps.Modules = modules
+	deps.Credentials = newBuiltinCredentialRegistry(t)
+	if err := nodepack.LoadDir(deps, dir); err != nil {
+		t.Fatalf("LoadDir() error = %v", err)
+	}
+	if len(modules.specs) != 1 {
+		t.Fatalf("approved %d module specs, want 1", len(modules.specs))
+	}
 }
 
 // TestPackCredentialTypeRefusals: each rule is reported at its own JSON path.

@@ -443,9 +443,10 @@ func (credentialType Type) Fields() []Field {
 	for _, declared := range credentialType.Properties {
 		_, withheld := secret[declared.Key]
 		fallback, _ := declared.Default.(string)
+		masked := withheld || (declared.TypeOptions != nil && declared.TypeOptions.Password)
 		fields = append(fields, Field{
 			Key: declared.Key, Label: declared.Label, Description: declared.Description,
-			Required: declared.Required, Default: fallback, Secret: withheld,
+			Required: declared.Required, Default: fallback, Secret: withheld, Masked: masked,
 		})
 	}
 	return fields

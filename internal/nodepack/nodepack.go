@@ -182,6 +182,13 @@ func Decode(data []byte) (*Pack, error) {
 // Load converts a pack into the definition the editor sees and the routing
 // description the interpreter executes.
 func Load(pack *Pack) (node.Definition, *routing.Node, error) {
+	return load(pack, defaultCredentialLookup)
+}
+
+// load is Load against the credential registry lookup resolves from, which a
+// module pack's credential types are checked against: LoadDir passes the
+// registry it was given, so a type a sibling directory pack declared counts.
+func load(pack *Pack, lookup credentialLookup) (node.Definition, *routing.Node, error) {
 	if pack == nil {
 		return node.Definition{}, nil, fmt.Errorf("a node pack is required")
 	}
@@ -189,7 +196,7 @@ func Load(pack *Pack) (node.Definition, *routing.Node, error) {
 		return node.Definition{}, nil, fmt.Errorf("a node pack needs a type and a display name")
 	}
 	if pack.Module != nil {
-		return loadModule(pack)
+		return loadModule(pack, lookup)
 	}
 	if pack.Trigger == nil && len(pack.Resources) == 0 {
 		return node.Definition{}, nil, fmt.Errorf("node pack %q declares neither resources, a trigger nor a module", pack.Type)
@@ -598,9 +605,9 @@ func Register(definitions *node.Registry, routes *routing.Registry, executors Ex
 // as the node's own: the credential types it may use become credential
 // requirements the compiler checks, and its limits travel with the definition
 // so the executor applies exactly what the operator approved.
-func loadModule(pack *Pack) (node.Definition, *routing.Node, error) {
+func loadModule(pack *Pack, lookup credentialLookup) (node.Definition, *routing.Node, error) {
 	module := pack.Module
-	if issues := checkModule(pack, withOwnCredentialTypes(pack, defaultCredentialLookup)); len(issues) > 0 {
+	if issues := checkModule(pack, withOwnCredentialTypes(pack, lookup)); len(issues) > 0 {
 		return node.Definition{}, nil, fmt.Errorf("node pack %q: %s", pack.Type, issues[0].Message)
 	}
 	limits, err := module.limits()

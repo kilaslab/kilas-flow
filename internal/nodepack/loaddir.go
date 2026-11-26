@@ -234,7 +234,10 @@ func registerModule(deps DirDeps, dir, name string, pack *Pack) error {
 	if !strings.EqualFold(digestOf(module), strings.TrimSpace(pack.Module.SHA256)) {
 		return fmt.Errorf("load node pack %q: %s does not match the sha256 its manifest pins: the module was changed after it was approved", name, pack.Module.File)
 	}
-	if issues := checkModule(pack, withOwnCredentialTypes(pack, defaultCredentialLookup)); len(issues) > 0 {
+	// The registry the loader was given, which already holds every directory
+	// pack's declared types, so a module may use a type a sibling declares.
+	lookup := registryCredentialLookup(deps.Credentials)
+	if issues := checkModule(pack, withOwnCredentialTypes(pack, lookup)); len(issues) > 0 {
 		return fmt.Errorf("load node pack %q: %s", name, issues[0].Message)
 	}
 	limits, err := pack.Module.limits()
@@ -264,7 +267,7 @@ func registerModule(deps DirDeps, dir, name string, pack *Pack) error {
 	}); err != nil {
 		return fmt.Errorf("load node pack %q: %w", name, err)
 	}
-	definition, _, err := Load(pack)
+	definition, _, err := load(pack, lookup)
 	if err != nil {
 		return fmt.Errorf("load node pack %q: %w", name, err)
 	}

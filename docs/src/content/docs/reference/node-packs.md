@@ -114,17 +114,18 @@ A pack may declare credential types of its own in `credentialTypes`. Each entry:
 | `id` | yes | `<pack type>.<word>`, letters and digits after the dot, at most 64 characters. Immutable once released. |
 | `displayName` | yes | The form's title in the credential picker. |
 | `description` | no | Shown under the title. |
-| `fields` | yes | At least one field: `key`, `label`, `kind` (`string`, `number`, `boolean`, `options`), and optionally `description`, `required`, `default` (a string), `options` (options fields only), `typeOptions` (`password` masks a readable field), `secret` (never returned by the API; implies masked). |
+| `fields` | yes | At least one field: `key`, `label`, `kind` (`string`, `number`, `boolean`, `options`), and optionally `description`, `required`, `default` (a string), `options` (options fields only), `typeOptions` (`password` masks a readable field), `secret` (never returned by the API; implies masked). `kind` and `options` are validated and stored, but the editor renders every field as a text input today and option membership is not enforced. |
 | `authenticate` | no | `placement` (`header`, `query`, `basicAuth`, `bearer`, `path`, `custom`) with `name`/`value` templates over the type's own fields as `{{ key }}`, or `user`/`password` field names for `basicAuth`. Absent means the type does not sign requests. |
 | `test` | no | `method`, `url` (a `{{ key }}` template), `expectStatusBelow` (0–599), `forbiddenNote`. |
 | `defaultDomains` / `defaultDomainsFrom` | no | The host scope when the owner saved none: a fixed host list, or the name of a non-secret field holding a URL. Not both. |
 
 The loader registers every directory pack's types before it installs any pack,
 so one pack may name another's type. Two installed packs declaring the same ID
-must declare it identically; a differing declaration, an ID the deployment
-already registered, and an embedded (compiled-in) pack's declarations are not
-accepted. The semantics, the immutability contract and the boot-refusal matrix
-are in [Credential types from node
+must declare it identically; a differing declaration and an ID the deployment
+already registered refuse the boot. An embedded (compiled-in) pack's
+`credentialTypes` are ignored rather than refused: only the directory loader
+registers them. The semantics, the immutability contract and the boot-refusal
+matrix are in [Credential types from node
 packs](/concepts/credentials/#credential-types-from-node-packs).
 
 ## Install and distribution

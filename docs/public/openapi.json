@@ -2574,6 +2574,10 @@
           "label": {
             "type": "string"
           },
+          "masked": {
+            "description": "Hidden on screen while typed; true for every secret field and for a readable field the type masks",
+            "type": "boolean"
+          },
           "required": {
             "type": "boolean"
           },

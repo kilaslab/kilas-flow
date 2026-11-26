@@ -504,9 +504,9 @@ The declaration becomes exactly the `Type` a built-in is:
 | Manifest | Registered type |
 | --- | --- |
 | `id`, `displayName`, `description` | the same fields |
-| `fields[]` (`key`, `label`, `description`, `kind`, `required`, `default`, `options`, `typeOptions`) | `Properties`, in the shared property language |
-| `fields[].secret: true` | the key is added to `Secrets`, and the field is also masked (`typeOptions.password`) |
-| `fields[].typeOptions.password` without `secret` | masked in the editor, still returned by the API |
+| `fields[]` (`key`, `label`, `description`, `kind`, `required`, `default`, `options`, `typeOptions`) | `Properties`, in the shared property language. `kind` and `options` are validated and stored with the type, but the credential editor renders every field as a text input today and does not enforce option membership on save. |
+| `fields[].secret: true` | the key is added to `Secrets`, and the field is also masked (`typeOptions.password`); `GET /credential-types` reports `secret: true, masked: true` |
+| `fields[].typeOptions.password` without `secret` | `masked: true` — hidden in the editor while typed, still returned by the API |
 | `authenticate` | the placement descriptor above, any of the six placements |
 | `test` | the probe [Testing a credential](#testing-a-credential) runs |
 | `defaultDomains` / `defaultDomainsFrom` | the default host scope (one or the other, not both) |
@@ -586,7 +586,9 @@ Notes:
   attach it. A pack type for a host API should name its base URL field.
 - Credential types are global. A pack scoped with `visibleTo` still registers
   its types for every tenant, because the credential catalogue has no tenant
-  dimension.
+  dimension: every tenant's `GET /credential-types` lists them, names,
+  fields and `defaultDomains` included, so do not put anything confidential in
+  a declaration.
 - Only directory packs register types. An embedded pack (compiled into the
   binary) that needs a new type adds it to `builtin.go` instead.
 - Uninstalling the pack removes the type at the next boot. Credential rows of

@@ -59,6 +59,11 @@ type CredentialType struct {
 }
 
 // CredentialField is one field of a pack's credential type.
+//
+// Kind and Options are validated and stored with the type, but the credential
+// editor renders every field as a text input today and option membership is
+// not enforced on save; Secret and typeOptions.password are what change how a
+// field is shown (GET /credential-types reports both as `masked`).
 type CredentialField struct {
 	Key         string                    `json:"key"`
 	Label       string                    `json:"label"`
