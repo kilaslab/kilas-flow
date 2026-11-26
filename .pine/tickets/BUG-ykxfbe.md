@@ -1,13 +1,13 @@
 ---
 id: BUG-ykxfbe
 title: 'PostgreSQL: a key label or email longer than 64 characters makes every save and publish fail (created_by / publish actor are varchar(64))'
-status: testing
+status: done
 priority: medium
 labels:
     - persistence
     - postgres
 created: "2026-11-26T07:41:56Z"
-updated: "2026-11-26T08:50:00Z"
+updated: "2026-11-26T08:51:49Z"
 ---
 
 # Description
@@ -32,3 +32,58 @@ Related: FEAT-s3sfx5 (embed actor identity).
 - Regression test `internal/repository/long_actor_test.go` (TestALongActorLabelIsStoredWholeOnEveryDriver, eachDriver): save, activate, deactivate and restore with a 255-character multibyte key label (510 bytes) and a 255-character email; asserts createdBy, actorLabel and every publish event's actor are the whole label. **Fails before the fix on a live PostgreSQL 17** (`SaveDraft() error = create workflow version: ERROR: value too long for type character varying(64) (SQLSTATE 22001)` for both the key and the user), passes after; the SQLite half passed before and after, as expected.
 - Migration test `internal/database/legacy_actor_width_migration_test.go`: after Migrate both columns are varchar(255) and hold 255 characters; rollBackBelow("legacy_actor_width") narrows them to varchar(64) and truncates to the first 64 characters (rune-safe, PostgreSQL counts characters); Migrate again restores 255. SQLite: rollback leaves the value whole. The reads cast to text because pgx's cached plan refuses a result type that changed from varchar(255) to varchar(64).
 - Verified: `KILASFLOW_TEST_POSTGRES_DSN=... CGO_ENABLED=0 go test -p 1 -count=1 ./internal/database/... ./internal/repository/...` (PostgreSQL 17 container) ok; `CGO_ENABLED=0 go test -count=1 ./internal/repository/... ./internal/database/... ./internal/api/... ./internal/tenantpurge/...` ok; gofmt -l internal clean; go vet ./internal/... clean; make generate-docs-facts-check up to date. CHANGELOG Fixed entry added.
+
+## Work Evidence
+
+Recorded from commits by `pine close --evidence --commit` on 2026-11-26.
+
+- Commits (5):
+  - `ad5dc274` — BUG-ykxfbe: correct the migration comments, the test's byte count and the cached-plan learning after review
+  - `73c459fb` — merge: widen the legacy actor columns to varchar(255) (BUG-ykxfbe)
+  - `ac6e1e2e` — chore(pine): BUG-ykxfbe learning, pgx cached plans refuse a changed column type mid-test
+  - `07f1ab2b` — chore(pine): BUG-ykxfbe moves to testing with its fix notes
+  - `f8921063` — BUG-ykxfbe: widen created_by and publish actor to varchar(255) so a long key label or email no longer fails every save and publish on PostgreSQL
+- Files changed:
+
+```
+ad5dc274 BUG-ykxfbe: correct the migration comments, the test's byte count and the cached-plan learning after review
+
+ .pine/memory/persistence.md                            | 2 +-
+ internal/repository/long_actor_test.go                 | 2 +-
+ migrations/postgres/000031_legacy_actor_width.down.sql | 2 +-
+ migrations/postgres/000031_legacy_actor_width.up.sql   | 2 +-
+ migrations/sqlite/000031_legacy_actor_width.up.sql     | 4 ++--
+ 5 files changed, 6 insertions(+), 6 deletions(-)
+73c459fb merge: widen the legacy actor columns to varchar(255) (BUG-ykxfbe)
+
+ .pine/memory/persistence.md                        |   3 +-
+ .pine/tickets/BUG-ykxfbe.md                        |  17 ++-
+ CHANGELOG.md                                       |   7 +
+ .../database/legacy_actor_width_migration_test.go  | 160 +++++++++++++++++++++
+ internal/repository/long_actor_test.go             | 126 ++++++++++++++++
+ internal/repository/models.go                      |  11 +-
+ .../postgres/000031_legacy_actor_width.down.sql    |  14 ++
+ .../postgres/000031_legacy_actor_width.up.sql      |  18 +++
+ .../sqlite/000031_legacy_actor_width.down.sql      |  12 ++
+ migrations/sqlite/000031_legacy_actor_width.up.sql |  14 ++
+ 10 files changed, 373 insertions(+), 9 deletions(-)
+ac6e1e2e chore(pine): BUG-ykxfbe learning, pgx cached plans refuse a changed column type mid-test
+
+ .pine/memory/persistence.md | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+07f1ab2b chore(pine): BUG-ykxfbe moves to testing with its fix notes
+
+ .pine/tickets/BUG-ykxfbe.md | 17 +++++++++++++----
+ 1 file changed, 13 insertions(+), 4 deletions(-)
+f8921063 BUG-ykxfbe: widen created_by and publish actor to varchar(255) so a long key label or email no longer fails every save and publish on PostgreSQL
+
+ CHANGELOG.md                                       |   7 +
+ .../database/legacy_actor_width_migration_test.go  | 160 +++++++++++++++++++++
+ internal/repository/long_actor_test.go             | 126 ++++++++++++++++
+ internal/repository/models.go                      |  11 +-
+ .../postgres/000031_legacy_actor_width.down.sql    |  14 ++
+ .../postgres/000031_legacy_actor_width.up.sql      |  18 +++
+ .../sqlite/000031_legacy_actor_width.down.sql      |  12 ++
+ migrations/sqlite/000031_legacy_actor_width.up.sql |  14 ++
+ 8 files changed, 358 insertions(+), 4 deletions(-)
+```
