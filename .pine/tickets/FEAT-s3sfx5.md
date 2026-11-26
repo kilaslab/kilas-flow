@@ -1,7 +1,7 @@
 ---
 id: FEAT-s3sfx5
 title: Actor identity in embed sessions
-status: todo
+status: testing
 priority: medium
 labels:
     - saas
@@ -9,7 +9,7 @@ labels:
     - audit
 parent: EPIC-7c3ry9
 created: "2026-09-23T02:07:00Z"
-updated: "2026-09-23T02:07:00Z"
+updated: "2026-11-26T07:35:00Z"
 ---
 
 # Description
@@ -17,10 +17,19 @@ updated: "2026-09-23T02:07:00Z"
 The token names the tenant, workflow, scopes and origin, but not the user (`internal/embed/embed.go:148-171`). Version history, publish events and manual runs therefore cannot say which host user acted.
 
 # Acceptance Criteria
-- [ ] Minting accepts `actor: { id, displayName }`, which is signed into the token.
-- [ ] The actor is recorded on versions, publish events and manually queued executions, returned by the API, and shown in history.
+- [x] Minting accepts `actor: { id, displayName }`, which is signed into the token.
+- [x] The actor is recorded on versions, publish events and manually queued executions, returned by the API, and shown in history.
 
 # Implementation Plan
+
+## Implementation notes
+
+- `embed.Actor{ID, DisplayName}` is validated in `Actor.Validate()` (id 1-128 of `[A-Za-z0-9._:@|+/=-]`; display name optional, max 64 runes because it is copied into the varchar(64) `created_by`/`actor` columns, letters/marks/digits/spaces/simple punctuation, no leading or trailing space) and signed into the token as `Session.Actor` (json `act`, pointer). Old tokens still verify with a nil actor; tokenVersion stays `kfe1`.
+- `requestActor()` checks the embed session first and maps it to the new kind `embed` (Label = displayName, new `Actor.ID` = host id; never reuses `actor_key_id`). An unnamed session records `embed` with no label.
+- Migration 000029 (both dialects): `workflow_versions.actor_id` (nullable), `workflow_publish_events.actor_id`, and `executions.actor_kind/actor_label/actor_key_id/actor_id` (NOT NULL DEFAULT ''). No backfill.
+- `queueManual` fills the execution actor from `repository.ActorFrom(ctx)`; Run and Retry pass `audited(ctx, "")`. QueueTriggered, sub-workflow queueing and the idempotency fingerprint are untouched.
+- API: actor enums are `user,key,embed`; `actorId` on version and publish-event resources; four actor fields on execution detail and summary. Web: `actorName()` renders "{name} (embedded)" / "Embedded editor" in the version list, the publish timeline and the execution detail page. SDK `EmbedSessionRequest.actor`. Docs: embedding guide section "Naming the user who acts", changelogs, regenerated clients and references.
+- Verified: gofmt, go vet ./internal/..., CGO_ENABLED=0 go test of embed, repository, database, api/..., guardrails, tenantpurge, workflow, execution (all ok); make generate-api-check generate-types-check generate-api-reference-check generate-sdk-reference-check generate-docs-facts-check (fresh); web version-history test + pnpm check (0 errors); sdk pnpm test (167 passed) + pnpm check.
 
 # Notes
 

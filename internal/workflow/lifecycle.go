@@ -49,6 +49,9 @@ type VersionSummary struct {
 	ActorKind  string `json:"actorKind,omitempty"`
 	ActorLabel string `json:"actorLabel,omitempty"`
 	ActorKeyID string `json:"actorKeyId,omitempty"`
+	// ActorID is the host's identifier for an "embed" actor: the user a host
+	// named when it minted the embed session. Host-asserted, never verified.
+	ActorID string `json:"actorId,omitempty"`
 	// ActorMeta is what the caller reported using to make the write, today the
 	// skills an agent listed in X-KilasFlow-Skills-Used.
 	ActorMeta []string `json:"actorMeta,omitempty"`
@@ -84,12 +87,13 @@ type PublishEvent struct {
 	VersionID  string        `json:"versionId"`
 	Action     PublishAction `json:"action"`
 	Actor      string        `json:"actor,omitempty"`
-	// ActorKind, ActorLabel and ActorKeyID are who acted, in the same
+	// ActorKind, ActorLabel, ActorKeyID and ActorID are who acted, in the same
 	// vocabulary the revision listing uses. Absent when the publish predates
 	// attribution, which is a different answer from an actor nobody named.
 	ActorKind  string    `json:"actorKind,omitempty"`
 	ActorLabel string    `json:"actorLabel,omitempty"`
 	ActorKeyID string    `json:"actorKeyId,omitempty"`
+	ActorID    string    `json:"actorId,omitempty"`
 	Reason     string    `json:"reason,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
 }

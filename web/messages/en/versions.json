@@ -2,6 +2,8 @@
 	"versions_role_draft": "Draft",
 	"versions_role_published": "Published",
 	"versions_revision_title": "Revision {revision}",
+	"versions_actor_embedded": "{name} (embedded)",
+	"versions_actor_embedded_unnamed": "Embedded editor",
 	"versions_time_unknown": "—",
 	"versions_time_just_now": "just now",
 	"versions_refusal_cannot_change": "This session cannot change this workflow.",

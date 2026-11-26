@@ -146,7 +146,8 @@ const session = await tenant.client.createEmbedSession({
   workflowId: tenant.workflowId,
   scopes: ['workflow:read', 'workflow:write', 'workflow:run'],
   origin, // a server-side constant, never taken from request headers
-  branding: tenant.branding
+  branding: tenant.branding,
+  actor: { id: user.id, displayName: user.name } // optional: who is editing
 });
 ```
 
@@ -158,6 +159,34 @@ expiry the editor posts `session-expiring`, the host mints a replacement and
 hands it over with the SDK's `setSession`, and the editor swaps the token in
 place instead of reloading (see
 [the postMessage protocol](#the-postmessage-protocol-v2)).
+
+#### Naming the user who acts
+
+`actor` is optional. When the host names its user, KilasFlow signs the
+actor into the token and records it as an `embed` actor on every revision
+the session saves, every publish event it causes, and every manual run or
+retry it queues. The version panel's revision list and publish timeline show
+the name as "Ada Lovelace (embedded)", and the API returns it as
+`actorKind: "embed"`, `actorLabel` (the display name) and `actorId` (your
+identifier) on workflow versions, publish events and executions.
+
+- `id` is your own stable identifier for the user: 1 to 128 letters, digits
+  and `. _ - : @ | + / =`, so provider subjects such as `auth0|abc` and email
+  addresses both fit.
+- `displayName` is optional: at most 64 letters, digits, spaces and simple
+  punctuation, without leading or trailing spaces. Anything outside those
+  limits is refused with a 422 at minting, never truncated.
+- A session minted without an actor still records `embed`, with no label:
+  the trail says an embedded editor acted and invents no name. The panel shows
+  it as "Embedded editor".
+- The actor is host-asserted. KilasFlow signs it so the browser cannot change
+  it, but never verifies it against an identity provider: it is attribution
+  for the audit trail, not authentication, and it grants nothing. Your
+  backend's entitlement check is still the authorization.
+- Mint a fresh session for each user. A token shared between two users
+  attributes both users' work to whoever it names.
+- A server older than this field refuses a mint body that carries `actor`
+  with a 422, so upgrade KilasFlow before your host starts sending it.
 
 #### Publish and activate authority
 

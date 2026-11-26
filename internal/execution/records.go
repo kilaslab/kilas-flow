@@ -86,6 +86,14 @@ type Record struct {
 	FinishedAt              *time.Time      `json:"finishedAt,omitempty"`
 	CancellationRequestedAt *time.Time      `json:"cancellationRequestedAt,omitempty"`
 	NodeRuns                []NodeRun       `json:"nodeRuns,omitempty"`
+	// ActorKind, ActorLabel, ActorKeyID and ActorID are who queued a manual run
+	// or a retry: "user", "key" or "embed", with the label, key identifier, or
+	// host user identifier beside it. Empty for a trigger-started run and for
+	// every run queued before attribution existed.
+	ActorKind  string `json:"actorKind,omitempty"`
+	ActorLabel string `json:"actorLabel,omitempty"`
+	ActorKeyID string `json:"actorKeyId,omitempty"`
+	ActorID    string `json:"actorId,omitempty"`
 	// LeaseOwner is an internal fencing token copied from durable storage when
 	// a worker claims a record. It is intentionally never part of the API.
 	LeaseOwner string `json:"-"`

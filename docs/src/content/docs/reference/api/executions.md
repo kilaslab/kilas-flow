@@ -47,6 +47,10 @@ Response (skeleton — every field, placeholder values):
 {
   "items": [
     {
+      "actorId": "string",
+      "actorKeyId": "string",
+      "actorKind": "user",
+      "actorLabel": "string",
       "durationMs": 0,
       "finishedAt": "2026-01-02T15:04:05Z",
       "id": "string",
@@ -108,6 +112,10 @@ Fields of the `ExecutionResource` body:
 
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
+| `actorId` | no | `string` | Who queued this run, for a manual run or a retry: the host's identifier for an embed session's user, host-asserted and not verified. Absent for trigger-started runs and runs queued before attribution. |
+| `actorKeyId` | no | `string` | Who queued this run, for a manual run or a retry: the identifier of the API key. Absent for trigger-started runs and runs queued before attribution. |
+| `actorKind` | no | `string` | Who queued this run, for a manual run or a retry: user for a signed-in person, key for an API key, embed for an embed session. Absent for trigger-started runs and runs queued before attribution. |
+| `actorLabel` | no | `string` | Who queued this run, for a manual run or a retry: the email address, API key name, or embed display name, where one is known. Absent for trigger-started runs and runs queued before attribution. |
 | `approvalUrl` | no | `string` | The approval page, for a run waiting on an approval only |
 | `cancellationRequestedAt` | no | `string` | — |
 | `error` | no |  | — |
@@ -130,6 +138,10 @@ Response (skeleton — every field, placeholder values):
 
 ```json
 {
+  "actorId": "string",
+  "actorKeyId": "string",
+  "actorKind": "user",
+  "actorLabel": "string",
   "approvalUrl": "https://flows.example",
   "cancellationRequestedAt": "2026-01-02T15:04:05Z",
   "error": null,
@@ -276,6 +288,10 @@ Fields of the `ExecutionResource` body:
 
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
+| `actorId` | no | `string` | Who queued this run, for a manual run or a retry: the host's identifier for an embed session's user, host-asserted and not verified. Absent for trigger-started runs and runs queued before attribution. |
+| `actorKeyId` | no | `string` | Who queued this run, for a manual run or a retry: the identifier of the API key. Absent for trigger-started runs and runs queued before attribution. |
+| `actorKind` | no | `string` | Who queued this run, for a manual run or a retry: user for a signed-in person, key for an API key, embed for an embed session. Absent for trigger-started runs and runs queued before attribution. |
+| `actorLabel` | no | `string` | Who queued this run, for a manual run or a retry: the email address, API key name, or embed display name, where one is known. Absent for trigger-started runs and runs queued before attribution. |
 | `approvalUrl` | no | `string` | The approval page, for a run waiting on an approval only |
 | `cancellationRequestedAt` | no | `string` | — |
 | `error` | no |  | — |
@@ -298,6 +314,10 @@ Response (skeleton — every field, placeholder values):
 
 ```json
 {
+  "actorId": "string",
+  "actorKeyId": "string",
+  "actorKind": "user",
+  "actorLabel": "string",
   "approvalUrl": "https://flows.example",
   "cancellationRequestedAt": "2026-01-02T15:04:05Z",
   "error": null,

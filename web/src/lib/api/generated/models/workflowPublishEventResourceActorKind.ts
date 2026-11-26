@@ -7,7 +7,7 @@
  */
 
 /**
- * What kind of caller acted: user for a signed-in person, key for an API key. Absent when the publish predates attribution or arrived unauthenticated.
+ * What kind of caller acted: user for a signed-in person, key for an API key, embed for an embed session. Absent when the publish predates attribution or arrived unauthenticated.
  */
 export type WorkflowPublishEventResourceActorKind = typeof WorkflowPublishEventResourceActorKind[keyof typeof WorkflowPublishEventResourceActorKind];
 
@@ -15,4 +15,5 @@ export type WorkflowPublishEventResourceActorKind = typeof WorkflowPublishEventR
 export const WorkflowPublishEventResourceActorKind = {
   user: 'user',
   key: 'key',
+  embed: 'embed',
 } as const;

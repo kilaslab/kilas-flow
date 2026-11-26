@@ -540,6 +540,24 @@ describe('embed sessions', () => {
 		expect(session.token).toBe('kfe1.a.b');
 	});
 
+	it('forwards the acting host user in the mint body', async () => {
+		const { calls, fetchImpl } = recordingFetch({
+			status: 201,
+			body: { token: 'kfe1.a.b', embedUrl: '/embed/wf-1', scopes: ['workflow:write'], origin: 'https://host.example' }
+		});
+		await client(fetchImpl, { Authorization: 'Bearer host-key' }).createEmbedSession({
+			workflowId: 'wf-1',
+			scopes: ['workflow:write'],
+			origin: 'https://host.example',
+			actor: { id: 'auth0|ada', displayName: 'Ada Lovelace' }
+		});
+
+		expect(JSON.parse(String(calls[0]!.init.body))).toMatchObject({
+			workflowId: 'wf-1',
+			actor: { id: 'auth0|ada', displayName: 'Ada Lovelace' }
+		});
+	});
+
 	it('needs exactly one subject before it reaches the network', async () => {
 		const { calls, fetchImpl } = recordingFetch({ status: 201, body: {} });
 		const sdk = client(fetchImpl);

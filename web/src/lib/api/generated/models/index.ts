@@ -8,6 +8,7 @@
 
 export * from './activationNotice';
 export * from './activationResource';
+export * from './actor';
 export * from './aIAgentCompletedEvent';
 export * from './aIAgentFailedEvent';
 export * from './aIModelCompletedEvent';
@@ -72,8 +73,10 @@ export * from './executionListResource';
 export * from './executionNodeRunResource';
 export * from './executionRequestResource';
 export * from './executionResource';
+export * from './executionResourceActorKind';
 export * from './executionStartedEvent';
 export * from './executionSummary';
+export * from './executionSummaryActorKind';
 export * from './executionWaitingEvent';
 export * from './exportDatastoreRowsParams';
 export * from './exportedWorkflowResource';

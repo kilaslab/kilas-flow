@@ -1278,6 +1278,7 @@ Response (skeleton — every field, placeholder values):
 {
   "items": [
     {
+      "actorId": "string",
       "actorKeyId": "string",
       "actorKind": "user",
       "actorLabel": "string",

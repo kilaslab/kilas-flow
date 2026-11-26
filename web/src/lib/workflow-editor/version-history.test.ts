@@ -5,10 +5,12 @@ import { setLocale } from '$lib/i18n/locale.svelte';
 import * as m from '$lib/paraglide/messages.js';
 import type { ConnectionChange } from '$lib/workflow-editor/history-diff';
 import {
+	actorName,
 	connectionChangeSentence,
 	eventRevisionLabel,
 	publishConfirmation,
 	publishEventActionLabel,
+	publishEventAuthor,
 	publishEventSentence,
 	publishRefusal,
 	relativeTime,
@@ -93,6 +95,44 @@ describe('versionAuthor', () => {
 		// have no author and the column is nullable for that reason.
 		expect(versionAuthor(summary())).toBeNull();
 		expect(versionAuthor(summary({ createdBy: '  ' }))).toBeNull();
+	});
+});
+
+describe('actor names', () => {
+	afterEach(() => {
+		setLocale('en');
+	});
+
+	it('marks an embed actor as the name its host gave', () => {
+		expect(actorName('embed', 'Ada Lovelace', 'auth0|ada')).toBe('Ada Lovelace (embedded)');
+		expect(versionAuthor(summary({ actorKind: 'embed', actorLabel: 'Ada Lovelace', createdBy: 'Ada Lovelace', actorId: 'auth0|ada' }))).toBe(
+			'Ada Lovelace (embedded)'
+		);
+	});
+
+	it('falls back to the host identifier, then to an unnamed embedded editor', () => {
+		expect(actorName('embed', '', 'auth0|ada')).toBe('auth0|ada (embedded)');
+		expect(actorName('embed', undefined, undefined)).toBe('Embedded editor');
+		expect(versionAuthor(summary({ actorKind: 'embed' }))).toBe('Embedded editor');
+	});
+
+	it('names a person or a key as before, and nobody when nothing is known', () => {
+		expect(actorName('user', 'ada@example.com')).toBe('ada@example.com');
+		expect(actorName('key', 'ci-agent', 'ignored')).toBe('ci-agent');
+		expect(actorName(undefined, '  ')).toBeNull();
+		expect(versionAuthor(summary({ createdBy: 'yusril' }))).toBe('yusril');
+	});
+
+	it('reads a publish event, falling back to its legacy actor label', () => {
+		expect(publishEventAuthor({ actorKind: 'embed', actorLabel: 'Ada Lovelace', actor: 'Ada Lovelace' })).toBe('Ada Lovelace (embedded)');
+		expect(publishEventAuthor({ actor: 'ada@example.com' })).toBe('ada@example.com');
+		expect(publishEventAuthor({})).toBeNull();
+	});
+
+	it('marks the embed actor in Indonesian', () => {
+		expect(setLocale('id')).toBe(true);
+		expect(actorName('embed', 'Ada', undefined)).toBe('Ada (tertanam)');
+		expect(actorName('embed', '', '')).toBe('Editor tertanam');
 	});
 });
 

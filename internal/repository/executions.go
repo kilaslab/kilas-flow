@@ -217,6 +217,7 @@ func (store *GORMExecutionStore) queueManual(ctx context.Context, tenant TenantS
 		return execution.Record{}, err
 	}
 	startedAt := time.Now().UTC()
+	actor := ActorFrom(ctx)
 
 	var model executionModel
 	err = store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -267,6 +268,12 @@ func (store *GORMExecutionStore) queueManual(ctx context.Context, tenant TenantS
 			Output:            []byte("null"),
 			Error:             []byte("null"),
 			StartedAt:         startedAt,
+			// Who asked for this run, as the API boundary tagged the context.
+			// An untagged context records nobody rather than a guess.
+			ActorKind:  actor.Kind,
+			ActorLabel: actor.Label,
+			ActorKeyID: actor.KeyID,
+			ActorID:    actor.ID,
 		}
 		if err := tx.Create(&model).Error; err != nil {
 			return fmt.Errorf("create execution: %w", err)
@@ -1525,6 +1532,10 @@ func executionFromModel(model executionModel) execution.Record {
 		FinishedAt:              model.FinishedAt,
 		CancellationRequestedAt: model.CancellationRequestedAt,
 		LeaseOwner:              model.LeaseOwner,
+		ActorKind:               model.ActorKind,
+		ActorLabel:              model.ActorLabel,
+		ActorKeyID:              model.ActorKeyID,
+		ActorID:                 model.ActorID,
 	}
 }
 

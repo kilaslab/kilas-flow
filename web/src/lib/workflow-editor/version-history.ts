@@ -36,10 +36,29 @@ export function versionRoles(summary: Pick<WorkflowVersionSummaryResource, 'draf
 	return roles;
 }
 
+/**
+ * What to call an actor, or null when nothing names one.
+ *
+ * An embed actor is the user a host named when it minted the session, and the
+ * name is marked as such: it is what the host asserted, not an account this
+ * deployment knows. A session minted without a name still says an embedded
+ * editor acted rather than leaving the row blank; one with only the host's
+ * identifier shows that identifier.
+ */
+export function actorName(kind: string | null | undefined, label: string | null | undefined, id?: string | null): string | null {
+	const name = label?.trim() || (kind === 'embed' ? id?.trim() : '');
+	if (kind === 'embed') return name ? m.versions_actor_embedded({ name }) : m.versions_actor_embedded_unnamed();
+	return name ? name : null;
+}
+
 /** Who saved a revision, or null when the deployment never knew. */
-export function versionAuthor(summary: Pick<WorkflowVersionSummaryResource, 'createdBy'>): string | null {
-	const author = summary.createdBy?.trim();
-	return author ? author : null;
+export function versionAuthor(summary: Pick<WorkflowVersionSummaryResource, 'createdBy' | 'actorKind' | 'actorLabel' | 'actorId'>): string | null {
+	return actorName(summary.actorKind, summary.actorLabel || summary.createdBy, summary.actorId);
+}
+
+/** Who caused a publish event, falling back to the legacy actor label. */
+export function publishEventAuthor(event: Pick<WorkflowPublishEventResource, 'actor' | 'actorKind' | 'actorLabel' | 'actorId'>): string | null {
+	return actorName(event.actorKind, event.actorLabel || event.actor, event.actorId);
 }
 
 /** What to call a revision in a sentence, preferring the name a person gave it. */

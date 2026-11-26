@@ -7,7 +7,7 @@
  */
 
 /**
- * What kind of caller saved this revision: user for a signed-in person, key for an API key. Absent when the write predates attribution or arrived unauthenticated.
+ * What kind of caller saved this revision: user for a signed-in person, key for an API key, embed for an embed session. Absent when the write predates attribution or arrived unauthenticated.
  */
 export type WorkflowVersionSummaryResourceActorKind = typeof WorkflowVersionSummaryResourceActorKind[keyof typeof WorkflowVersionSummaryResourceActorKind];
 
@@ -15,4 +15,5 @@ export type WorkflowVersionSummaryResourceActorKind = typeof WorkflowVersionSumm
 export const WorkflowVersionSummaryResourceActorKind = {
   user: 'user',
   key: 'key',
+  embed: 'embed',
 } as const;

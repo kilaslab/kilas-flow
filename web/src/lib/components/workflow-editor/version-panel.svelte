@@ -23,6 +23,7 @@
 		eventRevisionLabel,
 		publishConfirmation,
 		publishEventActionLabel,
+		publishEventAuthor,
 		publishEventSentence,
 		publishRefusal,
 		relativeTime,
@@ -518,12 +519,13 @@
 				{:else}
 					<ol class="space-y-3" aria-label={m.versions_publish_history_aria()}>
 						{#each events as event, index (`${event.createdAt}-${event.versionId}-${index}`)}
+							{@const eventAuthor = publishEventAuthor(event)}
 							<li class="flex gap-2">
 								<StatusBadge class="shrink-0 self-start" status={event.action} label={publishEventActionLabel(event)} />
 								<span class="min-w-0">
 									<span class="block text-xs">{publishEventSentence(event, eventRevisionLabel(event.versionId, loaded.items))}</span>
 									<span class="block text-[0.6875rem] text-muted-foreground">
-										{relativeTime(event.createdAt, { locale: currentLocale() })}{#if event.actor} · {event.actor}{/if}{#if event.reason} · {event.reason}{/if}
+										{relativeTime(event.createdAt, { locale: currentLocale() })}{#if eventAuthor} · {eventAuthor}{/if}{#if event.reason} · {event.reason}{/if}
 									</span>
 								</span>
 							</li>

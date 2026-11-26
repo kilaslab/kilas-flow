@@ -2,6 +2,8 @@
 	"versions_role_draft": "Draf",
 	"versions_role_published": "Diterbitkan",
 	"versions_revision_title": "Revisi {revision}",
+	"versions_actor_embedded": "{name} (tertanam)",
+	"versions_actor_embedded_unnamed": "Editor tertanam",
 	"versions_time_unknown": "—",
 	"versions_time_just_now": "baru saja",
 	"versions_refusal_cannot_change": "Sesi ini tidak dapat mengubah alur kerja ini.",

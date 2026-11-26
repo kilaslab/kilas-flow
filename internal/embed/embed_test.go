@@ -460,6 +460,9 @@ func TestATokenMintedBeforeDatastoresStillVerifies(t *testing.T) {
 	if !session.Allows(embed.ScopeRead) || !session.Allows(embed.ScopeWrite) || session.Allows(embed.ScopeRun) {
 		t.Errorf("scopes = %#v, want the original workflow scopes and nothing else", session.Scopes)
 	}
+	if session.Actor != nil {
+		t.Errorf("actor = %#v, want none on a token minted before actors existed", session.Actor)
+	}
 }
 
 // A nil issuer refuses every token.
