@@ -146,7 +146,7 @@ type Deps struct {
 	// wired has always had.
 	RateLimiter handlers.RateLimiter
 	// TenantSettings is the per-tenant settings cache behind PATCH
-	// /admin/tenants/{id}. Nil leaves that operation answering 503.
+	// /tenants/{id}. Nil leaves that operation answering 503.
 	TenantSettings *tenantsettings.Cache
 	Version        string
 	// OAuthSigningKey HMAC-signs Google Connect state. Empty disables Connect.

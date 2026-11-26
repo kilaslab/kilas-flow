@@ -8,7 +8,7 @@ until the server surface it targets is considered stable; see `README.md`.
 ## Unreleased
 
 - **Additive**: `updateTenant(tenantId, { settings })` — `PATCH
-  /api/v1/admin/tenants/{id}`, the operator's per-tenant settings. `settings`
+  /api/v1/tenants/{id}`, the operator's per-tenant settings. `settings`
   is a merge patch over the stored document, section by section, with `null`
   removing a field or a section. Refusals are 422 problems whose `errors[]`
   carry `value.code` `tenant_settings_unknown_key` or

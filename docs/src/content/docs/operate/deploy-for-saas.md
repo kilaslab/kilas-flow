@@ -184,9 +184,10 @@ whatever worker is free. There is no tenant-to-worker pinning.
   `Retry-After` and the `rate_limited` problem code before any execution
   exists. With more than one server process behind a load balancer, set
   `ratelimit.store: database` so the processes share one allowance;
-  in-memory buckets would each grant the full rate. Per-tenant *overrides*
-  of these defaults arrive with the tenant-settings surface; the
-  deployment-wide defaults stand alone.
+  in-memory buckets would each grant the full rate. A tenant's own
+  allowances override these defaults through its `rateLimit` settings
+  section (`PATCH /api/v1/tenants/{id}`; see
+  [Tenant settings](/operate/tenants/#tenant-settings)).
 - **Worker capacity is shared, not per tenant.** A tenant is a row with no
   configuration beyond which node types it may see; one customer's hundred
   concurrent runs occupy the same workers and connections as any other

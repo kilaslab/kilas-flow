@@ -23,6 +23,18 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- Per-tenant settings. `PATCH /api/v1/tenants/{id}` (operator key only) merges
+  a settings patch into the tenant's stored document, section by section, with
+  `null` removing a field or a section; `GET /api/v1/tenants/{id}` and the
+  listing return `settings` and `settingsVersion`. Unknown keys are refused
+  with `tenant_settings_unknown_key`, rejected values with
+  `tenant_settings_invalid` (both 422), and a write that keeps losing to a
+  concurrent one with `tenant_settings_conflict` (409). The first section is
+  `rateLimit` (`runPerMinute`, `webhookPerMinute`, `eventsPerMinute`), which
+  overrides the deployment's `ratelimit.*` defaults for that tenant. A change
+  applies at once on the serving process and within 5 seconds on every other.
+  Migration 000030 adds two columns to `tenants`. The SDK gains
+  `updateTenant`.
 - Credential key rotation. `security.secondary_encryption_key_env` (default
   `KILASFLOW_ENCRYPTION_KEY_SECONDARY`) holds the previous key during a
   rotation: it opens what it sealed and seals nothing. `kilasflow
