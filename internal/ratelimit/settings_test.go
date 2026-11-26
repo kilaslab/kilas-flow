@@ -72,6 +72,19 @@ func TestALoweredCapacityAppliesWithoutWaitingForARefill(t *testing.T) {
 	}
 }
 
+func TestEachRateLimitFieldOverridesItsOwnBucket(t *testing.T) {
+	cache := tenantsettings.NewCache(settingsRegistry(t), staticLoader{
+		"acme": `{"rateLimit":{"runPerMinute":11,"webhookPerMinute":22,"eventsPerMinute":33}}`,
+	})
+	overrides := SettingsOverrides{Cache: cache}
+	ctx := context.Background()
+	for bucket, want := range map[string]int{BucketRun: 11, BucketWebhook: 22, BucketEvents: 33, "unknown": 0} {
+		if got := overrides.Allowance(ctx, "acme", bucket); got != want {
+			t.Errorf("Allowance(%s) = %d, want %d", bucket, got, want)
+		}
+	}
+}
+
 // staticLoader serves fixed documents, one per tenant.
 type staticLoader map[string]string
 

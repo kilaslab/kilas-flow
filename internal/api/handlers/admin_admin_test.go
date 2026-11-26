@@ -45,6 +45,8 @@ type adminTestStore struct {
 	tenants []repository.TenantSummary
 	// getTenantErr, when set, is what GetTenant returns.
 	getTenantErr error
+	// updateSettingsErr, when set, is what UpdateTenantSettings returns.
+	updateSettingsErr error
 	// createTenantErr and createUserErr are what the creates return.
 	createTenantErr error
 	createUserErr   error
@@ -99,6 +101,9 @@ func (stub *adminTestStore) ReadTenantSettings(_ context.Context, id string) ([]
 
 func (stub *adminTestStore) UpdateTenantSettings(_ context.Context, id string, apply func([]byte) ([]byte, error)) (repository.Tenant, error) {
 	stub.calls++
+	if stub.updateSettingsErr != nil {
+		return repository.Tenant{}, stub.updateSettingsErr
+	}
 	for i, summary := range stub.tenants {
 		if summary.ID != id {
 			continue
@@ -878,5 +883,26 @@ func TestAdminDeleteContinuesAfterTheRequestContextIsCancelled(t *testing.T) {
 	}
 	if out.Body.TenantRemoved != true {
 		t.Errorf("TenantRemoved = %v, want the completed result", out.Body.TenantRemoved)
+	}
+}
+
+func TestAdminSettingsContentionAnswers409WithTheConflictCode(t *testing.T) {
+	store := &adminTestStore{
+		tenants:           []repository.TenantSummary{{Tenant: repository.Tenant{ID: "acme", Name: "Acme"}}},
+		updateSettingsErr: fmt.Errorf("%w: tenant %q", repository.ErrSettingsContention, "acme"),
+	}
+	input := &updateTenantInput{ID: "acme"}
+	input.Body.Settings = map[string]json.RawMessage{"rateLimit": json.RawMessage(`{"runPerMinute":5}`)}
+	_, err := adminHandler(store).UpdateTenant(adminOperatorContext(), input)
+	if status := statusOf(t, err); status != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", status)
+	}
+	var model *huma.ErrorModel
+	if !errors.As(err, &model) || len(model.Errors) != 1 {
+		t.Fatalf("error = %#v, want one error detail", err)
+	}
+	issue, ok := model.Errors[0].Value.(tenantSettingsIssue)
+	if !ok || issue.Code != TenantSettingsConflictCode {
+		t.Errorf("detail value = %#v, want the %s code", model.Errors[0].Value, TenantSettingsConflictCode)
 	}
 }

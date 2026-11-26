@@ -3,6 +3,7 @@ package tenantsettings
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -232,5 +233,31 @@ func TestANilCacheReadsAsNoSettings(t *testing.T) {
 	cache.Invalidate("acme")
 	if cache.Registry() != nil {
 		t.Error("nil cache has a registry")
+	}
+}
+
+func TestAFullCacheStartsOverRatherThanGrowing(t *testing.T) {
+	loader := newCountingLoader()
+	cache, _ := newTestCache(t, loader)
+	for i := 0; i < maxCacheEntries; i++ {
+		if _, err := cache.Get(context.Background(), fmt.Sprintf("tenant-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if size := len(cache.entries); size != maxCacheEntries {
+		t.Fatalf("entries = %d, want %d", size, maxCacheEntries)
+	}
+	if _, err := cache.Get(context.Background(), "one-more"); err != nil {
+		t.Fatal(err)
+	}
+	if size := len(cache.entries); size != 1 {
+		t.Errorf("entries after overflowing = %d, want the map started over with 1", size)
+	}
+	reads := loader.readCount()
+	if _, err := cache.Get(context.Background(), "tenant-0"); err != nil {
+		t.Fatal(err)
+	}
+	if loader.readCount() != reads+1 {
+		t.Error("a tenant dropped by the overflow was served without reading the store")
 	}
 }
