@@ -30,6 +30,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/safehttp"
 	"github.com/kilaslab/kilas-flow/internal/sqlnode"
+	"github.com/kilaslab/kilas-flow/internal/tenantsettings"
 )
 
 // Path prefixes for the single-origin layout. Keeping them in one place makes
@@ -144,7 +145,10 @@ type Deps struct {
 	// unlimited, which is what a deployment without the per-tenant limiter
 	// wired has always had.
 	RateLimiter handlers.RateLimiter
-	Version     string
+	// TenantSettings is the per-tenant settings cache behind PATCH
+	// /admin/tenants/{id}. Nil leaves that operation answering 503.
+	TenantSettings *tenantsettings.Cache
+	Version        string
 	// OAuthSigningKey HMAC-signs Google Connect state. Empty disables Connect.
 	OAuthSigningKey []byte
 	// OAuthTokenURL overrides Google's token endpoint in tests.
