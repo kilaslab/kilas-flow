@@ -436,6 +436,13 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Fixed
 
+- PostgreSQL: an API key whose label, or a user whose email, is longer than 64
+  characters can save, publish, unpublish and restore workflows again. Each of
+  those writes failed with `500` because the legacy `createdBy` and publish
+  `actor` columns were `varchar(64)` while the label can be 255 characters;
+  migration 000031 widens both to 255. Rolling it back narrows them again and
+  cuts any longer value to its first 64 characters (`actorLabel` keeps the
+  whole label). SQLite was not affected.
 - Activating, or publishing a revision of, a workflow that calls a sub-workflow
   which is not active, or does not exist, answers `422` (`config.invalid`)
   instead of a `500 workflow operation failed`. The message names the calling
