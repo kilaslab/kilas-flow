@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -146,8 +147,8 @@ func TestCORSPreflightAnswersWithoutReachingTheHandler(t *testing.T) {
 	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "https://host.example" {
 		t.Errorf("Access-Control-Allow-Origin = %q", got)
 	}
-	if got := recorder.Header().Get("Access-Control-Allow-Methods"); got != corsMethods {
-		t.Errorf("Access-Control-Allow-Methods = %q", got)
+	if got := recorder.Header().Get("Access-Control-Allow-Methods"); got != corsMethods || !strings.Contains(got, "PATCH") {
+		t.Errorf("Access-Control-Allow-Methods = %q, want every method the API serves, PATCH included", got)
 	}
 	if got := recorder.Header().Get("Access-Control-Allow-Headers"); got != "Authorization, Content-Type" {
 		t.Errorf("Access-Control-Allow-Headers = %q, want the browser's own list echoed", got)

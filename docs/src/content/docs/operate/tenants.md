@@ -136,7 +136,8 @@ await client.updateTenant("acme", { settings: { rateLimit: { runPerMinute: 30 } 
 
 The body is a merge patch, section by section: an object is merged field by
 field into what is stored, and `null` removes a field, or a whole section, so
-the tenant falls back to the deployment configuration for it. Resending a patch
+the tenant falls back to the deployment configuration for it. Sections are
+flat: each field holds one value and is replaced whole, never merged into. Resending a patch
 that changes nothing leaves `settingsVersion` where it was.
 
 The `rateLimit` section replaces the deployment's `ratelimit.*` defaults for
