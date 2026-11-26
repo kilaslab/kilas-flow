@@ -188,8 +188,8 @@ whatever worker is free. There is no tenant-to-worker pinning.
   allowances override these defaults through its `rateLimit` settings
   section (`PATCH /api/v1/tenants/{id}`; see
   [Tenant settings](/operate/tenants/#tenant-settings)).
-- **Worker capacity is shared, not per tenant.** A tenant is a row with no
-  configuration beyond which node types it may see; one customer's hundred
+- **Worker capacity is shared, not per tenant.** A tenant's settings cover
+  its rate limits, not its share of the workers; one customer's hundred
   concurrent runs occupy the same workers and connections as any other
   customer's. Plan capacity for the sum of tenants, and watch
   `kilasflow_executions_running` against `kilasflow_execution_worker_capacity`

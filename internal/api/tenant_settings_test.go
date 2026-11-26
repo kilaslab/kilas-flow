@@ -133,7 +133,7 @@ func TestTenantSettingsRefuseUnknownKeysWithANamedCode(t *testing.T) {
 	}{
 		{`{"settings":{"limits":{"runPerMinute":5}}}`, "body.settings.limits", tenantsettings.CodeUnknownKey},
 		{`{"settings":{"rateLimit":{"runsPerMinute":5}}}`, "body.settings.rateLimit.runsPerMinute", tenantsettings.CodeUnknownKey},
-		{`{"settings":{"rateLimit":{"runPerMinute":0}}}`, "body.settings.rateLimit", tenantsettings.CodeInvalid},
+		{`{"settings":{"rateLimit":{"runPerMinute":0}}}`, "body.settings.rateLimit.runPerMinute", tenantsettings.CodeInvalid},
 		{`{"settings":{"rateLimit":{"runPerMinute":"five"}}}`, "body.settings.rateLimit.runPerMinute", tenantsettings.CodeInvalid},
 	}
 	for _, tc := range cases {

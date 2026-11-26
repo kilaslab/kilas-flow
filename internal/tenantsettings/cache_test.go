@@ -3,6 +3,7 @@ package tenantsettings
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -122,22 +123,59 @@ func TestAnotherProcessSeesTheChangeWhenItsTTLRunsOut(t *testing.T) {
 	}
 }
 
+// countingRegistry is a registry whose one section counts its decodes.
+func countingRegistry(t *testing.T, decodes *int) *Registry {
+	t.Helper()
+	registry := NewRegistry()
+	if err := Register(registry, "limits", func(value limitsSection) error {
+		*decodes++
+		return validateLimits(value)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return registry
+}
+
 func TestAnUnchangedVersionReusesTheDecodedSettings(t *testing.T) {
 	loader := newCountingLoader()
 	loader.set("acme", `{"limits":{"runPerMinute":3}}`)
-	cache, clock := newTestCache(t, loader)
+	decodes := 0
+	clock := &testClock{now: time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)}
+	cache := NewCache(countingRegistry(t, &decodes), loader).WithClock(clock.Now)
 	runPerMinute(t, cache, "acme")
-	// The stored bytes change without a version bump; a reload that compares
-	// versions keeps what it decoded, which proves no second decode ran.
-	loader.mu.Lock()
-	loader.docs["acme"] = []byte(`{"limits":{"runPerMinute":7}}`)
-	loader.mu.Unlock()
 	clock.advance(DefaultTTL)
 	if got := runPerMinute(t, cache, "acme"); got != 3 {
-		t.Errorf("runPerMinute = %d, want the reused 3", got)
+		t.Errorf("runPerMinute = %d, want 3", got)
 	}
 	if reads := loader.readCount(); reads != 2 {
 		t.Errorf("store reads = %d, want 2 (one per TTL)", reads)
+	}
+	if decodes != 1 {
+		t.Errorf("decodes = %d, want 1: an unchanged version and document reuse the decoded settings", decodes)
+	}
+}
+
+func TestARecreatedTenantAtTheSameVersionIsNotServedTheOldSettings(t *testing.T) {
+	loader := newCountingLoader()
+	loader.set("acme", `{"limits":{"runPerMinute":3}}`)
+	serving, _ := newTestCache(t, loader)
+	other, otherClock := newTestCache(t, loader)
+	runPerMinute(t, other, "acme")
+
+	// The tenant is purged and created again under the same id; its first
+	// settings write lands at version 1 again, with a different document.
+	// Only the serving process sees the purge.
+	loader.mu.Lock()
+	delete(loader.docs, "acme")
+	delete(loader.versions, "acme")
+	loader.mu.Unlock()
+	serving.Invalidate("acme")
+	loader.set("acme", `{"limits":{"runPerMinute":9}}`)
+	serving.Invalidate("acme")
+
+	otherClock.advance(DefaultTTL)
+	if got := runPerMinute(t, other, "acme"); got != 9 {
+		t.Errorf("other process after its TTL = %d, want the recreated tenant's 9", got)
 	}
 }
 
@@ -152,6 +190,14 @@ func TestAStoreFailureServesTheLastKnownSettings(t *testing.T) {
 	clock.advance(DefaultTTL)
 	if got := runPerMinute(t, cache, "acme"); got != 3 {
 		t.Errorf("runPerMinute during an outage = %d, want the last known 3", got)
+	}
+	// The failure backs the entry off half a TTL: the next request inside
+	// that window does not read the failing store again.
+	reads := loader.readCount()
+	clock.advance(DefaultTTL / 4)
+	runPerMinute(t, cache, "acme")
+	if got := loader.readCount(); got != reads {
+		t.Errorf("store reads during the back-off = %d, want %d", got, reads)
 	}
 	if _, err := cache.Get(context.Background(), "globex"); err == nil {
 		t.Error("a tenant never cached read without error during an outage")
@@ -187,5 +233,31 @@ func TestANilCacheReadsAsNoSettings(t *testing.T) {
 	cache.Invalidate("acme")
 	if cache.Registry() != nil {
 		t.Error("nil cache has a registry")
+	}
+}
+
+func TestAFullCacheStartsOverRatherThanGrowing(t *testing.T) {
+	loader := newCountingLoader()
+	cache, _ := newTestCache(t, loader)
+	for i := 0; i < maxCacheEntries; i++ {
+		if _, err := cache.Get(context.Background(), fmt.Sprintf("tenant-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if size := len(cache.entries); size != maxCacheEntries {
+		t.Fatalf("entries = %d, want %d", size, maxCacheEntries)
+	}
+	if _, err := cache.Get(context.Background(), "one-more"); err != nil {
+		t.Fatal(err)
+	}
+	if size := len(cache.entries); size != 1 {
+		t.Errorf("entries after overflowing = %d, want the map started over with 1", size)
+	}
+	reads := loader.readCount()
+	if _, err := cache.Get(context.Background(), "tenant-0"); err != nil {
+		t.Fatal(err)
+	}
+	if loader.readCount() != reads+1 {
+		t.Error("a tenant dropped by the overflow was served without reading the store")
 	}
 }

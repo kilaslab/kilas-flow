@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -14,7 +15,8 @@ import (
 const SettingsSection = "rateLimit"
 
 // MaxPerMinute is the largest per-minute allowance a tenant setting may hold.
-// It mirrors config.rateLimitPerMinuteCeiling, so a tenant override can never
+// It equals config.rateLimitPerMinuteCeiling (internal/config pins the two
+// together in a test), so a tenant override can never
 // exceed what the deployment configuration itself would accept.
 const MaxPerMinute = 1_000_000
 
@@ -31,6 +33,7 @@ type TenantSettings struct {
 // read as "unlimited": a tenant that should fall back to the default sets the
 // field to null.
 func (settings TenantSettings) Validate() error {
+	var problems []error
 	for _, field := range []struct {
 		name  string
 		value *int
@@ -43,10 +46,13 @@ func (settings TenantSettings) Validate() error {
 			continue
 		}
 		if *field.value < 1 || *field.value > MaxPerMinute {
-			return fmt.Errorf("%s must be between 1 and %d, got %d", field.name, MaxPerMinute, *field.value)
+			problems = append(problems, &tenantsettings.FieldError{
+				Field:   field.name,
+				Message: fmt.Sprintf("must be between 1 and %d, got %d", MaxPerMinute, *field.value),
+			})
 		}
 	}
-	return nil
+	return errors.Join(problems...)
 }
 
 // allowance is the override for bucket, 0 when the tenant set none.

@@ -1,6 +1,7 @@
 package tenantsettings
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"sync"
@@ -33,6 +34,11 @@ type Loader interface {
 
 type cacheEntry struct {
 	settings Settings
+	// stored is the document the settings were decoded from. A version is
+	// unique only within one tenant row's lifetime: a purged tenant id can be
+	// created again and reach the same version with a different document,
+	// and a process that never saw the purge must not keep the old one.
+	stored   []byte
 	loadedAt time.Time
 }
 
@@ -92,7 +98,7 @@ func (c *Cache) Registry() *Registry {
 // consumer wired without one falls back to the deployment configuration.
 //
 // A fresh entry is served from memory. Otherwise the store is read once; an
-// unchanged version reuses the decoded settings. When the store fails, the
+// unchanged version and document reuse the decoded settings. When the store fails, the
 // last settings known for the tenant are served with a warning, and the error
 // is returned only when there are none.
 func (c *Cache) Get(ctx context.Context, tenantID string) (Settings, error) {
@@ -112,12 +118,20 @@ func (c *Cache) Get(ctx context.Context, tenantID string) (Settings, error) {
 		if cached {
 			c.logger.WarnContext(ctx, "tenant settings read failed; serving the last known settings",
 				"tenant", tenantID, "settings_version", entry.settings.version, "error", err)
+			// Back off half a TTL before trying the store again, so a failing
+			// store is not read, and warned about, on every request.
+			c.mu.Lock()
+			if current, ok := c.entries[tenantID]; ok && c.generation.Load() == generation {
+				current.loadedAt = now.Add(-c.ttl / 2)
+				c.entries[tenantID] = current
+			}
+			c.mu.Unlock()
 			return entry.settings, nil
 		}
 		return Settings{}, err
 	}
 	var settings Settings
-	if cached && entry.settings.version == version {
+	if cached && entry.settings.version == version && bytes.Equal(entry.stored, stored) {
 		settings = entry.settings
 	} else {
 		decoded, decodeErr := c.registry.Decode(stored, version)
@@ -132,7 +146,7 @@ func (c *Cache) Get(ctx context.Context, tenantID string) (Settings, error) {
 		if _, present := c.entries[tenantID]; !present && len(c.entries) >= maxCacheEntries {
 			c.entries = map[string]cacheEntry{}
 		}
-		c.entries[tenantID] = cacheEntry{settings: settings, loadedAt: now}
+		c.entries[tenantID] = cacheEntry{settings: settings, stored: stored, loadedAt: now}
 	}
 	c.mu.Unlock()
 	return settings, nil

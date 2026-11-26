@@ -21,7 +21,7 @@ func settingsTenant(t *testing.T, db *database.DB, id string) *repository.GORMAu
 	return store
 }
 
-func setTo(doc string) func([]byte) ([]byte, error) {
+func settingsSetTo(doc string) func([]byte) ([]byte, error) {
 	return func([]byte) ([]byte, error) { return []byte(doc), nil }
 }
 
@@ -49,14 +49,14 @@ func TestTenantSettingsWritesAndBumpsTheVersion(t *testing.T) {
 		ctx := context.Background()
 		const id = "drv-settings-write"
 		store := settingsTenant(t, db, id)
-		updated, err := store.UpdateTenantSettings(ctx, id, setTo(`{"rateLimit":{"runPerMinute":5}}`))
+		updated, err := store.UpdateTenantSettings(ctx, id, settingsSetTo(`{"rateLimit":{"runPerMinute":5}}`))
 		if err != nil {
 			t.Fatalf("UpdateTenantSettings() error = %v", err)
 		}
 		if string(updated.Settings) != `{"rateLimit":{"runPerMinute":5}}` || updated.SettingsVersion != 1 {
 			t.Errorf("updated = %q v%d", updated.Settings, updated.SettingsVersion)
 		}
-		updated, err = store.UpdateTenantSettings(ctx, id, setTo(`{"rateLimit":{"runPerMinute":6}}`))
+		updated, err = store.UpdateTenantSettings(ctx, id, settingsSetTo(`{"rateLimit":{"runPerMinute":6}}`))
 		if err != nil || updated.SettingsVersion != 2 {
 			t.Fatalf("second update = v%d, %v; want v2", updated.SettingsVersion, err)
 		}
@@ -85,7 +85,7 @@ func TestTenantSettingsWritesAndBumpsTheVersion(t *testing.T) {
 			t.Error("ListTenants() is missing the tenant")
 		}
 		// Emptying the document stores NULL and still counts as a change.
-		updated, err = store.UpdateTenantSettings(ctx, id, setTo(""))
+		updated, err = store.UpdateTenantSettings(ctx, id, settingsSetTo(""))
 		if err != nil || updated.Settings != nil || updated.SettingsVersion != 3 {
 			t.Errorf("emptied = %q v%d, %v", updated.Settings, updated.SettingsVersion, err)
 		}
@@ -101,7 +101,7 @@ func TestTenantSettingsSkipsANoOpWrite(t *testing.T) {
 		ctx := context.Background()
 		const id = "drv-settings-noop"
 		store := settingsTenant(t, db, id)
-		if _, err := store.UpdateTenantSettings(ctx, id, setTo(`{"a":{}}`)); err != nil {
+		if _, err := store.UpdateTenantSettings(ctx, id, settingsSetTo(`{"a":{}}`)); err != nil {
 			t.Fatal(err)
 		}
 		same, err := store.UpdateTenantSettings(ctx, id, func(current []byte) ([]byte, error) { return current, nil })
@@ -121,7 +121,7 @@ func TestTenantSettingsRetriesWhenAnotherWriterWins(t *testing.T) {
 			calls++
 			if calls == 1 {
 				// Another writer lands between this read and this write.
-				if _, err := store.UpdateTenantSettings(ctx, id, setTo(`{"other":{}}`)); err != nil {
+				if _, err := store.UpdateTenantSettings(ctx, id, settingsSetTo(`{"other":{}}`)); err != nil {
 					t.Fatalf("nested update error = %v", err)
 				}
 			}
@@ -136,10 +136,37 @@ func TestTenantSettingsRetriesWhenAnotherWriterWins(t *testing.T) {
 	})
 }
 
+func TestTenantSettingsGiveUpWhenEveryAttemptLosesTheRace(t *testing.T) {
+	eachDriver(t, func(t *testing.T, db *database.DB) {
+		ctx := context.Background()
+		const id = "drv-settings-contention"
+		store := settingsTenant(t, db, id)
+		calls := 0
+		_, err := store.UpdateTenantSettings(ctx, id, func([]byte) ([]byte, error) {
+			calls++
+			// Another writer bumps the version between every read and write.
+			if err := db.Exec(`UPDATE tenants SET settings_version = settings_version + 1 WHERE id = ?`, id).Error; err != nil {
+				t.Fatalf("bump the version: %v", err)
+			}
+			return []byte(`{"mine":{}}`), nil
+		})
+		if !errors.Is(err, repository.ErrSettingsContention) {
+			t.Fatalf("error = %v, want ErrSettingsContention", err)
+		}
+		if calls != 5 {
+			t.Errorf("apply calls = %d, want 5 attempts", calls)
+		}
+		doc, _, _ := store.ReadTenantSettings(ctx, id)
+		if doc != nil {
+			t.Errorf("a lost race wrote %q", doc)
+		}
+	})
+}
+
 func TestTenantSettingsReportsAnUnknownTenant(t *testing.T) {
 	eachDriver(t, func(t *testing.T, db *database.DB) {
 		store := repository.NewAuthStore(db.DB)
-		_, err := store.UpdateTenantSettings(context.Background(), "drv-settings-missing", setTo(`{}`))
+		_, err := store.UpdateTenantSettings(context.Background(), "drv-settings-missing", settingsSetTo(`{}`))
 		if !errors.Is(err, repository.ErrNotFound) {
 			t.Errorf("error = %v, want ErrNotFound", err)
 		}

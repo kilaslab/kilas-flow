@@ -14,10 +14,17 @@ type limitsSection struct {
 }
 
 func validateLimits(value limitsSection) error {
+	var problems []error
 	if value.RunPerMinute != nil && *value.RunPerMinute < 1 {
-		return errors.New("runPerMinute must be at least 1")
+		problems = append(problems, &FieldError{Field: "runPerMinute", Message: "must be at least 1"})
 	}
-	return nil
+	if value.Label == "reject" {
+		problems = append(problems, &FieldError{Field: "label", Message: "is reserved"})
+	}
+	if value.Big < 0 {
+		problems = append(problems, errors.New("big must not be negative"))
+	}
+	return errors.Join(problems...)
 }
 
 func testRegistry(t *testing.T) *Registry {
@@ -142,7 +149,8 @@ func TestApplyRefusesUnknownSectionsAndFieldsWithTheNamedCode(t *testing.T) {
 func TestApplyRefusesAValueTheSectionRejects(t *testing.T) {
 	registry := testRegistry(t)
 	cases := map[string]string{
-		`{"limits":{"runPerMinute":0}}`:      "limits",
+		`{"limits":{"runPerMinute":0}}`:      "limits.runPerMinute",
+		`{"limits":{"big":-1}}`:              "limits",
 		`{"limits":{"runPerMinute":"five"}}`: "limits.runPerMinute",
 		`{"limits":[1]}`:                     "limits",
 		`{"limits":7}`:                       "limits",
@@ -152,6 +160,31 @@ func TestApplyRefusesAValueTheSectionRejects(t *testing.T) {
 		issues := patchIssues(t, err)
 		if len(issues) != 1 || issues[0].Code != CodeInvalid || issues[0].Path != path {
 			t.Errorf("Apply(%s) issues = %+v, want one invalid at %s", patch, issues, path)
+		}
+	}
+}
+
+func TestApplyReportsEachFieldAValidatorRefusesAtItsOwnPath(t *testing.T) {
+	registry := testRegistry(t)
+	_, err := registry.Apply(nil, patchOf(t, `{"limits":{"runPerMinute":0,"label":"reject"}}`))
+	issues := patchIssues(t, err)
+	paths := map[string]bool{}
+	for _, issue := range issues {
+		if issue.Code != CodeInvalid {
+			t.Errorf("issue = %+v, want invalid", issue)
+		}
+		paths[issue.Path] = true
+	}
+	if len(issues) != 2 || !paths["limits.runPerMinute"] || !paths["limits.label"] {
+		t.Errorf("issues = %+v, want one at each refused field", issues)
+	}
+}
+
+func TestApplyRepairsAStoredDocumentThatIsNotAnObject(t *testing.T) {
+	registry := testRegistry(t)
+	for _, corrupt := range []string{`not json`, `[1,2]`, `{"limits":`} {
+		if out := applyOK(t, registry, corrupt, `{"limits":{"runPerMinute":2}}`); out != `{"limits":{"runPerMinute":2}}` {
+			t.Errorf("Apply over %q = %s, want the patch alone", corrupt, out)
 		}
 	}
 }

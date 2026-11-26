@@ -30,11 +30,57 @@ func TestARateLimitSettingMustBeWithinTheDeploymentBounds(t *testing.T) {
 			t.Errorf("webhookPerMinute %s: error = %v, want an invalid issue", value, err)
 		}
 	}
+	_, err := registry.Apply(nil, map[string]json.RawMessage{
+		SettingsSection: json.RawMessage(`{"runPerMinute":0,"eventsPerMinute":0}`),
+	})
+	var patchErr *tenantsettings.PatchError
+	if !errors.As(err, &patchErr) || len(patchErr.Issues) != 2 ||
+		patchErr.Issues[0].Path != "rateLimit.runPerMinute" || patchErr.Issues[1].Path != "rateLimit.eventsPerMinute" {
+		t.Errorf("two refused fields = %v, want one issue at each field path", err)
+	}
 	for _, value := range []string{"1", "1000000"} {
 		if _, err := registry.Apply(nil, map[string]json.RawMessage{
 			SettingsSection: json.RawMessage(`{"runPerMinute":` + value + `,"eventsPerMinute":` + value + `}`),
 		}); err != nil {
 			t.Errorf("runPerMinute %s: error = %v, want accepted", value, err)
+		}
+	}
+}
+
+// A capacity lowered at runtime applies at once: a bucket filled under the old
+// capacity is capped to the new one even when no time has passed.
+func TestALoweredCapacityAppliesWithoutWaitingForARefill(t *testing.T) {
+	now := time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	memory := NewMemoryStore()
+	if ok, _, _ := memory.Spend(ctx, "acme", BucketRun, 100, 100.0/60, now); !ok {
+		t.Fatal("first spend at capacity 100 refused")
+	}
+	if ok, _, _ := memory.Spend(ctx, "acme", BucketRun, 1, 1.0/60, now); !ok {
+		t.Fatal("first spend at capacity 1 refused")
+	}
+	if ok, _, _ := memory.Spend(ctx, "acme", BucketRun, 1, 1.0/60, now); ok {
+		t.Error("memory store: a second spend at the lowered capacity 1 was allowed")
+	}
+
+	held := &BucketModel{Tokens: 99, UpdatedAt: now}
+	if ok, _ := settle(held, 1, 1.0/60, now); !ok {
+		t.Fatal("settle: first spend at capacity 1 refused")
+	}
+	if ok, _ := settle(held, 1, 1.0/60, now); ok {
+		t.Error("database store: a second spend at the lowered capacity 1 was allowed")
+	}
+}
+
+func TestEachRateLimitFieldOverridesItsOwnBucket(t *testing.T) {
+	cache := tenantsettings.NewCache(settingsRegistry(t), staticLoader{
+		"acme": `{"rateLimit":{"runPerMinute":11,"webhookPerMinute":22,"eventsPerMinute":33}}`,
+	})
+	overrides := SettingsOverrides{Cache: cache}
+	ctx := context.Background()
+	for bucket, want := range map[string]int{BucketRun: 11, BucketWebhook: 22, BucketEvents: 33, "unknown": 0} {
+		if got := overrides.Allowance(ctx, "acme", bucket); got != want {
+			t.Errorf("Allowance(%s) = %d, want %d", bucket, got, want)
 		}
 	}
 }

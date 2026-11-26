@@ -13,7 +13,7 @@ import (
 // small enough that listing it costs nothing.
 const (
 	// corsMethods is the method list a browser is told it may use.
-	corsMethods = "GET, POST, PUT, DELETE, OPTIONS"
+	corsMethods = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
 
 	// corsDefaultHeaders is what a preflight is answered with when the browser
 	// did not name its own headers. Authorization and Content-Type are the two
