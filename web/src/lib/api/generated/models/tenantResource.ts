@@ -5,6 +5,7 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
+import type { TenantResourceSettings } from './tenantResourceSettings';
 
 export interface TenantResource {
   /** A URL to the JSON Schema for this object. */
@@ -12,6 +13,10 @@ export interface TenantResource {
   createdAt: string;
   id: string;
   name: string;
+  /** The tenant's settings, one object per section. A section that is absent falls back to the deployment configuration. */
+  settings: TenantResourceSettings;
+  /** Counts the writes that changed settings; 0 means they have never been written */
+  settingsVersion: number;
   /** Accounts this tenant holds */
   userCount: number;
 }

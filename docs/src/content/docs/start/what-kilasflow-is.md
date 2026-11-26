@@ -92,11 +92,11 @@ tenant identifier and every repository call takes a tenant scope, and a
 request's tenant is now resolved from whatever authenticated it — an embed
 session first, then the signed-in session or the API key. A row belonging to
 another tenant therefore does not fail a permission check; it does not exist.
-What stays thin is what a tenant *is*: an id, a name and timestamps, with no
-per-tenant configuration beyond which node types it may see (set in the
-operator's configuration, not stored on the tenant) and no per-tenant quota, all
-tenants sharing the same tables in the same database, so the separation is only
-ever as good as the `WHERE` clause that enforces it. And with authentication
+What stays thin is what a tenant *is*: an id, a name, timestamps and a small
+settings document the operator changes live (today, the tenant's own rate
+limits), while which node types it may see stays in the operator's
+configuration. All tenants share the same tables in the same database, so the
+separation is only ever as good as the `WHERE` clause that enforces it. And with authentication
 off, which is the default, every caller is the operator and every request
 resolves to the one tenant named `default`.
 

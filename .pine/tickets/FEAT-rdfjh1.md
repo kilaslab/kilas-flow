@@ -36,6 +36,7 @@ Source: a 2026-09-23 review of a host SaaS application (a multi-tenant customer-
 Stale ref, gap real. The quota line moved to tenancy-and-embedding.md:281-284. Shared pool `execution.max_concurrent` (internal/config/config.go:503); `ClaimNext` is global FIFO (internal/repository/executions.go:528, order ~570); datastore limits deployment-wide (internal/datastore/limits.go:19-40).
 - Missing groundwork: `/tenants/{id}` has only GET/DELETE (no update endpoint for `limits`), `tenantModel` has no config columns, only sign-in is throttled (in-memory `LoginLimiter`, internal/api/middleware/loginlimit.go), so `webhookRatePerMinute` needs FEAT-g33qf6, and "per-tenant metrics" needs FEAT-2npfgy. Tenant settings storage and endpoint: FEAT-4fp51b.
 - Coordinate with FEAT-mngmn1 (tenant API field) and FEAT-8zgwp6 (per-tenant counters).
+- FEAT-4fp51b landed the settings surface: `webhookRatePerMinute` is now `rateLimit.webhookPerMinute` (section owned by internal/ratelimit, read through `tenantsettings.Cache`). Add `limits` as its own section via `tenantsettings.Register` in the package that enforces it; the PATCH endpoint needs no change.
 
 # Related Files
 

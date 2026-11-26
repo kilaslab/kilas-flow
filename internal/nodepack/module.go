@@ -121,6 +121,15 @@ func defaultCredentialLookup(id string) (credentials.Type, bool) {
 	return credentials.Default().Get(id)
 }
 
+// registryCredentialLookup resolves from registry, or from the process-wide
+// one when the caller supplied none.
+func registryCredentialLookup(registry *credentials.Registry) credentialLookup {
+	if registry == nil {
+		return defaultCredentialLookup
+	}
+	return registry.Get
+}
+
 // limits converts the manifest's bounds into the host's, filling what the
 // manifest left zero from the shipped defaults and refusing anything above the
 // ceilings.

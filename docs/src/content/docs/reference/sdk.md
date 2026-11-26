@@ -508,6 +508,14 @@ getTenant(tenantId: string, signal?: AbortSignal): Promise<TenantResource>
 
 Reads one tenant, such as the resource a create answered with.
 
+#### `updateTenant`
+
+```ts
+updateTenant(tenantId: string, input: UpdateTenantInputBody, signal?: AbortSignal): Promise<TenantResource>
+```
+
+Changes a tenant's settings and answers with the tenant as stored.
+
 #### `deleteTenant`
 
 ```ts

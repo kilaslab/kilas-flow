@@ -5,10 +5,12 @@ import { setLocale } from '$lib/i18n/locale.svelte';
 import * as m from '$lib/paraglide/messages.js';
 import type { ConnectionChange } from '$lib/workflow-editor/history-diff';
 import {
+	actorName,
 	connectionChangeSentence,
 	eventRevisionLabel,
 	publishConfirmation,
 	publishEventActionLabel,
+	publishEventAuthor,
 	publishEventSentence,
 	publishRefusal,
 	relativeTime,
@@ -93,6 +95,47 @@ describe('versionAuthor', () => {
 		// have no author and the column is nullable for that reason.
 		expect(versionAuthor(summary())).toBeNull();
 		expect(versionAuthor(summary({ createdBy: '  ' }))).toBeNull();
+	});
+});
+
+describe('actor names', () => {
+	afterEach(() => {
+		setLocale('en');
+	});
+
+	it('marks an embed actor as the name its host gave', () => {
+		expect(actorName('embed', 'Ada Lovelace')).toBe('Ada Lovelace (embedded)');
+		expect(versionAuthor(summary({ actorKind: 'embed', actorLabel: 'Ada Lovelace', createdBy: 'Ada Lovelace', actorId: 'auth0|ada' }))).toBe(
+			'Ada Lovelace (embedded)'
+		);
+	});
+
+	it('never shows the host identifier: an embed actor without a name is an unnamed embedded editor', () => {
+		// A host may use an email address as its identifier; a name it chose
+		// not to give is not one to reveal.
+		expect(actorName('embed', '')).toBe('Embedded editor');
+		expect(actorName('embed', undefined)).toBe('Embedded editor');
+		expect(versionAuthor(summary({ actorKind: 'embed', actorId: 'ada@example.com' }))).toBe('Embedded editor');
+		expect(publishEventAuthor({ actorKind: 'embed' })).toBe('Embedded editor');
+	});
+
+	it('names a person or a key as before, and nobody when nothing is known', () => {
+		expect(actorName('user', 'ada@example.com')).toBe('ada@example.com');
+		expect(actorName('key', 'ci-agent')).toBe('ci-agent');
+		expect(actorName(undefined, '  ')).toBeNull();
+		expect(versionAuthor(summary({ createdBy: 'yusril' }))).toBe('yusril');
+	});
+
+	it('reads a publish event, falling back to its legacy actor label', () => {
+		expect(publishEventAuthor({ actorKind: 'embed', actorLabel: 'Ada Lovelace', actor: 'Ada Lovelace' })).toBe('Ada Lovelace (embedded)');
+		expect(publishEventAuthor({ actor: 'ada@example.com' })).toBe('ada@example.com');
+		expect(publishEventAuthor({})).toBeNull();
+	});
+
+	it('marks the embed actor in Indonesian', () => {
+		expect(setLocale('id')).toBe(true);
+		expect(actorName('embed', 'Ada')).toBe('Ada (tertanam)');
+		expect(actorName('embed', '')).toBe('Editor tertanam');
 	});
 });
 

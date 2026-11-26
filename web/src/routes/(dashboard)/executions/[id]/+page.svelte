@@ -18,6 +18,7 @@
 	import NodeConsole from '$lib/components/workflow-editor/node-console.svelte';
 	import RailGrip from '$lib/components/workflow-editor/rail-grip.svelte';
 	import { railWidth } from '$lib/workflow-editor/rail-width.svelte';
+	import { actorName } from '$lib/workflow-editor/version-history';
 	import * as m from '$lib/paraglide/messages.js';
 	import { applyEvents, executionEvents, isTerminalStatus, latestExecutionStatus, liveConsole } from '$lib/workflow-editor/event-stream.svelte';
 	import {
@@ -104,6 +105,8 @@
 	const runGroups = $derived(nodeRunsByNode(execution.data?.nodeRuns));
 	const liveStatus = $derived(latestExecutionStatus(live.events));
 	const status = $derived(liveStatus ?? execution.data?.status ?? 'queued');
+	// Who queued a manual run or a retry; trigger-started runs name nobody.
+	const runActor = $derived(actorName(execution.data?.actorKind, execution.data?.actorLabel));
 	const stoppable = $derived(status === 'running' || status === 'queued' || status === 'waiting' || status === 'cancelling');
 	// Only an approval wait gets the approval page; a timer says when it resumes.
 	const waiting = $derived(waitingNotice(execution.data ?? {}));
@@ -315,7 +318,7 @@
 				</div>
 				<div>
 					<dt class="text-xs text-muted-foreground">{m.executions_trigger()}</dt>
-					<dd class="mt-1">{statusLabel(execution.data.trigger)}</dd>
+					<dd class="mt-1">{statusLabel(execution.data.trigger)}{#if runActor} · {runActor}{/if}</dd>
 				</div>
 			</dl>
 		</div>

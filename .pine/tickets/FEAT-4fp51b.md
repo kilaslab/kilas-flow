@@ -1,7 +1,7 @@
 ---
 id: FEAT-4fp51b
 title: 'Per-tenant settings: a stored settings document and an update endpoint on the admin tenant API'
-status: todo
+status: done
 priority: medium
 labels:
     - saas
@@ -9,7 +9,7 @@ labels:
     - api
 parent: EPIC-7c3ry9
 created: "2026-09-25T10:08:12Z"
-updated: "2026-09-25T10:08:12Z"
+updated: "2026-11-26T07:52:25Z"
 ---
 
 # Description
@@ -21,11 +21,24 @@ Several tickets in this epic assume a place to store and change per-tenant setti
 Found by the 2026-09-25 audit of this epic's tickets against the code.
 
 # Acceptance Criteria
-- [ ] Tenants carry a typed, versioned settings document (a JSON column or a side table), with one migration for both dialects.
-- [ ] `PATCH /api/v1/admin/tenants/{id}` (operator key only, like the rest of the admin surface) updates settings with merge semantics, and `GET /tenants/{id}` returns them.
-- [ ] Unknown keys are refused with a named problem code, and each consumer registers and validates its own section, so FEAT-rdfjh1 and FEAT-mngmn1 add fields without touching the endpoint.
-- [ ] Reads on hot paths (claim, compile, webhook ingress) are cached and invalidated on update, including across processes.
-- [ ] The SDK and the admin client expose the update. The tenancy docs describe settings versus deployment config and which one wins.
+- [x] Tenants carry a typed, versioned settings document (a JSON column or a side table), with one migration for both dialects.
+- [x] `PATCH /api/v1/admin/tenants/{id}` (operator key only, like the rest of the admin surface) updates settings with merge semantics, and `GET /tenants/{id}` returns them.
+- [x] Unknown keys are refused with a named problem code, and each consumer registers and validates its own section, so FEAT-rdfjh1 and FEAT-mngmn1 add fields without touching the endpoint.
+- [x] Reads on hot paths (claim, compile, webhook ingress) are cached and invalidated on update, including across processes.
+- [x] The SDK and the admin client expose the update. The tenancy docs describe settings versus deployment config and which one wins.
+
+# Implementation notes
+
+Branch worktree-agent-a31807cebe54e0eed (FEAT-4fp51b).
+
+- **Storage**: two columns on `tenants` (migration 000030, both dialects), no side table, so tenant purge's row delete takes the settings with it. `settings` is a nullable bytea/blob holding canonical JSON (NULL = no settings, every section falls back to deployment config); `settings_version` is `NOT NULL DEFAULT 0` (0 = never written). Model tags match the SQL; the baseline drift test stays green.
+- **Version semantics**: +1 on every write that changes the document; a no-op patch writes nothing and keeps the version. `GORMAuthStore.UpdateTenantSettings` is a compare-and-swap on `settings_version` (plain map Updates, no gorm.Expr, per BUG-br7ggc), retrying apply up to 5 times, then `ErrSettingsContention` (409 `tenant_settings_conflict`). The version is also the cache's reuse key and the client-visible `settingsVersion`.
+- **Registry** (`internal/tenantsettings`, stdlib only): consumers `Register[T]` a struct section + validator; the endpoint never changes for a new section. Merge is RFC 7396 per section (section null = remove, field null = remove, empty section dropped, empty document stored as NULL); merged sections are decoded into T, validated, stored canonical. Unknown section/field = `tenant_settings_unknown_key`, bad value = `tenant_settings_invalid` (both 422, one `errors[]` entry per issue at `body.settings.<section>.<field>` with `value.code`); all-or-nothing. `null` on a stored-but-unregistered section retires it. Large integers stay exact. Sections evolve additively; a breaking change is a new section name (package doc).
+- **First section**: `rateLimit` owned by `internal/ratelimit` (`runPerMinute`, `webhookPerMinute`, `eventsPerMinute`, 1..1,000,000 like `ratelimit.*`). `ratelimit.SettingsOverrides` reads it through the cache, so the `Overrides` seam (now taking ctx) is finally wired; webhook ingress, run API and events API all honour it.
+- **Cache / cross-process invalidation**: no general cross-process channel exists (LISTEN/NOTIFY is executions-only and PG-only; SQLite is single-process), so `tenantsettings.Cache` is TTL (5 s) + version check: the serving process invalidates at once after PATCH (and after DELETE purge), other processes see the change when their entry ages out; an unchanged version reuses the decoded settings; a store failure serves the last known settings; an invalidation during a load is not overwritten (generation counter); 10,000-entry cap. Not wired into engine claim/compile (nothing there reads settings yet; FEAT-rdfjh1/FEAT-mngmn1 add those readers via `tenantsettings.Read`).
+- **Surface**: `PATCH /api/v1/tenants/{id}` (operation `update-tenant`, operator key only via `operatorOnly`; embed sessions refused by the middleware default deny — covered by the existing admin-surface tests, which now include PATCH). `TenantResource` gains `settings` (never null) and `settingsVersion` on GET/list/create/patch. SDK `updateTenant`; web admin client regenerated by orval.
+- **Review fixes (round 2)**: the cache reuses decoded settings only when version *and* stored bytes match (a purged-and-recreated tenant id can reach the same version with a different document); a store failure served from a stale entry backs the entry off half a TTL. Validators return `tenantsettings.FieldError`s joined with `errors.Join`, each reported at `body.settings.<section>.<field>`. An unreadable stored document is treated as empty (logged) so a PATCH repairs it. Both rate-limit stores cap tokens to capacity on every spend (capacity can drop at runtime). `ratelimit.MaxPerMinute` is pinned to `config.rateLimitPerMinuteCeiling` by a test in internal/config. CORS allows PATCH. Remaining "no per-tenant configuration/quota" doc claims replaced; sections are flat, fields replaced whole. Added tests for CAS exhaustion (repository + 409 at the handler), per-field bucket mapping, cache overflow.
+- **Verified** (re-run after the review fixes, all green, plus `make docs-build`; PostgreSQL halves re-run on a throwaway container): gofmt; `go build ./...`; `go vet ./internal/... ./cmd/...`; `go test` over tenantsettings, ratelimit, repository, database, api, webhook, tenantpurge, cli, config; `go test ./cmd/kilasflow -run 'Wiring|Role|Metrics'`; generate-types/api/api-reference/sdk-reference/docs-facts and their -check targets; `make sdk-check sdk-test`. PostgreSQL halves of the new repository and migration tests (and the whole internal/database package) also passed against a throwaway pgvector/pg17 container with `-p 1`.
 
 # Implementation Plan
 
@@ -40,3 +53,131 @@ internal/config/packs_visibility.go (current per-tenant behaviour as file config
 docs/src/content/docs/concepts/tenancy-and-embedding.md:281-284 ("no per-tenant configuration")
 
 # Attachments
+
+## Work Evidence
+
+Recorded from commits by `pine close --evidence --commit` on 2026-11-26.
+
+- Commits (11):
+  - `28c6f472` — FEAT-4fp51b: record the review fixes and re-verification on the ticket
+  - `e06b3f23` — FEAT-4fp51b: allow PATCH in CORS and drop the remaining no-per-tenant-configuration claims
+  - `e37fc48b` — FEAT-4fp51b: cover settings contention, bucket mapping and a full cache
+  - `56ef440d` — FEAT-4fp51b: cap rate buckets to a lowered capacity at once; pin the tenant rate bound to the config ceiling
+  - `a915f639` — FEAT-4fp51b: report each refused settings field at its own path; let a patch repair an unreadable document
+  - `62b4fe0a` — FEAT-4fp51b: reuse cached settings only when version and document match; back off a failing store
+  - `1ada6dea` — FEAT-4fp51b: record the PostgreSQL verification on the ticket
+  - `5ff7051a` — FEAT-4fp51b: document tenant settings versus deployment configuration
+  - `51379f77` — FEAT-4fp51b: expose updateTenant in the SDK and regenerate clients and references
+  - `3efadbf6` — FEAT-4fp51b: prove tenant settings end to end and through the rate limiter
+  - `7e1423f9` — FEAT-4fp51b: store per-tenant settings and add PATCH /admin/tenants/{id}
+- Files changed:
+
+```
+28c6f472 FEAT-4fp51b: record the review fixes and re-verification on the ticket
+
+ .pine/tickets/FEAT-4fp51b.md | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+e06b3f23 FEAT-4fp51b: allow PATCH in CORS and drop the remaining no-per-tenant-configuration claims
+
+ docs/src/content/docs/operate/deploy-for-saas.md |  4 ++--
+ docs/src/content/docs/operate/security.md        |  7 ++++---
+ docs/src/content/docs/operate/tenants.md         |  3 ++-
+ docs/src/content/docs/start/what-kilasflow-is.md | 10 +++++-----
+ internal/api/middleware/cors.go                  |  2 +-
+ internal/api/middleware/cors_test.go             |  5 +++--
+ 6 files changed, 17 insertions(+), 14 deletions(-)
+e37fc48b FEAT-4fp51b: cover settings contention, bucket mapping and a full cache
+
+ internal/api/handlers/admin_admin_test.go   | 26 ++++++++++++++++++
+ internal/ratelimit/settings_test.go         | 13 +++++++++
+ internal/repository/tenant_settings_test.go | 41 ++++++++++++++++++++++++-----
+ internal/tenantsettings/cache_test.go       | 27 +++++++++++++++++++
+ 4 files changed, 100 insertions(+), 7 deletions(-)
+56ef440d FEAT-4fp51b: cap rate buckets to a lowered capacity at once; pin the tenant rate bound to the config ceiling
+
+ internal/config/ratelimit_ceiling_test.go | 18 ++++++++++++++++++
+ internal/ratelimit/ratelimit.go           |  9 ++++++---
+ internal/ratelimit/settings.go            |  3 ++-
+ internal/ratelimit/settings_test.go       | 25 +++++++++++++++++++++++++
+ internal/ratelimit/store.go               |  8 +++++---
+ 5 files changed, 56 insertions(+), 7 deletions(-)
+a915f639 FEAT-4fp51b: report each refused settings field at its own path; let a patch repair an unreadable document
+
+ internal/api/tenant_settings_test.go     |  2 +-
+ internal/ratelimit/settings.go           |  9 ++++--
+ internal/ratelimit/settings_test.go      |  8 +++++
+ internal/tenantsettings/registry.go      | 54 +++++++++++++++++++++++++++-----
+ internal/tenantsettings/registry_test.go | 39 +++++++++++++++++++++--
+ 5 files changed, 99 insertions(+), 13 deletions(-)
+62b4fe0a FEAT-4fp51b: reuse cached settings only when version and document match; back off a failing store
+
+ internal/tenantsettings/cache.go      | 20 ++++++++++--
+ internal/tenantsettings/cache_test.go | 59 ++++++++++++++++++++++++++++++-----
+ 2 files changed, 69 insertions(+), 10 deletions(-)
+1ada6dea FEAT-4fp51b: record the PostgreSQL verification on the ticket
+
+ .pine/tickets/FEAT-4fp51b.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+5ff7051a FEAT-4fp51b: document tenant settings versus deployment configuration
+
+ .pine/tickets/FEAT-4fp51b.md                       | 26 ++++++++---
+ .pine/tickets/FEAT-rdfjh1.md                       |  1 +
+ CHANGELOG.md                                       | 12 ++++++
+ .../content/docs/concepts/tenancy-and-embedding.md | 40 ++++++++++++++---
+ docs/src/content/docs/operate/deploy-for-saas.md   |  7 +--
+ docs/src/content/docs/operate/tenants.md           | 50 +++++++++++++++++++++-
+ internal/api/server.go                             |  2 +-
+ sdk/CHANGELOG.md                                   |  2 +-
+ 8 files changed, 122 insertions(+), 18 deletions(-)
+51379f77 FEAT-4fp51b: expose updateTenant in the SDK and regenerate clients and references
+
+ docs/public/openapi.json                           |  88 +++++++++++++++++-
+ docs/src/content/docs/reference/api-contract.md    |   2 +-
+ docs/src/content/docs/reference/api.md             |   4 +-
+ docs/src/content/docs/reference/api/tenants.md     |  76 +++++++++++++++
+ docs/src/content/docs/reference/sdk.md             |   8 ++
+ scripts/generate-api-reference.mjs                 |   2 +-
+ sdk/CHANGELOG.md                                   |  10 ++
+ sdk/README.md                                      |   4 +-
+ sdk/src/generated/models.ts                        |  79 ++++++++++++++++
+ sdk/src/server.ts                                  |  19 ++++
+ sdk/test/operation-coverage.test.mjs               |   1 +
+ sdk/test/operations.test.ts                        |  23 +++++
+ web/src/lib/api/generated/admin/admin.ts           | 103 ++++++++++++++++++++-
+ web/src/lib/api/generated/models/index.ts          |   3 +
+ web/src/lib/api/generated/models/tenantResource.ts |   5 +
+ .../api/generated/models/tenantResourceSettings.ts |  12 +++
+ .../api/generated/models/updateTenantInputBody.ts  |  15 +++
+ .../models/updateTenantInputBodySettings.ts        |  12 +++
+ 18 files changed, 458 insertions(+), 8 deletions(-)
+3efadbf6 FEAT-4fp51b: prove tenant settings end to end and through the rate limiter
+
+ internal/api/tenant_settings_test.go | 208 +++++++++++++++++++++++++++++++++++
+ internal/ratelimit/settings_test.go  |  79 +++++++++++++
+ 2 files changed, 287 insertions(+)
+7e1423f9 FEAT-4fp51b: store per-tenant settings and add PATCH /admin/tenants/{id}
+
+ cmd/kilasflow/main.go                              |  12 +-
+ internal/api/handlers/admin.go                     |  47 +++
+ internal/api/handlers/admin_admin_test.go          |  45 ++-
+ internal/api/handlers/admin_settings.go            | 111 +++++++
+ internal/api/routes.go                             |   3 +-
+ internal/api/server.go                             |   6 +-
+ .../database/tenant_settings_migration_test.go     |  73 +++++
+ internal/ratelimit/ratelimit.go                    |   4 +-
+ internal/ratelimit/ratelimit_test.go               |   2 +-
+ internal/ratelimit/settings.go                     |  94 ++++++
+ internal/repository/auth.go                        |  37 ++-
+ internal/repository/models.go                      |   5 +
+ internal/repository/tenant_settings.go             |  88 ++++++
+ internal/repository/tenant_settings_test.go        | 164 ++++++++++
+ internal/tenantsettings/cache.go                   | 163 ++++++++++
+ internal/tenantsettings/cache_test.go              | 191 ++++++++++++
+ internal/tenantsettings/registry.go                | 340 +++++++++++++++++++++
+ internal/tenantsettings/registry_test.go           | 200 ++++++++++++
+ .../postgres/000030_tenant_settings.down.sql       |   5 +
+ migrations/postgres/000030_tenant_settings.up.sql  |  20 ++
+ migrations/sqlite/000030_tenant_settings.down.sql  |   5 +
+ migrations/sqlite/000030_tenant_settings.up.sql    |  20 ++
+ 22 files changed, 1622 insertions(+), 13 deletions(-)
+```

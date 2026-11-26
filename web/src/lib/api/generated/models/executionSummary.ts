@@ -5,8 +5,17 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
+import type { ExecutionSummaryActorKind } from './executionSummaryActorKind';
 
 export interface ExecutionSummary {
+  /** Who queued this run, for a manual run or a retry: the host's identifier for an embed session's user, host-asserted and not verified. Absent for trigger-started runs and runs queued before attribution. */
+  actorId?: string;
+  /** Who queued this run, for a manual run or a retry: the identifier of the API key. Absent for trigger-started runs and runs queued before attribution. */
+  actorKeyId?: string;
+  /** Who queued this run, for a manual run or a retry: user for a signed-in person, key for an API key, embed for an embed session. Absent for trigger-started runs and runs queued before attribution. */
+  actorKind?: ExecutionSummaryActorKind;
+  /** Who queued this run, for a manual run or a retry: the email address, API key name, or embed display name, where one is known. Absent for trigger-started runs and runs queued before attribution. */
+  actorLabel?: string;
   /** Wall-clock duration in milliseconds, once the execution has finished */
   durationMs?: number;
   finishedAt?: string;

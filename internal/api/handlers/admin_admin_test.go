@@ -26,8 +26,10 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/auth"
 	"github.com/kilaslab/kilas-flow/internal/binary"
 	"github.com/kilaslab/kilas-flow/internal/embed"
+	"github.com/kilaslab/kilas-flow/internal/ratelimit"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/tenantpurge"
+	"github.com/kilaslab/kilas-flow/internal/tenantsettings"
 )
 
 // adminTestPrefix is where the operator routes are mounted in these tests. It
@@ -43,6 +45,8 @@ type adminTestStore struct {
 	tenants []repository.TenantSummary
 	// getTenantErr, when set, is what GetTenant returns.
 	getTenantErr error
+	// updateSettingsErr, when set, is what UpdateTenantSettings returns.
+	updateSettingsErr error
 	// createTenantErr and createUserErr are what the creates return.
 	createTenantErr error
 	createUserErr   error
@@ -83,6 +87,38 @@ func (stub *adminTestStore) GetTenant(_ context.Context, id string) (repository.
 func (stub *adminTestStore) ListTenants(context.Context) ([]repository.TenantSummary, error) {
 	stub.calls++
 	return stub.tenants, nil
+}
+
+func (stub *adminTestStore) ReadTenantSettings(_ context.Context, id string) ([]byte, int64, error) {
+	stub.calls++
+	for _, summary := range stub.tenants {
+		if summary.ID == id {
+			return summary.Settings, summary.SettingsVersion, nil
+		}
+	}
+	return nil, 0, nil
+}
+
+func (stub *adminTestStore) UpdateTenantSettings(_ context.Context, id string, apply func([]byte) ([]byte, error)) (repository.Tenant, error) {
+	stub.calls++
+	if stub.updateSettingsErr != nil {
+		return repository.Tenant{}, stub.updateSettingsErr
+	}
+	for i, summary := range stub.tenants {
+		if summary.ID != id {
+			continue
+		}
+		next, err := apply(summary.Settings)
+		if err != nil {
+			return repository.Tenant{}, err
+		}
+		if string(next) != string(summary.Settings) {
+			stub.tenants[i].Settings = next
+			stub.tenants[i].SettingsVersion++
+		}
+		return stub.tenants[i].Tenant, nil
+	}
+	return repository.Tenant{}, repository.ErrNotFound
 }
 
 func (stub *adminTestStore) CreateUser(_ context.Context, tenant repository.TenantScope, email, name, passwordHash string) (repository.User, error) {
@@ -197,10 +233,14 @@ func (purger *adminTestPurger) Purge(ctx context.Context, tenantID string) (tena
 // answers 503 without one, so the tests that exercise the whole surface have to
 // wire it the way a deployment does.
 func adminHandler(store *adminTestStore) *Admin {
+	registry := tenantsettings.NewRegistry()
+	if err := ratelimit.RegisterSettings(registry); err != nil {
+		panic(err)
+	}
 	return NewAdmin(store, adminTestPrefix).WithTenantPurger(&adminTestPurger{
 		store:  store,
 		result: tenantpurge.Result{TenantID: "acme", Removed: map[string]int64{"tenants": 1}},
-	})
+	}).WithTenantSettings(tenantsettings.NewCache(registry, store))
 }
 
 // adminOperation is one admin route, wrapped so a test can exercise every one
@@ -236,6 +276,14 @@ func adminOperations(handler *Admin) []adminOperation {
 			name: "GET /tenants/{id}", method: http.MethodGet, path: adminTestPrefix + "/tenants/acme",
 			call: func(ctx context.Context) error {
 				_, err := handler.GetTenant(ctx, &getTenantInput{ID: "acme"})
+				return err
+			},
+		},
+		{
+			name: "PATCH /tenants/{id}", method: http.MethodPatch, path: adminTestPrefix + "/tenants/acme",
+			body: `{"settings":{}}`,
+			call: func(ctx context.Context) error {
+				_, err := handler.UpdateTenant(ctx, &updateTenantInput{ID: "acme"})
 				return err
 			},
 		},
@@ -835,5 +883,26 @@ func TestAdminDeleteContinuesAfterTheRequestContextIsCancelled(t *testing.T) {
 	}
 	if out.Body.TenantRemoved != true {
 		t.Errorf("TenantRemoved = %v, want the completed result", out.Body.TenantRemoved)
+	}
+}
+
+func TestAdminSettingsContentionAnswers409WithTheConflictCode(t *testing.T) {
+	store := &adminTestStore{
+		tenants:           []repository.TenantSummary{{Tenant: repository.Tenant{ID: "acme", Name: "Acme"}}},
+		updateSettingsErr: fmt.Errorf("%w: tenant %q", repository.ErrSettingsContention, "acme"),
+	}
+	input := &updateTenantInput{ID: "acme"}
+	input.Body.Settings = map[string]json.RawMessage{"rateLimit": json.RawMessage(`{"runPerMinute":5}`)}
+	_, err := adminHandler(store).UpdateTenant(adminOperatorContext(), input)
+	if status := statusOf(t, err); status != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", status)
+	}
+	var model *huma.ErrorModel
+	if !errors.As(err, &model) || len(model.Errors) != 1 {
+		t.Fatalf("error = %#v, want one error detail", err)
+	}
+	issue, ok := model.Errors[0].Value.(tenantSettingsIssue)
+	if !ok || issue.Code != TenantSettingsConflictCode {
+		t.Errorf("detail value = %#v, want the %s code", model.Errors[0].Value, TenantSettingsConflictCode)
 	}
 }

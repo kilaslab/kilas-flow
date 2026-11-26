@@ -67,6 +67,7 @@ import type {
 	TestPayloadBody,
 	UpdateRowsInputBody,
 	UpdateRowsOutputBody,
+	UpdateTenantInputBody,
 	UpsertRowInputBody,
 	UpsertRowOutputBody,
 	UserResource,
@@ -128,6 +129,27 @@ export interface EmbedSessionRequest {
 		accent?: string;
 		hideRun?: boolean;
 		hideSave?: boolean;
+	};
+	/**
+	 * The host user this session acts for. It is signed into the token and
+	 * recorded as an `embed` actor on the revisions, publish events and manual
+	 * runs the session causes, so version history can say who acted.
+	 *
+	 * `id` is your own stable identifier for the user: 1 to 128 letters,
+	 * digits and `. _ - : @ | + / =`. Use an opaque id rather than an email:
+	 * the API returns it to anyone who can read the workflow's history or
+	 * executions, and the token payload is readable by whoever holds it.
+	 * `displayName` is what KilasFlow shows: at
+	 * most 64 letters, digits, spaces and simple punctuation, without leading
+	 * or trailing spaces. Anything else is refused with a 422.
+	 *
+	 * It is host-asserted: KilasFlow signs it but never verifies it, so mint a
+	 * fresh session for each user rather than sharing one token. Omit it for
+	 * an unnamed session, which still records that an embedded editor acted.
+	 */
+	actor?: {
+		id: string;
+		displayName?: string;
 	};
 }
 
@@ -740,6 +762,24 @@ export class KilasFlowClient {
 	/** Reads one tenant, such as the resource a create answered with. */
 	getTenant(tenantId: string, signal?: AbortSignal): Promise<TenantResource> {
 		return this.#transport.request('GET', `/tenants/${encodeURIComponent(tenantId)}`, { signal });
+	}
+
+	/**
+	 * Changes a tenant's settings and answers with the tenant as stored. The
+	 * `settings` object is a merge patch, section by section: an object is
+	 * merged field by field, and `null` removes a field or a whole section so
+	 * the tenant falls back to the deployment configuration. A section or
+	 * field the server does not accept is refused with
+	 * `tenant_settings_unknown_key`, a value its section rejects with
+	 * `tenant_settings_invalid` (both 422), and nothing is written. Each change
+	 * bumps `settingsVersion`; it applies at once on the serving process and
+	 * within 5 seconds on every other one. Needs the operator credential.
+	 *
+	 * @example
+	 * await server.updateTenant('acme', { settings: { rateLimit: { runPerMinute: 30 } } });
+	 */
+	updateTenant(tenantId: string, input: UpdateTenantInputBody, signal?: AbortSignal): Promise<TenantResource> {
+		return this.#transport.request('PATCH', `/tenants/${encodeURIComponent(tenantId)}`, { body: input, signal });
 	}
 
 	/**

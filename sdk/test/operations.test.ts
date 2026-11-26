@@ -269,6 +269,29 @@ describe('tenant deletion', () => {
 	});
 });
 
+describe('tenant settings', () => {
+	it('patches the encoded tenant path with the merge patch as given', async () => {
+		const tenant = {
+			id: 'acme/x',
+			name: 'Acme',
+			createdAt: '2026-11-26T00:00:00Z',
+			userCount: 0,
+			settings: { rateLimit: { runPerMinute: 30 } },
+			settingsVersion: 1
+		};
+		const { calls, fetchImpl } = recordingFetch({ body: tenant });
+		const patch = { settings: { rateLimit: { runPerMinute: 30, webhookPerMinute: null } } };
+
+		const updated = await client(fetchImpl).updateTenant('acme/x', patch);
+
+		expect(calls.map((call) => `${call.init.method} ${pathOf(call)}`)).toEqual([
+			'PATCH /api/v1/tenants/acme%2Fx'
+		]);
+		expect(JSON.parse(String(calls[0]?.init.body))).toEqual(patch);
+		expect(updated).toEqual(tenant);
+	});
+});
+
 describe('host events', () => {
 	it('publishes one event and returns the fan-out report', async () => {
 		const { calls, fetchImpl } = recordingFetch({

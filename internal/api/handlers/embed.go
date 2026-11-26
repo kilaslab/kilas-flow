@@ -63,6 +63,7 @@ type embedSessionBody struct {
 	Origin      string         `json:"origin" minLength:"1" doc:"Exact origin of the page that will frame the editor"`
 	TTLSeconds  int            `json:"ttlSeconds,omitempty" doc:"Session lifetime; capped by the server"`
 	Branding    embed.Branding `json:"branding,omitempty" doc:"Validated white-label values; never markup"`
+	Actor       *embed.Actor   `json:"actor,omitempty" doc:"The host user this session acts for. Signed into the token and recorded as an embed actor on the revisions, publish events, and manual runs the session causes. Host-asserted: KilasFlow does not verify it. Omit it for an unnamed session."`
 }
 
 type createEmbedSessionInput struct {
@@ -129,6 +130,7 @@ func (handler *EmbedSessions) Create(ctx context.Context, input *createEmbedSess
 		Lifetime:    time.Duration(input.Body.TTLSeconds) * time.Second,
 		Branding:    input.Body.Branding,
 		Confinement: confinement,
+		Actor:       input.Body.Actor,
 	})
 	if err != nil {
 		return nil, huma.Error422UnprocessableEntity(err.Error())

@@ -432,7 +432,7 @@
 						</label>
 						<Input
 							id={`credential-field-${field.key}`}
-							type={field.secret ? 'password' : 'text'}
+							type={field.secret || field.masked ? 'password' : 'text'}
 							value={fields[field.key] ?? ''}
 							placeholder={isSecretStored(field) ? m.credentials_stored_placeholder() : field.default ? m.credentials_default_placeholder({ value: field.default }) : undefined}
 							autocomplete="off"

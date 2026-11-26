@@ -54,7 +54,7 @@ type Store interface {
 // root wires whatever the deployment stores them in, and a deployment
 // without per-tenant settings wires nothing.
 type Overrides interface {
-	Allowance(tenantID, bucket string) int
+	Allowance(ctx context.Context, tenantID, bucket string) int
 }
 
 // Service is the per-(tenant, bucket) rate limiter.
@@ -112,7 +112,7 @@ func (service *Service) Allow(ctx context.Context, tenantID, bucket string) (boo
 	if service.overrides != nil {
 		// Zero is the honest "no override": an unset row and an absent table
 		// mean the same thing, and a negative one would be a stored bug.
-		if override := service.overrides.Allowance(tenantID, bucket); override > 0 {
+		if override := service.overrides.Allowance(ctx, tenantID, bucket); override > 0 {
 			perMinute = override
 		}
 	}
@@ -166,9 +166,12 @@ func (store *MemoryStore) Spend(_ context.Context, tenantID, bucketName string, 
 		store.buckets[key] = held
 	} else if elapsed := now.Sub(held.updated).Seconds(); elapsed > 0 {
 		held.tokens += elapsed * refillPerSecond
-		if held.tokens > capacity {
-			held.tokens = capacity
-		}
+	}
+	// Capped on every spend, not only after a refill: a tenant setting can
+	// lower the capacity at runtime, and a bucket filled under the old one
+	// must not keep spending above the new one.
+	if held.tokens > capacity {
+		held.tokens = capacity
 	}
 	held.updated = now
 	if held.tokens >= 1 {

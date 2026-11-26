@@ -35,6 +35,7 @@ import (
 
 	"context"
 
+	"github.com/kilaslab/kilas-flow/internal/credentials"
 	"github.com/kilaslab/kilas-flow/internal/loadoptions"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/routing"
@@ -73,6 +74,11 @@ type DirDeps struct {
 	// Context bounds the audit of a module pack. Nil is a background context:
 	// the loader runs at boot, where there is nothing to cancel.
 	Context context.Context
+	// Credentials receives the credential types packs declare in
+	// credentialTypes. The server passes credentials.Default(), at
+	// composition, before anything reads it. Nil refuses a pack that declares
+	// one rather than installing a node whose credential cannot exist.
+	Credentials *credentials.Registry
 }
 
 // ModuleRegistrar audits a module pack's bytes and makes them reachable.
@@ -105,34 +111,62 @@ func LoadDir(deps DirDeps, dir string) error {
 	// ReadDir sorts by filename, which is what makes a duplicate registration
 	// report the same pack on every boot rather than whichever the filesystem
 	// returned first.
+	//
+	// Two passes: every pack is read and verified first, then every pack's
+	// credential types are registered, and only then is any pack installed.
+	// A trigger pack can therefore name a credential type a sibling pack
+	// declares whatever their directory names sort as.
+	var loaded []loadedPack
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		if err := loadPackDir(deps, dir, entry.Name()); err != nil {
+		pack, err := readPackDir(dir, entry.Name())
+		if err != nil {
+			return err
+		}
+		loaded = append(loaded, loadedPack{name: entry.Name(), pack: pack})
+	}
+	if err := registerPackCredentialTypes(deps.Credentials, loaded); err != nil {
+		return err
+	}
+	for _, one := range loaded {
+		if err := installPack(deps, dir, one.name, one.pack); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// loadPackDir installs the one pack living in dir/name.
-func loadPackDir(deps DirDeps, dir, name string) error {
+// loadedPack is one pack directory that has been read and verified but not
+// yet installed.
+type loadedPack struct {
+	name string
+	pack *Pack
+}
+
+// readPackDir reads, verifies and decodes the one pack living in dir/name.
+func readPackDir(dir, name string) (*Pack, error) {
 	manifestPath := filepath.Join(dir, name, ManifestName)
 	manifest, err := os.ReadFile(manifestPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("load node pack %q: %s is missing", name, ManifestName)
+			return nil, fmt.Errorf("load node pack %q: %s is missing", name, ManifestName)
 		}
-		return fmt.Errorf("load node pack %q: read %s: %w", name, manifestPath, err)
+		return nil, fmt.Errorf("load node pack %q: read %s: %w", name, manifestPath, err)
 	}
 	if err := checkPackDigest(dir, name, manifest); err != nil {
-		return err
+		return nil, err
 	}
 	pack, err := Decode(manifest)
 	if err != nil {
-		return fmt.Errorf("load node pack %q: %s: %w", name, manifestPath, err)
+		return nil, fmt.Errorf("load node pack %q: %s: %w", name, manifestPath, err)
 	}
+	return pack, nil
+}
+
+// installPack registers one read pack's node, routing and trigger.
+func installPack(deps DirDeps, dir, name string, pack *Pack) error {
 	if pack.Module != nil {
 		if err := registerModule(deps, dir, name, pack); err != nil {
 			return err
@@ -200,7 +234,10 @@ func registerModule(deps DirDeps, dir, name string, pack *Pack) error {
 	if !strings.EqualFold(digestOf(module), strings.TrimSpace(pack.Module.SHA256)) {
 		return fmt.Errorf("load node pack %q: %s does not match the sha256 its manifest pins: the module was changed after it was approved", name, pack.Module.File)
 	}
-	if issues := checkModule(pack, defaultCredentialLookup); len(issues) > 0 {
+	// The registry the loader was given, which already holds every directory
+	// pack's declared types, so a module may use a type a sibling declares.
+	lookup := registryCredentialLookup(deps.Credentials)
+	if issues := checkModule(pack, withOwnCredentialTypes(pack, lookup)); len(issues) > 0 {
 		return fmt.Errorf("load node pack %q: %s", name, issues[0].Message)
 	}
 	limits, err := pack.Module.limits()
@@ -230,7 +267,7 @@ func registerModule(deps DirDeps, dir, name string, pack *Pack) error {
 	}); err != nil {
 		return fmt.Errorf("load node pack %q: %w", name, err)
 	}
-	definition, _, err := Load(pack)
+	definition, _, err := load(pack, lookup)
 	if err != nil {
 		return fmt.Errorf("load node pack %q: %w", name, err)
 	}

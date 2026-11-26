@@ -144,8 +144,9 @@ type Type struct {
 //
 // There is a package-level `defaultRegistry` below all the same, built once
 // from the built-in types. It exists for callers that have no registry of their
-// own to thread through; a deployment that registers pack credentials builds
-// its own and passes it. An earlier version of this comment claimed the
+// own to thread through. cmd/kilasflow extends it once at composition with the
+// types directory node packs and community packages declare; a test or tool
+// that registers its own builds a private registry and passes it. An earlier version of this comment claimed the
 // package-level form had been avoided, which was not true of the file it sat
 // in.
 type Registry struct {
@@ -325,6 +326,28 @@ func ApplyAuthentication(request *http.Request, credentialType Type, fields map[
 // fieldMarker is a `{{ key }}` or `{{key}}` reference in a descriptor template.
 var fieldMarker = regexp.MustCompile(`\{\{ ([^\s{}]+) \}\}|\{\{([^\s{}]+)\}\}`)
 
+// TemplateFields returns the field keys a descriptor template references with
+// `{{ key }}` markers, in the order they appear. A pack's validator uses it to
+// refuse a template naming a field its type does not declare, which expand
+// would otherwise send as written.
+func TemplateFields(template string) []string {
+	var keys []string
+	for _, parts := range fieldMarker.FindAllStringSubmatch(template, -1) {
+		key := parts[1]
+		if key == "" {
+			key = parts[2]
+		}
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// ExpandTemplate is expand for a caller outside this package: a pack validator
+// fills a custom placement's template with placeholders to check its shape.
+func ExpandTemplate(template string, fields map[string]string) string {
+	return expand(template, fields)
+}
+
 // expand substitutes `{{ key }}` references from the credential's own fields.
 //
 // Deliberately not the expression evaluator: a descriptor is written by whoever
@@ -420,9 +443,10 @@ func (credentialType Type) Fields() []Field {
 	for _, declared := range credentialType.Properties {
 		_, withheld := secret[declared.Key]
 		fallback, _ := declared.Default.(string)
+		masked := withheld || (declared.TypeOptions != nil && declared.TypeOptions.Password)
 		fields = append(fields, Field{
 			Key: declared.Key, Label: declared.Label, Description: declared.Description,
-			Required: declared.Required, Default: fallback, Secret: withheld,
+			Required: declared.Required, Default: fallback, Secret: withheld, Masked: masked,
 		})
 	}
 	return fields
@@ -446,9 +470,9 @@ func (credentialType Type) Definition() Definition {
 // not offer: a map is writable by anything that can see it.
 //
 // Default is that registry itself — a *Registry, not a copy, and its map is
-// not synchronised. Composition may extend it once at boot (a community
-// package's credential types register here before any goroutine reads it), and
-// nothing may write to it afterwards.
+// not synchronised. Composition may extend it once at boot — a directory node
+// pack's credentialTypes, then a community package's credential types, register
+// here before any goroutine reads it — and nothing may write to it afterwards.
 var defaultRegistry = func() *Registry {
 	registry := NewRegistry()
 	if err := RegisterAll(registry); err != nil {

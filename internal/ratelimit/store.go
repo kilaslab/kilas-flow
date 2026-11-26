@@ -106,9 +106,11 @@ func (store *GORMStore) Spend(ctx context.Context, tenantID, bucketName string, 
 func settle(held *BucketModel, capacity, refillPerSecond float64, now time.Time) (bool, time.Duration) {
 	if elapsed := now.Sub(held.UpdatedAt).Seconds(); elapsed > 0 {
 		held.Tokens += elapsed * refillPerSecond
-		if held.Tokens > capacity {
-			held.Tokens = capacity
-		}
+	}
+	// Capped on every spend, as MemoryStore does: the capacity can drop at
+	// runtime when a tenant's rateLimit setting lowers it.
+	if held.Tokens > capacity {
+		held.Tokens = capacity
 	}
 	held.UpdatedAt = now
 	if held.Tokens >= 1 {

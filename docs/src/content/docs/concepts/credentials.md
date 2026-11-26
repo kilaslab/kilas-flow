@@ -231,7 +231,7 @@ switching on the type ID:
 
 ```go
 type Authentication struct {
-	Placement Placement // header | query | basicAuth | bearer | path
+	Placement Placement // header | query | basicAuth | bearer | path | custom
 	Name      string    // a {{ field }} template
 	Value     string    // a {{ field }} template
 	User      string
@@ -246,14 +246,16 @@ not authenticate an HTTP request at all — `postgres`, `mysql`, `sqlite` —
 declares no descriptor, so application refuses it by *absence* rather than by
 falling through a default branch, which is a better error anyway.
 
-One boundary that follows, stated once because the pack documentation leans
-on it: **a new named credential type is a Go change** — a `Type` value added
-to `internal/credentials/builtin.go` — and a node pack cannot add one; it
-names a type that already exists. Pack authors pick from the generic HTTP
-types, and the choice is guided in
+Because the descriptor is data, a credential type does not have to be Go. A
+built-in type is a `Type` value in `internal/credentials/builtin.go`; a
+directory node pack can declare its own in its manifest's `credentialTypes`
+block, and the server registers it at boot beside the built-ins (see
+[Credential types from node packs](#credential-types-from-node-packs)). A pack
+that only needs a generic header, bearer, basic or query credential can still
+name one of the generic HTTP types, and the choice is guided in
 [Credentials for your API](/guides/build-nodes-for-your-api/#credentials-for-your-api).
 
-The five placements:
+The six placements:
 
 | Placement | Effect |
 | --- | --- |
@@ -262,6 +264,7 @@ The five placements:
 | `basicAuth` | RFC 7617 basic auth from two named fields |
 | `bearer` | `Authorization: Bearer …` |
 | `path` | substitutes fields into the request path |
+| `custom` | merges a JSON template's `headers` and `qs` objects into the request |
 
 `path` exists for Telegram, whose Bot API puts the token in the URL —
 `/bot<token>/sendMessage` — which no header or query placement can express. The
@@ -394,8 +397,10 @@ every tenant can open every file the server can.
 20 credential types ship.
 <!-- /generated:credential-types -->
 
-They are all declared in one place, and node packs do not add credential types
-today:
+They are all declared in one place. The count covers the built-in types only:
+a directory node pack can declare more (see
+[Credential types from node packs](#credential-types-from-node-packs)), and
+those are not in this table.
 
 | ID | For |
 | --- | --- |
@@ -447,10 +452,11 @@ its entries — a type marking an undeclared field as secret is refused, as is a
 duplicate ID or an unknown property kind. Unlike the
 [node registry](/concepts/node-registry/), though, it is not assembled in the
 composition root: it is a package-level singleton built in a variable
-initialiser, which panics if the built-in types are invalid, and nothing in
-startup registers a credential type. A pack cannot contribute one: it names a
-type that exists, and the generic HTTP types are what a pack's own API usually
-needs.
+initialiser, which panics if the built-in types are invalid. Composition extends
+it exactly once at boot — first with the `credentialTypes` that directory node
+packs declare, then with a community package's credential types when the
+JavaScript sidecar is on — before anything reads it, and nothing writes to it
+afterwards.
 
 A type states what an empty `allowedDomains` means for it. `DefaultDomains` is a
 fixed list, for a service at one address (`openAiApi`, `openRouterApi`, the
@@ -466,6 +472,129 @@ is *secret* — never returned by the API — is a separate flag from whether th
 editor *masks* it. Conflating them would make a masked-but-readable field start
 coming back as the redaction placeholder, and users would overwrite real values
 with it.
+
+## Credential types from node packs
+
+A pack that calls a host's own API usually wants a credential shaped for that
+API rather than a generic header credential: a base URL the pack reads, a key it
+never shows, a test that proves the key works. A directory node pack declares
+one in its manifest:
+
+```json
+{
+  "type": "pack.acme",
+  "credentialType": "pack.acme.api",
+  "credentialTypes": [{
+    "id": "pack.acme.api",
+    "displayName": "Acme API",
+    "fields": [
+      {"key": "baseUrl", "label": "Base URL", "kind": "string", "required": true, "default": "https://api.acme.example"},
+      {"key": "accountId", "label": "Account ID", "kind": "string", "typeOptions": {"password": true}},
+      {"key": "apiKey", "label": "API key", "kind": "string", "required": true, "secret": true}
+    ],
+    "authenticate": {"placement": "header", "name": "X-Api-Key", "value": "{{ apiKey }}"},
+    "test": {"method": "GET", "url": "{{ baseUrl }}/v1/me"},
+    "defaultDomainsFrom": "baseUrl"
+  }]
+}
+```
+
+The declaration becomes exactly the `Type` a built-in is:
+
+| Manifest | Registered type |
+| --- | --- |
+| `id`, `displayName`, `description` | the same fields |
+| `fields[]` (`key`, `label`, `description`, `kind`, `required`, `default`, `options`, `typeOptions`) | `Properties`, in the shared property language. `kind` and `options` are validated and stored with the type, but the credential editor renders every field as a text input today and does not enforce option membership on save. |
+| `fields[].secret: true` | the key is added to `Secrets`, and the field is also masked (`typeOptions.password`); `GET /credential-types` reports `secret: true, masked: true` |
+| `fields[].typeOptions.password` without `secret` | `masked: true` — hidden in the editor while typed, still returned by the API |
+| `authenticate` | the placement descriptor above, any of the six placements |
+| `test` | the probe [Testing a credential](#testing-a-credential) runs |
+| `defaultDomains` / `defaultDomainsFrom` | the default host scope (one or the other, not both) |
+
+Rules the loader and `nodepackgen validate` both enforce, each reported at its
+JSON path (`$.credentialTypes[0].authenticate.value` and so on):
+
+- **Namespace.** The ID is the pack's own `type`, a dot, and one word of letters
+  and digits: `pack.acme.api` for the pack `pack.acme`. No built-in ID contains
+  a dot (a test holds that line), so a pack type can never shadow a built-in,
+  and one pack cannot claim a name inside another's namespace. A
+  `credentialType` one word inside the pack's namespace must be declared by the
+  pack. A pack declaring types needs a `type` without surrounding spaces and
+  outside the reserved `kilasflow.` namespace.
+- **Length.** At most 64 characters, the width of the stored credential's type
+  column.
+- **Fields.** At least one; keys unique, not starting with `$` and without a
+  comma (the store keeps its own bookkeeping under those). `kind` is `string`,
+  `number`, `boolean` or `options` — a stored credential value is a string, so a
+  `default` must be written as a string too. `options` is required on an
+  options field and refused on any other.
+- **Templates.** Every `{{ key }}` in `authenticate.name`, `authenticate.value`
+  and `test.url` names a declared field; `basicAuth`'s `user` and `password`
+  name declared fields; `header` and `query` need a name and a value, `bearer`
+  and `custom` a value. A `custom` value, with its fields filled in, must be a
+  JSON object holding only `headers` and `qs` objects of strings. A `test`
+  method is `GET`, `HEAD` or `POST`. `defaultDomainsFrom` names a declared
+  field that is not secret, because the scope is read back and shown.
+- **What signs must be secret.** Every field `authenticate.value` references,
+  `basicAuth`'s `password`, and a trigger's `hmac.secretCredential.field` (when
+  it names the pack's own type) must be declared `secret`. A field that is not
+  is stored in plaintext, returned by `GET /credentials/{id}` and left out of the
+  scrubbing that keeps secrets out of error text. A header or query `name` and
+  `basicAuth`'s `user` may be readable.
+- **Default domains.** Each `defaultDomains` entry is a host name, or `*.` and a
+  host name of at least two labels (`*.acme.example`, never `*.com`). A port, a
+  scheme, a path, a space, or a wildcard over an IP address is refused.
+- **What a pack may not say.** `dial` and `neverSentOverHttp` exist on built-in
+  types and are refused as unknown keys in a manifest: both relax a check the
+  host makes, and only the binary may claim them.
+
+**Immutability.** A released ID is a contract with every credential row stored
+under it: the row is keyed by the ID, its sealed payload by the field keys.
+The loader enforces the part it can see — when two installed packs (typically
+two versions of one pack) declare the same ID, their declarations must be
+identical, or the boot is refused with "a released credential type is
+immutable, so give the changed declaration a new id". The part it cannot see is
+a contract on the author: never rename or remove a released field key, and never
+flip its `secret` flag, in a later release. Declare a new ID (`pack.acme.apiV2`)
+instead.
+
+Where the types appear once loaded: `GET /credential-types` lists them in the
+same shape as a built-in, the editor's credential form renders their fields,
+the routing interpreter and a trigger's lifecycle requests sign with their
+`authenticate`, the credential test runs their `test`, and confinement reads
+their default scope. Any pack may name another pack's type — the loader reads
+every pack and registers every declared type before it installs any pack, so a
+trigger pack can borrow a sibling's type whatever the directory order.
+
+What refuses the boot:
+
+| Situation | Result |
+| --- | --- |
+| Two installed packs declare one ID identically | registered once |
+| Two installed packs declare one ID differently | refused, naming both pack directories |
+| A pack declares an ID the deployment already registered | refused, naming the existing type's display name |
+| A community package (sidecar) declares an ID a pack already registered | refused by the sidecar loader, naming the ID |
+| The server supplied no credential registry to the loader | refused, naming the pack |
+
+Notes:
+
+- A type with no `authenticate` is allowed. It cannot sign a request, but it can
+  hold a trigger's HMAC signing secret (`trigger.hmac.secretCredential`), whose
+  `field` must then be a declared field.
+- A type without `defaultDomains` or `defaultDomainsFrom` is unscoped when its
+  owner saves no domains, so an embedded editor or a scoped agent token cannot
+  attach it. A pack type for a host API should name its base URL field.
+- Credential types are global. A pack scoped with `visibleTo` still registers
+  its types for every tenant, because the credential catalogue has no tenant
+  dimension: every tenant's `GET /credential-types` lists them, names,
+  fields and `defaultDomains` included, so do not put anything confidential in
+  a declaration.
+- Only directory packs register types. An embedded pack (compiled into the
+  binary) that needs a new type adds it to `builtin.go` instead.
+- Uninstalling the pack removes the type at the next boot. Credential rows of
+  that type stay stored and sealed but can no longer sign a request, and one
+  saved without domains reads as unscoped, until a pack declaring the same ID
+  is installed again.
 
 ## API operations
 
@@ -575,6 +704,9 @@ node, which never runs. See
 (`undeclaredCredentials`), `internal/credentials/registry.go` (`Placement`,
 `Authentication`, `ApplyAuthentication`, `RunTest`),
 `internal/credentials/builtin.go` (the built-in types, including Google Drive, Gmail and Google Sheets OAuth2),
+`internal/nodepack/credentialtypes.go` (a pack's `credentialTypes`: the
+declaration, its checks and its registration) and `internal/nodepack/loaddir.go`
+(the two-pass load that registers them before any pack installs),
 `internal/repository/credentials.go` (the storage split and `Resolve`),
 `internal/engine/authenticate.go` (the domain check on the run path),
 `internal/engine/secret_scrub.go` and `internal/credentials/scrub.go` (scrubbing

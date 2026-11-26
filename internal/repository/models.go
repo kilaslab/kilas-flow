@@ -284,6 +284,8 @@ type workflowVersionModel struct {
 	ActorKind  *string `gorm:"size:16"`
 	ActorLabel *string `gorm:"size:255"`
 	ActorKeyID *string `gorm:"size:64"`
+	// ActorID is the host's identifier for an 'embed' actor (000029).
+	ActorID *string `gorm:"size:128"`
 	// ActorMeta is what the caller said it used to make this write, today the
 	// skills an agent listed in X-KilasFlow-Skills-Used, stored as JSON. It is
 	// nullable like Diagnostics and for the same reason: a revision nobody
@@ -330,6 +332,7 @@ type workflowPublishEventModel struct {
 	ActorKind  string    `gorm:"not null;size:16;default:''"`
 	ActorLabel string    `gorm:"not null;size:255;default:''"`
 	ActorKeyID string    `gorm:"not null;size:64;default:''"`
+	ActorID    string    `gorm:"not null;size:128;default:''"`
 	CreatedAt  time.Time `gorm:"not null;index:idx_workflow_publish_events_workflow,priority:3"`
 }
 
@@ -357,6 +360,13 @@ type executionModel struct {
 	LeaseOwner              string     `gorm:"size:128;index"`
 	LeaseExpiresAt          *time.Time `gorm:"index"`
 	CancellationRequestedAt *time.Time `gorm:"index"`
+	// ActorKind, ActorLabel, ActorKeyID and ActorID are who queued a manual
+	// run or a retry, in workflow_versions' vocabulary (000029). Empty for a
+	// trigger-started run and for every run queued before attribution.
+	ActorKind  string `gorm:"not null;size:16;default:''"`
+	ActorLabel string `gorm:"not null;size:255;default:''"`
+	ActorKeyID string `gorm:"not null;size:64;default:''"`
+	ActorID    string `gorm:"not null;size:128;default:''"`
 	// ReclaimCount is how many times an expired lease has handed this
 	// execution to a fresh worker. It is what MaxExecutionReclaims compares
 	// against: the claim that would exceed the cap settles the row as
@@ -418,6 +428,11 @@ type tenantModel struct {
 	Name      string    `gorm:"not null;size:255"`
 	CreatedAt time.Time `gorm:"not null"`
 	UpdatedAt time.Time `gorm:"not null"`
+	// Settings is the tenant's settings document as canonical JSON, NULL when
+	// it has none. SettingsVersion counts the writes that changed it (0 =
+	// never written) and guards each update against a concurrent one.
+	Settings        []byte
+	SettingsVersion int64 `gorm:"not null;default:0"`
 }
 
 func (tenantModel) TableName(namer schema.Namer) string {

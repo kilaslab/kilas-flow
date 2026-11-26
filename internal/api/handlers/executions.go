@@ -239,6 +239,10 @@ type ExecutionSummary struct {
 	StartedAt         time.Time         `json:"startedAt"`
 	FinishedAt        *time.Time        `json:"finishedAt,omitempty"`
 	DurationMs        *int64            `json:"durationMs,omitempty" doc:"Wall-clock duration in milliseconds, once the execution has finished"`
+	ActorKind         string            `json:"actorKind,omitempty" enum:"user,key,embed" doc:"Who queued this run, for a manual run or a retry: user for a signed-in person, key for an API key, embed for an embed session. Absent for trigger-started runs and runs queued before attribution."`
+	ActorLabel        string            `json:"actorLabel,omitempty" doc:"Who queued this run, for a manual run or a retry: the email address, API key name, or embed display name, where one is known. Absent for trigger-started runs and runs queued before attribution."`
+	ActorKeyID        string            `json:"actorKeyId,omitempty" doc:"Who queued this run, for a manual run or a retry: the identifier of the API key. Absent for trigger-started runs and runs queued before attribution."`
+	ActorID           string            `json:"actorId,omitempty" doc:"Who queued this run, for a manual run or a retry: the host's identifier for an embed session's user, host-asserted and not verified. Absent for trigger-started runs and runs queued before attribution."`
 }
 
 // ExecutionListResource is one page of execution history, newest first.

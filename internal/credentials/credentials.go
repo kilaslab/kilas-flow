@@ -181,6 +181,10 @@ type Field struct {
 	Default string `json:"default,omitempty"`
 	// Secret fields are never returned by the API after they are stored.
 	Secret bool `json:"secret"`
+	// Masked fields are hidden on screen while they are typed: every secret
+	// field, and a readable field whose property sets typeOptions.password. A
+	// masked field that is not secret still comes back with its real value.
+	Masked bool `json:"masked,omitempty" doc:"Hidden on screen while typed; true for every secret field and for a readable field the type masks"`
 }
 
 // Definition describes one supported credential type.

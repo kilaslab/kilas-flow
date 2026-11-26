@@ -52,6 +52,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/scheduler"
 	"github.com/kilaslab/kilas-flow/internal/sqlnode"
 	"github.com/kilaslab/kilas-flow/internal/tenantpurge"
+	"github.com/kilaslab/kilas-flow/internal/tenantsettings"
 	"github.com/kilaslab/kilas-flow/internal/wasmpack"
 	"github.com/kilaslab/kilas-flow/internal/webhook"
 	"github.com/kilaslab/kilas-flow/nodes"
@@ -392,6 +393,10 @@ func run(args []string) error {
 		Deliveries: webhookTriggers, Lifecycles: webhookLifecycles,
 		Executors: executorRegistry, Options: optionLoader,
 		Modules: modulePacks, Context: ctx,
+		// A directory pack's credentialTypes extend the global catalogue
+		// here, once, before anything reads credentials.Default(); the
+		// sidecar below extends it next, and nothing does afterwards.
+		Credentials: credentials.Default(),
 	}, cfg.Packs.Dir); err != nil {
 		return fmt.Errorf("load directory node packs: %w", err)
 	}
@@ -716,11 +721,19 @@ func run(args []string) error {
 	} else {
 		rateLimitStore = ratelimit.NewMemoryStore()
 	}
+	// Per-tenant settings: each consumer registers its section, and the
+	// cache is what hot paths read them through. The rate limiter is the
+	// first reader — a tenant's rateLimit section replaces the defaults below.
+	tenantSettingsRegistry := tenantsettings.NewRegistry()
+	if err := ratelimit.RegisterSettings(tenantSettingsRegistry); err != nil {
+		return err
+	}
+	tenantSettings := tenantsettings.NewCache(tenantSettingsRegistry, authStore)
 	rateLimiter := ratelimit.NewService(rateLimitStore, map[string]int{
 		ratelimit.BucketRun:     cfg.RateLimit.RunPerMinute,
 		ratelimit.BucketWebhook: cfg.RateLimit.WebhookPerMinute,
 		ratelimit.BucketEvents:  cfg.RateLimit.EventsPerMinute,
-	})
+	}).WithOverrides(ratelimit.SettingsOverrides{Cache: tenantSettings})
 	metricsRegistry := newMetricsRegistry(cfg)
 	runtime, err := engine.NewService(engine.ServiceDeps{
 		Logger:      log,
@@ -1002,6 +1015,7 @@ func run(args []string) error {
 		TenantPurger:    tenantPurger,
 		HostEvents:      hostEventService,
 		RateLimiter:     rateLimiter,
+		TenantSettings:  tenantSettings,
 		Version:         version,
 		OAuthSigningKey: oauthSigningKey,
 		OAuthHTTP:       oauthHTTP,

@@ -6,10 +6,19 @@
  * OpenAPI spec version: 0.1.0-dev
  */
 import type { ExecutionNodeRunResource } from './executionNodeRunResource';
+import type { ExecutionResourceActorKind } from './executionResourceActorKind';
 
 export interface ExecutionResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** Who queued this run, for a manual run or a retry: the host's identifier for an embed session's user, host-asserted and not verified. Absent for trigger-started runs and runs queued before attribution. */
+  actorId?: string;
+  /** Who queued this run, for a manual run or a retry: the identifier of the API key. Absent for trigger-started runs and runs queued before attribution. */
+  actorKeyId?: string;
+  /** Who queued this run, for a manual run or a retry: user for a signed-in person, key for an API key, embed for an embed session. Absent for trigger-started runs and runs queued before attribution. */
+  actorKind?: ExecutionResourceActorKind;
+  /** Who queued this run, for a manual run or a retry: the email address, API key name, or embed display name, where one is known. Absent for trigger-started runs and runs queued before attribution. */
+  actorLabel?: string;
   /** The approval page, for a run waiting on an approval only */
   approvalUrl?: string;
   cancellationRequestedAt?: string;

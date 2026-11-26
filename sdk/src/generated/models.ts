@@ -300,6 +300,21 @@ export interface ActivationResource {
   updatedAt: string;
 }
 
+export interface Actor {
+  /**
+     * The name KilasFlow shows for this user: at most 64 letters, digits, spaces, and simple punctuation, without leading or trailing spaces.
+     * @maxLength 64
+     */
+  displayName?: string;
+  /**
+     * The host's own stable identifier for its user: 1 to 128 letters, digits, and . _ - : @ | + / =. Returned by the API to anyone who can read the workflow's history, so use an opaque identifier rather than an email address. Host-asserted, never verified.
+     * @minLength 1
+     * @maxLength 128
+     * @pattern ^[A-Za-z0-9._:@|+/=\-]+$
+     */
+  id: string;
+}
+
 export interface Assignment {
   id?: string;
   name: string;
@@ -617,6 +632,8 @@ export interface Field {
   description?: string;
   key: string;
   label: string;
+  /** Hidden on screen while typed; true for every secret field and for a readable field the type masks */
+  masked?: boolean;
   required: boolean;
   secret: boolean;
 }
@@ -891,6 +908,8 @@ export interface DuplicateWorkflowInputBody {
 export interface EmbedSessionBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** The host user this session acts for. Signed into the token and recorded as an embed actor on the revisions, publish events, and manual runs the session causes. Host-asserted: KilasFlow does not verify it. Omit it for an unnamed session. */
+  actor?: Actor;
   /** Validated white-label values; never markup */
   branding?: Branding;
   /** Datastore this session may touch; exactly one of this and workflowId */
@@ -1051,7 +1070,27 @@ export interface ExecutionFailedEvent {
   workflowId?: string;
 }
 
+/**
+ * Who queued this run, for a manual run or a retry: user for a signed-in person, key for an API key, embed for an embed session. Absent for trigger-started runs and runs queued before attribution.
+ */
+export type ExecutionSummaryActorKind = typeof ExecutionSummaryActorKind[keyof typeof ExecutionSummaryActorKind];
+
+
+export const ExecutionSummaryActorKind = {
+  user: 'user',
+  key: 'key',
+  embed: 'embed',
+} as const;
+
 export interface ExecutionSummary {
+  /** Who queued this run, for a manual run or a retry: the host's identifier for an embed session's user, host-asserted and not verified. Absent for trigger-started runs and runs queued before attribution. */
+  actorId?: string;
+  /** Who queued this run, for a manual run or a retry: the identifier of the API key. Absent for trigger-started runs and runs queued before attribution. */
+  actorKeyId?: string;
+  /** Who queued this run, for a manual run or a retry: user for a signed-in person, key for an API key, embed for an embed session. Absent for trigger-started runs and runs queued before attribution. */
+  actorKind?: ExecutionSummaryActorKind;
+  /** Who queued this run, for a manual run or a retry: the email address, API key name, or embed display name, where one is known. Absent for trigger-started runs and runs queued before attribution. */
+  actorLabel?: string;
   /** Wall-clock duration in milliseconds, once the execution has finished */
   durationMs?: number;
   finishedAt?: string;
@@ -1106,9 +1145,29 @@ export interface ExecutionRequestResource {
   workflowVersionId: string;
 }
 
+/**
+ * Who queued this run, for a manual run or a retry: user for a signed-in person, key for an API key, embed for an embed session. Absent for trigger-started runs and runs queued before attribution.
+ */
+export type ExecutionResourceActorKind = typeof ExecutionResourceActorKind[keyof typeof ExecutionResourceActorKind];
+
+
+export const ExecutionResourceActorKind = {
+  user: 'user',
+  key: 'key',
+  embed: 'embed',
+} as const;
+
 export interface ExecutionResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** Who queued this run, for a manual run or a retry: the host's identifier for an embed session's user, host-asserted and not verified. Absent for trigger-started runs and runs queued before attribution. */
+  actorId?: string;
+  /** Who queued this run, for a manual run or a retry: the identifier of the API key. Absent for trigger-started runs and runs queued before attribution. */
+  actorKeyId?: string;
+  /** Who queued this run, for a manual run or a retry: user for a signed-in person, key for an API key, embed for an embed session. Absent for trigger-started runs and runs queued before attribution. */
+  actorKind?: ExecutionResourceActorKind;
+  /** Who queued this run, for a manual run or a retry: the email address, API key name, or embed display name, where one is known. Absent for trigger-started runs and runs queued before attribution. */
+  actorLabel?: string;
   /** The approval page, for a run waiting on an approval only */
   approvalUrl?: string;
   cancellationRequestedAt?: string;
@@ -1319,12 +1378,21 @@ export interface ListTenantUsersOutputBody {
   items: UserResource[] | null;
 }
 
+/**
+ * The tenant's settings, one object per section. A section that is absent falls back to the deployment configuration.
+ */
+export type TenantResourceSettings = {[key: string]: unknown};
+
 export interface TenantResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   createdAt: string;
   id: string;
   name: string;
+  /** The tenant's settings, one object per section. A section that is absent falls back to the deployment configuration. */
+  settings: TenantResourceSettings;
+  /** Counts the writes that changed settings; 0 means they have never been written */
+  settingsVersion: number;
   /** Accounts this tenant holds */
   userCount: number;
 }
@@ -1806,6 +1874,18 @@ export interface UpdateRowsOutputBody {
 }
 
 /**
+ * A merge patch over the tenant's settings: one object per section, null to remove a section or a field
+ */
+export type UpdateTenantInputBodySettings = {[key: string]: unknown};
+
+export interface UpdateTenantInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** A merge patch over the tenant's settings: one object per section, null to remove a section or a field */
+  settings?: UpdateTenantInputBodySettings;
+}
+
+/**
  * Columns to set or to insert with
  */
 export type UpsertRowInputBodyValues = {[key: string]: unknown};
@@ -1921,7 +2001,7 @@ export const WorkflowPublishEventResourceAction = {
 } as const;
 
 /**
- * What kind of caller acted: user for a signed-in person, key for an API key. Absent when the publish predates attribution or arrived unauthenticated.
+ * What kind of caller acted: user for a signed-in person, key for an API key, embed for an embed session. Absent when the publish predates attribution or arrived unauthenticated.
  */
 export type WorkflowPublishEventResourceActorKind = typeof WorkflowPublishEventResourceActorKind[keyof typeof WorkflowPublishEventResourceActorKind];
 
@@ -1929,17 +2009,20 @@ export type WorkflowPublishEventResourceActorKind = typeof WorkflowPublishEventR
 export const WorkflowPublishEventResourceActorKind = {
   user: 'user',
   key: 'key',
+  embed: 'embed',
 } as const;
 
 export interface WorkflowPublishEventResource {
   action: WorkflowPublishEventResourceAction;
   /** Who acted, where the actor is known */
   actor?: string;
+  /** The host's identifier for the user an embed session acted for, as the host asserted it when minting the session. Not verified by KilasFlow. Absent for every other kind. */
+  actorId?: string;
   /** Identifier of the API key that acted. Absent for a session. */
   actorKeyId?: string;
-  /** What kind of caller acted: user for a signed-in person, key for an API key. Absent when the publish predates attribution or arrived unauthenticated. */
+  /** What kind of caller acted: user for a signed-in person, key for an API key, embed for an embed session. Absent when the publish predates attribution or arrived unauthenticated. */
   actorKind?: WorkflowPublishEventResourceActorKind;
-  /** The actor's email address or API key name, where one is known */
+  /** The actor's email address, API key name, or the display name a host gave its embed session's user, where one is known */
   actorLabel?: string;
   createdAt: string;
   reason?: string;
@@ -1976,7 +2059,7 @@ export interface WorkflowSummary {
 }
 
 /**
- * What kind of caller saved this revision: user for a signed-in person, key for an API key. Absent when the write predates attribution or arrived unauthenticated.
+ * What kind of caller saved this revision: user for a signed-in person, key for an API key, embed for an embed session. Absent when the write predates attribution or arrived unauthenticated.
  */
 export type WorkflowVersionSummaryResourceActorKind = typeof WorkflowVersionSummaryResourceActorKind[keyof typeof WorkflowVersionSummaryResourceActorKind];
 
@@ -1984,14 +2067,17 @@ export type WorkflowVersionSummaryResourceActorKind = typeof WorkflowVersionSumm
 export const WorkflowVersionSummaryResourceActorKind = {
   user: 'user',
   key: 'key',
+  embed: 'embed',
 } as const;
 
 export interface WorkflowVersionSummaryResource {
+  /** The host's identifier for the user an embed session acted for, as the host asserted it when minting the session. Not verified by KilasFlow. Absent for every other kind. */
+  actorId?: string;
   /** Identifier of the API key that saved this revision, so a reused key name still names the key that acted. Absent for a session. */
   actorKeyId?: string;
-  /** What kind of caller saved this revision: user for a signed-in person, key for an API key. Absent when the write predates attribution or arrived unauthenticated. */
+  /** What kind of caller saved this revision: user for a signed-in person, key for an API key, embed for an embed session. Absent when the write predates attribution or arrived unauthenticated. */
   actorKind?: WorkflowVersionSummaryResourceActorKind;
-  /** The actor's email address or API key name, where one is known */
+  /** The actor's email address, API key name, or the display name a host gave its embed session's user, where one is known */
   actorLabel?: string;
   /**
      * What the caller reported using to make the write, from the X-KilasFlow-Skills-Used header
@@ -5549,6 +5635,64 @@ export const getTenant = async (id: string, options?: RequestInit): Promise<getT
 
   const data: getTenantResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as getTenantResponse
+}
+
+
+
+export type updateTenantResponse200 = {
+  data: TenantResource
+  status: 200
+}
+
+export type updateTenantResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type updateTenantResponseSuccess = (updateTenantResponse200) & {
+  headers: Headers;
+};
+export type updateTenantResponseError = (updateTenantResponseDefault) & {
+  headers: Headers;
+};
+
+export type updateTenantResponse = (updateTenantResponseSuccess | updateTenantResponseError)
+
+export const getUpdateTenantUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/tenants/${id}`
+}
+
+/**
+ * Changes a tenant's settings. The body's settings object is merged into the stored one section by section, as a JSON merge patch (RFC 7396): a section set to null is removed, so the tenant falls back to the deployment configuration for it; an object is merged field by field, and a field set to null is removed. A section or field this server does not accept is refused with tenant_settings_unknown_key, a value its section rejects with tenant_settings_invalid, both as 422 with one error per problem located at body.settings.<section>.<field>; a patch with any problem writes nothing. A write that changes the document bumps settingsVersion by one, and an unchanged one keeps it. A change applies at once on the process that served it and within 5 s on every other process. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused. Sections this server accepts: rateLimit.
+ * @summary Update a tenant's settings
+ */
+export const updateTenant = async (id: string,
+    updateTenantInputBody: NonReadonly<UpdateTenantInputBody>, options?: RequestInit): Promise<updateTenantResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getUpdateTenantUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateTenantInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: updateTenantResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as updateTenantResponse
 }
 
 

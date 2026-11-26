@@ -8,11 +8,13 @@
 import type { WorkflowVersionSummaryResourceActorKind } from './workflowVersionSummaryResourceActorKind';
 
 export interface WorkflowVersionSummaryResource {
+  /** The host's identifier for the user an embed session acted for, as the host asserted it when minting the session. Not verified by KilasFlow. Absent for every other kind. */
+  actorId?: string;
   /** Identifier of the API key that saved this revision, so a reused key name still names the key that acted. Absent for a session. */
   actorKeyId?: string;
-  /** What kind of caller saved this revision: user for a signed-in person, key for an API key. Absent when the write predates attribution or arrived unauthenticated. */
+  /** What kind of caller saved this revision: user for a signed-in person, key for an API key, embed for an embed session. Absent when the write predates attribution or arrived unauthenticated. */
   actorKind?: WorkflowVersionSummaryResourceActorKind;
-  /** The actor's email address or API key name, where one is known */
+  /** The actor's email address, API key name, or the display name a host gave its embed session's user, where one is known */
   actorLabel?: string;
   /**
      * What the caller reported using to make the write, from the X-KilasFlow-Skills-Used header
