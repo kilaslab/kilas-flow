@@ -518,7 +518,9 @@ JSON path (`$.credentialTypes[0].authenticate.value` and so on):
   and digits: `pack.acme.api` for the pack `pack.acme`. No built-in ID contains
   a dot (a test holds that line), so a pack type can never shadow a built-in,
   and one pack cannot claim a name inside another's namespace. A
-  `credentialType` inside the pack's namespace must be declared by the pack.
+  `credentialType` one word inside the pack's namespace must be declared by the
+  pack. A pack declaring types needs a `type` without surrounding spaces and
+  outside the reserved `kilasflow.` namespace.
 - **Length.** At most 64 characters, the width of the stored credential's type
   column.
 - **Fields.** At least one; keys unique, not starting with `$` and without a
@@ -529,8 +531,19 @@ JSON path (`$.credentialTypes[0].authenticate.value` and so on):
 - **Templates.** Every `{{ key }}` in `authenticate.name`, `authenticate.value`
   and `test.url` names a declared field; `basicAuth`'s `user` and `password`
   name declared fields; `header` and `query` need a name and a value, `bearer`
-  and `custom` a value. `defaultDomainsFrom` names a declared field that is not
-  secret, because the scope is read back and shown.
+  and `custom` a value. A `custom` value, with its fields filled in, must be a
+  JSON object holding only `headers` and `qs` objects of strings. A `test`
+  method is `GET`, `HEAD` or `POST`. `defaultDomainsFrom` names a declared
+  field that is not secret, because the scope is read back and shown.
+- **What signs must be secret.** Every field `authenticate.value` references,
+  `basicAuth`'s `password`, and a trigger's `hmac.secretCredential.field` (when
+  it names the pack's own type) must be declared `secret`. A field that is not
+  is stored in plaintext, returned by `GET /credentials/{id}` and left out of the
+  scrubbing that keeps secrets out of error text. A header or query `name` and
+  `basicAuth`'s `user` may be readable.
+- **Default domains.** Each `defaultDomains` entry is a host name, or `*.` and a
+  host name of at least two labels (`*.acme.example`, never `*.com`). A port, a
+  scheme, a path, a space, or a wildcard over an IP address is refused.
 - **What a pack may not say.** `dial` and `neverSentOverHttp` exist on built-in
   types and are refused as unknown keys in a manifest: both relax a check the
   host makes, and only the binary may claim them.

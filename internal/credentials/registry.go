@@ -342,6 +342,12 @@ func TemplateFields(template string) []string {
 	return keys
 }
 
+// ExpandTemplate is expand for a caller outside this package: a pack validator
+// fills a custom placement's template with placeholders to check its shape.
+func ExpandTemplate(template string, fields map[string]string) string {
+	return expand(template, fields)
+}
+
 // expand substitutes `{{ key }}` references from the credential's own fields.
 //
 // Deliberately not the expression evaluator: a descriptor is written by whoever

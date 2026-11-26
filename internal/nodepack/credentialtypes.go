@@ -25,10 +25,12 @@ package nodepack
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"regexp"
 	"strings"
 
 	"github.com/kilaslab/kilas-flow/internal/credentials"
+	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/property"
 )
 
@@ -138,6 +140,16 @@ func checkCredentialTypes(pack *Pack) []Issue {
 	}
 	prefix := strings.TrimSpace(pack.Type) + "."
 	declared := map[string]CredentialType{}
+	if len(pack.CredentialTypes) > 0 {
+		switch {
+		case strings.TrimSpace(pack.Type) == "" || pack.Type != strings.TrimSpace(pack.Type):
+			fail("$.credentialTypes", "a pack declares credential types inside its own type's namespace, so it needs a type without surrounding spaces first")
+			return issues
+		case strings.HasPrefix(pack.Type, node.BuiltinPrefix):
+			fail("$.credentialTypes", "node type %q claims the reserved %q namespace, so it cannot be a credential type namespace either", pack.Type, node.BuiltinPrefix)
+			return issues
+		}
+	}
 	for i, credentialType := range pack.CredentialTypes {
 		base := fmt.Sprintf("$.credentialTypes[%d]", i)
 		before := len(issues)
@@ -220,12 +232,28 @@ func checkCredentialTypes(pack *Pack) []Issue {
 				if !keys[auth.User] {
 					fail(at+".user", "basicAuth user must name a field of credential type %q, and %q does not", id, auth.User)
 				}
-				if !keys[auth.Password] {
+				switch {
+				case !keys[auth.Password]:
 					fail(at+".password", "basicAuth password must name a field of credential type %q, and %q does not", id, auth.Password)
+				case !secret[auth.Password]:
+					fail(at+".password", signingFieldMessage, auth.Password)
 				}
 			}
 			checkMarkers(at+".name", auth.Name)
 			checkMarkers(at+".value", auth.Value)
+			// What a request is signed with must be secret: a field that is not
+			// is stored in plaintext, returned by the API and left out of the
+			// scrubbing that keeps secrets out of error text.
+			for _, key := range credentials.TemplateFields(auth.Value) {
+				if keys[key] && !secret[key] {
+					fail(at+".value", signingFieldMessage, key)
+				}
+			}
+			if auth.Placement == credentials.PlacementCustom && strings.TrimSpace(auth.Value) != "" {
+				if problem := checkCustomTemplate(auth.Value, keys); problem != "" {
+					fail(at+".value", "%s", problem)
+				}
+			}
 		}
 		if test := credentialType.Test; test != nil {
 			at := base + ".test"
@@ -233,6 +261,9 @@ func checkCredentialTypes(pack *Pack) []Issue {
 				fail(at+".url", "a credential test needs a url")
 			}
 			checkMarkers(at+".url", test.URL)
+			if method := strings.ToUpper(strings.TrimSpace(test.Method)); method != "" && method != "GET" && method != "HEAD" && method != "POST" {
+				fail(at+".method", "a credential test is a GET, HEAD or POST probe, not %q", test.Method)
+			}
 			if test.ExpectStatusBelow < 0 || test.ExpectStatusBelow > 599 {
 				fail(at+".expectStatusBelow", "expectStatusBelow must be an HTTP status between 0 and 599, not %d", test.ExpectStatusBelow)
 			}
@@ -249,8 +280,8 @@ func checkCredentialTypes(pack *Pack) []Issue {
 			}
 		}
 		for j, domain := range credentialType.DefaultDomains {
-			if strings.TrimSpace(domain) == "" || strings.Contains(domain, "/") {
-				fail(fmt.Sprintf("%s.defaultDomains[%d]", base, j), "a default domain is a host name such as %q, not %q", "api.example.com", domain)
+			if problem := checkDefaultDomain(domain); problem != "" {
+				fail(fmt.Sprintf("%s.defaultDomains[%d]", base, j), "default domain %q %s: write a host name such as %q, or %q for its subdomains", domain, problem, "api.example.com", "*.example.com")
 			}
 		}
 		// The registry's own rules last, and only on a declaration that passed
@@ -264,7 +295,8 @@ func checkCredentialTypes(pack *Pack) []Issue {
 			declared[id] = credentialType
 		}
 	}
-	if own := pack.CredentialType; own != "" && strings.TrimSpace(pack.Type) != "" && strings.HasPrefix(own, prefix) {
+	if own := pack.CredentialType; own != "" && strings.TrimSpace(pack.Type) != "" && strings.HasPrefix(own, prefix) &&
+		credentialTypeName.MatchString(strings.TrimPrefix(own, prefix)) {
 		if _, found := declared[own]; !found {
 			fail("$.credentialType", "credential type %q is in this pack's namespace, so the pack must declare it under credentialTypes", own)
 		}
@@ -278,10 +310,102 @@ func checkCredentialTypes(pack *Pack) []Issue {
 			}
 			if !known {
 				fail("$.trigger.hmac.secretCredential.field", "field %q is not declared by credential type %q", secretCredential.Field, secretCredential.Type)
+			} else if !isSecretField(credentialType, secretCredential.Field) {
+				fail("$.trigger.hmac.secretCredential.field", signingFieldMessage, secretCredential.Field)
 			}
 		}
 	}
 	return issues
+}
+
+// signingFieldMessage refuses a non-secret field where a signing secret goes.
+const signingFieldMessage = "field %q signs with its value, so it must be declared secret: a field that is not is stored in plaintext, returned by the API and not scrubbed from error text"
+
+func isSecretField(credentialType CredentialType, key string) bool {
+	for _, field := range credentialType.Fields {
+		if field.Key == key {
+			return field.Secret
+		}
+	}
+	return false
+}
+
+// checkCustomTemplate expands a custom placement's template with a placeholder
+// for every declared field and checks it is what ApplyAuthentication accepts:
+// a JSON object with only `headers` and `qs`, each an object of strings. The
+// runtime substitution is unchanged; this only finds the template that would
+// fail on every request.
+func checkCustomTemplate(template string, keys map[string]bool) string {
+	placeholders := make(map[string]string, len(keys))
+	for key := range keys {
+		placeholders[key] = "placeholder"
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(credentials.ExpandTemplate(template, placeholders)), &decoded); err != nil {
+		return "a custom placement's value must be a JSON object once its fields are filled in"
+	}
+	for key, raw := range decoded {
+		if key != "headers" && key != "qs" {
+			return fmt.Sprintf("a custom placement's template may hold only headers and qs, not %q", key)
+		}
+		var values map[string]string
+		if err := json.Unmarshal(raw, &values); err != nil {
+			return fmt.Sprintf("a custom placement's %s must be an object of strings", key)
+		}
+	}
+	if len(decoded) == 0 {
+		return "a custom placement's template needs headers or qs"
+	}
+	return ""
+}
+
+// checkDefaultDomain says what is wrong with one defaultDomains entry, or
+// returns "". An entry is a host name, or `*.` and a host name of at least two
+// labels — AllowsHost matches exactly that — so a port, a scheme, a space, an
+// IP wildcard or a wildcard over a whole top-level domain is refused.
+func checkDefaultDomain(domain string) string {
+	host, wildcard := strings.CutPrefix(domain, "*.")
+	switch {
+	case strings.TrimSpace(domain) == "":
+		return "is empty"
+	case strings.ContainsAny(domain, " \t\r\n"):
+		return "contains a space"
+	case strings.Contains(domain, "://"):
+		return "has a scheme"
+	case strings.ContainsAny(domain, "/?#@"):
+		return "is not a bare host"
+	case strings.Contains(host, ":") || strings.Contains(host, "[") || strings.Contains(host, "]"):
+		return "carries a port or an IPv6 literal"
+	case strings.Contains(host, "*"):
+		return "has a wildcard that is not a leading *."
+	}
+	labels := strings.Split(strings.TrimSuffix(host, "."), ".")
+	for _, label := range labels {
+		if label == "" || !hostLabel.MatchString(label) {
+			return "is not a valid host name"
+		}
+	}
+	if wildcard {
+		if net.ParseIP(host) != nil || allDigits(labels[len(labels)-1]) {
+			return "puts a wildcard in front of an IP address"
+		}
+		if len(labels) < 2 {
+			return "puts a wildcard in front of a whole top-level domain"
+		}
+	}
+	return ""
+}
+
+// hostLabel is one DNS label.
+var hostLabel = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
+
+func allDigits(value string) bool {
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return value != ""
 }
 
 // packCredentialTypes returns a pack's declared types converted for the
