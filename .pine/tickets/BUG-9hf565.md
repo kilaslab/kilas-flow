@@ -1,7 +1,7 @@
 ---
 id: BUG-9hf565
 title: 'CI: the Luxon ambiguous-November-hour golden depends on the real clock and has failed since 2026-11-01'
-status: todo
+status: done
 priority: high
 labels:
     - ci
@@ -21,3 +21,20 @@ updated: "2026-11-26T08:05:19Z"
 # Notes
 
 Found while merging FEAT-n12211, FEAT-s3sfx5 and FEAT-4fp51b (PR #57), whose CI was red only on this test. It is a different failure from the local-only Sydney host artefact in .pine/memory/testing.md.
+
+## Work Evidence
+
+Recorded from commits by `pine close --evidence --commit` on 2026-11-26.
+
+- Commits (1):
+  - `12d56347` — BUG-9hf565: the ambiguous-November-hour Luxon probe pins Settings.now, so its golden stops depending on the real clock
+- Files changed:
+
+```
+12d56347 BUG-9hf565: the ambiguous-November-hour Luxon probe pins Settings.now, so its golden stops depending on the real clock
+
+ .pine/tickets/BUG-9hf565.md               | 23 +++++++++++++++++++++++
+ internal/jsrun/testdata/parity/luxon.json |  2 +-
+ scripts/js-parity/record.mjs              |  2 +-
+ 3 files changed, 25 insertions(+), 2 deletions(-)
+```
