@@ -91,7 +91,7 @@ func TestTheOverrideReplacesTheDefault(t *testing.T) {
 // mapOverrides adapts a literal map to the Overrides interface, for tests.
 type mapOverrides map[string]int
 
-func (overrides mapOverrides) Allowance(tenantID, bucket string) int {
+func (overrides mapOverrides) Allowance(_ context.Context, tenantID, bucket string) int {
 	return overrides[tenantID+"\x00"+bucket]
 }
 

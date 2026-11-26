@@ -43,7 +43,7 @@ const session = await kilasflow.createEmbedSession({
 
 ## Operation surface
 
-One thin, typed method per API operation — all 82 under `/api/v1` that a
+One thin, typed method per API operation — all 83 under `/api/v1` that a
 backend can drive (the one exception is below), grouped here the way the
 [API contract](https://github.com/kilaslab/kilas-flow/blob/main/docs/src/content/docs/reference/api-contract.md)
 groups them. Every method takes an `AbortSignal` last, resolves `Promise<void>`
@@ -62,7 +62,7 @@ the three writes that can be retried safely, which take an
 | Node catalogue | `listNodeTypes`, `nodeIconUrl`, `loadNodePropertyOptions`, `loadNodePropertySchema`, `getExpressionGrammar` |
 | Interop | `importWorkflow`, `convertWorkflowFragment`, `exportWorkflow` |
 | Datastores | `listDatastores`, `createDatastore`, `getDatastore`, `renameDatastore`, `deleteDatastore`, `clearDatastore`, `addDatastoreColumn`, `renameDatastoreColumn`, `deleteDatastoreColumn`, `listDatastoreRows`, `getDatastoreRow`, `insertDatastoreRow`, `updateDatastoreRows`, `deleteDatastoreRows`, `upsertDatastoreRow`, `incrementDatastoreRows`, `iterateDatastoreRows`, `exportDatastoreRows`, `importDatastoreRows`, `datastoreFilter`, `paginateCursor` |
-| Tenants and accounts | `listTenants`, `createTenant`, `getTenant`, `deleteTenant`, `listTenantUsers`, `createTenantUser`, `disableTenantUser`, `enableTenantUser`, `setTenantUserPassword`, `createTenantApiKey` |
+| Tenants and accounts | `listTenants`, `createTenant`, `getTenant`, `updateTenant`, `deleteTenant`, `listTenantUsers`, `createTenantUser`, `disableTenantUser`, `enableTenantUser`, `setTenantUserPassword`, `createTenantApiKey` |
 | Embed | `createEmbedSession` |
 | System | `getHealth`, `getReady` |
 

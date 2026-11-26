@@ -7,13 +7,23 @@ until the server surface it targets is considered stable; see `README.md`.
 
 ## Unreleased
 
-- `createEmbedSession` accepts an optional `actor: { id, displayName? }`
-  naming the host user the session acts for. The server signs it into the
-  token and records it on the revisions, publish events and manual runs the
-  session causes. It is host-asserted, not verified. A server without actor
+- **Additive**: `createEmbedSession` accepts an optional
+  `actor: { id, displayName? }` naming the host user the session acts for.
+  The server signs it into the token and records it on the revisions, publish
+  events and manual runs the session causes. It is host-asserted, not verified. A server without actor
   support refuses the field with a `422`. The generated types gain `actorId`
   on versions and publish events, `embed` as an actor kind, and actor fields
   on executions.
+- **Additive**: `updateTenant(tenantId, { settings })` — `PATCH
+  /api/v1/tenants/{id}`, the operator's per-tenant settings. `settings`
+  is a merge patch over the stored document, section by section, with `null`
+  removing a field or a section. Refusals are 422 problems whose `errors[]`
+  carry `value.code` `tenant_settings_unknown_key` or
+  `tenant_settings_invalid` and a `location` naming the key. The first section
+  is `rateLimit` (`runPerMinute`, `webhookPerMinute`, `eventsPerMinute`).
+  `TenantResource` gains `settings` (an object, `{}` when unset) and
+  `settingsVersion`; a client that builds a `TenantResource` literal in
+  TypeScript must add both.
 - **Breaking**: `deleteCredential` now rejects with a `409` problem when a
   workflow's draft or published version still attaches the credential,
   instead of deleting it. The method's signature is unchanged; the server's

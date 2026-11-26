@@ -341,10 +341,39 @@ rather than the editor silently being frameable.
 takes a scope, the resolver has a real precedence order, and both authentication
 and embed sessions supply real tenant identifiers.
 
-**A tenant is a row, but a thin one.** The `tenants` table holds an id, a name
-and timestamps, and `users` and `api_keys` reference it with an
-`ON DELETE RESTRICT` foreign key so an identity cannot outlive its tenant. There
-is no per-tenant configuration and no per-tenant quota.
+**A tenant is a row with a settings document.** The `tenants` table holds an
+id, a name, timestamps and the tenant's settings, and `users` and `api_keys`
+reference it with an `ON DELETE RESTRICT` foreign key so an identity cannot
+outlive its tenant. The settings are changed live by the operator with
+`PATCH /api/v1/tenants/{id}`; today they hold one section, `rateLimit`, a
+tenant's own per-minute allowances. See
+[Tenant settings](/operate/tenants/#tenant-settings).
+
+### Tenant settings versus deployment configuration
+
+Two things shape how a tenant is served, and they answer different questions.
+
+- **Deployment configuration** is the baseline every tenant shares. It is the
+  config file and environment the process reads once at boot, and changing it
+  means a restart.
+- **Tenant settings** are per-tenant rows, changed live through the operator
+  API. A change applies at once on the process that served the update and
+  within 5 seconds on every other process (each caches a tenant's settings for
+  at most that long and re-checks the stored version).
+
+Where both speak to the same thing, the tenant's setting wins over the
+deployment default for that tenant, and setting it to `null` falls back to the
+default again. The deployment's bounds and prohibitions always win: a tenant
+setting is validated against the same limits the configuration enforces (a
+`rateLimit` allowance is 1 to 1,000,000 per minute, as `ratelimit.*` is), and
+it can only adjust what the deployment allows, never switch off what the
+deployment forbids. Node-pack visibility (`packs.visible_to`) stays deployment
+configuration.
+
+Each section is registered by the code that reads it and validated by that
+code, so a key no consumer registered is refused with
+`tenant_settings_unknown_key` rather than stored as a setting that applies to
+nothing.
 
 **A tenant is created through the operator API.** `POST /api/v1/tenants` adds one, answers
 `201` with a `Location` header, and answers `409` if the ID is already taken, so a mistyped
@@ -375,7 +404,8 @@ a repository method is never given a way to run unscoped, and there is no
 `GET`, `POST` and `DELETE` on `/api/v1/api-keys` manage machine credentials; and
 `POST /api/v1/stream-tickets` mints the single-use ticket a browser needs for the
 event stream. The operator surface provisions tenants: `GET` and `POST` on
-`/api/v1/tenants`, `GET` and `POST` on `/api/v1/tenants/{id}/users` plus the
+`/api/v1/tenants`, `GET`, `PATCH` (settings) and `DELETE` on `/api/v1/tenants/{id}`,
+`GET` and `POST` on `/api/v1/tenants/{id}/users` plus the
 disable, enable and password operations under `/api/v1/tenants/{id}/users/{userId}/`,
 and `POST /api/v1/tenants/{id}/api-keys`. See the [tenant reference](/reference/api/tenants/)
 for the full surface, the [HTTP API reference](/reference/api/), and the

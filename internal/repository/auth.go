@@ -22,6 +22,21 @@ type Tenant struct {
 	Name      string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// Settings is the tenant's settings document as canonical JSON, nil when
+	// it has none. Its sections are defined by internal/tenantsettings.
+	Settings []byte
+	// SettingsVersion counts the writes that changed Settings; 0 means the
+	// document has never been written.
+	SettingsVersion int64
+}
+
+// tenantFromModel is the one place a stored tenant row becomes a Tenant.
+func tenantFromModel(model tenantModel) Tenant {
+	return Tenant{
+		ID: model.ID, Name: model.Name,
+		CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt,
+		Settings: model.Settings, SettingsVersion: model.SettingsVersion,
+	}
 }
 
 // User is a dashboard account.
@@ -147,6 +162,19 @@ type AuthRepository interface {
 	GetTenant(ctx context.Context, id string) (Tenant, error)
 	// ListTenants is the operator's view: every tenant and its account count.
 	ListTenants(ctx context.Context) ([]TenantSummary, error)
+	// ReadTenantSettings reads one tenant's settings document and its
+	// version by primary key. An unknown tenant reads as (nil, 0, nil): a
+	// hot-path reader treats it as a tenant with no settings, and the request
+	// that named it is refused elsewhere.
+	ReadTenantSettings(ctx context.Context, id string) ([]byte, int64, error)
+	// UpdateTenantSettings replaces a tenant's settings with what apply
+	// returns for the stored document. The write lands only if the version it
+	// read is still stored, retrying apply against the newer document when
+	// another writer won, and gives up with ErrSettingsContention. An apply
+	// that returns the document unchanged writes nothing and keeps the
+	// version. An unknown tenant is ErrNotFound; an apply error is returned
+	// wrapped, with nothing written.
+	UpdateTenantSettings(ctx context.Context, id string, apply func(current []byte) ([]byte, error)) (Tenant, error)
 	CreateUser(ctx context.Context, tenant TenantScope, email, name, passwordHash string) (User, error)
 	// FindUserForLogin resolves an email across every tenant, because a login
 	// form has no tenant to scope by.
@@ -251,7 +279,7 @@ func (store *GORMAuthStore) CreateTenant(ctx context.Context, id, name string) (
 		}
 		return Tenant{}, fmt.Errorf("create tenant: %w", err)
 	}
-	return Tenant{ID: model.ID, Name: model.Name, CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt}, nil
+	return tenantFromModel(model), nil
 }
 
 // GetTenant reads one tenant.
@@ -263,7 +291,7 @@ func (store *GORMAuthStore) GetTenant(ctx context.Context, id string) (Tenant, e
 		}
 		return Tenant{}, fmt.Errorf("read tenant: %w", err)
 	}
-	return Tenant{ID: model.ID, Name: model.Name, CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt}, nil
+	return tenantFromModel(model), nil
 }
 
 // ListTenants returns every tenant with its account count, oldest first.
@@ -284,10 +312,7 @@ func (store *GORMAuthStore) ListTenants(ctx context.Context) ([]TenantSummary, e
 	tenants := make([]TenantSummary, 0, len(models))
 	for _, model := range models {
 		tenants = append(tenants, TenantSummary{
-			Tenant: Tenant{
-				ID: model.ID, Name: model.Name,
-				CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt,
-			},
+			Tenant:    tenantFromModel(model),
 			UserCount: counts[model.ID],
 		})
 	}

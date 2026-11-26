@@ -109,11 +109,59 @@ const key = await client.createTenantApiKey(tenant.id, { label: "acme backend" }
 ```
 
 The rest of the surface: `GET /tenants` and `GET /tenants/{id}` read back
-(`userCount` included), `disable`/`enable` on a user stop and resume the
+(`userCount`, `settings` and `settingsVersion` included), `PATCH /tenants/{id}`
+changes the tenant's [settings](#tenant-settings), `disable`/`enable` on a user stop and resume the
 account signing in (a disabled account's sessions are cut too), a password
 set replaces the old one immediately, and `DELETE /tenants/{id}` purges the
 tenant — everything that purge removes, and its idempotence, is
 [Tenant deletion](/operate/tenant-deletion/).
+
+## Tenant settings
+
+A tenant carries a settings document the operator changes live, without a
+restart. `GET /tenants/{id}` returns it as `settings` (an object, `{}` when the
+tenant has none) with `settingsVersion`, which counts the writes that changed
+it.
+
+```bash
+curl -X PATCH "$KILASFLOW_URL/api/v1/tenants/acme" \
+  -H "Authorization: Bearer $OPERATOR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"settings":{"rateLimit":{"runPerMinute":30}}}'
+```
+
+```ts
+await client.updateTenant("acme", { settings: { rateLimit: { runPerMinute: 30 } } });
+```
+
+The body is a merge patch, section by section: an object is merged field by
+field into what is stored, and `null` removes a field, or a whole section, so
+the tenant falls back to the deployment configuration for it. Resending a patch
+that changes nothing leaves `settingsVersion` where it was.
+
+The `rateLimit` section replaces the deployment's `ratelimit.*` defaults for
+this tenant:
+
+| Field | Replaces | Bounds |
+| --- | --- | --- |
+| `runPerMinute` | `ratelimit.run_per_minute` | 1 to 1,000,000 |
+| `webhookPerMinute` | `ratelimit.webhook_per_minute` | 1 to 1,000,000 |
+| `eventsPerMinute` | `ratelimit.events_per_minute` | 1 to 1,000,000 |
+
+A patch with any problem writes nothing. The answer is a problem document with
+one entry in `errors[]` per problem, its `location` naming the key
+(`body.settings.rateLimit.runPerMinute`) and its `value.code` one of:
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `tenant_settings_unknown_key` | 422 | A section or field this server does not accept |
+| `tenant_settings_invalid` | 422 | A value its section refused: not an object, the wrong type, or out of bounds |
+| `tenant_settings_conflict` | 409 | The settings kept changing under the update; read them again and retry |
+
+A change applies at once on the process that served it and within 5 seconds on
+every other process. The difference from deployment configuration, and which
+one wins, is in
+[Tenancy and embedding](/concepts/tenancy-and-embedding/#tenant-settings-versus-deployment-configuration).
 
 ## Isolation: what a tenant's key can reach
 

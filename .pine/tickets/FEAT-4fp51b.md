@@ -1,7 +1,7 @@
 ---
 id: FEAT-4fp51b
 title: 'Per-tenant settings: a stored settings document and an update endpoint on the admin tenant API'
-status: todo
+status: testing
 priority: medium
 labels:
     - saas
@@ -9,7 +9,7 @@ labels:
     - api
 parent: EPIC-7c3ry9
 created: "2026-09-25T10:08:12Z"
-updated: "2026-09-25T10:08:12Z"
+updated: "2026-11-26T07:34:21Z"
 ---
 
 # Description
@@ -21,11 +21,23 @@ Several tickets in this epic assume a place to store and change per-tenant setti
 Found by the 2026-09-25 audit of this epic's tickets against the code.
 
 # Acceptance Criteria
-- [ ] Tenants carry a typed, versioned settings document (a JSON column or a side table), with one migration for both dialects.
-- [ ] `PATCH /api/v1/admin/tenants/{id}` (operator key only, like the rest of the admin surface) updates settings with merge semantics, and `GET /tenants/{id}` returns them.
-- [ ] Unknown keys are refused with a named problem code, and each consumer registers and validates its own section, so FEAT-rdfjh1 and FEAT-mngmn1 add fields without touching the endpoint.
-- [ ] Reads on hot paths (claim, compile, webhook ingress) are cached and invalidated on update, including across processes.
-- [ ] The SDK and the admin client expose the update. The tenancy docs describe settings versus deployment config and which one wins.
+- [x] Tenants carry a typed, versioned settings document (a JSON column or a side table), with one migration for both dialects.
+- [x] `PATCH /api/v1/admin/tenants/{id}` (operator key only, like the rest of the admin surface) updates settings with merge semantics, and `GET /tenants/{id}` returns them.
+- [x] Unknown keys are refused with a named problem code, and each consumer registers and validates its own section, so FEAT-rdfjh1 and FEAT-mngmn1 add fields without touching the endpoint.
+- [x] Reads on hot paths (claim, compile, webhook ingress) are cached and invalidated on update, including across processes.
+- [x] The SDK and the admin client expose the update. The tenancy docs describe settings versus deployment config and which one wins.
+
+# Implementation notes
+
+Branch worktree-agent-a31807cebe54e0eed (FEAT-4fp51b).
+
+- **Storage**: two columns on `tenants` (migration 000030, both dialects), no side table, so tenant purge's row delete takes the settings with it. `settings` is a nullable bytea/blob holding canonical JSON (NULL = no settings, every section falls back to deployment config); `settings_version` is `NOT NULL DEFAULT 0` (0 = never written). Model tags match the SQL; the baseline drift test stays green.
+- **Version semantics**: +1 on every write that changes the document; a no-op patch writes nothing and keeps the version. `GORMAuthStore.UpdateTenantSettings` is a compare-and-swap on `settings_version` (plain map Updates, no gorm.Expr, per BUG-br7ggc), retrying apply up to 5 times, then `ErrSettingsContention` (409 `tenant_settings_conflict`). The version is also the cache's reuse key and the client-visible `settingsVersion`.
+- **Registry** (`internal/tenantsettings`, stdlib only): consumers `Register[T]` a struct section + validator; the endpoint never changes for a new section. Merge is RFC 7396 per section (section null = remove, field null = remove, empty section dropped, empty document stored as NULL); merged sections are decoded into T, validated, stored canonical. Unknown section/field = `tenant_settings_unknown_key`, bad value = `tenant_settings_invalid` (both 422, one `errors[]` entry per issue at `body.settings.<section>.<field>` with `value.code`); all-or-nothing. `null` on a stored-but-unregistered section retires it. Large integers stay exact. Sections evolve additively; a breaking change is a new section name (package doc).
+- **First section**: `rateLimit` owned by `internal/ratelimit` (`runPerMinute`, `webhookPerMinute`, `eventsPerMinute`, 1..1,000,000 like `ratelimit.*`). `ratelimit.SettingsOverrides` reads it through the cache, so the `Overrides` seam (now taking ctx) is finally wired; webhook ingress, run API and events API all honour it.
+- **Cache / cross-process invalidation**: no general cross-process channel exists (LISTEN/NOTIFY is executions-only and PG-only; SQLite is single-process), so `tenantsettings.Cache` is TTL (5 s) + version check: the serving process invalidates at once after PATCH (and after DELETE purge), other processes see the change when their entry ages out; an unchanged version reuses the decoded settings; a store failure serves the last known settings; an invalidation during a load is not overwritten (generation counter); 10,000-entry cap. Not wired into engine claim/compile (nothing there reads settings yet; FEAT-rdfjh1/FEAT-mngmn1 add those readers via `tenantsettings.Read`).
+- **Surface**: `PATCH /api/v1/tenants/{id}` (operation `update-tenant`, operator key only via `operatorOnly`; embed sessions refused by the middleware default deny — covered by the existing admin-surface tests, which now include PATCH). `TenantResource` gains `settings` (never null) and `settingsVersion` on GET/list/create/patch. SDK `updateTenant`; web admin client regenerated by orval.
+- **Verified**: gofmt; `go build ./...`; `go vet ./internal/... ./cmd/...`; `go test` over tenantsettings, ratelimit, repository, database, api, webhook, tenantpurge, cli, config; `go test ./cmd/kilasflow -run 'Wiring|Role|Metrics'`; generate-types/api/api-reference/sdk-reference/docs-facts and their -check targets; `make sdk-check sdk-test`. PostgreSQL halves of the new repository and migration tests (and the whole internal/database package) also passed against a throwaway pgvector/pg17 container with `-p 1`.
 
 # Implementation Plan
 

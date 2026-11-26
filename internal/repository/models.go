@@ -428,6 +428,11 @@ type tenantModel struct {
 	Name      string    `gorm:"not null;size:255"`
 	CreatedAt time.Time `gorm:"not null"`
 	UpdatedAt time.Time `gorm:"not null"`
+	// Settings is the tenant's settings document as canonical JSON, NULL when
+	// it has none. SettingsVersion counts the writes that changed it (0 =
+	// never written) and guards each update against a concurrent one.
+	Settings        []byte
+	SettingsVersion int64 `gorm:"not null;default:0"`
 }
 
 func (tenantModel) TableName(namer schema.Namer) string {

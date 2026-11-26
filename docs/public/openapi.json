@@ -4581,6 +4581,16 @@
           "name": {
             "type": "string"
           },
+          "settings": {
+            "additionalProperties": {},
+            "description": "The tenant's settings, one object per section. A section that is absent falls back to the deployment configuration.",
+            "type": "object"
+          },
+          "settingsVersion": {
+            "description": "Counts the writes that changed settings; 0 means they have never been written",
+            "format": "int64",
+            "type": "integer"
+          },
           "userCount": {
             "description": "Accounts this tenant holds",
             "format": "int64",
@@ -4591,7 +4601,9 @@
           "id",
           "name",
           "createdAt",
-          "userCount"
+          "userCount",
+          "settings",
+          "settingsVersion"
         ],
         "type": "object"
       },
@@ -4780,6 +4792,26 @@
           "matched",
           "rows"
         ],
+        "type": "object"
+      },
+      "UpdateTenantInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/UpdateTenantInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "settings": {
+            "additionalProperties": {},
+            "description": "A merge patch over the tenant's settings: one object per section, null to remove a section or a field",
+            "type": "object"
+          }
+        },
         "type": "object"
       },
       "UpsertRowInputBody": {
@@ -9158,6 +9190,60 @@
           }
         },
         "summary": "Read one tenant",
+        "tags": [
+          "Admin"
+        ]
+      },
+      "patch": {
+        "description": "Changes a tenant's settings. The body's settings object is merged into the stored one section by section, as a JSON merge patch (RFC 7396): a section set to null is removed, so the tenant falls back to the deployment configuration for it; an object is merged field by field, and a field set to null is removed. A section or field this server does not accept is refused with tenant_settings_unknown_key, a value its section rejects with tenant_settings_invalid, both as 422 with one error per problem located at body.settings.<section>.<field>; a patch with any problem writes nothing. A write that changes the document bumps settingsVersion by one, and an unchanged one keeps it. A change applies at once on the process that served it and within 5 s on every other process. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused. Sections this server accepts: rateLimit.",
+        "operationId": "update-tenant",
+        "parameters": [
+          {
+            "description": "Tenant ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Tenant ID",
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTenantInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantResource"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Update a tenant's settings",
         "tags": [
           "Admin"
         ]

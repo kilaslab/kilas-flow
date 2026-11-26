@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/auth"
 	"github.com/kilaslab/kilas-flow/internal/repository"
 	"github.com/kilaslab/kilas-flow/internal/tenantpurge"
+	"github.com/kilaslab/kilas-flow/internal/tenantsettings"
 )
 
 // TenantResource is one customer as the operator sees it.
@@ -26,6 +28,9 @@ type TenantResource struct {
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"createdAt"`
 	UserCount int64     `json:"userCount" doc:"Accounts this tenant holds"`
+	// Settings is never null: a tenant with none answers {}.
+	Settings        map[string]json.RawMessage `json:"settings" doc:"The tenant's settings, one object per section. A section that is absent falls back to the deployment configuration."`
+	SettingsVersion int64                      `json:"settingsVersion" doc:"Counts the writes that changed settings; 0 means they have never been written"`
 }
 
 // UserResource is a dashboard account as the operator sees it.
@@ -70,6 +75,17 @@ type Admin struct {
 	// has, so the composition root hands the handler the one collaborator that
 	// owns the order. Nil leaves the delete operation answering 503.
 	purger TenantPurger
+	// settings is the tenant-settings cache: its registry validates a patch
+	// and its entry for the tenant is dropped after the write. Nil leaves the
+	// update operation answering 503.
+	settings *tenantsettings.Cache
+}
+
+// WithTenantSettings attaches the tenant-settings cache the update operation
+// validates against and invalidates.
+func (handler *Admin) WithTenantSettings(cache *tenantsettings.Cache) *Admin {
+	handler.settings = cache
+	return handler
 }
 
 // TenantPurger deletes one tenant and everything it owns.
@@ -286,6 +302,26 @@ func (handler *Admin) Register(api huma.API) {
 		Tags:        []string{"Admin"},
 	}, handler.GetTenant)
 
+	updateDescription := "Changes a tenant's settings. The body's settings object is merged into the " +
+		"stored one section by section, as a JSON merge patch (RFC 7396): a section set to null is " +
+		"removed, so the tenant falls back to the deployment configuration for it; an object is " +
+		"merged field by field, and a field set to null is removed. A section or field this server " +
+		"does not accept is refused with tenant_settings_unknown_key, a value its section rejects " +
+		"with tenant_settings_invalid, both as 422 with one error per problem located at " +
+		"body.settings.<section>.<field>; a patch with any problem writes nothing. A write that " +
+		"changes the document bumps settingsVersion by one, and an unchanged one keeps it. A " +
+		"change applies at once on the process that served it and within 5 s on every other " +
+		"process. " + operatorNote
+	if sections := handler.settings.Registry().Sections(); len(sections) > 0 {
+		updateDescription += " Sections this server accepts: " + strings.Join(sections, ", ") + "."
+	}
+	huma.Register(api, huma.Operation{
+		OperationID: "update-tenant", Method: http.MethodPatch, Path: "/tenants/{id}",
+		Summary:     "Update a tenant's settings",
+		Description: updateDescription,
+		Tags:        []string{"Admin"},
+	}, handler.UpdateTenant)
+
 	huma.Register(api, huma.Operation{
 		OperationID: "delete-tenant", Method: http.MethodDelete, Path: "/tenants/{id}",
 		Summary: "Delete a tenant and everything it owns",
@@ -473,6 +509,8 @@ func (handler *Admin) DeleteTenant(ctx context.Context, input *deleteTenantInput
 		// makes "nothing was removed" unreadable rather than empty.
 		removed = map[string]int64{}
 	}
+	// A purged tenant has no settings left; drop what this process cached.
+	handler.settings.Invalidate(result.TenantID)
 	principal, _ := auth.PrincipalFrom(ctx)
 	slog.InfoContext(ctx, "tenant deleted",
 		"tenant", result.TenantID,
@@ -667,9 +705,18 @@ func (handler *Admin) tenantPath(id string) string { return handler.prefix + "/t
 func (handler *Admin) tenantUsersPath(id string) string { return handler.tenantPath(id) + "/users" }
 
 func tenantResource(summary repository.TenantSummary) TenantResource {
+	settings := map[string]json.RawMessage{}
+	if len(summary.Settings) > 0 {
+		// The stored document is canonical JSON written by Apply; one that
+		// somehow is not reads as no settings rather than failing the read.
+		if err := json.Unmarshal(summary.Settings, &settings); err != nil || settings == nil {
+			settings = map[string]json.RawMessage{}
+		}
+	}
 	return TenantResource{
 		ID: summary.ID, Name: summary.Name,
 		CreatedAt: summary.CreatedAt, UserCount: summary.UserCount,
+		Settings: settings, SettingsVersion: summary.SettingsVersion,
 	}
 }
 
