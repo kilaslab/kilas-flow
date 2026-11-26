@@ -104,21 +104,24 @@ describe('actor names', () => {
 	});
 
 	it('marks an embed actor as the name its host gave', () => {
-		expect(actorName('embed', 'Ada Lovelace', 'auth0|ada')).toBe('Ada Lovelace (embedded)');
+		expect(actorName('embed', 'Ada Lovelace')).toBe('Ada Lovelace (embedded)');
 		expect(versionAuthor(summary({ actorKind: 'embed', actorLabel: 'Ada Lovelace', createdBy: 'Ada Lovelace', actorId: 'auth0|ada' }))).toBe(
 			'Ada Lovelace (embedded)'
 		);
 	});
 
-	it('falls back to the host identifier, then to an unnamed embedded editor', () => {
-		expect(actorName('embed', '', 'auth0|ada')).toBe('auth0|ada (embedded)');
-		expect(actorName('embed', undefined, undefined)).toBe('Embedded editor');
-		expect(versionAuthor(summary({ actorKind: 'embed' }))).toBe('Embedded editor');
+	it('never shows the host identifier: an embed actor without a name is an unnamed embedded editor', () => {
+		// A host may use an email address as its identifier; a name it chose
+		// not to give is not one to reveal.
+		expect(actorName('embed', '')).toBe('Embedded editor');
+		expect(actorName('embed', undefined)).toBe('Embedded editor');
+		expect(versionAuthor(summary({ actorKind: 'embed', actorId: 'ada@example.com' }))).toBe('Embedded editor');
+		expect(publishEventAuthor({ actorKind: 'embed' })).toBe('Embedded editor');
 	});
 
 	it('names a person or a key as before, and nobody when nothing is known', () => {
 		expect(actorName('user', 'ada@example.com')).toBe('ada@example.com');
-		expect(actorName('key', 'ci-agent', 'ignored')).toBe('ci-agent');
+		expect(actorName('key', 'ci-agent')).toBe('ci-agent');
 		expect(actorName(undefined, '  ')).toBeNull();
 		expect(versionAuthor(summary({ createdBy: 'yusril' }))).toBe('yusril');
 	});
@@ -131,8 +134,8 @@ describe('actor names', () => {
 
 	it('marks the embed actor in Indonesian', () => {
 		expect(setLocale('id')).toBe(true);
-		expect(actorName('embed', 'Ada', undefined)).toBe('Ada (tertanam)');
-		expect(actorName('embed', '', '')).toBe('Editor tertanam');
+		expect(actorName('embed', 'Ada')).toBe('Ada (tertanam)');
+		expect(actorName('embed', '')).toBe('Editor tertanam');
 	});
 });
 

@@ -171,14 +171,21 @@ the name as "Ada Lovelace (embedded)", and the API returns it as
 identifier) on workflow versions, publish events and executions.
 
 - `id` is your own stable identifier for the user: 1 to 128 letters, digits
-  and `. _ - : @ | + / =`, so provider subjects such as `auth0|abc` and email
-  addresses both fit.
+  and `. _ - : @ | + / =`. Use an opaque identifier, such as a provider
+  subject like `auth0|abc` or your own user id, not an email address. The API
+  returns `actorId` to anyone who can read the workflow's history or
+  executions, and the token's payload is signed but not encrypted, so
+  whoever holds the token can read the id too. The editor never displays it.
 - `displayName` is optional: at most 64 letters, digits, spaces and simple
   punctuation, without leading or trailing spaces. Anything outside those
   limits is refused with a 422 at minting, never truncated.
-- A session minted without an actor still records `embed`, with no label:
-  the trail says an embedded editor acted and invents no name. The panel shows
-  it as "Embedded editor".
+- A session minted without a display name, or without an actor at all, shows
+  as "Embedded editor". Without an actor it still records `embed`, with no
+  label: the trail says an embedded editor acted and invents no name.
+- Read `actorKind` to tell who acted. The older `createdBy` field on versions
+  and `actor` field on publish events carry the bare display name with no
+  kind, so on their own they cannot tell a host's user from a KilasFlow
+  user or an API key with the same name.
 - The actor is host-asserted. KilasFlow signs it so the browser cannot change
   it, but never verifies it against an identity provider: it is attribution
   for the audit trail, not authentication, and it grants nothing. Your

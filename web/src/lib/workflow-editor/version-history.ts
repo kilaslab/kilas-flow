@@ -42,23 +42,24 @@ export function versionRoles(summary: Pick<WorkflowVersionSummaryResource, 'draf
  * An embed actor is the user a host named when it minted the session, and the
  * name is marked as such: it is what the host asserted, not an account this
  * deployment knows. A session minted without a name still says an embedded
- * editor acted rather than leaving the row blank; one with only the host's
- * identifier shows that identifier.
+ * editor acted rather than leaving the row blank. The host's identifier is
+ * never displayed in its place: a host may use an email address there, and a
+ * name the host chose not to give is not one to reveal.
  */
-export function actorName(kind: string | null | undefined, label: string | null | undefined, id?: string | null): string | null {
-	const name = label?.trim() || (kind === 'embed' ? id?.trim() : '');
+export function actorName(kind: string | null | undefined, label: string | null | undefined): string | null {
+	const name = label?.trim();
 	if (kind === 'embed') return name ? m.versions_actor_embedded({ name }) : m.versions_actor_embedded_unnamed();
 	return name ? name : null;
 }
 
 /** Who saved a revision, or null when the deployment never knew. */
-export function versionAuthor(summary: Pick<WorkflowVersionSummaryResource, 'createdBy' | 'actorKind' | 'actorLabel' | 'actorId'>): string | null {
-	return actorName(summary.actorKind, summary.actorLabel || summary.createdBy, summary.actorId);
+export function versionAuthor(summary: Pick<WorkflowVersionSummaryResource, 'createdBy' | 'actorKind' | 'actorLabel'>): string | null {
+	return actorName(summary.actorKind, summary.actorLabel || summary.createdBy);
 }
 
 /** Who caused a publish event, falling back to the legacy actor label. */
-export function publishEventAuthor(event: Pick<WorkflowPublishEventResource, 'actor' | 'actorKind' | 'actorLabel' | 'actorId'>): string | null {
-	return actorName(event.actorKind, event.actorLabel || event.actor, event.actorId);
+export function publishEventAuthor(event: Pick<WorkflowPublishEventResource, 'actor' | 'actorKind' | 'actorLabel'>): string | null {
+	return actorName(event.actorKind, event.actorLabel || event.actor);
 }
 
 /** What to call a revision in a sentence, preferring the name a person gave it. */
