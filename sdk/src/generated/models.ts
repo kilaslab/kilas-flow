@@ -300,6 +300,13 @@ export interface ActivationResource {
   updatedAt: string;
 }
 
+export interface Actor {
+  /** The name KilasFlow shows for this user: at most 64 letters, digits, spaces, and simple punctuation, without leading or trailing spaces. */
+  displayName?: string;
+  /** The host's own stable identifier for its user: 1 to 128 letters, digits, and . _ - : @ | + / =. Host-asserted, never verified. */
+  id: string;
+}
+
 export interface Assignment {
   id?: string;
   name: string;
@@ -891,6 +898,8 @@ export interface DuplicateWorkflowInputBody {
 export interface EmbedSessionBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** The host user this session acts for. Signed into the token and recorded as an embed actor on the revisions, publish events, and manual runs the session causes. Host-asserted: KilasFlow does not verify it. Omit it for an unnamed session. */
+  actor?: Actor;
   /** Validated white-label values; never markup */
   branding?: Branding;
   /** Datastore this session may touch; exactly one of this and workflowId */
@@ -1051,7 +1060,27 @@ export interface ExecutionFailedEvent {
   workflowId?: string;
 }
 
+/**
+ * Who queued this run, for a manual run or a retry: user for a signed-in person, key for an API key, embed for an embed session. Absent for trigger-started runs and runs queued before attribution.
+ */
+export type ExecutionSummaryActorKind = typeof ExecutionSummaryActorKind[keyof typeof ExecutionSummaryActorKind];
+
+
+export const ExecutionSummaryActorKind = {
+  user: 'user',
+  key: 'key',
+  embed: 'embed',
+} as const;
+
 export interface ExecutionSummary {
+  /** Who queued this run, for a manual run or a retry: the host's identifier for an embed session's user, host-asserted and not verified. Absent for trigger-started runs and runs queued before attribution. */
+  actorId?: string;
+  /** Who queued this run, for a manual run or a retry: the identifier of the API key. Absent for trigger-started runs and runs queued before attribution. */
+  actorKeyId?: string;
+  /** Who queued this run, for a manual run or a retry: user for a signed-in person, key for an API key, embed for an embed session. Absent for trigger-started runs and runs queued before attribution. */
+  actorKind?: ExecutionSummaryActorKind;
+  /** Who queued this run, for a manual run or a retry: the email address, API key name, or embed display name, where one is known. Absent for trigger-started runs and runs queued before attribution. */
+  actorLabel?: string;
   /** Wall-clock duration in milliseconds, once the execution has finished */
   durationMs?: number;
   finishedAt?: string;
@@ -1106,9 +1135,29 @@ export interface ExecutionRequestResource {
   workflowVersionId: string;
 }
 
+/**
+ * Who queued this run, for a manual run or a retry: user for a signed-in person, key for an API key, embed for an embed session. Absent for trigger-started runs and runs queued before attribution.
+ */
+export type ExecutionResourceActorKind = typeof ExecutionResourceActorKind[keyof typeof ExecutionResourceActorKind];
+
+
+export const ExecutionResourceActorKind = {
+  user: 'user',
+  key: 'key',
+  embed: 'embed',
+} as const;
+
 export interface ExecutionResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** Who queued this run, for a manual run or a retry: the host's identifier for an embed session's user, host-asserted and not verified. Absent for trigger-started runs and runs queued before attribution. */
+  actorId?: string;
+  /** Who queued this run, for a manual run or a retry: the identifier of the API key. Absent for trigger-started runs and runs queued before attribution. */
+  actorKeyId?: string;
+  /** Who queued this run, for a manual run or a retry: user for a signed-in person, key for an API key, embed for an embed session. Absent for trigger-started runs and runs queued before attribution. */
+  actorKind?: ExecutionResourceActorKind;
+  /** Who queued this run, for a manual run or a retry: the email address, API key name, or embed display name, where one is known. Absent for trigger-started runs and runs queued before attribution. */
+  actorLabel?: string;
   /** The approval page, for a run waiting on an approval only */
   approvalUrl?: string;
   cancellationRequestedAt?: string;
@@ -1921,7 +1970,7 @@ export const WorkflowPublishEventResourceAction = {
 } as const;
 
 /**
- * What kind of caller acted: user for a signed-in person, key for an API key. Absent when the publish predates attribution or arrived unauthenticated.
+ * What kind of caller acted: user for a signed-in person, key for an API key, embed for an embed session. Absent when the publish predates attribution or arrived unauthenticated.
  */
 export type WorkflowPublishEventResourceActorKind = typeof WorkflowPublishEventResourceActorKind[keyof typeof WorkflowPublishEventResourceActorKind];
 
@@ -1929,17 +1978,20 @@ export type WorkflowPublishEventResourceActorKind = typeof WorkflowPublishEventR
 export const WorkflowPublishEventResourceActorKind = {
   user: 'user',
   key: 'key',
+  embed: 'embed',
 } as const;
 
 export interface WorkflowPublishEventResource {
   action: WorkflowPublishEventResourceAction;
   /** Who acted, where the actor is known */
   actor?: string;
+  /** The host's identifier for the user an embed session acted for, as the host asserted it when minting the session. Not verified by KilasFlow. Absent for every other kind. */
+  actorId?: string;
   /** Identifier of the API key that acted. Absent for a session. */
   actorKeyId?: string;
-  /** What kind of caller acted: user for a signed-in person, key for an API key. Absent when the publish predates attribution or arrived unauthenticated. */
+  /** What kind of caller acted: user for a signed-in person, key for an API key, embed for an embed session. Absent when the publish predates attribution or arrived unauthenticated. */
   actorKind?: WorkflowPublishEventResourceActorKind;
-  /** The actor's email address or API key name, where one is known */
+  /** The actor's email address, API key name, or the display name a host gave its embed session's user, where one is known */
   actorLabel?: string;
   createdAt: string;
   reason?: string;
@@ -1976,7 +2028,7 @@ export interface WorkflowSummary {
 }
 
 /**
- * What kind of caller saved this revision: user for a signed-in person, key for an API key. Absent when the write predates attribution or arrived unauthenticated.
+ * What kind of caller saved this revision: user for a signed-in person, key for an API key, embed for an embed session. Absent when the write predates attribution or arrived unauthenticated.
  */
 export type WorkflowVersionSummaryResourceActorKind = typeof WorkflowVersionSummaryResourceActorKind[keyof typeof WorkflowVersionSummaryResourceActorKind];
 
@@ -1984,14 +2036,17 @@ export type WorkflowVersionSummaryResourceActorKind = typeof WorkflowVersionSumm
 export const WorkflowVersionSummaryResourceActorKind = {
   user: 'user',
   key: 'key',
+  embed: 'embed',
 } as const;
 
 export interface WorkflowVersionSummaryResource {
+  /** The host's identifier for the user an embed session acted for, as the host asserted it when minting the session. Not verified by KilasFlow. Absent for every other kind. */
+  actorId?: string;
   /** Identifier of the API key that saved this revision, so a reused key name still names the key that acted. Absent for a session. */
   actorKeyId?: string;
-  /** What kind of caller saved this revision: user for a signed-in person, key for an API key. Absent when the write predates attribution or arrived unauthenticated. */
+  /** What kind of caller saved this revision: user for a signed-in person, key for an API key, embed for an embed session. Absent when the write predates attribution or arrived unauthenticated. */
   actorKind?: WorkflowVersionSummaryResourceActorKind;
-  /** The actor's email address or API key name, where one is known */
+  /** The actor's email address, API key name, or the display name a host gave its embed session's user, where one is known */
   actorLabel?: string;
   /**
      * What the caller reported using to make the write, from the X-KilasFlow-Skills-Used header

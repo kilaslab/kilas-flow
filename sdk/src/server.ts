@@ -129,6 +129,24 @@ export interface EmbedSessionRequest {
 		hideRun?: boolean;
 		hideSave?: boolean;
 	};
+	/**
+	 * The host user this session acts for. It is signed into the token and
+	 * recorded as an `embed` actor on the revisions, publish events and manual
+	 * runs the session causes, so version history can say who acted.
+	 *
+	 * `id` is your own stable identifier for the user: 1 to 128 letters,
+	 * digits and `. _ - : @ | + / =`. `displayName` is what KilasFlow shows: at
+	 * most 64 letters, digits, spaces and simple punctuation, without leading
+	 * or trailing spaces. Anything else is refused with a 422.
+	 *
+	 * It is host-asserted: KilasFlow signs it but never verifies it, so mint a
+	 * fresh session for each user rather than sharing one token. Omit it for
+	 * an unnamed session, which still records that an embedded editor acted.
+	 */
+	actor?: {
+		id: string;
+		displayName?: string;
+	};
 }
 
 export interface ExecutionListQuery {

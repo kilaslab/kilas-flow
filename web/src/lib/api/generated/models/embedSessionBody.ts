@@ -5,11 +5,14 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
+import type { Actor } from './actor';
 import type { Branding } from './branding';
 
 export interface EmbedSessionBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  /** The host user this session acts for. Signed into the token and recorded as an embed actor on the revisions, publish events, and manual runs the session causes. Host-asserted: KilasFlow does not verify it. Omit it for an unnamed session. */
+  actor?: Actor;
   /** Validated white-label values; never markup */
   branding?: Branding;
   /** Datastore this session may touch; exactly one of this and workflowId */
