@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -121,6 +122,44 @@ func TestAnEmbedSessionsActorIsRecordedOnEverythingItDoes(t *testing.T) {
 	if kind != "key" || keyID == "" || id != "" {
 		t.Errorf("key run actor = (%q, key %q, id %q), want key with its key id and no host id", kind, keyID, id)
 	}
+
+	// A run pinned to a named revision takes the other queue path, and is
+	// attributed the same way.
+	pinned := embedRequest(t, server.handler, token, http.MethodPost, "/api/v1/workflows/"+workflowID+"/run",
+		map[string]any{"workflowVersionId": versionID})
+	if pinned.Code != http.StatusAccepted {
+		t.Fatalf("embed pinned run = %d, want 202 (body: %s)", pinned.Code, pinned.Body)
+	}
+	var pinnedRun map[string]any
+	if err := json.Unmarshal(pinned.Body.Bytes(), &pinnedRun); err != nil {
+		t.Fatalf("decode pinned run: %v", err)
+	}
+	pinnedID, _ := pinnedRun["id"].(string)
+	pinnedDetail := server.callJSON(t, http.MethodGet, "/api/v1/executions/"+pinnedID, key, nil, http.StatusOK)
+	if pinnedDetail["workflowVersionId"] != versionID {
+		t.Errorf("pinned run version = %v, want %s", pinnedDetail["workflowVersionId"], versionID)
+	}
+	expectEmbedActor(t, "pinned run", pinnedDetail, "embed", "Ada Lovelace", "auth0|ada")
+
+	// A retry records who asked for it: the original here was seeded with no
+	// actor at all, and the embed session retries it.
+	finished := server.seedExecution(t, "globex", key, workflowID)
+	retried := embedRequest(t, server.handler, token, http.MethodPost, "/api/v1/executions/"+finished.ID+"/retry", nil)
+	if retried.Code != http.StatusCreated {
+		t.Fatalf("embed retry = %d, want 201 (body: %s)", retried.Code, retried.Body)
+	}
+	var retry map[string]any
+	if err := json.Unmarshal(retried.Body.Bytes(), &retry); err != nil {
+		t.Fatalf("decode retry: %v", err)
+	}
+	retryID, _ := retry["id"].(string)
+	if retryID == "" || retryID == finished.ID {
+		t.Fatalf("retry id = %q, want a new execution", retryID)
+	}
+	retryDetail := server.callJSON(t, http.MethodGet, "/api/v1/executions/"+retryID, key, nil, http.StatusOK)
+	expectEmbedActor(t, "retried run", retryDetail, "embed", "Ada Lovelace", "auth0|ada")
+	original := server.callJSON(t, http.MethodGet, "/api/v1/executions/"+finished.ID, key, nil, http.StatusOK)
+	expectEmbedActor(t, "retried original", original, "", "", "")
 }
 
 // A session minted without an actor still records that an embedded editor
@@ -156,16 +195,21 @@ func TestMintingRefusesAMalformedActor(t *testing.T) {
 		workflowDraft(crmWorkflow("Refused", sharedPingType)), http.StatusCreated)
 	workflowID, _ := created["id"].(string)
 
+	mint := func(actor map[string]any) *httptest.ResponseRecorder {
+		return server.call(t, http.MethodPost, "/api/v1/embed-sessions", key, map[string]any{
+			"workflowId": workflowID, "scopes": []string{"workflow:read"}, "origin": embedOrigin, "actor": actor,
+		})
+	}
+
+	// The schema's length and pattern limits may refuse these before the
+	// handler runs; either way the refusal is a 422 that names the actor.
 	for name, actor := range map[string]map[string]any{
-		"markup name":  {"id": "u1", "displayName": "<b>x</b>"},
 		"long name":    {"id": "u1", "displayName": strings.Repeat("a", 65)},
 		"spaced id":    {"id": "user 1"},
 		"empty id":     {"id": ""},
 		"oversized id": {"id": strings.Repeat("a", 129)},
 	} {
-		recorder := server.call(t, http.MethodPost, "/api/v1/embed-sessions", key, map[string]any{
-			"workflowId": workflowID, "scopes": []string{"workflow:read"}, "origin": embedOrigin, "actor": actor,
-		})
+		recorder := mint(actor)
 		if recorder.Code != http.StatusUnprocessableEntity {
 			t.Errorf("%s: mint = %d, want 422 (body: %s)", name, recorder.Code, recorder.Body)
 			continue
@@ -173,5 +217,27 @@ func TestMintingRefusesAMalformedActor(t *testing.T) {
 		if !strings.Contains(recorder.Body.String(), "actor") {
 			t.Errorf("%s: refusal = %s, want it to name the actor", name, recorder.Body)
 		}
+	}
+
+	// These pass the schema and are refused by the issuer's own validation,
+	// which stays the authority on what an actor may be.
+	for name, actor := range map[string]map[string]any{
+		"markup name":        {"id": "u1", "displayName": "<b>x</b>"},
+		"leading space name": {"id": "u1", "displayName": " Ada"},
+		"newline name":       {"id": "u1", "displayName": "Ada\nLovelace"},
+	} {
+		recorder := mint(actor)
+		if recorder.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s: mint = %d, want 422 (body: %s)", name, recorder.Code, recorder.Body)
+			continue
+		}
+		if !strings.Contains(recorder.Body.String(), "actor display name must be at most 64") {
+			t.Errorf("%s: refusal = %s, want the issuer's display-name sentence", name, recorder.Body)
+		}
+	}
+
+	// A name of exactly 64 runes, non-Latin included, is accepted.
+	if recorder := mint(map[string]any{"id": "auth0|ada", "displayName": strings.Repeat("李", 64)}); recorder.Code != http.StatusCreated {
+		t.Errorf("64-rune name: mint = %d, want 201 (body: %s)", recorder.Code, recorder.Body)
 	}
 }

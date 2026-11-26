@@ -301,9 +301,17 @@ export interface ActivationResource {
 }
 
 export interface Actor {
-  /** The name KilasFlow shows for this user: at most 64 letters, digits, spaces, and simple punctuation, without leading or trailing spaces. */
+  /**
+     * The name KilasFlow shows for this user: at most 64 letters, digits, spaces, and simple punctuation, without leading or trailing spaces.
+     * @maxLength 64
+     */
   displayName?: string;
-  /** The host's own stable identifier for its user: 1 to 128 letters, digits, and . _ - : @ | + / =. Host-asserted, never verified. */
+  /**
+     * The host's own stable identifier for its user: 1 to 128 letters, digits, and . _ - : @ | + / =. Returned by the API to anyone who can read the workflow's history, so use an opaque identifier rather than an email address. Host-asserted, never verified.
+     * @minLength 1
+     * @maxLength 128
+     * @pattern ^[A-Za-z0-9._:@|+/=\-]+$
+     */
   id: string;
 }
 

@@ -162,9 +162,13 @@ func (branding Branding) WithDefaults(defaults Branding) Branding {
 // user is, and KilasFlow signs that claim into the token so a browser cannot
 // change it afterwards. KilasFlow never verifies it against an identity
 // provider, so it is attribution for audit trails, not authentication.
+//
+// The schema tags describe the limits to API clients; Validate is the
+// authority, and refuses what the schema cannot express (the display name's
+// characters and its surrounding spaces).
 type Actor struct {
-	ID          string `json:"id" doc:"The host's own stable identifier for its user: 1 to 128 letters, digits, and . _ - : @ | + / =. Host-asserted, never verified."`
-	DisplayName string `json:"displayName,omitempty" doc:"The name KilasFlow shows for this user: at most 64 letters, digits, spaces, and simple punctuation, without leading or trailing spaces."`
+	ID          string `json:"id" minLength:"1" maxLength:"128" pattern:"^[A-Za-z0-9._:@|+/=\\-]+$" doc:"The host's own stable identifier for its user: 1 to 128 letters, digits, and . _ - : @ | + / =. Returned by the API to anyone who can read the workflow's history, so use an opaque identifier rather than an email address. Host-asserted, never verified."`
+	DisplayName string `json:"displayName,omitempty" maxLength:"64" doc:"The name KilasFlow shows for this user: at most 64 letters, digits, spaces, and simple punctuation, without leading or trailing spaces."`
 }
 
 const (

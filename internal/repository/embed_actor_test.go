@@ -102,6 +102,34 @@ func TestAManualRunRecordsWhoQueuedIt(t *testing.T) {
 	assertExecutionActor(t, loaded, repository.ActorKindKey, "ci-agent", "key_ci", "")
 }
 
+// A trigger-started run is nobody's manual act: even a context that carries
+// an actor leaves its execution unattributed.
+func TestATriggeredRunRecordsNoActor(t *testing.T) {
+	db := newHistoryDB(t)
+	tenant := repository.TenantScope{ID: "tenant-a"}
+	workflows := repository.NewWorkflowStore(db.DB)
+	stored, err := workflows.SaveDraft(context.Background(), tenant, historyDocument("Triggered"))
+	if err != nil {
+		t.Fatalf("SaveDraft() error = %v", err)
+	}
+	// Triggers fire only on an active workflow, against its pinned revision.
+	if _, err := workflows.Activate(context.Background(), tenant, stored.ID, historyCatalog()); err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+	store := repository.NewExecutionStore(db.DB)
+
+	queued, err := store.QueueTriggered(embedActorContext(), tenant, stored.ID, stored.LatestVersion.ID,
+		execution.TriggerWebhook, "manual", nil)
+	if err != nil {
+		t.Fatalf("QueueTriggered() error = %v", err)
+	}
+	loaded, err := store.Get(context.Background(), tenant, queued.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	assertExecutionActor(t, loaded, "", "", "", "")
+}
+
 func assertExecutionActor(t *testing.T, record execution.Record, kind, label, keyID, id string) {
 	t.Helper()
 	if record.ActorKind != kind || record.ActorLabel != label || record.ActorKeyID != keyID || record.ActorID != id {
