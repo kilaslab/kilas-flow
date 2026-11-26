@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"regexp"
 	"sort"
@@ -39,6 +40,16 @@ const (
 	// type, or outside what the section's validator allows.
 	CodeInvalid = "tenant_settings_invalid"
 )
+
+// FieldError is a validator's refusal of one field, named by its json key. A
+// validator that finds several returns them with errors.Join, and each becomes
+// its own issue located at the field.
+type FieldError struct {
+	Field   string
+	Message string
+}
+
+func (err *FieldError) Error() string { return err.Field + ": " + err.Message }
 
 // Issue is one reason a patch was refused.
 type Issue struct {
@@ -176,10 +187,15 @@ func (r *Registry) lookup(name string) *section {
 //
 // Every refusal is collected into one *PatchError, and the stored document is
 // then left as it was.
+//
+// A stored document that is not a JSON object is treated as empty and logged,
+// the same way a read shows it as no settings, so a patch can repair it rather
+// than every patch failing on what is already there.
 func (r *Registry) Apply(stored []byte, patch map[string]json.RawMessage) ([]byte, error) {
 	document, err := splitDocument(stored)
 	if err != nil {
-		return nil, err
+		slog.Warn("tenant settings: the stored document is unreadable and is replaced by this patch", "error", err)
+		document = map[string]json.RawMessage{}
 	}
 	keys := make([]string, 0, len(patch))
 	for key := range patch {
@@ -241,7 +257,7 @@ func (r *Registry) Apply(stored []byte, patch map[string]json.RawMessage) ([]byt
 		merged, _ := json.Marshal(current)
 		_, canonical, err := sec.decode(merged)
 		if err != nil {
-			issues = append(issues, decodeIssue(name, err))
+			issues = append(issues, decodeIssues(name, err)...)
 			continue
 		}
 		if string(canonical) == "{}" {
@@ -265,14 +281,38 @@ func (r *Registry) Apply(stored []byte, patch map[string]json.RawMessage) ([]byt
 	return out, nil
 }
 
-// decodeIssue turns a section's decode or validation failure into an Issue,
-// naming the field where encoding/json says which one it was.
-func decodeIssue(name string, err error) Issue {
+// decodeIssues turns a section's decode or validation failure into issues:
+// one per *FieldError a validator joined, located at its field; the field
+// encoding/json names for a type mismatch; otherwise one at the section.
+func decodeIssues(name string, err error) []Issue {
 	var typeErr *json.UnmarshalTypeError
 	if errors.As(err, &typeErr) && typeErr.Field != "" {
-		return Issue{Code: CodeInvalid, Path: name + "." + typeErr.Field, Message: fmt.Sprintf("expected %s, got a JSON %s", typeErr.Type, typeErr.Value)}
+		return []Issue{{Code: CodeInvalid, Path: name + "." + typeErr.Field, Message: fmt.Sprintf("expected %s, got a JSON %s", typeErr.Type, typeErr.Value)}}
 	}
-	return Issue{Code: CodeInvalid, Path: name, Message: err.Error()}
+	var issues []Issue
+	for _, leaf := range leafErrors(err) {
+		var fieldErr *FieldError
+		if errors.As(leaf, &fieldErr) && fieldErr.Field != "" {
+			issues = append(issues, Issue{Code: CodeInvalid, Path: name + "." + fieldErr.Field, Message: fieldErr.Message})
+			continue
+		}
+		issues = append(issues, Issue{Code: CodeInvalid, Path: name, Message: leaf.Error()})
+	}
+	return issues
+}
+
+// leafErrors flattens errors.Join trees into their leaves.
+func leafErrors(err error) []error {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var leaves []error
+		for _, inner := range joined.Unwrap() {
+			if inner != nil {
+				leaves = append(leaves, leafErrors(inner)...)
+			}
+		}
+		return leaves
+	}
+	return []error{err}
 }
 
 // splitDocument reads a stored document into its sections, raw.

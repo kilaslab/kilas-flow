@@ -30,6 +30,14 @@ func TestARateLimitSettingMustBeWithinTheDeploymentBounds(t *testing.T) {
 			t.Errorf("webhookPerMinute %s: error = %v, want an invalid issue", value, err)
 		}
 	}
+	_, err := registry.Apply(nil, map[string]json.RawMessage{
+		SettingsSection: json.RawMessage(`{"runPerMinute":0,"eventsPerMinute":0}`),
+	})
+	var patchErr *tenantsettings.PatchError
+	if !errors.As(err, &patchErr) || len(patchErr.Issues) != 2 ||
+		patchErr.Issues[0].Path != "rateLimit.runPerMinute" || patchErr.Issues[1].Path != "rateLimit.eventsPerMinute" {
+		t.Errorf("two refused fields = %v, want one issue at each field path", err)
+	}
 	for _, value := range []string{"1", "1000000"} {
 		if _, err := registry.Apply(nil, map[string]json.RawMessage{
 			SettingsSection: json.RawMessage(`{"runPerMinute":` + value + `,"eventsPerMinute":` + value + `}`),

@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -31,6 +32,7 @@ type TenantSettings struct {
 // read as "unlimited": a tenant that should fall back to the default sets the
 // field to null.
 func (settings TenantSettings) Validate() error {
+	var problems []error
 	for _, field := range []struct {
 		name  string
 		value *int
@@ -43,10 +45,13 @@ func (settings TenantSettings) Validate() error {
 			continue
 		}
 		if *field.value < 1 || *field.value > MaxPerMinute {
-			return fmt.Errorf("%s must be between 1 and %d, got %d", field.name, MaxPerMinute, *field.value)
+			problems = append(problems, &tenantsettings.FieldError{
+				Field:   field.name,
+				Message: fmt.Sprintf("must be between 1 and %d, got %d", MaxPerMinute, *field.value),
+			})
 		}
 	}
-	return nil
+	return errors.Join(problems...)
 }
 
 // allowance is the override for bucket, 0 when the tenant set none.
