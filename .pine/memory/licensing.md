@@ -1,6 +1,6 @@
 ---
 topic: licensing
-updated: 2026-09-06T04:50:20Z
+updated: 2026-11-27T08:40:22Z
 ---
 
 # licensing
@@ -20,3 +20,4 @@ updated: 2026-09-06T04:50:20Z
 
   The Code-node globals shim is written from n8n's *documented behaviour* only. No task-runner source is read. n8n-docs snippets are Commons Clause, so none are copied verbatim, including into tests. Real templates used as a test corpus are fetched into a gitignored directory and pinned by digest, never committed.
 - 2026-09-24: READING n8n SOURCE AS A BEHAVIOUR REFERENCE — owner decision (EPIC-tjnr1z). An agent may read n8n's source (outside this repository, e.g. on GitHub or in the official Docker image) to settle what n8n actually does in a case — pairing, error handling, an option's meaning. It may not port it: no line-by-line translation into Go or Svelte, no copied message strings, tests, identifiers-as-structure or file layout. Write the behaviour down in the ticket in your own words, then write KilasFlow's own code from that description. The three prohibitions above still hold unchanged. Why: n8n's Sustainable Use License restricts derivative works to internal or non-commercial use, and KilasFlow ships commercially; a Go rewrite that follows n8n's code is still a derivative.
+- 2026-11-27: 2026-11-27: FILE AND FORMAT NODE DEPENDENCIES (FEAT-re138f). Four Go modules were added for the Markdown and HTML nodes, all pure Go and permissive: github.com/yuin/goldmark v1.8.7 (MIT, Markdown to HTML), github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2 (MIT, HTML to Markdown) with its one new transitive module github.com/JohannesKaufmann/dom v0.3.1 (MIT), and github.com/andybalholm/cascadia v1.3.4 (BSD-2-Clause, CSS selectors for the HTML node's extraction). golang.org/x/net (BSD-3) was already an indirect dependency and is now direct for golang.org/x/net/html. Licence texts were read in the module cache at the pinned versions. Nothing is vendored. Crypto, XML, Compression and Convert to File (including its XLSX writer) use only the Go standard library, and every node's parameter names are format facts under the wire-format test: the behaviour was written from n8n's documented behaviour, with no n8n source, tests or message strings copied.
