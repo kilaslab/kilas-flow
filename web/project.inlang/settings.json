@@ -14,7 +14,6 @@
 			"./messages/{locale}/datastores.json",
 			"./messages/{locale}/settings.json",
 			"./messages/{locale}/auth.json",
-			"./messages/{locale}/home.json",
 			"./messages/{locale}/editor.json",
 			"./messages/{locale}/canvas.json",
 			"./messages/{locale}/properties.json",

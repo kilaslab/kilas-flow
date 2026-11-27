@@ -23,6 +23,11 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- First run: `/` and `/app` open the workflow list, where `/` used to show a
+  status card that Settings → About this instance already carries. The boot
+  log's `http server listening` line names the editor URL
+  (`editor=http://localhost:8080/app/workflows`, or `server.public_url` when
+  set).
 - Embed theming. Session `branding` takes `theme` (`light`, `dark`, or
   `system` to follow the viewer), `fontFamily` (`default`, `system`, `serif`)
   and `radius` (0 to 16 pixels), validated at mint and again in the frame. The

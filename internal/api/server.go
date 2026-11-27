@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -376,6 +377,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go func() {
 		s.log.Info("http server listening",
 			"addr", s.cfg.Server.Addr(),
+			"editor", EditorURL(s.cfg.Server),
 			"docs", DocsPath,
 			"openapi", OpenAPIPath+".json",
 		)
@@ -415,4 +417,24 @@ func (s *Server) Run(ctx context.Context) error {
 		s.log.Info("shutdown complete")
 		return nil
 	}
+}
+
+// EditorPath is where the dashboard's workflow list lives; `/` and `/app`
+// redirect there.
+const EditorPath = "/app/workflows"
+
+// EditorURL is the address the boot log names for the editor, so a first run
+// prints something to open (FEAT-p01rcw). It is server.public_url when one is
+// set, otherwise the listen address, with a wildcard host shown as localhost:
+// http://0.0.0.0:8080 is not a page anyone can open.
+func EditorURL(server config.Server) string {
+	if base := strings.TrimRight(strings.TrimSpace(server.PublicURL), "/"); base != "" {
+		return base + EditorPath
+	}
+	host := server.Host
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(server.Port)) + EditorPath
 }
