@@ -1,14 +1,14 @@
 ---
 id: FEAT-1mxtsn
 title: 'Integrator-first information architecture and landing page (three tracks: Embed, API, Build nodes)'
-status: todo
+status: doing
 priority: high
 labels:
     - docs
     - ia
 parent: EPIC-62zt4j
 created: "2026-09-23T02:04:34Z"
-updated: "2026-09-23T02:04:34Z"
+updated: "2026-11-27T08:08:26Z"
 ---
 
 # Description
@@ -85,11 +85,17 @@ BUG-b4cb1c
 
 
 # Acceptance Criteria
-- [ ] The sidebar matches the IA in EPIC-62zt4j with no orphan pages
-- [ ] The landing page has three tracks (Embed in your SaaS / Integrate via API / Build nodes for your API), each one click from its quickstart
-- [ ] No page says "mostly empty" or quotes a hand-written count that the product can contradict
-- [ ] Contributor and internal pages (acceptance capstone, contributing) move to About
+- [x] The sidebar matches the IA in EPIC-62zt4j with no orphan pages
+  - Evidence: `docs/astro.config.mjs` now has a hand-written sidebar (Start; Embed in your SaaS; Integrate via API; Build nodes for your API; Workflows; Operate; Reference; About these docs) and `assertNoOrphanPages`, which fails `astro build` when a page is in no group. IA entries for pages that do not exist yet (quickstart, how it fits, glossary, ...) wait for their own tickets.
+- [x] The landing page has three tracks (Embed in your SaaS / Integrate via API / Build nodes for your API), each one click from its quickstart
+  - Evidence: `docs/src/content/docs/index.mdx`. The Embed track starts at the SaaS integration playbook (FEAT-n010f0), because the 15-minute embed quickstart is not written; the API track starts at "Trigger workflows from your app" (FEAT-prw1hw); the nodes track starts at "Build nodes for your API".
+- [x] No page says "mostly empty" or quotes a hand-written count that the product can contradict
+  - Evidence: the landing, 404 and contributing pages are rewritten; the node-registry table's "46 types today" and "3 types today" are gone. The remaining counts are between `generated:` markers.
+- [x] Contributor and internal pages (acceptance capstone, contributing) move to About
+  - Evidence: both are in the "About these docs" group. The files did not move, so their URLs still work and no redirect is needed.
 - [ ] The stale statements from DOC-23 are corrected
+  - Done: node-registry counts, the GOWA pack line in the architecture tree, and the n8n scoreboard now names the corpus it measures. Already fixed on main before this ticket: the `deployment.md` duplicate paragraph and the `security.md` heading.
+  - Remaining: `operate/configuration-reference.md:129` says "no longer than MaxTablePrefixLength". That page is generated from the Go comment on `Database.TablePrefix` in `internal/config/config.go`, so the fix is a code comment edit plus `make generate-config-reference` (the value is 16, as `operate/deploy-for-saas.md` says).
 
 # Implementation Plan
 
@@ -102,3 +108,10 @@ Related tickets: BUG-b4cb1c, FEAT-nxxbs5
 # Related Files
 
 # Attachments
+
+## Progress (2026-11-27)
+
+- Sidebar regrouped by what an integrator is doing. Pages kept their URLs (nothing moved), so there are no redirects to maintain and CI link validation still passes. `assertNoOrphanPages` in `docs/astro.config.mjs` fails the build on a page in no group; `contributing.md` tells authors to add new pages to the sidebar.
+- `index.mdx` leads with the three tracks (three columns on a wide screen, `docs/src/styles/kilasflow.css`), then a short "Not an integrator?" list and a "What is not built yet" paragraph. It quotes no counts. The hero action stays an external link, as the file's comment requires.
+- `404.md` and `contributing.md` lost the stub text. `llms.txt` promotes the three tracks' entry pages and no longer says how many skills the bundle holds.
+- Left open: DOC-23 item 6 (generated config reference, needs a Go comment change). `start/first-workflow.md` is still a stub and the landing page does not promote it.
