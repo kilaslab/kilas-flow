@@ -54,7 +54,6 @@
 	"canvas_node_disabled_title": "Nonaktif: alur kerja meneruskan itemnya tanpa mengeksekusi node ini (D untuk mengaktifkan)",
 	"canvas_node_disable_aria": "Nonaktifkan {name}",
 	"canvas_node_enable_aria": "Aktifkan {name}",
-	"canvas_node_note_title": "Catatan: {note}",
 	"canvas_menu_aria_node": "Aksi untuk {name}",
 	"canvas_menu_aria_selection": "Aksi untuk {count} node terpilih",
 	"canvas_menu_open": "Buka",

@@ -3,6 +3,8 @@
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import Pin from '@lucide/svelte/icons/pin';
 	import Plus from '@lucide/svelte/icons/plus';
+	import Power from '@lucide/svelte/icons/power';
+	import PowerOff from '@lucide/svelte/icons/power-off';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 
@@ -32,6 +34,7 @@
 		placeholderDefinition,
 		portOffset
 	} from '$lib/workflow-editor/node-visual';
+	import { noteShownInFlow } from '$lib/workflow-editor/node-state';
 	import { portLabel, resolvedPorts } from '$lib/workflow-editor/ports';
 	import { markdownRuns, stickyPalette } from '$lib/workflow-editor/sticky';
 
@@ -84,6 +87,9 @@
 			: nodeSubtitle(node, data.definition)
 	);
 	const invalid = $derived(Boolean(data.validationMessage));
+	// The note the author asked to see under the node (n8n's "Display note in
+	// flow"); null when the flag is off or the note is empty.
+	const flowNote = $derived(noteShownInFlow(node));
 	const runStatus = $derived(data.runStatus ?? null);
 	const annotation = $derived(isAnnotation(data.definition));
 	const palette = $derived(stickyPalette(node.parameters?.color));
@@ -201,6 +207,19 @@
 					</button>
 					<button
 						type="button"
+						class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+						aria-label={node.disabled ? m.canvas_node_enable_aria({ name: node.name }) : m.canvas_node_disable_aria({ name: node.name })}
+						data-toggle-disabled={node.id}
+						onclick={() => actions?.toggleDisabled(node.id)}
+					>
+						{#if node.disabled}
+							<Power aria-hidden="true" class="size-3.5" />
+						{:else}
+							<PowerOff aria-hidden="true" class="size-3.5" />
+						{/if}
+					</button>
+					<button
+						type="button"
 						class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
 						aria-label={m.canvas_node_delete_aria({ name: node.name })}
 						onclick={() => actions?.remove(node.id)}
@@ -287,6 +306,12 @@
 			{/if}
 			{#if subtitle}
 				<p class="truncate pt-0 font-mono text-[0.625rem] leading-tight text-muted-foreground">{subtitle}</p>
+			{/if}
+			{#if flowNote}
+				<!-- The author's note, as plain text: it is documentation typed into
+				     Settings or carried in by an import, never markup. Clamped so a
+				     long one cannot cover the steps beneath. -->
+				<p data-node-note={node.id} class="mx-auto mt-1 line-clamp-3 whitespace-pre-wrap break-words rounded border border-dashed border-border bg-card px-2 py-1 text-[0.625rem] leading-tight text-muted-foreground">{flowNote}</p>
 			{/if}
 		</div>
 
