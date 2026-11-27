@@ -28,7 +28,8 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   settings dialog. Both edit the draft, so they undo and save with the rest
   of the document.
 - A Help menu in the dashboard sidebar: the API reference, the OpenAPI
-  document, what's new (the changelog) and the running version.
+  document, what's new (the changelog), the running version, and the
+  editor's keyboard shortcuts while a workflow is open.
 - First run: `/` and `/app` open the workflow list, where `/` used to show a
   status card that Settings → About this instance already carries. The boot
   log's `http server listening` line names the editor URL

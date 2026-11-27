@@ -6,6 +6,7 @@
 	import type { HealthOutputBody } from '$lib/api/generated/models';
 	import * as Dropdown from '$lib/components/ui/dropdown-menu';
 	import { helpLinks } from '$lib/dashboard/help-links';
+	import { requestShortcuts, shortcutsBridge } from '$lib/workflow-editor/shortcuts-bridge.svelte';
 	import * as m from '$lib/paraglide/messages.js';
 
 	/**
@@ -19,8 +20,9 @@
 	 *
 	 * The version is read from the health probe the Settings page already uses,
 	 * so the menu names the build the server is running, not the one the web app
-	 * was compiled with. Keyboard shortcuts are not listed: that overlay is owned
-	 * by the workflow editor (press `?` there) and has no entry point outside it.
+	 * was compiled with. Keyboard shortcuts appear only while a workflow editor
+	 * is open: the overlay is the editor's (also on `?`), and the menu asks for
+	 * it through shortcutsBridge.
 	 */
 	let { collapsed = false }: { collapsed?: boolean } = $props();
 
@@ -68,6 +70,9 @@
 				{/snippet}
 			</Dropdown.Item>
 		{/each}
+		{#if shortcutsBridge.available}
+			<Dropdown.Item onclick={requestShortcuts}>{m.nav_help_shortcuts()}</Dropdown.Item>
+		{/if}
 		{#if version}
 			<Dropdown.Separator />
 			<Dropdown.Label class="font-mono">{version}</Dropdown.Label>

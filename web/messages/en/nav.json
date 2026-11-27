@@ -13,5 +13,6 @@
 	"nav_help_whats_new": "What's new",
 	"nav_help_opens_new_tab": "(opens in a new tab)",
 	"nav_help_version": "Version {version}",
-	"nav_help_version_unavailable": "Version unavailable"
+	"nav_help_version_unavailable": "Version unavailable",
+	"nav_help_shortcuts": "Keyboard shortcuts"
 }

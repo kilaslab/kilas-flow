@@ -13,5 +13,6 @@
 	"nav_help_whats_new": "Yang baru",
 	"nav_help_opens_new_tab": "(dibuka di tab baru)",
 	"nav_help_version": "Versi {version}",
-	"nav_help_version_unavailable": "Versi tidak tersedia"
+	"nav_help_version_unavailable": "Versi tidak tersedia",
+	"nav_help_shortcuts": "Pintasan keyboard"
 }

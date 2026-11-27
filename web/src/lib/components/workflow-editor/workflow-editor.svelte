@@ -47,6 +47,7 @@
 </script>
 
 <script lang="ts">
+	import { shortcutsBridge } from '$lib/workflow-editor/shortcuts-bridge.svelte';
 	import { tick, untrack, type Snippet } from 'svelte';
 
 	import { Background, BackgroundVariant, MiniMap, SvelteFlow, ViewportPortal, type Connection as FlowConnection, type EdgeTypes } from '@xyflow/svelte';
@@ -292,6 +293,20 @@
 	let renameValue = $state('');
 	let renameInput = $state<HTMLInputElement>();
 	let shortcutsOpen = $state(false);
+	// The sidebar's Help menu offers this overlay while the editor is mounted.
+	$effect(() => {
+		shortcutsBridge.available = true;
+		return () => {
+			shortcutsBridge.available = false;
+		};
+	});
+	let answeredShortcutRequests = shortcutsBridge.requests;
+	$effect(() => {
+		const requests = shortcutsBridge.requests;
+		if (requests === answeredShortcutRequests) return;
+		answeredShortcutRequests = requests;
+		shortcutsOpen = true;
+	});
 	/**
 	 * The node context menu, while one is open: the node it was asked on, where
 	 * (in the canvas region's coordinates), and the element focus returns to.
