@@ -63,5 +63,6 @@
 	"settings_variables_empty_body": "Tambahkan base URL, nama environment, atau nilai lain yang dipakai bersama oleh workflow Anda.",
 	"settings_variables_key_required": "Isi kuncinya.",
 	"settings_variables_key_invalid": "Gunakan huruf, angka, dan garis bawah, diawali huruf atau garis bawah (maksimal 64 karakter).",
-	"settings_variables_error_unexpected": "Respons variabel tidak terduga"
+	"settings_variables_error_unexpected": "Respons variabel tidak terduga",
+	"settings_variables_key_placeholder": "API_BASE"
 }

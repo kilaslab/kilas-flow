@@ -138,7 +138,7 @@
 	>
 		<div class="grid gap-1">
 			<label for="variable-new-key" class="text-xs font-medium">{m.settings_variables_key()}</label>
-			<Input id="variable-new-key" bind:value={newKey} maxlength={64} autocomplete="off" spellcheck={false} class="font-mono" placeholder="API_BASE" />
+			<Input id="variable-new-key" bind:value={newKey} maxlength={64} autocomplete="off" spellcheck={false} class="font-mono" placeholder={m.settings_variables_key_placeholder()} />
 		</div>
 		<div class="grid gap-1">
 			<label for="variable-new-value" class="text-xs font-medium">{m.settings_variables_value()}</label>
