@@ -3,6 +3,8 @@
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import Pin from '@lucide/svelte/icons/pin';
 	import Plus from '@lucide/svelte/icons/plus';
+	import Power from '@lucide/svelte/icons/power';
+	import PowerOff from '@lucide/svelte/icons/power-off';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 
@@ -32,6 +34,7 @@
 		placeholderDefinition,
 		portOffset
 	} from '$lib/workflow-editor/node-visual';
+	import { noteShownInFlow } from '$lib/workflow-editor/node-state';
 	import { portLabel, resolvedPorts } from '$lib/workflow-editor/ports';
 	import { markdownRuns, stickyPalette } from '$lib/workflow-editor/sticky';
 
@@ -84,6 +87,9 @@
 			: nodeSubtitle(node, data.definition)
 	);
 	const invalid = $derived(Boolean(data.validationMessage));
+	// The note the author asked to see under the node (n8n's "Display note in
+	// flow"); null when the flag is off or the note is empty.
+	const flowNote = $derived(noteShownInFlow(node));
 	const runStatus = $derived(data.runStatus ?? null);
 	const annotation = $derived(isAnnotation(data.definition));
 	const palette = $derived(stickyPalette(node.parameters?.color));
@@ -201,6 +207,19 @@
 					</button>
 					<button
 						type="button"
+						class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+						aria-label={node.disabled ? m.canvas_node_enable_aria({ name: node.name }) : m.canvas_node_disable_aria({ name: node.name })}
+						data-toggle-disabled={node.id}
+						onclick={() => actions?.toggleDisabled(node.id)}
+					>
+						{#if node.disabled}
+							<Power aria-hidden="true" class="size-3.5" />
+						{:else}
+							<PowerOff aria-hidden="true" class="size-3.5" />
+						{/if}
+					</button>
+					<button
+						type="button"
 						class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
 						aria-label={m.canvas_node_delete_aria({ name: node.name })}
 						onclick={() => actions?.remove(node.id)}
@@ -215,6 +234,7 @@
 		<div
 			class="kf-node-tile flex items-center justify-center gap-3 border bg-card transition-[border-color,box-shadow] {TILE[visual.shape]}"
 			style={`border-color: ${border}; box-shadow: ${shadow}`}
+			title={node.disabled ? m.canvas_node_disabled_title() : undefined}
 		>
 			<span
 				class={nodeIconBadgeClass(visual.shape)}
@@ -227,7 +247,7 @@
 				{/if}
 			</span>
 			{#if visual.shape === 'hub'}
-				<span class="truncate text-xs font-semibold leading-tight">{node.name}</span>
+				<span class="truncate text-xs font-semibold leading-tight {node.disabled ? 'line-through' : ''}">{node.name}{#if node.disabled}<span class="sr-only"> ({m.canvas_node_disabled()})</span>{/if}</span>
 			{/if}
 		</div>
 
@@ -279,13 +299,23 @@
 		     (w-32) matching the 68px tile pitch so long chains fit. -->
 		<div class="pointer-events-none absolute left-1/2 top-full w-32 -translate-x-1/2 pt-1 text-center">
 			{#if visual.shape !== 'hub'}
-				<p class="truncate text-xs font-semibold leading-tight">{node.name}</p>
+				<p class="truncate text-xs font-semibold leading-tight {node.disabled ? 'line-through' : ''}">{node.name}{#if node.disabled}<span class="sr-only"> ({m.canvas_node_disabled()})</span>{/if}</p>
 			{/if}
 			{#if capsuleType}
 				<p class="mx-auto mt-1 w-fit truncate rounded-full border border-destructive/30 bg-destructive/10 px-1 py-0 text-[0.625rem] font-medium leading-tight text-destructive" title={m.canvas_node_unsupported_note({ type: capsuleType })}>{m.canvas_node_unsupported()}</p>
 			{/if}
 			{#if subtitle}
 				<p class="truncate pt-0 font-mono text-[0.625rem] leading-tight text-muted-foreground">{subtitle}</p>
+			{/if}
+			{#if flowNote}
+				<!-- The author's note, as plain text: it is documentation typed into
+				     Settings or carried in by an import, never markup. Clamped so a
+				     long one cannot cover the steps beneath. -->
+				<!-- The padding sits on the box and the clamp on the text inside it: a
+				     clamped element's own padding shows the top of the line it cut. -->
+				<div data-node-note={node.id} class="mx-auto mt-1 rounded border border-dashed border-border bg-card px-2 py-1">
+					<p class="line-clamp-3 whitespace-pre-wrap break-words text-[0.625rem] leading-tight text-muted-foreground">{flowNote}</p>
+				</div>
 			{/if}
 		</div>
 

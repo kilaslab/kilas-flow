@@ -10,6 +10,7 @@
 	import { propertyVisible, withDefaults } from '$lib/workflow-editor/visibility';
 	import type { CredentialResource, CredentialTypeResource, Definition, Node, PropertyDefinition, WebhookRouteResource } from '$lib/api/generated/models';
 	import type { PropertyScope } from '$lib/workflow-editor/document';
+	import { nodeNote, type NodeNote } from '$lib/workflow-editor/node-state';
 	import { credentialGone, credentialIdsToProbe, credentialPresenceKey, credentialTypesFor, probeCredentials, requiresCredential } from '$lib/workflow-editor/credentials';
 	import { savedNodeBinds, webhookAddress } from '$lib/workflow-editor/webhook-address';
 	import { Button } from '$lib/components/ui/button';
@@ -33,7 +34,9 @@
 		upstreamNodeNames = [],
 		onChange,
 		onRename,
-		onCredentialChange
+		onCredentialChange,
+		onDisabledChange,
+		onNoteChange
 	}: {
 		node: Node;
 		definition: Definition;
@@ -53,6 +56,10 @@
 		/** Renames the node and rewrites the expressions that address it. */
 		onRename?: (name: string) => void;
 		onCredentialChange?: (typeID: string, credentialID: string) => void;
+		/** Enables or disables the node; the Settings tab offers the switch only when this is given. */
+		onDisabledChange?: (disabled: boolean) => void;
+		/** Writes the node's note and its "display in flow" flag; Settings offers both only when this is given. */
+		onNoteChange?: (patch: Partial<NodeNote>) => void;
 	} = $props();
 
 	// Display names for credential type ids. Loaded here rather than passed
@@ -165,6 +172,10 @@
 		const id = selectedCredential(typeID);
 		return Boolean(id) && unlistedCredentialIDs.includes(id) && credentialGone(credentialPresence.data, id);
 	}
+	// A sticky note takes no part in a run, so it has nothing to disable; it is
+	// documentation itself, so it gets no note of its own either.
+	const showNodeState = $derived(activeTab === 'settings' && !isAnnotation(definition) && Boolean(onDisabledChange || onNoteChange));
+	const note = $derived(nodeNote(node));
 	const properties = $derived(activeTab === 'parameters' ? definition.parameters ?? [] : definition.sharedSettings ?? []);
 	const values = $derived((activeTab === 'parameters' ? node.parameters : node.settings) ?? {});
 	/**
@@ -314,8 +325,42 @@
 					<p class="text-[0.625rem] leading-4 text-muted-foreground">{m.properties_credential_reference_note()}</p>
 				</div>
 			{/if}
+			{#if showNodeState}
+				<!-- What the author says about the node rather than how it is
+				     configured. Disabled is the document's own flag; the note is n8n's
+				     notes and notesInFlow, so both survive an n8n round trip. -->
+				<div class="grid gap-2 rounded-lg border border-border bg-background/40 p-2" data-node-state>
+					<p class="text-[0.6875rem] font-medium uppercase tracking-wider text-muted-foreground">{m.properties_state_heading()}</p>
+					{#if onDisabledChange}
+						<label class="flex items-center gap-2 text-xs">
+							<input type="checkbox" class="size-3.5" data-node-disabled checked={Boolean(node.disabled)} aria-describedby={`node-disabled-hint-${node.id}`} onchange={(event) => onDisabledChange?.(event.currentTarget.checked)} />
+							<span class="font-medium">{m.properties_disabled_label()}</span>
+						</label>
+						<p id={`node-disabled-hint-${node.id}`} class="text-[0.6875rem] leading-4 text-muted-foreground">{m.properties_disabled_hint()}</p>
+					{/if}
+					{#if onNoteChange}
+						<label class="text-xs font-medium leading-tight" for={`node-notes-${node.id}`}>{m.properties_notes_label()}</label>
+						<textarea
+							id={`node-notes-${node.id}`}
+							rows="3"
+							value={note.text}
+							class="rounded-md border border-input bg-background px-2 py-1 text-xs"
+							aria-describedby={`node-notes-hint-${node.id}`}
+							oninput={(event) => onNoteChange?.({ text: event.currentTarget.value })}
+						></textarea>
+						<p id={`node-notes-hint-${node.id}`} class="text-[0.6875rem] leading-4 text-muted-foreground">{m.properties_notes_hint()}</p>
+						<label class="flex items-center gap-2 text-xs">
+							<input type="checkbox" class="size-3.5" data-node-notes-in-flow checked={note.inFlow} aria-describedby={`node-notes-flow-hint-${node.id}`} onchange={(event) => onNoteChange?.({ inFlow: event.currentTarget.checked })} />
+							<span class="font-medium">{m.properties_notes_in_flow()}</span>
+						</label>
+						<p id={`node-notes-flow-hint-${node.id}`} class="text-[0.6875rem] leading-4 text-muted-foreground">{m.properties_notes_in_flow_hint()}</p>
+					{/if}
+				</div>
+			{/if}
 			{#if visibleProperties.length === 0}
-				<p class="text-xs leading-5 text-muted-foreground">{activeTab === 'parameters' ? m.properties_no_parameters_to_configure() : m.properties_no_settings_to_configure()}</p>
+				{#if !showNodeState}
+					<p class="text-xs leading-5 text-muted-foreground">{activeTab === 'parameters' ? m.properties_no_parameters_to_configure() : m.properties_no_settings_to_configure()}</p>
+				{/if}
 			{:else}
 				{#each visibleProperties as property (property.key)}
 					{#if isAnnotation(definition) && activeTab === 'parameters' && property.key === 'color'}
