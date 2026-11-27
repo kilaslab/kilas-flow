@@ -60,6 +60,7 @@ const sidebar = [
 		items: [
 			{ label: 'SaaS integration playbook', slug: 'guides/saas-playbook' },
 			{ label: 'Embedding and multi-tenancy', slug: 'guides/embedding' },
+			{ label: 'Embed sessions in depth', slug: 'guides/embed-sessions' },
 			{ label: 'Tenants, provisioning and identity', slug: 'operate/tenants' },
 			{ label: 'Tenancy and the embed boundary', slug: 'concepts/tenancy-and-embedding' },
 			{ label: 'White-label, localisation and go-live', slug: 'guides/white-label' },

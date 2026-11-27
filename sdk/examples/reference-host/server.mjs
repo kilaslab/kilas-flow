@@ -170,9 +170,10 @@ async function serveTenantApi(tenant, action, url, request, response) {
 		return json(200, { executionId, status: execution.status });
 	}
 
-	// Host-side datastore read through the tenant's own key: the embed token
-	// is default-denied on /datastores/*, so this call is backend-only by
-	// construction, not by convention.
+	// Host-side datastore read through the tenant's own key. The editor's
+	// workflow session holds no datastore scope, so it is refused /datastores/*
+	// and this call is backend-only by construction, not by convention. A
+	// datastore session (datastore:read) could make the same read from a page.
 	if (action === 'signups' && request.method === 'GET') {
 		const rows = await datastore(tenant, 'GET', `/datastores/${tenant.datastoreId}/rows?limit=25`);
 		return json(200, rows);
@@ -325,10 +326,10 @@ async function ensureTenant(slug) {
  * datastore reads as unknown and answers 404 — isolation the reference app
  * relies on rather than reimplements.
  *
- * The SDK has no datastore methods yet, so this helper speaks the documented
- * REST endpoints with the same tenant key the SDK client holds. It will read
- * as SDK calls once they exist; the endpoints, not the spelling, are the
- * contract.
+ * The SDK has datastore methods now (`insertDatastoreRow`, `listDatastoreRows`
+ * and the rest), and a host written today can use them. This sample predates
+ * them, so the helper speaks the same REST endpoints with the tenant key the SDK
+ * client holds; the request is identical either way.
  */
 async function ensureDatastore(tenant, slug) {
 	const name = `reference-${slug}`;

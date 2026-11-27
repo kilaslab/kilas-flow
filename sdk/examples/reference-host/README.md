@@ -134,11 +134,15 @@ column operations — so a host written today can use those instead; this sample
 predates them and the REST call is the same request.
 
 Embed sessions can reach data too, and only within one datastore: a session
-minted for a `datastoreId` with `datastore:read` or `datastore:write` may read
-the table definition and read or write its **rows**. Everything that reshapes the
-table — listing datastores, clearing it, adding, renaming or dropping a column,
-and the CSV import — stays with the backend key, and a workflow-scoped session
-never reaches any of it. Writing from inside a workflow uses the datastore node
-(`kilasflow.datastore`, insert with `dataTableId` and a `columns`
-mapping); see the [embedding guide](../../../docs/src/content/docs/guides/embedding.md)
-for the exact parameters and the scope table.
+minted for a `datastoreId` with `datastore:read` may read the table definition
+and its rows (the CSV export included), and with `datastore:write` it may also
+insert, upsert, increment, update, delete and CSV-import rows. Everything that
+reshapes the table — listing or creating datastores, renaming, dropping or
+clearing one, adding, renaming or dropping a column — stays with the backend
+key, and a workflow-scoped session never reaches any of it. Writing from inside
+a workflow uses the datastore node (`kilasflow.datastore`, insert with
+`dataTableId` and a `columns` mapping); see the
+[embedding guide](../../../docs/src/content/docs/guides/embedding.md) for the
+exact parameters, and
+[Embed sessions in depth](../../../docs/src/content/docs/guides/embed-sessions.md#datastore-sessions)
+for the permissions.
