@@ -215,6 +215,7 @@
 		<div
 			class="kf-node-tile flex items-center justify-center gap-3 border bg-card transition-[border-color,box-shadow] {TILE[visual.shape]}"
 			style={`border-color: ${border}; box-shadow: ${shadow}`}
+			title={node.disabled ? m.canvas_node_disabled_title() : undefined}
 		>
 			<span
 				class={nodeIconBadgeClass(visual.shape)}
@@ -227,7 +228,7 @@
 				{/if}
 			</span>
 			{#if visual.shape === 'hub'}
-				<span class="truncate text-xs font-semibold leading-tight">{node.name}</span>
+				<span class="truncate text-xs font-semibold leading-tight {node.disabled ? 'line-through' : ''}">{node.name}{#if node.disabled}<span class="sr-only"> ({m.canvas_node_disabled()})</span>{/if}</span>
 			{/if}
 		</div>
 
@@ -279,7 +280,7 @@
 		     (w-32) matching the 68px tile pitch so long chains fit. -->
 		<div class="pointer-events-none absolute left-1/2 top-full w-32 -translate-x-1/2 pt-1 text-center">
 			{#if visual.shape !== 'hub'}
-				<p class="truncate text-xs font-semibold leading-tight">{node.name}</p>
+				<p class="truncate text-xs font-semibold leading-tight {node.disabled ? 'line-through' : ''}">{node.name}{#if node.disabled}<span class="sr-only"> ({m.canvas_node_disabled()})</span>{/if}</p>
 			{/if}
 			{#if capsuleType}
 				<p class="mx-auto mt-1 w-fit truncate rounded-full border border-destructive/30 bg-destructive/10 px-1 py-0 text-[0.625rem] font-medium leading-tight text-destructive" title={m.canvas_node_unsupported_note({ type: capsuleType })}>{m.canvas_node_unsupported()}</p>

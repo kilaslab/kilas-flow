@@ -49,5 +49,19 @@
 	"canvas_controls_aria": "Panel kontrol",
 	"canvas_zoom_in": "Perbesar",
 	"canvas_zoom_out": "Perkecil",
-	"canvas_fit_view": "Sesuaikan tampilan"
+	"canvas_fit_view": "Sesuaikan tampilan",
+	"canvas_node_disabled": "nonaktif",
+	"canvas_node_disabled_title": "Nonaktif: alur kerja meneruskan itemnya tanpa mengeksekusi node ini (D untuk mengaktifkan)",
+	"canvas_node_disable_aria": "Nonaktifkan {name}",
+	"canvas_node_enable_aria": "Aktifkan {name}",
+	"canvas_node_note_title": "Catatan: {note}",
+	"canvas_menu_aria_node": "Aksi untuk {name}",
+	"canvas_menu_aria_selection": "Aksi untuk {count} node terpilih",
+	"canvas_menu_open": "Buka",
+	"canvas_menu_rename": "Ganti nama",
+	"canvas_menu_duplicate": "Duplikat",
+	"canvas_menu_disable": "Nonaktifkan",
+	"canvas_menu_enable": "Aktifkan",
+	"canvas_menu_copy": "Salin",
+	"canvas_menu_delete": "Hapus"
 }
