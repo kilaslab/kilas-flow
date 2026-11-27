@@ -23,6 +23,10 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- Rename a workflow from its title in the editor, and edit its settings
+  (execution timeout or no limit, error workflow, timezone) in a Workflow
+  settings dialog. Both edit the draft, so they undo and save with the rest
+  of the document.
 - A Help menu in the dashboard sidebar: the API reference, the OpenAPI
   document, what's new (the changelog) and the running version.
 - First run: `/` and `/app` open the workflow list, where `/` used to show a
