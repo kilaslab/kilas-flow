@@ -3,7 +3,7 @@ title: KilasFlow
 description: An embeddable open-source workflow engine for APIs, AI agents, and SaaS products.
 template: splash
 hero:
-  tagline: A workflow engine that ships as one Go binary and embeds into your product.
+  tagline: Put a workflow engine inside your product. One Go binary, one HTTP API, and an editor you mount in an iframe.
   actions:
     # Only external links belong here. A hero action is read from frontmatter
     # rather than from the page body, so it is not part of the rendered tree that
@@ -18,42 +18,69 @@ hero:
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
-KilasFlow runs workflows: a graph of nodes, triggered by an HTTP request, a cron
-schedule, another workflow or a person pressing a button, executing against a
-durable queue that survives a restart. It is written in Go, ships as a single
-binary with the editor embedded in it, and defaults to SQLite so that running it
-takes no infrastructure at all.
+KilasFlow runs workflows: a graph of nodes, started by an HTTP request, a cron
+schedule, an event from your app, another workflow or a person pressing a
+button. Runs go through a durable queue that survives a restart. It is Apache-2.0,
+written in Go, and ships as one binary with the editor inside it. SQLite is the
+default store, so trying it takes no infrastructure.
 
-**Start with [what KilasFlow is](/start/what-kilasflow-is/)**, which covers what
-works today and — just as usefully — what does not.
+This site is written for the engineer who is putting KilasFlow into a product.
+Pick the track that matches what you are building.
 
 <CardGrid>
-	<Card title="One binary" icon="rocket">
-		The API and the editor are served from the same process and the same
-		origin. `make build-all` produces it; there is nothing else to deploy.
+	<Card title="Embed in your SaaS" icon="laptop">
+		Mount the editor in your own pages. Map each customer to a tenant, keep
+		every key on your backend, and give your users a short-lived token instead.
+
+		- **Start here:** [SaaS integration playbook](/guides/saas-playbook/)
+		- [Embedding and multi-tenancy](/guides/embedding/)
+		- [Tenants, provisioning and identity](/operate/tenants/)
+		- [White-label, localisation and go-live](/guides/white-label/)
 	</Card>
-	<Card title="API first" icon="setting">
-		Thirty-five operations under `/api/v1`, with an OpenAPI 3.1 document
-		generated from the same Go types that serve the requests, so the
-		specification cannot drift from the implementation.
+	<Card title="Integrate via API" icon="random">
+		Drive workflows from your backend: start runs, send events, and read the
+		results. Every operation is in the generated OpenAPI reference.
+
+		- **Start here:** [Trigger workflows from your app](/guides/trigger-workflows/)
+		- [Get notified of results](/guides/get-notified/)
+		- [HTTP API reference](/reference/api/)
+		- [Using the host SDK](/guides/sdk/)
 	</Card>
-	<Card title="Built to embed" icon="puzzle">
-		The editor mounts in an iframe in a host application, scoped to one
-		workflow by a signed, short-lived session token.
-	</Card>
-	<Card title="Reads n8n workflows" icon="random">
-		The workflow document is a reimplementation of n8n's interchange format in
-		Go, with an importer and an exporter. No n8n code is used.
+	<Card title="Build nodes for your API" icon="puzzle">
+		Give your customers your product's API as workflow nodes. Write a JSON
+		pack, generate one from an OpenAPI document, or ship Go compiled to
+		WebAssembly.
+
+		- **Start here:** [Build nodes for your API](/guides/build-nodes-for-your-api/)
+		- [Generate a pack from OpenAPI](/guides/openapi-pack/)
+		- [App events as triggers](/guides/app-events/)
+		- [Node pack format](/reference/node-packs/)
 	</Card>
 </CardGrid>
 
-## This site is new and mostly empty
+## Not an integrator?
 
-The structure here is committed ahead of the writing, so that the pages arriving
-over the next few changes slot into a settled navigation instead of rearranging
-it. Most sections currently hold a stub that says what will go there and where
-the same information lives today — usually the repository's `README.md` or a Go
-package's doc comment, which are accurate and simply not addressable by a URL.
+- **Evaluating KilasFlow.** [What KilasFlow is](/start/what-kilasflow-is/) says
+  what works today and what does not, in that order.
+- **Running it.** [Install](/start/install/) gets one binary running.
+  [Deployment](/operate/deployment/) and [Deploy for SaaS](/operate/deploy-for-saas/)
+  cover production, and [Security posture](/operate/security/) says what is and
+  is not defended.
+- **Writing workflows.** The [execution model](/concepts/execution-model/),
+  [expressions](/concepts/expressions/) and [triggers and
+  webhooks](/concepts/webhooks/) pages describe how a workflow behaves. The
+  [node catalogue](/reference/node-catalogue/) lists every node.
+- **Coming from n8n.** The workflow document is a reimplementation of n8n's
+  interchange format, with an importer and an exporter and no n8n code. See
+  [Migrating from n8n](/guides/n8n-migration/).
+- **A coding agent.** The binary embeds a skills bundle and an MCP server, and
+  this site publishes [`llms.txt`](/llms.txt) and [`llms-full.txt`](/llms-full.txt).
 
-Where a page has not been written, it says so. Nothing on this site describes a
-feature that does not exist.
+## What is not built yet
+
+The site documents the system that exists on `main`. The gaps an integrator is
+most likely to hit are listed, not hidden: there is no single sign-on, the
+server does not push execution results to your backend, and the SDK is not on
+npm yet. [Get notified of results](/guides/get-notified/) covers the second one
+and [Using the host SDK](/guides/sdk/#install-from-a-checkout-until-the-first-release)
+the third.

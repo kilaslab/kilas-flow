@@ -845,7 +845,14 @@ execute.
 
 ### The score
 
-**Measured 5 September 2026, over 39 fixtures.**
+**Measured 5 September 2026, over the 39 fixtures of the regression corpus.**
+That corpus is the importer's test set, not a sample of what people import. It
+includes n8n's own test scaffolding and workflows chosen to exercise specific
+nodes. Do not read the share below as the share of public templates that import
+and run as they are: workflows people publish lean harder on nodes KilasFlow
+does not implement, and score lower. A separate scoreboard over the most-viewed
+public templates is planned and tracked as
+[FEAT-274c4p](https://github.com/kilaslab/kilas-flow/blob/main/.pine/tickets/FEAT-274c4p.md).
 
 | Tier | Count | Share |
 | --- | ---: | ---: |
