@@ -2,7 +2,7 @@
 title: Host events
 description: "The recommended host → workflow path: publish one event, every active workflow listening for it runs. Generated from the live OpenAPI document."
 sidebar:
-  order: 6
+  order: 8
 ---
 
 <!-- Generated from the live OpenAPI document by scripts/generate-api-reference.mjs — do not edit by hand. -->
@@ -62,6 +62,7 @@ Response (skeleton — every field, placeholder values):
 {
   "filtered": [
     {
+      "detail": "string",
       "executionId": "string",
       "reason": "duplicate",
       "workflowId": "string"
@@ -83,4 +84,4 @@ curl -X POST "$KILASFLOW_HOST/api/v1/events" \
   -d '{"type":"string"}'
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”

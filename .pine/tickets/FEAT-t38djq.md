@@ -1,7 +1,7 @@
 ---
 id: FEAT-t38djq
 title: Data-utility nodes (Rename Keys, Compare Datasets, Redis) and a 'deliberately unsupported' reason table
-status: todo
+status: doing
 priority: low
 labels:
     - n8n
@@ -37,9 +37,9 @@ Either a tenant-scoped implementation, or a placeholder that states the node is 
 - Rename Keys and Compare Datasets are pure transforms that fit alongside Set and Merge.
 
 # Acceptance Criteria
-- [ ] Rename Keys and Compare Datasets (4 outputs) import and run
+- [x] Rename Keys and Compare Datasets (4 outputs) import and run
 - [ ] Redis, behind a `redis` credential with the same host guard as SQL
-- [ ] Placeholders for deliberately unsupported nodes say why, and point to the alternative (Drive, HTTP, Datastore)
+- [x] Placeholders for deliberately unsupported nodes say why, and point to the alternative (Drive, HTTP, Datastore)
 
 # Implementation Plan
 
@@ -54,3 +54,23 @@ Related (from the audit): none
 `results-extra.json` (Execute Command, Read-Write Files from Disk, Local File Trigger, Rename Keys, Compare Datasets, Execution Data), `probes/Redis.json`
 
 # Attachments
+
+## Progress
+
+2026-11-27. Scope for the day: Rename Keys, Compare Datasets and the reason table. Redis is NOT done and is the one remaining acceptance criterion.
+
+Landed:
+
+- Rename Keys: native `kilasflow.renameKeys` (`nodes/data_utility.go`), n8n's own `keys.key[{currentKey,newKey}]` shape, dot paths on both sides, renames applied in order, a missing field left alone, null renamed like any other value, binary and provenance carried. Importer mapping and export in `internal/interop/n8n/data_utility.go`; the editor's empty default row is dropped; the regex replacement list (`additionalOptions`) is not carried and is reported as a blocking issue.
+- Compare Datasets: native `kilasflow.compareDatasets` with inputs `input1`/`input2` and outputs `onlyInA`, `same`, `different`, `onlyInB` in n8n's slot order, matching by `mergeByFields.values[{field1,field2}]` (names may differ per side), one-to-one in-order pairing, `skipFields` and `disableDotNotation` options, `resolve` of `includeBoth` (keys/same/different report), `preferInput1` or `preferInput2`. Importer mapping and export; options the node does not implement (resolve `mix`, `fuzzyCompare`, `multipleMatches` other than first) refuse to the placeholder with a reason, so a workflow never runs with a different comparison than it was written for. The importer wires n8n output index N to the Nth native port through the catalogue; an import test proves all six wires and the export slots.
+- Reason table: `deliberatelyUnavailable` (`n8n.go:1209`) for executeCommand, readWriteFile, writeBinaryFile, localFileTrigger, ssh and ftp. The placeholder says the node is deliberately absent in a shared, multi-tenant engine and names the alternative (Google Drive, HTTP Request, Webhook, Google Drive Trigger, Data table, Code). An ordinary gap keeps the plain "no equivalent" sentence, with a test that the table never excuses one.
+- Two builtin glyphs (`key-round`, `git-compare`) added to `glyphs.json` and `node-visual.ts`; node catalogue and catalogue-size facts regenerated; n8n migration guide updated; e2e coverage tiers and a run test per node added.
+
+Not verified here: the vitest glyph test and the Playwright e2e tests (no `web/node_modules` or e2e dependencies in this worktree). The Go-side glyph test passes.
+
+Remaining:
+
+- Redis behind a `redis` credential with the same host guard as SQL (acceptance criterion 2). Not started.
+- Rename Keys regular-expression replacements, if wanted (currently a blocking import issue).
+- Compare Datasets: fuzzy comparison, all matches, and a mix of versions per field (currently refused on import).
+- The Same output carries Input A's item as-is; if real n8n workflows read a `keys`/`same`/`different` shape from the Same branch, that needs a check against a live n8n instance.

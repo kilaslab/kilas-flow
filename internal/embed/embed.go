@@ -104,7 +104,20 @@ type Branding struct {
 	// that stops an action.
 	HideRun  bool `json:"hideRun,omitempty"`
 	HideSave bool `json:"hideSave,omitempty"`
+	// Theme picks the editor's palette: light, dark, or system (follow the
+	// viewer's prefers-color-scheme). Empty keeps the product default, dark.
+	Theme string `json:"theme,omitempty" enum:"light,dark,system" doc:"light, dark, or system to follow the viewer's colour-scheme preference. Empty keeps the default, dark."`
+	// FontFamily picks the interface font from a fixed list, never a font
+	// name or URL a host types: a free-form family is how a remote font, and
+	// a request to a third party from inside the frame, would arrive.
+	FontFamily string `json:"fontFamily,omitempty" enum:"default,system,serif" doc:"default (the product font), system (the viewer's system UI font), or serif. Fonts are never loaded from elsewhere."`
+	// Radius is the corner radius of surfaces in pixels; controls and chips
+	// scale from it. Nil keeps the product default.
+	Radius *int `json:"radius,omitempty" minimum:"0" maximum:"16" doc:"Corner radius of cards, nodes, menus and dialogs, in pixels from 0 to 16; controls and chips scale from it. Omit for the default (10)."`
 }
+
+// BrandingRadiusMax bounds Branding.Radius.
+const BrandingRadiusMax = 16
 
 var (
 	accentPattern = regexp.MustCompile(`^(#[0-9a-fA-F]{3,8}|oklch\([0-9a-zA-Z%.\s/]+\)|rgb\([0-9,\s%.]+\)|[a-zA-Z]{3,20})$`)
@@ -130,6 +143,19 @@ func (branding Branding) Validate() error {
 	if branding.Accent != "" && !accentPattern.MatchString(branding.Accent) {
 		return fmt.Errorf("branding accent must be a plain CSS colour")
 	}
+	switch branding.Theme {
+	case "", "light", "dark", "system":
+	default:
+		return fmt.Errorf("branding theme must be light, dark or system")
+	}
+	switch branding.FontFamily {
+	case "", "default", "system", "serif":
+	default:
+		return fmt.Errorf("branding fontFamily must be default, system or serif")
+	}
+	if branding.Radius != nil && (*branding.Radius < 0 || *branding.Radius > BrandingRadiusMax) {
+		return fmt.Errorf("branding radius must be between 0 and %d pixels", BrandingRadiusMax)
+	}
 	return nil
 }
 
@@ -153,6 +179,15 @@ func (branding Branding) WithDefaults(defaults Branding) Branding {
 	}
 	branding.HideRun = branding.HideRun || defaults.HideRun
 	branding.HideSave = branding.HideSave || defaults.HideSave
+	if branding.Theme == "" {
+		branding.Theme = defaults.Theme
+	}
+	if branding.FontFamily == "" {
+		branding.FontFamily = defaults.FontFamily
+	}
+	if branding.Radius == nil {
+		branding.Radius = defaults.Radius
+	}
 	return branding
 }
 

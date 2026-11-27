@@ -1,7 +1,7 @@
 ---
 id: FEAT-mq412g
 title: Importer resolves community node types to installed sidecar/pack nodes
-status: todo
+status: done
 priority: medium
 labels:
     - n8n
@@ -9,7 +9,7 @@ labels:
     - community-nodes
 parent: EPIC-8rbys7
 created: "2026-09-23T01:17:55Z"
-updated: "2026-09-23T01:17:55Z"
+updated: "2026-11-27T07:56:44Z"
 ---
 
 # Description
@@ -37,9 +37,9 @@ When the tenant's catalogue contains a sidecar or pack node whose source package
 - Even an operator who installs `@apify/n8n-nodes-apify` in the sidecar cannot import a workflow that uses it without a code change adding a mapping entry. FEAT-ed6wdy chose namespaced types and "requires a mapping entry".
 
 # Acceptance Criteria
-- [ ] Sidecar and pack definitions record their source npm package and node name
-- [ ] `byN8NType` consults the tenant catalogue before falling back to a placeholder
-- [ ] When the package is missing, the placeholder names it ("install npm package X in the sidecar")
+- [x] Sidecar and pack definitions record their source npm package and node name
+- [x] `byN8NType` consults the tenant catalogue before falling back to a placeholder
+- [x] When the package is missing, the placeholder names it ("install npm package X in the sidecar")
 
 # Implementation Plan
 
@@ -56,3 +56,12 @@ Related (from the audit): FEAT-7cg0cd, FEAT-ed6wdy (both done; neither covers im
 `results-extra.json` (Apify community), `internal/interop/n8n/n8n.go:803-816`, `internal/sidecarnode/convert.go:201`, `.pine/tickets/FEAT-ed6wdy.md:52`
 
 # Attachments
+
+## Progress
+
+2026-11-27: verified already delivered by #33 (0ce9afe8); the ticket was never closed. Evidence on main:
+
+- Sidecar and pack definitions record their npm package and node name: `N8NSource` set in internal/sidecarnode/convert.go:218 and internal/nodepack/nodepack.go (pack and trigger identity).
+- The importer consults the catalogue before falling back to a placeholder: `communityMapping` in internal/interop/n8n/n8n.go (called last in the mapping lookup), tenant-scoped.
+- A missing package is named in the placeholder: "Install npm package X in the sidecar and import the workflow again to run it here." (internal/interop/n8n/n8n.go, community placeholder reason).
+- Tests: TestACommunityNodeResolvesOntoTheInstalledNode, TestAnUnresolvedCommunityNodeNamesThePackageToInstall, TestACommunityNodeScopedAwayFromTheTenantDoesNotResolve, TestAResolvedCommunityNodeExportsAsItsN8NType (internal/interop/n8n) pass.

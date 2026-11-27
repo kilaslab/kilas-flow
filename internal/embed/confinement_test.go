@@ -1,6 +1,7 @@
 package embed
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -141,4 +142,105 @@ func TestASessionMintedWithoutAConfinementVerifies(t *testing.T) {
 		t.Error("a session minted with no confinement allowed a credential")
 	}
 	_ = time.Now
+}
+
+// A host may declare a whole kind open with "tenant". The token carries one
+// flag for it rather than every id the tenant owns, so it stays small however
+// many credentials the tenant stores, and a blank id still matches nothing.
+func TestATenantWideKindAllowsAnyIdOfThatKindAndTravelsAsAFlag(t *testing.T) {
+	issuer := confinementIssuer(t)
+	_, token, err := issuer.Issue(Request{
+		TenantID: "standalone", WorkflowID: "wf_1",
+		Scopes: []Scope{ScopeRead}, Origin: "https://host.example",
+		Confinement: Confinement{
+			Credentials:       []string{"cred_1"},
+			Datastores:        []DatastoreRef{{ID: "ds_1"}},
+			TenantCredentials: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	session, err := issuer.Verify(token)
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	confinement := session.Confinement
+	if !confinement.TenantCredentials || confinement.TenantDatastores || confinement.TenantWorkflows {
+		t.Fatalf("flags = %#v, want only the credential kind tenant-wide", confinement)
+	}
+	// The flag subsumes the list, so the list is not carried.
+	if len(confinement.Credentials) != 0 {
+		t.Errorf("credentials = %v, want none beside the tenant-wide flag", confinement.Credentials)
+	}
+	if !confinement.AllowsCredential("cred_anything") || confinement.AllowsCredential("  ") {
+		t.Errorf("tenant-wide credentials must allow any non-blank id and no blank one")
+	}
+	// The kinds stay independent: the datastore list is still the only grant.
+	if !confinement.AllowsDatastoreID("ds_1") || confinement.AllowsDatastoreID("ds_2") {
+		t.Errorf("datastores = %#v, want exactly ds_1", confinement.Datastores)
+	}
+	if confinement.AllowsWorkflow("wf_2") || !confinement.AllowsWorkflow("wf_1") {
+		t.Errorf("workflows = %#v, want only the session's own", confinement.Workflows)
+	}
+	if confinement.Empty() {
+		t.Error("a tenant-wide confinement reads as empty")
+	}
+
+	open := Confinement{TenantDatastores: true, TenantWorkflows: true}.normalized("wf_1")
+	if !open.AllowsDatastoreID("ds_9") || open.AllowsDatastoreID("") {
+		t.Errorf("tenant-wide datastores must allow any non-blank id and no blank one")
+	}
+	if !open.AllowsWorkflow("wf_9") || open.AllowsWorkflow("") || len(open.Workflows) != 0 {
+		t.Errorf("tenant-wide workflows = %#v, want any non-blank id and no list", open)
+	}
+}
+
+// The union is what a session declared by its host carries: whatever the owner's
+// revision uses, plus whatever the host named. Neither half can narrow the other.
+func TestAUnionAllowsWhatEitherHalfAllows(t *testing.T) {
+	derived := Confinement{Credentials: []string{"cred_owner"}, Datastores: []DatastoreRef{{Name: "Orders"}}, Workflows: []string{"wf_child"}}
+	declared := Confinement{Credentials: []string{"cred_host"}, Datastores: []DatastoreRef{{ID: "ds_host", Name: "Leads"}}, TenantWorkflows: true}
+	union := derived.Union(declared).normalized("wf_self")
+
+	for _, id := range []string{"cred_owner", "cred_host"} {
+		if !union.AllowsCredential(id) {
+			t.Errorf("union does not allow credential %s", id)
+		}
+	}
+	if union.AllowsCredential("cred_other") {
+		t.Error("union allows a credential neither half named")
+	}
+	if !union.AllowsDatastoreID("ds_host") || union.AllowsDatastoreID("ds_other") {
+		t.Errorf("union datastores = %#v", union.Datastores)
+	}
+	if !union.AllowsWorkflow("wf_anything") {
+		t.Error("union lost the declared tenant-wide workflow flag")
+	}
+	// Union does not touch either input.
+	if len(derived.Credentials) != 1 || len(declared.Credentials) != 1 {
+		t.Errorf("Union mutated an input: %#v %#v", derived, declared)
+	}
+}
+
+// A token minted before the tenant-wide flags existed carries none, and reads
+// exactly as it did: its own lists and nothing more.
+func TestATokenWithoutTenantFlagsKeepsItsLists(t *testing.T) {
+	var confinement Confinement
+	if err := json.Unmarshal([]byte(`{"crd":["cred_1"],"dst":[{"id":"ds_1"}],"wfw":["wf_1"]}`), &confinement); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if confinement.TenantCredentials || confinement.TenantDatastores || confinement.TenantWorkflows {
+		t.Fatalf("an old payload decoded with a tenant-wide flag: %#v", confinement)
+	}
+	if !confinement.AllowsCredential("cred_1") || confinement.AllowsCredential("cred_2") {
+		t.Errorf("old payload credentials = %v", confinement.Credentials)
+	}
+	encoded, err := json.Marshal(Confinement{Credentials: []string{"cred_1"}})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if string(encoded) != `{"crd":["cred_1"]}` {
+		t.Errorf("a confinement with no flags encoded as %s, want the flags omitted", encoded)
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/engine"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/property"
+	"github.com/kilaslab/kilas-flow/internal/triggerfilter"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
@@ -58,6 +59,7 @@ func hostEventTrigger() node.Definition {
 					Source: property.LoaderInternal, Name: HostEventEventsLoader,
 				},
 			},
+			triggerfilter.Property(),
 		},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     HostEventExecutorID,

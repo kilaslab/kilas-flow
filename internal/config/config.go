@@ -41,29 +41,31 @@ const EnvPrefix = "KILASFLOW_"
 // these structs by scripts/config-reference.go — edit the comments here and
 // regenerate, never the outputs by hand.
 type Config struct {
-	Server      Server       `koanf:"server"`
-	Database    Database     `koanf:"database"`
-	Datastore   Datastore    `koanf:"datastore"`
-	Security    Security     `koanf:"security"`
-	Secrets     Secrets      `koanf:"secrets"`
-	Auth        Auth         `koanf:"auth"`
-	Outbound    OutboundHTTP `koanf:"outbound"`
-	Webhook     Webhook      `koanf:"webhook"`
-	Metrics     Metrics      `koanf:"metrics"`
-	RateLimit   RateLimit    `koanf:"ratelimit"`
-	Embed       Embed        `koanf:"embed"`
-	Branding    Branding     `koanf:"branding"`
-	Execution   Execution    `koanf:"execution"`
-	History     History      `koanf:"history"`
-	Idempotency Idempotency  `koanf:"idempotency"`
-	SQL         SQLNodes     `koanf:"sql"`
-	Credential  Credential   `koanf:"credential"`
-	Binary      Binary       `koanf:"binary"`
-	Packs       Packs        `koanf:"packs"`
-	Google      Google       `koanf:"google"`
-	Log         Log          `koanf:"log"`
-	Sidecar     Sidecar      `koanf:"sidecar"`
-	Code        Code         `koanf:"code"`
+	Server        Server        `koanf:"server"`
+	Database      Database      `koanf:"database"`
+	Datastore     Datastore     `koanf:"datastore"`
+	Security      Security      `koanf:"security"`
+	Secrets       Secrets       `koanf:"secrets"`
+	Auth          Auth          `koanf:"auth"`
+	Outbound      OutboundHTTP  `koanf:"outbound"`
+	Webhook       Webhook       `koanf:"webhook"`
+	Metrics       Metrics       `koanf:"metrics"`
+	RateLimit     RateLimit     `koanf:"ratelimit"`
+	Embed         Embed         `koanf:"embed"`
+	Branding      Branding      `koanf:"branding"`
+	Execution     Execution     `koanf:"execution"`
+	History       History       `koanf:"history"`
+	Idempotency   Idempotency   `koanf:"idempotency"`
+	Notifications Notifications `koanf:"notifications"`
+	SQL           SQLNodes      `koanf:"sql"`
+	Credential    Credential    `koanf:"credential"`
+	Binary        Binary        `koanf:"binary"`
+	Packs         Packs         `koanf:"packs"`
+	Nodes         Nodes         `koanf:"nodes"`
+	Google        Google        `koanf:"google"`
+	Log           Log           `koanf:"log"`
+	Sidecar       Sidecar       `koanf:"sidecar"`
+	Code          Code          `koanf:"code"`
 }
 
 // Server holds HTTP listener settings.
@@ -691,6 +693,58 @@ const (
 	MaxIdempotencyRetention = 30 * 24 * time.Hour
 )
 
+// Notifications configures the signed deliveries a tenant receives when one
+// of its runs fails or completes, or a workflow is activated or deactivated.
+//
+// A tenant chooses its endpoint and events in the notifications section of
+// its settings (PATCH /api/v1/tenants/{id}/settings). The event is written to
+// a durable outbox in the same transaction as the change it reports, and a
+// dispatcher in every worker process delivers it at least once, retrying with
+// a capped exponential backoff and dead-lettering it after max_attempts. Each
+// tenant's deliveries are signed with a secret derived from one deployment
+// key, so no secret is stored in a settings document.
+type Notifications struct {
+	// SigningKeyEnv names the environment variable holding the key every
+	// tenant's signing secret is derived from: any non-empty value, at least
+	// 32 bytes recommended (`openssl rand -base64 32`). Like the other keys,
+	// it never comes from the config file. A tenant's secret is
+	// base64(HMAC-SHA256(key, "kilasflow-notifications:" + tenant id)).
+	//
+	// While the variable is unset no notification is written at all, whatever
+	// a tenant's settings say: an event that could only ever be sent unsigned
+	// is not queued.
+	// Env: KILASFLOW_NOTIFICATIONS_SIGNING_KEY_ENV. Default: "KILASFLOW_NOTIFICATIONS_SIGNING_KEY".
+	SigningKeyEnv string `koanf:"signing_key_env"`
+	// MaxAttempts is how many times one event is attempted before it is
+	// dead-lettered: kept in the delivery log, never sent again. Bounded to
+	// between 1 and 50.
+	// Env: KILASFLOW_NOTIFICATIONS_MAX_ATTEMPTS. Default: 8.
+	MaxAttempts int `koanf:"max_attempts"`
+	// Retention is how long an event stays in the delivery log, delivered,
+	// dead or still pending. Bounded to between 1h and 2160h (90 days).
+	// Env: KILASFLOW_NOTIFICATIONS_RETENTION. Default: 168h.
+	Retention time.Duration `koanf:"retention"`
+	// Timeout bounds one delivery attempt, connection and response included.
+	// It is separate from outbound.timeout, which a slow API a workflow calls
+	// may need raised: a notification endpoint should answer quickly, and one
+	// that hangs costs a dispatcher lane for this long per attempt. The rest of
+	// the outbound egress policy (allowed hosts, the private-network guard)
+	// applies unchanged. Bounded to between 1s and 60s.
+	// Env: KILASFLOW_NOTIFICATIONS_TIMEOUT. Default: 10s.
+	Timeout time.Duration `koanf:"timeout"`
+}
+
+// The bounds notifications.max_attempts and notifications.retention are
+// validated against.
+const (
+	MaxNotificationAttempts     = 50
+	MinNotificationRetention    = time.Hour
+	MaxNotificationRetention    = 90 * 24 * time.Hour
+	MinNotificationTimeout      = time.Second
+	MaxNotificationTimeout      = time.Minute
+	defaultNotificationAttempts = 8
+)
+
 // SQLNodes bounds what a workflow document may ask a database node for.
 //
 // This is not KilasFlow's own database — that is Database above. It bounds the
@@ -809,6 +863,50 @@ type Packs struct {
 	// and runs what the API would have refused.
 	// Env: KILASFLOW_PACKS_VISIBLE_TO. Default: [].
 	VisibleTo []string `koanf:"visible_to"`
+}
+
+// Nodes decides which built-in node types a tenant may use. packs.visible_to
+// scopes a node pack to tenants; a built-in cannot be scoped that way, because
+// the engine names some of them. This is the built-in counterpart: an allow list
+// and a deny list, each for every tenant or for one, so a SaaS can keep SQLite
+// (a file path on the server), Code, Postgres or HTTP Request away from its
+// customers.
+//
+// The section name is one word for the same reason Binary is: envKeyToPath
+// treats the first underscore as the section separator, so a two-word section
+// could never be set from the environment.
+type Nodes struct {
+	// Allow limits the built-ins a tenant may use, as `"<node type>"` (every
+	// tenant) or `"<node type>=<tenant id>"` (one tenant) list entries. The
+	// allow list that applies to a tenant is every entry without a tenant plus
+	// every entry naming it, and the tenant's own nodes.allow settings; when it
+	// is not empty, only the built-ins on it are available to that tenant, plus
+	// the types the engine names itself (the sub-workflow trigger and the error
+	// trigger), which are always available. Empty, the default, limits nothing.
+	//
+	// It applies to built-in types only: a pack's nodes keep packs.visible_to. A
+	// hidden type behaves like a node scoped to other tenants: absent from the
+	// catalogue, refused as node.not_available at compile, activation and claim.
+	// An entry naming a type that is not a registered built-in refuses the boot.
+	//
+	// Give every process the same value. The API role hides an unavailable node,
+	// but the worker is the authority: a worker started without this key accepts
+	// and runs what the API would have refused.
+	// Env: KILASFLOW_NODES_ALLOW. Default: [].
+	Allow []string `koanf:"allow"`
+	// Deny hides built-ins from a tenant, written like nodes.allow. Deny wins:
+	// a type on both lists is hidden. The deny list that applies to a tenant is
+	// every entry without a tenant plus every entry naming it, and the tenant's
+	// own nodes.deny settings, added together, so a tenant setting can add to
+	// what the deployment denies but never lift it.
+	//
+	// The engine-required types, kilasflow.errorTrigger and
+	// kilasflow.executeWorkflowTrigger, cannot be denied: an entry naming one
+	// refuses the boot, because a tenant's error workflows and sub-workflow
+	// calls would break from the inside. An entry naming a type that is not a
+	// registered built-in refuses the boot too, so a typo fails closed.
+	// Env: KILASFLOW_NODES_DENY. Default: [].
+	Deny []string `koanf:"deny"`
 }
 
 // Sidecar configures the opt-in JavaScript sidecar that runs programmatic
@@ -1133,6 +1231,15 @@ func Default() Config {
 			// costs. A day covers the retry a client makes after an outage;
 			// it is not meant to be a ledger.
 			Retention: 24 * time.Hour,
+		},
+		Notifications: Notifications{
+			SigningKeyEnv: "KILASFLOW_NOTIFICATIONS_SIGNING_KEY",
+			MaxAttempts:   defaultNotificationAttempts,
+			// A week of delivery log: long enough to diagnose an endpoint
+			// that failed over a weekend, short enough that the outbox of a
+			// busy tenant stays small.
+			Retention: 7 * 24 * time.Hour,
+			Timeout:   10 * time.Second,
 		},
 		SQL: SQLNodes{
 			// Both sit well above the node defaults (10,000 rows, 30 seconds):
@@ -1609,6 +1716,22 @@ func (c Config) Validate() error {
 			c.Idempotency.Retention, MinIdempotencyRetention, MaxIdempotencyRetention)
 	}
 
+	// Zero attempts would dead-letter every event unsent, and an hour of
+	// delivery log is the least that lets an operator see why an endpoint
+	// failed; ninety days turns the outbox into an archive.
+	if c.Notifications.MaxAttempts < 1 || c.Notifications.MaxAttempts > MaxNotificationAttempts {
+		return fmt.Errorf("notifications.max_attempts %d must be between 1 and %d",
+			c.Notifications.MaxAttempts, MaxNotificationAttempts)
+	}
+	if c.Notifications.Retention < MinNotificationRetention || c.Notifications.Retention > MaxNotificationRetention {
+		return fmt.Errorf("notifications.retention %s must be between %s and %s",
+			c.Notifications.Retention, MinNotificationRetention, MaxNotificationRetention)
+	}
+	if c.Notifications.Timeout < MinNotificationTimeout || c.Notifications.Timeout > MaxNotificationTimeout {
+		return fmt.Errorf("notifications.timeout %s must be between %s and %s",
+			c.Notifications.Timeout, MinNotificationTimeout, MaxNotificationTimeout)
+	}
+
 	// A negative retention puts the prune cutoff in the future, and every
 	// execution ever recorded is older than the future.
 	if c.Execution.Retention < 0 {
@@ -1735,6 +1858,10 @@ func (c Config) Validate() error {
 	}
 
 	if err := c.Packs.validateVisibleTo(); err != nil {
+		return err
+	}
+
+	if err := c.Nodes.validateAvailability(); err != nil {
 		return err
 	}
 

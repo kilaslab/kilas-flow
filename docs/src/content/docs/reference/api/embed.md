@@ -1,15 +1,15 @@
 ---
 title: Embed
-description: "Mint a session that confines an embedded editor to one workflow. Generated from the live OpenAPI document."
+description: "Mint an embed session: one workflow or one datastore, a scope list, one origin. Generated from the live OpenAPI document."
 sidebar:
-  order: 11
+  order: 13
 ---
 
 <!-- Generated from the live OpenAPI document by scripts/generate-api-reference.mjs — do not edit by hand. -->
 
 > **Generated reference — KilasFlow `0.1.0-dev`.** Produced from the OpenAPI document a real binary serves at `/api/openapi.json`, not hand-written. [Which reference to trust](/reference/api/).
 
-Mint a session that confines an embedded editor to one workflow.
+Mint an embed session: one workflow or one datastore, a scope list, one origin.
 
 ## Create an embed session (`create-embed-session`)
 
@@ -26,12 +26,19 @@ Request fields:
 | `actor` | no | `Actor` | The host user this session acts for. Signed into the token and recorded as an embed actor on the revisions, publish events, and manual runs the session causes. Host-asserted: KilasFlow does not verify it. Omit it for an unnamed session. |
 | `actor.displayName` | no | `string` | The name KilasFlow shows for this user: at most 64 letters, digits, spaces, and simple punctuation, without leading or trailing spaces. |
 | `actor.id` | yes | `string` | The host's own stable identifier for its user: 1 to 128 letters, digits, and . _ - : @ \| + / =. Returned by the API to anyone who can read the workflow's history, so use an opaque identifier rather than an email address. Host-asserted, never verified. |
+| `allow` | no | `EmbedAllow` | What the session's document may reference beyond what the workflow's published revision already uses. Workflow sessions only. Each id is checked against this tenant at mint (an unknown or foreign id answers 404); "tenant" opens the whole kind and needs a tenant-wide key. Omit it to confine the session to the published revision alone. |
+| `allow.credentials` | no |  | Credential ids the document may attach, or "tenant" for every credential in the tenant. The embedded credential picker lists exactly these plus the ones the published revision uses. |
+| `allow.datastores` | no |  | Data table ids the document may address (by id, or by the table's name), or "tenant" for every data table in the tenant. No session may create, rename, list, clear or drop a table whatever this says. |
+| `allow.workflows` | no |  | Workflow ids an Execute Sub-workflow or Workflow Tool node may call, or "tenant" for every workflow in the tenant. A called workflow runs with what its own document uses. |
 | `branding` | no | `Branding` | Validated white-label values; never markup |
 | `branding.accent` | no | `string` | — |
+| `branding.fontFamily` | no | `string` | default (the product font), system (the viewer's system UI font), or serif. Fonts are never loaded from elsewhere. |
 | `branding.hideRun` | no | `boolean` | — |
 | `branding.hideSave` | no | `boolean` | — |
 | `branding.logoUrl` | no | `string` | — |
 | `branding.name` | no | `string` | — |
+| `branding.radius` | no | `integer` | Corner radius of cards, nodes, menus and dialogs, in pixels from 0 to 16; controls and chips scale from it. Omit for the default (10). |
+| `branding.theme` | no | `string` | light, dark, or system to follow the viewer's colour-scheme preference. Empty keeps the default, dark. |
 | `datastoreId` | no | `string` | Datastore this session may touch; exactly one of this and workflowId |
 | `origin` | yes | `string` | Exact origin of the page that will frame the editor |
 | `scopes` | yes | `array or null` | workflow:read, workflow:write, workflow:run, workflow:publish, workflow:activate, datastore:read, datastore:write. workflow:publish pins a revision as the version production traffic runs and workflow:activate turns the workflow on and off; neither is implied by write. |
@@ -51,10 +58,13 @@ Fields of the `EmbedSessionResource` body:
 | --- | --- | --- | --- |
 | `branding` | no | `Branding` | — |
 | `branding.accent` | no | `string` | — |
+| `branding.fontFamily` | no | `string` | default (the product font), system (the viewer's system UI font), or serif. Fonts are never loaded from elsewhere. |
 | `branding.hideRun` | no | `boolean` | — |
 | `branding.hideSave` | no | `boolean` | — |
 | `branding.logoUrl` | no | `string` | — |
 | `branding.name` | no | `string` | — |
+| `branding.radius` | no | `integer` | Corner radius of cards, nodes, menus and dialogs, in pixels from 0 to 16; controls and chips scale from it. Omit for the default (10). |
+| `branding.theme` | no | `string` | light, dark, or system to follow the viewer's colour-scheme preference. Empty keeps the default, dark. |
 | `datastoreId` | no | `string` | — |
 | `embedUrl` | yes | `string` | — |
 | `expiresAt` | yes | `string` | — |
@@ -79,10 +89,13 @@ Response (skeleton — every field, placeholder values):
 {
   "branding": {
     "accent": "string",
+    "fontFamily": "default",
     "hideRun": false,
     "hideSave": false,
     "logoUrl": "https://flows.example",
-    "name": "string"
+    "name": "string",
+    "radius": 0,
+    "theme": "light"
   },
   "datastoreId": "string",
   "embedUrl": "https://flows.example",
@@ -120,4 +133,4 @@ resp, err := http.Post(baseURL+"/api/v1/embed-sessions", "application/json", byt
 
 :::
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”

@@ -404,6 +404,7 @@ func NewWorkflows(workflows repository.WorkflowRepository, executions repository
 
 // Register wires the documented workflow CRUD and lifecycle operations.
 func (handler *Workflows) Register(api huma.API) {
+	handler.registerContract(api)
 	huma.Register(api, huma.Operation{
 		OperationID: "create-workflow", Method: http.MethodPost, Path: "/workflows", DefaultStatus: http.StatusCreated,
 		Summary: "Create a workflow draft", Description: "Creates revision 1 of a canonical workflow document.", Tags: []string{"Workflows"},

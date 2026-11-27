@@ -23,6 +23,71 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- Embed theming. Session `branding` takes `theme` (`light`, `dark`, or
+  `system` to follow the viewer), `fontFamily` (`default`, `system`, `serif`)
+  and `radius` (0 to 16 pixels), validated at mint and again in the frame. The
+  editor, its canvas and its dialogs switch together.
+- Workflow contracts. `GET /api/v1/workflows/{id}/contract` returns, for the
+  revision a call would run (active, or the latest draft), the JSON Schema of
+  the input the sub-workflow trigger declares (its expected fields, open to
+  additional properties) and of the output the document declares in
+  `settings.outputSchema`, each with a `declared` flag. It reads with
+  `workflow:read`, so a host can build a model's tool definition from it.
+- Variables: a tenant's own key/value pairs, read by every workflow as
+  `{{ $vars.KEY }}` and by the Code node's `$vars` (n8n's Settings →
+  Variables). Managed under Settings → Variables or through
+  `GET/POST /api/v1/variables` and `PUT/DELETE /api/v1/variables/{id}`.
+  A run reads them once when it starts; a store that cannot be read fails the
+  run rather than running it with an empty `$vars`. Keys follow n8n's rule
+  (letters, digits and underscores, at most 64 characters), values are plain
+  text of at most 4096 bytes, and a tenant holds at most 500. Embed sessions
+  and workflow-bound keys are refused. Migration 000033 adds the table.
+- Trigger filters. The Webhook, Host Event and pack triggers take an optional
+  `triggerFilter` (the IF/Filter conditions shape, its expressions read the
+  trigger item) checked before anything is queued. A webhook delivery it
+  refuses is answered `200 {"filtered": true, "reason"}`, queues nothing and is
+  counted as filtered; a host event it refuses appears in the publish
+  response's `filtered` list with `reason: "filter"`. Migration 000032 stores
+  the filter with each host-event subscription.
+- Tenant notifications over a durable outbox. A tenant's settings gain a
+  `notifications` section naming one endpoint and its events
+  (`execution.failed` by default; `execution.completed`,
+  `workflow.activated` and `workflow.deactivated` on request). The event is
+  written to a new `outbound_events` table (migration 000034) in the same
+  transaction as the change it reports, and a leased dispatcher in every
+  worker process posts it through the egress policy, signed like the inbound
+  `standardWebhooks` preset (`webhook-id`, `webhook-timestamp`, `v1,`
+  HMAC-SHA256 over `timestamp.body`) with a secret derived per tenant from
+  `notifications.signing_key_env`. Delivery is at least once, retried with a
+  capped exponential backoff and jitter, each attempt bounded by
+  `notifications.timeout`, and dead-lettered after
+  `notifications.max_attempts`. `GET /api/v1/notifications/deliveries` lists
+  the tenant's events with attempts, last status and next retry (the endpoint
+  shown as scheme and host only); the log is
+  kept for `notifications.retention` (a week by default) and removed with the
+  tenant. Nothing is written while no signing key is set. See
+  [Notifications](docs/src/content/docs/operate/notifications.md).
+- Host-declared confinement for embed sessions. `POST /embed-sessions`
+  accepts an optional `allow: {credentials, datastores, workflows}`, each a
+  list of ids (at most 50) or `"tenant"`, for a workflow session. Every id is
+  checked against the minting tenant and an unknown or another tenant's id
+  answers 404; `"tenant"` opens the whole kind as a flag in the token and is
+  refused with 403 unless the minter holds tenant-wide authority. The token
+  carries the union of the set derived from the published revision and the
+  declared one, so save, publish, activation, restore, run and retry accept
+  both, and the embedded credential picker lists exactly that union. Without
+  `allow` a session is confined exactly as before, and tokens minted before
+  the change verify unchanged.
+- Allow or deny built-in node types per deployment or tenant. `nodes.deny` and
+  `nodes.allow` (environment `KILASFLOW_NODES_DENY` and `KILASFLOW_NODES_ALLOW`)
+  take entries written `type` or `type=tenant`, like `packs.visible_to`, and a
+  tenant's own lists are the new `nodes` section of its settings
+  (`PATCH /api/v1/tenants/{id}`, `allow` and `deny`). A hidden built-in is absent
+  from the catalogue and refused as `node.not_available` at compile, activation
+  and claim. Allow lists add up, deny lists add up and win, and the error
+  trigger and sub-workflow trigger can never be denied (a deny entry refuses the
+  boot, and the tenant API answers 422). A tenant setting can add to the
+  deployment's lists but never lift a deployment deny.
 - Actor identity in embed sessions. `POST /embed-sessions` accepts an optional
   `actor: {id, displayName}` (id 1 to 128 characters, display name at most 64),
   signed into the token. Revisions, publish events and manual runs or retries

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -26,6 +27,11 @@ type HostEventTrigger struct {
 	// a trigger that routes an item to the port matching its event. Empty
 	// means the trigger emits every event from its one output.
 	EventPath string
+	// Filter is the trigger's own filter (its triggerFilter parameter), copied
+	// onto every subscription the node holds so the fan-out can drop an event
+	// the workflow does not want without recompiling the document. Nil means
+	// no filter: every event of a subscribed type runs.
+	Filter any
 }
 
 // HostEventExtractor pulls the host-event subscriptions out of a document.
@@ -40,6 +46,8 @@ type HostEventTarget struct {
 	NodeID            string
 	NodeType          string
 	EventPath         string
+	// Filter is the subscribing trigger's filter, or nil when it has none.
+	Filter any
 }
 
 // WithHostEvents returns a store that keeps host-event subscriptions in step
@@ -75,12 +83,19 @@ func (store *GORMWorkflowStore) HostEventSubscriptions(ctx context.Context, tena
 	}
 	targets := make([]HostEventTarget, 0, len(models))
 	for _, model := range models {
+		var filter any
+		if len(model.TriggerFilter) > 0 {
+			if err := json.Unmarshal(model.TriggerFilter, &filter); err != nil {
+				return nil, fmt.Errorf("decode the trigger filter of workflow %q node %q: %w", model.WorkflowID, model.NodeID, err)
+			}
+		}
 		targets = append(targets, HostEventTarget{
 			WorkflowID:        model.WorkflowID,
 			WorkflowVersionID: model.WorkflowVersionID,
 			NodeID:            model.NodeID,
 			NodeType:          model.NodeType,
 			EventPath:         model.EventPath,
+			Filter:            filter,
 		})
 	}
 	return targets, nil
@@ -101,6 +116,14 @@ func syncHostEventSubscriptions(tx *gorm.DB, tenantID, workflowID, versionID str
 	}
 	now := time.Now().UTC()
 	for _, trigger := range triggers {
+		var filter []byte
+		if trigger.Filter != nil {
+			encoded, err := json.Marshal(trigger.Filter)
+			if err != nil {
+				return fmt.Errorf("encode the trigger filter of node %q: %w", trigger.NodeID, err)
+			}
+			filter = encoded
+		}
 		seen := make(map[string]bool, len(trigger.Events))
 		for _, eventType := range trigger.Events {
 			if seen[eventType] {
@@ -110,7 +133,7 @@ func syncHostEventSubscriptions(tx *gorm.DB, tenantID, workflowID, versionID str
 			subscription := hostEventSubscriptionModel{
 				TenantID: tenantID, WorkflowID: workflowID, WorkflowVersionID: versionID,
 				NodeID: trigger.NodeID, NodeType: trigger.NodeType,
-				EventType: eventType, EventPath: trigger.EventPath, CreatedAt: now,
+				EventType: eventType, EventPath: trigger.EventPath, TriggerFilter: filter, CreatedAt: now,
 			}
 			if err := tx.Create(&subscription).Error; err != nil {
 				return fmt.Errorf("record host event subscription for node %q: %w", trigger.NodeID, err)
@@ -211,8 +234,11 @@ type hostEventSubscriptionModel struct {
 	EventType string `gorm:"not null;size:255;uniqueIndex:uidx_host_event_subscriptions,priority:4"`
 	// EventPath is where the event's type sits in the trigger item, for a
 	// trigger that routes per event. Empty for a single-output trigger.
-	EventPath string    `gorm:"not null;size:128;default:''"`
-	CreatedAt time.Time `gorm:"not null"`
+	EventPath string `gorm:"not null;size:128;default:''"`
+	// TriggerFilter is the subscribing trigger's filter as JSON (000032).
+	// NULL means no filter.
+	TriggerFilter []byte
+	CreatedAt     time.Time `gorm:"not null"`
 }
 
 func (hostEventSubscriptionModel) TableName(namer schema.Namer) string {

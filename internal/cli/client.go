@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -99,13 +102,13 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return nil, networkError(c.redactText(err.Error()))
+		return nil, networkError(c.redactText(err.Error()), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, networkError(c.redactText(err.Error()))
+		return nil, networkError(c.redactText(err.Error()), err)
 	}
 	c.trace(fmt.Sprintf("< %d %d bytes", resp.StatusCode, len(raw)))
 
@@ -139,7 +142,7 @@ func (c *Client) Stream(ctx context.Context, method, path string, query url.Valu
 
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return nil, networkError(c.redactText(err.Error()))
+		return nil, networkError(c.redactText(err.Error()), err)
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
@@ -150,7 +153,7 @@ func (c *Client) Stream(ctx context.Context, method, path string, query url.Valu
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 	if err != nil {
-		return nil, networkError(c.redactText(err.Error()))
+		return nil, networkError(c.redactText(err.Error()), err)
 	}
 	c.trace(fmt.Sprintf("< %d %d bytes", resp.StatusCode, len(raw)))
 
@@ -180,7 +183,7 @@ func (c *Client) buildRequest(ctx context.Context, method, path string, query ur
 
 	req, err := http.NewRequestWithContext(ctx, method, target, reader)
 	if err != nil {
-		return nil, target, networkError(c.redactText(err.Error()))
+		return nil, target, networkError(c.redactText(err.Error()), err)
 	}
 
 	// A caller that names its own Accept keeps it: the streaming verbs ask for
@@ -224,8 +227,33 @@ func mutating(method string) bool {
 }
 
 // networkError is the failure a request that never produced a response has.
-func networkError(message string) *ExitError {
+//
+// The transport's own text says what went wrong but not what to do about it,
+// so the two failures a caller can fix from the command line get the next
+// step appended: nothing listening at the URL, and a host name that does not
+// resolve.
+func networkError(message string, cause error) *ExitError {
+	if next := networkNextStep(cause); next != "" {
+		message += ": " + next
+	}
+
 	return &ExitError{Code: ExitFailure, ErrCode: "network_error", Message: message}
+}
+
+// networkNextStep names the action that fixes a transport failure, or "".
+func networkNextStep(cause error) string {
+	if cause == nil {
+		return ""
+	}
+	if errors.Is(cause, syscall.ECONNREFUSED) {
+		return "no server is listening there; start one with `kilasflow serve`, or point the CLI at yours with --url or " + envURLVar
+	}
+	var dns *net.DNSError
+	if errors.As(cause, &dns) {
+		return "the host name does not resolve; check the URL passed with --url, set in " + envURLVar + " or in the configuration file"
+	}
+
+	return ""
 }
 
 // errorFor turns a non-2xx response into an ExitError.

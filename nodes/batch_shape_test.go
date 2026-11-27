@@ -29,6 +29,8 @@ var batchShapedNodes = map[string]string{
 	nodes.ExecuteWorkflowNodeType:    "calls the workflow once with all items by default",
 	nodes.GoogleSheetsNodeType:       "reads the sheet once and writes the batch in one request, and fails as one operation",
 	nodes.ChainSummarizationNodeType: "answers once for the whole batch in its together mode",
+	nodes.HTMLNodeType:               "the table operation folds every item into one table",
+	nodes.ConvertToFileNodeType:      "csv, xlsx and json write one file from every item",
 }
 
 // perItemNodes are the native nodes an item is the unit of work for: one item
@@ -44,7 +46,8 @@ var perItemNodes = map[string]bool{
 	nodes.OpenAIAppNodeType: true, nodes.GoogleGeminiAppNodeType: true,
 	nodes.InformationExtractorNodeType: true, nodes.TextClassifierNodeType: true,
 	nodes.ChainRetrievalQaNodeType: true, nodes.SentimentAnalysisNodeType: true,
-	nodes.EmailSendNodeType: true, nodes.RssFeedReadNodeType: true,
+	nodes.EmailSendNodeType: true, nodes.RssFeedReadNodeType: true, nodes.RenameKeysNodeType: true,
+	nodes.CryptoNodeType: true, nodes.XMLNodeType: true, nodes.MarkdownNodeType: true, nodes.CompressionNodeType: true,
 }
 
 // Every native node the runner could split into one-item calls is classified,

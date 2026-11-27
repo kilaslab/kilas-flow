@@ -105,6 +105,8 @@
 	import { emptyHistory, record as recordHistory, redo as redoHistory, undo as undoHistory, type History as DocumentHistory } from '$lib/workflow-editor/history';
 	import { SHORTCUT_REFERENCE, CANVAS_DELETE_KEYS, editorShortcut, formatKeys, isMacPlatform, isTypingTarget } from '$lib/workflow-editor/shortcuts';
 	import { hasLabelledOutputs } from '$lib/workflow-editor/ports';
+	import { isContextMenuKey, menuTargetIDs, nodeMenuItems, nodeMenuLabel, type NodeMenuAction } from '$lib/workflow-editor/node-menu';
+	import { setNodeDisabled, setNodeNote, type NodeNote } from '$lib/workflow-editor/node-state';
 	import { chatDockBottom, MINIMAP_BOTTOM, MINIMAP_HEIGHT, MINIMAP_WIDTH, showsMinimap, viewportRevealing } from '$lib/workflow-editor/canvas-chrome';
 	import { tidyDocument } from '$lib/workflow-editor/layout';
 	import { fitPaddingBeside, shownSaveError } from '$lib/workflow-editor/save-feedback';
@@ -124,6 +126,7 @@
 	import CanvasBridge, { type CanvasFlow } from './canvas-bridge.svelte';
 	import CanvasEdge from './canvas-edge.svelte';
 	import CanvasNode from './canvas-node.svelte';
+	import NodeContextMenu from './node-context-menu.svelte';
 	import NodePicker from './node-picker.svelte';
 	import PropertiesPanel from './properties-panel.svelte';
 	import VersionPanel from './version-panel.svelte';
@@ -278,6 +281,11 @@
 	let renameValue = $state('');
 	let renameInput = $state<HTMLInputElement>();
 	let shortcutsOpen = $state(false);
+	/**
+	 * The node context menu, while one is open: the node it was asked on, where
+	 * (in the canvas region's coordinates), and the element focus returns to.
+	 */
+	let nodeMenu = $state<{ nodeID: string; at: { x: number; y: number }; returnFocus: HTMLElement | null } | null>(null);
 	/** What the last clipboard action did, until the next action. */
 	let canvasMessage = $state<string | null>(null);
 	/** The last paste's import report, while its status line is showing. */
@@ -404,7 +412,30 @@
 	// A surface that owns the keyboard while it is open. The canvas shortcuts
 	// must not act behind a dialog, and on a narrow screen the inspector *is* a
 	// modal.
-	const overlayOpen = $derived(shortcutsOpen || pickerOpen || historyOpen || (narrow.current && propertyPanelOpen));
+	const overlayOpen = $derived(shortcutsOpen || pickerOpen || historyOpen || nodeMenu !== null || (narrow.current && propertyPanelOpen));
+
+	// What the open context menu acts on: the whole selection when the node it
+	// was asked on is part of it (the editor selects the node first when not),
+	// read from the displayed document so a label never lags the canvas.
+	const nodeMenuTargets = $derived.by(() => {
+		if (!nodeMenu) return [];
+		const targets = [];
+		for (const id of menuTargetIDs(selectedNodeIDs, nodeMenu.nodeID)) {
+			const node = (displayed.nodes ?? []).find((candidate) => candidate.id === id);
+			if (!node) continue;
+			const definition = resolveDefinition(node.type, node.typeVersion, definitions);
+			targets.push({ id, annotation: Boolean(definition && isAnnotation(definition)), disabled: Boolean(node.disabled) });
+		}
+		return targets;
+	});
+	const nodeMenuEntries = $derived(nodeMenuItems(nodeMenuTargets, locked));
+	// A menu with nothing left to offer (its node was removed, or the canvas
+	// locked under it) is not rendered, and must not stay "open": it would keep
+	// every canvas shortcut switched off behind an invisible overlay.
+	$effect(() => {
+		if (nodeMenu && nodeMenuEntries.length === 0) nodeMenu = null;
+	});
+	const nodeMenuName = $derived(nodeMenuLabel(nodeMenuTargets, new Map((displayed.nodes ?? []).map((node) => [node.id, node.name]))));
 
 	setCanvasActions({
 		readOnly: () => locked,
@@ -415,6 +446,11 @@
 		removeEdge: (edgeID) => removeConnection(edgeID),
 		rename: (nodeID) => startRename(nodeID),
 		open: (nodeID) => openNode(nodeID),
+		toggleDisabled: (nodeID) => {
+			if (locked) return;
+			const node = (draft.nodes ?? []).find((candidate) => candidate.id === nodeID);
+			if (node) replaceDraft(setNodeDisabled(draft, nodeID, !node.disabled));
+		},
 		resize: (nodeID, width, height) => {
 			if (locked) return;
 			replaceDraft(updateNodeSize(draft, nodeID, width, height));
@@ -840,6 +876,91 @@
 		return true;
 	}
 
+	/** Disables or enables the node open in the inspector, from its Settings tab. */
+	function setSelectedDisabled(disabled: boolean) {
+		if (locked || !selectedNode) return;
+		replaceDraft(setNodeDisabled(draft, selectedNode.id, disabled));
+	}
+
+	/** Writes the open node's note, from its Settings tab. One history step per field, however many keystrokes. */
+	function updateSelectedNote(patch: Partial<NodeNote>) {
+		if (locked || !selectedNode) return;
+		const field = patch.text !== undefined ? 'text' : 'inFlow';
+		replaceDraft(setNodeNote(draft, selectedNode.id, patch), { key: `${selectedNode.id}:note:${field}` });
+	}
+
+	/**
+	 * Opens the node context menu at a point (client coordinates).
+	 *
+	 * A node outside the selection is selected first, so the menu and the
+	 * selection cannot disagree and every action — which acts on the selection,
+	 * as its shortcut does — reaches the node the user pointed at.
+	 */
+	function showNodeMenu(nodeID: string, clientX: number, clientY: number, returnFocus: HTMLElement | null) {
+		if (!canvasRegion) return;
+		if (!selectedNodeIDs.includes(nodeID)) selectOnCanvas([nodeID]);
+		const region = canvasRegion.getBoundingClientRect();
+		nodeMenu = { nodeID, at: { x: clientX - region.left, y: clientY - region.top }, returnFocus };
+	}
+
+	function onNodeContextMenu({ node, event }: { node: EditorFlowNode; event: MouseEvent }) {
+		// The browser's own menu would open over this one.
+		event.preventDefault();
+		if (renameTarget) return;
+		const element = event.target instanceof Element ? event.target.closest<HTMLElement>('.svelte-flow__node') : null;
+		showNodeMenu(node.id, event.clientX, event.clientY, element);
+	}
+
+	/**
+	 * Shift+F10 or the context-menu key on a focused node: the same menu,
+	 * placed at the node's bottom-left corner since there is no pointer.
+	 */
+	function openNodeMenuFromKey(event: KeyboardEvent): boolean {
+		const element = event.target instanceof Element ? event.target.closest<HTMLElement>('.svelte-flow__node') : null;
+		const nodeID = element?.dataset.id;
+		if (!element || !nodeID || !editorSection?.contains(element)) return false;
+		const box = element.getBoundingClientRect();
+		showNodeMenu(nodeID, box.left, box.bottom, element);
+		return true;
+	}
+
+	function closeNodeMenu({ restoreFocus: restore }: { restoreFocus: boolean }) {
+		const menu = nodeMenu;
+		nodeMenu = null;
+		if (restore && menu) restoreFocus(menu.returnFocus);
+	}
+
+	/** Runs the chosen item through the editor's own action for it. */
+	function runNodeMenuAction(action: NodeMenuAction) {
+		const menu = nodeMenu;
+		if (!menu) return;
+		const targets = menuTargetIDs(selectedNodeIDs, menu.nodeID);
+		nodeMenu = null;
+		switch (action) {
+			case 'open':
+				openNode(menu.nodeID);
+				break;
+			case 'rename':
+				// The inline field takes focus itself.
+				startRename(menu.nodeID);
+				return;
+			case 'duplicate':
+				duplicateSelection();
+				break;
+			case 'toggle-disabled':
+				toggleSelectionDisabled();
+				break;
+			case 'copy':
+				void copySelectionToClipboard();
+				break;
+			case 'delete':
+				// Restores focus to the canvas itself, the node being gone.
+				removeNodes(targets);
+				return;
+		}
+		restoreFocus(menu.returnFocus);
+	}
+
 	/** n8n's Shift+S: a sticky note in the middle of the view. */
 	function addSticky(): boolean {
 		const sticky = definitions.find((definition) => isAnnotation(definition));
@@ -1170,6 +1291,10 @@
 	 */
 	function handleShortcut(event: KeyboardEvent) {
 		if (event.defaultPrevented) return;
+		if (isContextMenuKey(event) && !renameTarget && !overlayOpen && openNodeMenuFromKey(event)) {
+			event.preventDefault();
+			return;
+		}
 		const action = editorShortcut(event, event.target);
 		if (!action) return;
 		const focused = globalThis.document.activeElement;
@@ -1576,6 +1701,7 @@
 				ondelete={onDelete}
 				onnodedragstop={syncCanvas}
 				onselectionchange={onSelectionChange}
+				onnodecontextmenu={onNodeContextMenu}
 				ariaLabelConfig={ariaLabels}
 				onpaneclick={() => onSelectionChange({ nodes: [], edges: [] })}
 			>
@@ -1634,6 +1760,18 @@
 					{/if}
 				{/if}
 			</SvelteFlow>
+
+			{#if nodeMenu && nodeMenuEntries.length > 0 && canvasRegion}
+				<NodeContextMenu
+					at={nodeMenu.at}
+					area={{ width: canvasRegion.clientWidth, height: canvasRegion.clientHeight }}
+					items={nodeMenuEntries}
+					label={nodeMenuName}
+					mac={macKeys}
+					onSelect={runNodeMenuAction}
+					onClose={closeNodeMenu}
+				/>
+			{/if}
 
 			{#if showChat && chatTrigger}
 				<!-- Right corner: the zoom controls live bottom-left, and a Chat button
@@ -1707,7 +1845,7 @@
 				<RailGrip />
 				<div class="flex h-full min-h-0 flex-col">
 					<div class="min-h-0 flex-1">
-						<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} {credentialsLoaded} readOnly={locked} workflowID={document.id} savedNode={selectedSavedNode} {active} upstreamNodeNames={selectedUpstreamNames} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} />
+						<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} {credentialsLoaded} readOnly={locked} workflowID={document.id} savedNode={selectedSavedNode} {active} upstreamNodeNames={selectedUpstreamNames} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} onDisabledChange={setSelectedDisabled} onNoteChange={updateSelectedNote} />
 					</div>
 					{#if selectedResolvedVersion !== null && selectedResolvedVersion !== selectedNode.typeVersion}
 						<p class="shrink-0 border-t border-border px-3 py-1 text-[0.6875rem] leading-4 text-muted-foreground">{m.editor_resolved_version({ stored: selectedNode.typeVersion, resolved: selectedResolvedVersion })}</p>
@@ -1743,7 +1881,7 @@
 		{#if narrow.current && propertyPanelOpen && selectedNode && selectedDefinition}
 			<div bind:this={propertyDialog} class="focus-region absolute inset-x-2 bottom-2 z-30 max-h-[min(28rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-xl" role="dialog" aria-modal="true" aria-label={m.editor_node_properties_aria({ name: selectedNode.name })} tabindex="-1" onkeydown={handlePropertyDialogKeydown}>
 				<div class="flex justify-end border-b border-border px-1 py-1"><button bind:this={propertyCloseButton} type="button" class="grid size-6 place-items-center rounded-md text-muted-foreground hover:bg-muted" aria-label={m.editor_close_properties_aria()} onclick={closePropertyPanel}><X aria-hidden="true" class="size-3.5" /></button></div>
-				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} {credentialsLoaded} readOnly={locked} workflowID={document.id} savedNode={selectedSavedNode} {active} upstreamNodeNames={selectedUpstreamNames} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} />
+				<PropertiesPanel node={selectedNode} definition={selectedDefinition} {credentials} {credentialsLoaded} readOnly={locked} workflowID={document.id} savedNode={selectedSavedNode} {active} upstreamNodeNames={selectedUpstreamNames} onChange={updateProperty} onRename={renameSelected} onCredentialChange={updateCredential} onDisabledChange={setSelectedDisabled} onNoteChange={updateSelectedNote} />
 				{#if selectedResolvedVersion !== null && selectedResolvedVersion !== selectedNode.typeVersion}
 					<p class="border-t border-border px-3 py-1 text-[0.6875rem] leading-4 text-muted-foreground">{m.editor_resolved_version({ stored: selectedNode.typeVersion, resolved: selectedResolvedVersion })}</p>
 				{/if}

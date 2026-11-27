@@ -127,8 +127,9 @@ rejected without its contents ever being interpreted. Only after a constant-time
 signature comparison passes does the payload get base64-decoded and unmarshalled,
 and only then is expiry checked.
 
-The payload names one tenant, exactly one workflow, a set of scopes, one exact
-origin, and its issue and expiry times.
+The payload names one tenant, exactly one subject (one workflow or one
+datastore, never both), a set of scopes, one exact origin, the confinement of a
+workflow session, and its issue and expiry times.
 
 ### Scopes and the implication rule
 
@@ -159,9 +160,12 @@ Fifteen minutes by default, thirty minutes maximum. A request for longer is
 clamped rather than refused.
 
 An embed token travels through a host page and sits in a browser, so it is
-deliberately short: a leaked one is only useful for minutes. A host that needs a
-longer editing session mints another token, which is cheap and is also the point
-at which the host re-checks that the user is still allowed.
+deliberately short: a leaked one is only useful for minutes. A session is never
+extended and there is no refresh endpoint. A host that needs a longer editing
+session mints another token, which is cheap and is also the point at which the
+host re-checks that the user is still allowed. The SDK's `setSession` hands the
+new token to a mounted editor without a reload; see [lifetime and
+refresh](/guides/embed-sessions/#lifetime-and-refresh).
 
 ### Origin matching is exact
 
@@ -245,37 +249,45 @@ The middleware answers one question — *is this request inside this session's
 authority?* — and it asks it about **what the request targets**, not about which
 handler will run.
 
-| Request | Result |
-| --- | --- |
-| anything under `/node-types` | needs `workflow:read` |
-| `GET /credentials` | needs `workflow:read` — the editor has to offer a picker; lists only the credentials the session was granted, and pages over those alone, so no cursor names another |
-| `GET /workflows/{that one}` | needs `workflow:read` |
-| `POST /workflows/{that one}/run` | needs `workflow:run` |
-| `POST /workflows/{that one}/versions/{id}/publish` | needs `workflow:publish`; `workflow:write` alone is refused |
-| `POST /workflows/{that one}/activate`, `/deactivate` | needs `workflow:activate`; the activate handler then runs its usual compile and catalogue checks |
-| any other write to `/workflows/{that one}` | needs `workflow:write` |
-| `/workflows/{a different one}` | refused: scoped to a different workflow |
-| delete a workflow | refused outright, at any scope |
-| `POST /workflows/import` | refused outright |
-| `GET /executions?workflowId={that one}` | needs `workflow:read`; a different `workflowId`, or none, is refused |
-| anything under `/executions/{id}` | needs `workflow:read` — see the note below |
-| **anything else** | **refused** |
+The answer for every operation, per scope, is the generated
+[embed permit table](/reference/api/embed-permits/). It is not written by hand:
+the code that enforces the rules is asked about each operation in the API
+document, and CI fails when the table and the code disagree. In outline:
 
-The `/executions/{id}` row is the one place the middleware does not settle the
-question. It cannot: whether that execution belongs to the session's workflow is
-a fact in the database, not in the URL. So the middleware checks the scope and
-the handler checks ownership — `ownsExecution`, and an inline equivalent in the
-event stream. Both `GET /executions/{id}` and its event stream reach a handler
-before an embed session is told no.
+- **A workflow session** may read the node and credential-type catalogues, list
+  the credentials its confinement grants (names only, paged over those alone, so
+  no cursor names another), and work on its own workflow under the scopes it
+  holds: read, save with `workflow:write`, run with `workflow:run`, publish a
+  revision with `workflow:publish`, activate with `workflow:activate`. It may list
+  executions only with its own `workflowId`. A path naming a different workflow is
+  refused as scoped to a different workflow.
+- **A datastore session** may read and write the rows of its own datastore under
+  `datastore:read` and `datastore:write`, and nothing else. See
+  [Datastore sessions](/guides/embed-sessions/#datastore-sessions).
+- **No session** may list workflows, create, import, duplicate or delete one,
+  manage credentials, schedules or variables, mint a session or a key, call the
+  operator surface, or answer an approval.
+- **Anything else** is refused.
 
-That last row is the important one, and it is a genuine default arm rather than a
+Executions, and datastores by id, are the places the middleware does not settle
+the question. It cannot: whether an execution belongs to the session's workflow
+is a fact in the database, not in the URL, and a datastore session must read
+another datastore's id as unknown rather than as forbidden. So the middleware
+checks the scope and the handler checks ownership — `ownsExecution`, an inline
+equivalent in the event stream, and `ownsDatastore`. Each answers `404` for what
+is not the session's, so a session learns nothing about resources it does not
+own.
+
+The last arm is the important one, and it is a genuine default arm rather than a
 list of exclusions:
 
 ```go
 default:
-	// Listing every workflow, minting another session, managing schedules
-	// or credentials: none of that belongs to an embedded editor.
-	return false, "An embed session cannot use this endpoint."
+	// Listing every workflow, minting another session or another key,
+	// managing tenants, installing a pack: none of that belongs to a
+	// confined credential, and a route added later lands here rather than
+	// in an allow list somebody has to remember to update.
+	return http.StatusForbidden, subject.Denial("cannot use this endpoint")
 ```
 
 A route added tomorrow is denied to embed sessions until somebody deliberately
@@ -288,7 +300,11 @@ The table bounds what a session may *call*. The document it saves is checked
 too, at every point where it hands one to the server or makes one live — a save,
 a publish, an activation, a restore, a run and a retry — against a confinement
 minted into the token from the revision the workflow's owner published: the
-credentials, data tables and sub-workflows that revision uses, and nothing else.
+credentials, data tables and sub-workflows that revision uses, plus whatever
+the host declared in the mint body's `allow` set, and nothing else. The host's
+ids are checked against its tenant at mint, and `"tenant"` opens a whole kind
+only for a tenant-wide key; see
+[the embedding guide](/guides/embedding/#what-the-editor-may-reference-confinement-and-allow).
 
 That check on credential **ids** is not enough on its own. A guest holding
 `workflow:write` may edit where a request goes — an HTTP node's URL, a chat model
@@ -345,8 +361,9 @@ and embed sessions supply real tenant identifiers.
 id, a name, timestamps and the tenant's settings, and `users` and `api_keys`
 reference it with an `ON DELETE RESTRICT` foreign key so an identity cannot
 outlive its tenant. The settings are changed live by the operator with
-`PATCH /api/v1/tenants/{id}`; today they hold one section, `rateLimit`, a
-tenant's own per-minute allowances. See
+`PATCH /api/v1/tenants/{id}`; today they hold two sections, `rateLimit`, a
+tenant's own per-minute allowances, and `nodes`, the built-in node types the
+tenant may or may not use. See
 [Tenant settings](/operate/tenants/#tenant-settings).
 
 ### Tenant settings versus deployment configuration
@@ -368,7 +385,10 @@ setting is validated against the same limits the configuration enforces (a
 `rateLimit` allowance is 1 to 1,000,000 per minute, as `ratelimit.*` is), and
 it can only adjust what the deployment allows, never switch off what the
 deployment forbids. Node-pack visibility (`packs.visible_to`) stays deployment
-configuration.
+configuration. The `nodes` section is the one that adds rather than replaces: a
+tenant's allow and deny lists are united with the deployment's `nodes.allow` and
+`nodes.deny`, and deny wins, so a tenant setting can hide more built-ins from
+that tenant but can never lift a deployment deny.
 
 Each section is registered by the code that reads it and validated by that
 code, so a key no consumer registered is refused with

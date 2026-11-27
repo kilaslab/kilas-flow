@@ -39,7 +39,7 @@ opt-in authentication, the n8n importer and exporter, and the embedded-editor
 session flow are all implemented and covered by tests.
 
 <!-- generated:catalogue-size -->
-A default install serves 82 distinct node types across 89 type-and-version pairs: 78 types (83 pairs) compiled into the binary, counting the `kilasflow.unsupported` import placeholder for nodes KilasFlow does not implement, and 4 types (6 pairs) from the declarative packs it ships with.
+A default install serves 90 distinct node types across 97 type-and-version pairs: 86 types (91 pairs) compiled into the binary, counting the `kilasflow.unsupported` import placeholder for nodes KilasFlow does not implement, and 4 types (6 pairs) from the declarative packs it ships with.
 <!-- /generated:catalogue-size -->
 
 [`GET /api/v1/node-types`](/reference/api/) is the list of record, and the
@@ -108,6 +108,14 @@ refused past seven days, and a wait that resumes on a call and is never called
 fails by name at its own deadline — 24 hours when the node names none — rather
 than staying parked for ever. A wait inside a called sub-workflow is refused
 outright, because a child runs inline in its caller.
+
+**There are no outbound execution events.** KilasFlow starts runs from your
+app, but it does not call your app back when a run finishes or fails. There is
+no webhook subscription, no signed delivery and no delivery log. You learn about
+results by polling the execution list, by following one run's event stream, or
+by building the call into the workflow itself with an error workflow or a final
+HTTP Request node. [Get notified of results](/guides/get-notified/) covers each.
+A tenant-level notification feed is planned and needs a durable outbox first.
 
 **Scheduling is single-process.** The cron scheduler claims due rows
 transactionally, so a second instance will not double-fire, but distributed

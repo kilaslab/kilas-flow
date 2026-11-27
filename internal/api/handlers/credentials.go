@@ -303,7 +303,11 @@ func (handler *Credentials) List(ctx context.Context, input *credentialListInput
 	// from the whole tenant ends on a sibling the session may not see — its
 	// name and id, base64'd into a header. Restricting first means every row
 	// and every cursor come from the grant.
-	if session, embedded := middleware.EmbedSessionFrom(ctx); embedded {
+	//
+	// A session its host minted with credentials "tenant" is granted the
+	// whole tenant's list, so it is not restricted: the store lists inside
+	// the session's tenant either way.
+	if session, embedded := middleware.EmbedSessionFrom(ctx); embedded && !session.Confinement.TenantCredentials {
 		filter.Restricted = true
 		filter.IDs = session.Confinement.Credentials
 	}

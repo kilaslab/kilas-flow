@@ -150,6 +150,21 @@ describe('sanitizeBranding', () => {
 		expect(sanitizeBranding({ accent: 'expression(alert(1))' }).accent).toBeUndefined();
 	});
 
+	it('keeps a theme, font and radius only from the fixed vocabulary', () => {
+		expect(sanitizeBranding({ theme: 'light', fontFamily: 'serif', radius: 4 })).toMatchObject({ theme: 'light', fontFamily: 'serif', radius: 4 });
+		expect(sanitizeBranding({ theme: 'system' }).theme).toBe('system');
+		expect(sanitizeBranding({ radius: 0 }).radius).toBe(0);
+		// A free-form font family is how a remote font would arrive; a radius
+		// outside 0..16 or a CSS string is not a number the frame should trust.
+		const dropped = sanitizeBranding({ theme: 'sepia', fontFamily: 'Comic Sans MS', radius: 17 });
+		expect(dropped.theme).toBeUndefined();
+		expect(dropped.fontFamily).toBeUndefined();
+		expect(dropped.radius).toBeUndefined();
+		expect(sanitizeBranding({ radius: '4px' }).radius).toBeUndefined();
+		expect(sanitizeBranding({ radius: 2.5 }).radius).toBeUndefined();
+		expect(sanitizeBranding({ radius: -1 }).radius).toBeUndefined();
+	});
+
 	it('treats a missing or malformed payload as no branding', () => {
 		expect(sanitizeBranding(null)).toEqual({});
 		expect(sanitizeBranding('nope')).toEqual({});

@@ -11,7 +11,7 @@ life, which is what makes compiled graphs and the metadata served to the editor
 deterministic.
 
 <!-- generated:catalogue-size -->
-A default install serves 82 distinct node types across 89 type-and-version pairs: 78 types (83 pairs) compiled into the binary, counting the `kilasflow.unsupported` import placeholder for nodes KilasFlow does not implement, and 4 types (6 pairs) from the declarative packs it ships with.
+A default install serves 90 distinct node types across 97 type-and-version pairs: 86 types (91 pairs) compiled into the binary, counting the `kilasflow.unsupported` import placeholder for nodes KilasFlow does not implement, and 4 types (6 pairs) from the declarative packs it ships with.
 <!-- /generated:catalogue-size -->
 
 A pack loaded from `packs.dir` adds to that. The list of record is
@@ -228,8 +228,8 @@ what it claims.
 
 | Source | Meaning | Status |
 | --- | --- | --- |
-| `builtin` | compiled into this binary | 46 types today |
-| `pack` | a declarative node pack | 3 types today |
+| `builtin` | compiled into this binary | the types counted above as compiled in |
+| `pack` | a declarative node pack | the shipped packs, plus any pack loaded from `packs.dir` |
 | `sidecar` | an implementation running outside this process | registered at boot when `sidecar.enabled` is true; see [JavaScript sidecar](/operate/javascript-sidecar/) |
 
 `Register` adds a built-in. `RegisterFrom` adds a pack or a sidecar and
@@ -322,8 +322,17 @@ The scope is a composition-time declaration only. A pack sets it with the
 `packs.visible_to` config key. `ApplyVisibility` applies those overrides and is
 called once from `main.go` before the registry is shared, the same contract as
 `Register`; `ScopeTo` is the single-type convenience wrapper it forwards to,
-whose only consumers today are tests. Built-ins can never be scoped, because the
-engine names some of them.
+whose only consumers today are tests. Built-ins can never be scoped to a tenant
+list, because the engine names some of them.
+
+Built-ins have their own, separate mechanism: allow and deny lists
+(`ApplyAvailability`, the `nodes.allow` and `nodes.deny` config keys and a
+tenant's `nodes` settings section). They feed the same visibility check, so
+`VisibleTo`, `ListFor`, `ResolveFor` and `ForTenant` all honour them and a hidden
+built-in is `node.not_available` at compile, activation and claim exactly like a
+scoped pack node. The engine-required types, the error trigger and the
+sub-workflow trigger, are never hidden. See [Allowing or denying built-in
+nodes](/guides/tenant-scoped-nodes/#allowing-or-denying-built-in-nodes).
 
 A tenant that may not see a type is told the type does not exist: the catalogue,
 the icon route and the loaders answer exactly as they do for an unregistered

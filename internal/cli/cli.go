@@ -103,6 +103,12 @@ func run(verbs []Verb, env Env) (code int, handled bool) {
 
 	verb, rest, ok := splitVerb(verbs, env.Args)
 	if !ok {
+		// A noun on its own — `workflow`, `workflow --help` — lists that
+		// noun's verbs, and a noun followed by a word it does not have names
+		// the noun's help rather than the whole verb list.
+		if nounVerbs := verbsOfNoun(verbs, env.Args[0]); len(nounVerbs) > 0 {
+			return runNoun(env, env.Args[0], nounVerbs, env.Args[1:]), true
+		}
 		// An unknown word is a usage error, never a server boot: `kflow` in
 		// particular is not an alias, it is a stale binary name.
 		ctx := &Context{Env: env, Verb: Verb{Path: env.Args[0]}, Flags: &GlobalFlags{}}
@@ -126,7 +132,7 @@ func run(verbs []Verb, env Env) (code int, handled bool) {
 	// --out — were undiscoverable from the CLI itself, which is the one place
 	// the reference page tells an agent to look.
 	fs.Usage = func() {
-		fmt.Fprintf(stderr(env), "usage: kilasflow %s [flags] [args]\n  %s\n", verb.Path, verb.Summary)
+		fmt.Fprintf(stderr(env), "usage: %s\n  %s\n", usageLine(verb), verb.Summary)
 		fs.PrintDefaults()
 	}
 
@@ -141,6 +147,13 @@ func run(verbs []Verb, env Env) (code int, handled bool) {
 		// flag has already printed the reason and the usage line.
 		if errors.Is(err, flag.ErrHelp) {
 			return ExitOK, true
+		}
+		// A caller reading envelopes gets one for a bad flag too, rather than
+		// an empty stdout and a usage text it has to scrape from stderr.
+		if resolveMode(flags, env.TTY) == modeJSON {
+			ctx := &Context{Env: env, Verb: verb, Flags: flags}
+
+			return renderResult(env, ctx, usageError("%s: run `kilasflow %s --help` for its flags", err.Error(), verb.Path)), true
 		}
 
 		return ExitUsage, true

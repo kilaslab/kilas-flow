@@ -36,40 +36,7 @@ func readFilter(value any, item workflow.Item) (conditions.Filter, error) {
 }
 
 func richFilter(declared map[string]any) (conditions.Filter, error) {
-	filter := conditions.Filter{
-		Combinator: conditions.Combinator(textOf(declared["combinator"])),
-		// n8n's own default, and the one that does not quietly widen a match.
-		Options: conditions.Options{CaseSensitive: true},
-	}
-	if options, ok := declared["options"].(map[string]any); ok {
-		if sensitive, present := options["caseSensitive"].(bool); present {
-			filter.Options.CaseSensitive = sensitive
-		}
-		filter.Options.TypeValidation = conditions.Validation(textOf(options["typeValidation"]))
-	}
-
-	list, _ := declared["conditions"].([]any)
-	for index, entry := range list {
-		row, ok := entry.(map[string]any)
-		if !ok {
-			return conditions.Filter{}, fmt.Errorf("condition %d is not an object", index)
-		}
-		operator, ok := row["operator"].(map[string]any)
-		if !ok {
-			return conditions.Filter{}, fmt.Errorf("condition %d has no operator", index)
-		}
-		filter.Conditions = append(filter.Conditions, conditions.Condition{
-			ID:         textOf(row["id"]),
-			LeftValue:  row["leftValue"],
-			RightValue: row["rightValue"],
-			Operator: conditions.Operator{
-				Type:        conditions.ValueType(textOf(operator["type"])),
-				Operation:   textOf(operator["operation"]),
-				SingleValue: operator["singleValue"] == true,
-			},
-		})
-	}
-	return filter, nil
+	return conditions.Parse(declared)
 }
 
 // flatFilter reads the shape IF stored before this family shared an evaluator.

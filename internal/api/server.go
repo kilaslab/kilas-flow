@@ -66,6 +66,12 @@ type Deps struct {
 	Events *events.Broker
 	// Schedules is the cron surface. A nil store disables the endpoints.
 	Schedules repository.ScheduleRepository
+	// Variables is the tenant's `$vars` store. A nil store disables the
+	// endpoints.
+	Variables repository.VariableRepository
+	// NotificationLog is the tenant's outbound notification delivery log. A
+	// nil log answers the endpoint with 503.
+	NotificationLog handlers.DeliveryLog
 	// Datastores is the row store. A nil engine disables the endpoints.
 	Datastores *datastore.Engine
 	// Webhook serves the reserved /webhook prefix. A nil handler keeps the

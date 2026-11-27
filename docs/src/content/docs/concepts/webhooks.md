@@ -161,6 +161,37 @@ restricted away from. Filtering is not verification and the answer is different
 on purpose: the delivery was received correctly and deliberately not acted on, so
 the sender is told `200` and stops retrying.
 
+### Trigger filters
+
+The Webhook trigger, the Host Event trigger and every pack trigger carry an
+optional **Only run when** parameter (`triggerFilter` in the document). It takes
+the same conditions IF and Filter use, and its expressions read the trigger
+item, so `{{ $json.body.channel }}` means what it means in the first node after
+the trigger. The filter runs before anything is queued: an event it does not
+admit creates no execution, takes no queue slot and writes no execution
+history.
+
+```json
+"triggerFilter": {
+  "combinator": "and",
+  "options": { "caseSensitive": true, "typeValidation": "loose" },
+  "conditions": [
+    {
+      "leftValue": { "mode": "expression", "value": "{{ $json.body.channel }}" },
+      "rightValue": "whatsapp",
+      "operator": { "type": "string", "operation": "equals" }
+    }
+  ]
+}
+```
+
+A webhook delivery the filter refuses is answered
+`200 {"filtered": true, "reason": "the event did not match the trigger filter"}`
+and counted under the `filtered` outcome of the webhook request metric. A
+filter that cannot be evaluated (a strict type check that refuses the value, for
+example) also filters the event out, and the reason says why. Leave the
+parameter empty to run for every event.
+
 ## Responses render sandboxed
 
 A webhook answer is served from the instance's own origin — the same one as the
@@ -407,6 +438,16 @@ name would reach. In both cases the trigger item is the event document —
 `{{ $json.type }}` and reads `{{ $json.payload }}`. Deduplication is per
 `(eventId, workflow)`: within the delivery window a retried publish reaches
 each workflow once, whatever idempotency key it carried.
+
+A host-event trigger's [filter](#trigger-filters) is checked against the event
+document before the workflow is queued. A workflow whose listening triggers all
+refuse the event appears in the publish response's `filtered` list with
+`reason: "filter"` and a `detail` saying why, and no execution is created. A
+workflow with several listening triggers runs from the first one whose filter
+admits the event. A filtered workflow is not claimed for the event id, so the
+same event published again after the filter changes can still reach it. The
+filter is stored with the subscription when the workflow is activated: change
+it, then publish (or re-activate) the workflow for the new filter to apply.
 
 ## API operations
 

@@ -125,7 +125,9 @@ function rssFeed(): string {
 // records every message so the test can await them instead of sleeping. A
 // record keeps the fields a run's messages carry, so a test can read how the
 // run it started ended. An `accent` query parameter is passed through as the
-// session's branding accent, the one value a host re-accents the editor with.
+// session's branding accent, the one value a host re-accents the editor with;
+// `theme`, `font` and `radius` pass through as branding.theme, .fontFamily and
+// .radius the same way.
 function hostPage(): string {
 	return `<!doctype html>
 <html><head><meta charset="utf-8"><title>e2e host</title></head>
@@ -140,13 +142,18 @@ var token = query.get('token');
 var scopes = (query.get('scopes') || '').split(',').filter(Boolean);
 var locale = query.get('locale');
 var accent = query.get('accent');
+var branding = {};
+if (accent) branding.accent = accent;
+if (query.get('theme')) branding.theme = query.get('theme');
+if (query.get('font')) branding.fontFamily = query.get('font');
+if (query.get('radius')) branding.radius = Number(query.get('radius'));
 var frame = document.getElementById('e2e-frame');
 window.addEventListener('message', function (event) {
 	var data = event.data || {};
 	window.__e2eEvents.push({ origin: event.origin, type: data.type, executionId: data.executionId, status: data.status });
 	if (event.data && event.data.type === 'kilasflow:embed-ready') {
 		event.source.postMessage(
-			{ type: 'kilasflow:embed-session', token: token, workflowId: workflowId, scopes: scopes, branding: accent ? { accent: accent } : {}, locale: locale },
+			{ type: 'kilasflow:embed-session', token: token, workflowId: workflowId, scopes: scopes, branding: branding, locale: locale },
 			event.origin
 		);
 	}

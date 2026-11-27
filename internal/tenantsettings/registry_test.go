@@ -231,3 +231,41 @@ func TestDecodeSkipsASectionThatNoLongerValidates(t *testing.T) {
 		t.Errorf("Lookup() = %+v, %v", limits, ok)
 	}
 }
+
+// A write check guards what a patch may set but not what a stored document may
+// hold: a stored section that failed it on read would be skipped whole, so a
+// reference the binary later stopped registering would switch the rest of the
+// section off.
+func TestRegisterCheckedRunsTheWriteCheckOnPatchesOnly(t *testing.T) {
+	registry := NewRegistry()
+	writeCheck := func(value limitsSection) error {
+		if value.Label == "unknown" {
+			return &FieldError{Field: "label", Message: "names something this binary does not register"}
+		}
+		return nil
+	}
+	if err := RegisterChecked(registry, "limits", validateLimits, writeCheck); err != nil {
+		t.Fatalf("RegisterChecked() error = %v", err)
+	}
+
+	_, err := registry.Apply(nil, patchOf(t, `{"limits":{"label":"unknown"}}`))
+	var refused *PatchError
+	if !errors.As(err, &refused) || len(refused.Issues) != 1 || refused.Issues[0].Path != "limits.label" {
+		t.Fatalf("Apply() error = %v, want one issue at limits.label", err)
+	}
+
+	// The same value, already stored, still decodes with its neighbours.
+	settings, err := registry.Decode([]byte(`{"limits":{"label":"unknown","runPerMinute":3}}`), 1)
+	if err != nil {
+		t.Fatalf("Decode() error = %v, want the write check skipped on read", err)
+	}
+	limits, ok := Lookup[limitsSection](settings, "limits")
+	if !ok || limits.Label != "unknown" || limits.RunPerMinute == nil {
+		t.Errorf("Lookup() = %+v, %v, want the stored section served whole", limits, ok)
+	}
+
+	// The always-on validator still guards the read.
+	if _, err := registry.Decode([]byte(`{"limits":{"runPerMinute":0}}`), 2); err == nil {
+		t.Error("Decode() accepted a value the validator refuses")
+	}
+}

@@ -2,7 +2,7 @@
 title: Node types
 description: "The node catalogue, icons, load-options, load-schema, and the expression grammar. Generated from the live OpenAPI document."
 sidebar:
-  order: 7
+  order: 9
 ---
 
 <!-- Generated from the live OpenAPI document by scripts/generate-api-reference.mjs — do not edit by hand. -->
@@ -29,7 +29,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/node-types" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `workflow:read` — the catalogue is narrowed to the session’s own tenant. `load-options` is additionally bounded to the session’s workflow by the handler.
+Embed: Allow with `workflow:read` (every other workflow scope carries it). The catalogue is narrowed to the session’s own tenant.
 
 ## Serve a node's icon (`get-node-icon`)
 
@@ -57,7 +57,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/node-types/{type}/icon" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `workflow:read` — the catalogue is narrowed to the session’s own tenant. `load-options` is additionally bounded to the session’s workflow by the handler.
+Embed: Allow with `workflow:read` (every other workflow scope carries it). The catalogue is narrowed to the session’s own tenant.
 
 ## Load a property's selectable values (`load-node-property-options`)
 
@@ -127,7 +127,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/node-types/{type}/load-options" \
   -d '{"property":"string"}'
 ```
 
-Embed: Allow with `workflow:read` — the catalogue is narrowed to the session’s own tenant. `load-options` is additionally bounded to the session’s workflow by the handler.
+Embed: Allow with `workflow:read` (every other workflow scope carries it). It can reach a customer’s service, so the handler bounds it to the session’s workflow, not only its tenant.
 
 ## Load a resource mapper's columns (`load-node-property-schema`)
 
@@ -208,7 +208,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/node-types/{type}/load-schema" \
   -d '{"property":"string"}'
 ```
 
-Embed: Allow with `workflow:read` — the catalogue is narrowed to the session’s own tenant. `load-options` is additionally bounded to the session’s workflow by the handler.
+Embed: Allow with `workflow:read` (every other workflow scope carries it). The catalogue is narrowed to the session’s own tenant.
 
 ## Describe the expression grammar (`get-expression-grammar`)
 
@@ -248,4 +248,4 @@ curl -X GET "$KILASFLOW_HOST/api/v1/expression-grammar" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”

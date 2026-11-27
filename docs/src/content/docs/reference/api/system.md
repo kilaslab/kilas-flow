@@ -2,7 +2,7 @@
 title: System
 description: "Health and readiness. Generated from the live OpenAPI document."
 sidebar:
-  order: 12
+  order: 14
 ---
 
 <!-- Generated from the live OpenAPI document by scripts/generate-api-reference.mjs — do not edit by hand. -->
@@ -47,7 +47,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/health" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Readiness probe (`get-ready`)
 
@@ -97,4 +97,4 @@ curl -X GET "$KILASFLOW_HOST/api/v1/ready" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”

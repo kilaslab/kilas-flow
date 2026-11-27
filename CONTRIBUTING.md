@@ -62,6 +62,7 @@ checks only matter if your change reaches the API surface or the configuration.
 | `make generate-api-check` | the committed web API client matches the served OpenAPI document |
 | `make generate-types-check` | the committed SDK types match the served OpenAPI document |
 | `make generate-api-reference-check` | the committed API reference pages match the served document |
+| `make generate-embed-permits-check` | `scripts/embed-permits/embed-permits.json`, the embed permit table the API reference reads, matches the Go authority gate; `make generate-embed-permits` rewrites it |
 | `make generate-config-reference-check` | the configuration reference and `config.example.yaml` match the `Config` structs |
 | `make generate-docs-facts-check` | the docs' exit-code tables, node-catalogue size and credential-type count match what the binary registers; `make generate-docs-facts` rewrites them |
 | `make smoke-cli-examples` | every shell example in `reference/cli.md` runs against a booted server and ends with the exit code its `# exit N` comment names |

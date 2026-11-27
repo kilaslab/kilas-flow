@@ -112,6 +112,19 @@ func ScopeAuth() func(http.Handler) http.Handler {
 	}
 }
 
+// EmbedPermit is what the authority gate answers an embed session making this
+// request: a status of zero when the request is inside the session's authority,
+// otherwise the refusal's status and the sentence a host page reads back.
+//
+// EmbedAuth enforces exactly this answer, and the docs generator
+// (scripts/embed-permits) prints it, so the embed-session reference states the
+// verdicts of the code that runs rather than a copy of its rules. Only the
+// method, the path and the query of the request are read; the token and the
+// origin are checked before this and are not part of the table.
+func EmbedPermit(session embed.Session, r *http.Request) (int, string) {
+	return permits(sessionSubject{session: session}, r)
+}
+
 // permits decides whether one request is inside a subject's authority.
 //
 // The rule is deliberately about *what the request targets*, not about which
@@ -381,6 +394,33 @@ func permits(subject subject, r *http.Request) (int, string) {
 			return refused(subject, subject.Allows(embed.ScopeRead), "cannot read")
 		}
 		return refused(subject, subject.Allows(embed.ScopeWrite), "is read-only")
+
+	case path == "/variables" || strings.HasPrefix(path, "/variables/"):
+		// Variables are tenant-wide: every workflow of the tenant reads them.
+		// An embed session is confined to one workflow and a workflow-bound
+		// key to its one subject, so neither may read the tenant's set or
+		// change what its siblings read; an unbound scoped key reads with
+		// workflow:read and writes with workflow:write, like schedules.
+		if subject.Kind() != kindKey || bound != "" {
+			return http.StatusForbidden, subject.Denial("cannot manage variables")
+		}
+		if r.Method == http.MethodGet {
+			return refused(subject, subject.Allows(embed.ScopeRead), "cannot read")
+		}
+		return refused(subject, subject.Allows(embed.ScopeWrite), "is read-only")
+
+	case path == "/notifications" || strings.HasPrefix(path, "/notifications/"):
+		// The delivery log covers every workflow of the tenant, and its
+		// payloads name executions and workflows a confined credential was
+		// never given: a tenant-level surface, refused to an embed session and
+		// a workflow-bound key exactly like the schedules above.
+		if subject.Kind() != kindKey || bound != "" {
+			return http.StatusForbidden, subject.Denial("cannot read notification deliveries")
+		}
+		if r.Method == http.MethodGet {
+			return refused(subject, subject.Allows(embed.ScopeRead), "cannot read")
+		}
+		return http.StatusForbidden, subject.Denial("cannot use this endpoint")
 
 	case path == "/resume" || strings.HasPrefix(path, "/resume/"):
 		// Approval resume is never available to a confined credential:

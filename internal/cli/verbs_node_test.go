@@ -194,3 +194,67 @@ func TestNodeOptionsPostsThePropertyItWasGiven(t *testing.T) {
 		t.Fatalf("the stub saw %d requests, want 1: a missing --property must not reach the server", len(api.calls))
 	}
 }
+
+// namespacedCatalogue is the real catalogue's shape: every type carries its
+// namespace, and two namespaces can share a name.
+const namespacedCatalogue = `[` +
+	`{"type":"kilasflow.httpRequest","version":1,"displayName":"HTTP Request","category":"Core"},` +
+	`{"type":"kilasflow.set","version":1,"displayName":"Edit Fields","category":"Core"},` +
+	`{"type":"acme.set","version":1,"displayName":"Acme Set","category":"Packs"},` +
+	`{"type":"kilasflow.googleSheets","version":1,"displayName":"Google Sheets","category":"Apps"}]`
+
+func describeAgainst(t *testing.T, catalogue string, args ...string) (int, map[string]any) {
+	t.Helper()
+	api := newRecordingAPI(map[string]http.HandlerFunc{
+		apiPrefix + "/node-types": jsonBody(http.StatusOK, catalogue),
+	})
+	srv := stubAPI(t, api.routesFor(t))
+	code, _, stdout, _ := runCLI(t, Env{
+		Args:   append(append([]string{"node", "describe"}, args...), "--url", srv.URL, "--json"),
+		Getenv: homeEnv(t.TempDir(), nil),
+	})
+
+	return code, envelope(t, stdout)
+}
+
+// A bare name and an n8n type both resolve to the one catalogue type whose
+// name they are, case ignored.
+func TestNodeDescribeResolvesBareAndN8NNames(t *testing.T) {
+	for _, asked := range []string{"httpRequest", "httprequest", "n8n-nodes-base.httpRequest", "kilasflow.httpRequest"} {
+		t.Run(asked, func(t *testing.T) {
+			code, doc := describeAgainst(t, namespacedCatalogue, asked)
+			if code != ExitOK {
+				t.Fatalf("exit = %d, want %d (%v)", code, ExitOK, doc)
+			}
+			data, _ := doc["data"].(map[string]any)
+			if data["type"] != "kilasflow.httpRequest" {
+				t.Fatalf("data.type = %v, want kilasflow.httpRequest", data["type"])
+			}
+		})
+	}
+}
+
+// A bare name two namespaces share is a usage error naming both.
+func TestNodeDescribeRefusesAnAmbiguousBareName(t *testing.T) {
+	code, doc := describeAgainst(t, namespacedCatalogue, "set")
+	if code != ExitUsage {
+		t.Fatalf("exit = %d, want %d (%v)", code, ExitUsage, doc)
+	}
+	message, _ := doc["error"].(map[string]any)["message"].(string)
+	if !strings.Contains(message, "acme.set") || !strings.Contains(message, "kilasflow.set") {
+		t.Fatalf("error.message = %q, want both candidates named", message)
+	}
+}
+
+// A name that matches nothing suggests the types containing it and names the
+// command that lists the catalogue.
+func TestNodeDescribeSuggestsContainingNames(t *testing.T) {
+	code, doc := describeAgainst(t, namespacedCatalogue, "sheets")
+	if code != ExitNotFound {
+		t.Fatalf("exit = %d, want %d (%v)", code, ExitNotFound, doc)
+	}
+	message, _ := doc["error"].(map[string]any)["message"].(string)
+	if !strings.Contains(message, "kilasflow.googleSheets") || !strings.Contains(message, "kilasflow node list") {
+		t.Fatalf("error.message = %q, want the containing type and the list command", message)
+	}
+}

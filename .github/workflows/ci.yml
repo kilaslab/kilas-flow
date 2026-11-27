@@ -279,6 +279,17 @@ jobs:
         if: always()
         run: make generate-api-reference-check
 
+      # The embed permit table is exported from the Go authority gate
+      # (internal/api/middleware EmbedPermit) by scripts/embed-permits, one
+      # verdict per operation and embed scope, and the docs API reference reads
+      # it rather than restating the rules. It runs before the reference check
+      # on purpose: a stale table is reported here, by name, instead of as a
+      # reference page that differs. Go only; the operations come from an
+      # in-process server.
+      - name: Embed permit table
+        if: always()
+        run: make generate-embed-permits-check
+
       # The configuration reference and config.example.yaml are generated from
       # the Config structs by scripts/config-reference.go, which reads source
       # and defaults only — no binary, no Node, so this step needs just Go.

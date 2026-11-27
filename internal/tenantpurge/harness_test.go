@@ -334,6 +334,7 @@ type purgeEnv struct {
 	secrets     *repository.GORMCredentialStore
 	engine      *datastore.Engine
 	idempotency *repository.GORMIdempotencyStore
+	variables   *repository.GORMVariableStore
 }
 
 func newPurgeEnv(t *testing.T, db *database.DB, prefix string) *purgeEnv {
@@ -372,6 +373,7 @@ func newPurgeEnv(t *testing.T, db *database.DB, prefix string) *purgeEnv {
 		secrets:     repository.NewCredentialStore(db.DB, cipher),
 		engine:      engine,
 		idempotency: repository.NewIdempotencyStore(db.DB),
+		variables:   repository.NewVariableStore(db.DB),
 	}
 }
 
@@ -516,6 +518,14 @@ func (env *purgeEnv) seedTenant(id string) *tenantSeed {
 	).Error; err != nil {
 		env.t.Fatalf("seed rate_limit_buckets(%s) error = %v", id, err)
 	}
+	// One outbound event, which the triggers step claims with the rest of
+	// the tenant's delivery rows.
+	if err := env.db.Exec(
+		"INSERT INTO "+env.prefix+"outbound_events (id, tenant_id, event_type, subject_id, endpoint, payload, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"evt-seed-"+id, id, "execution.failed", stored.ID, "https://host.example/hooks", []byte(`{}`), "pending", time.Now(), time.Now(),
+	).Error; err != nil {
+		env.t.Fatalf("seed outbound_events(%s) error = %v", id, err)
+	}
 
 	// The static data its Code nodes keep between runs.
 	if err := repository.NewStaticDataStore(env.db.DB).SaveStaticData(ctx, tenant, stored.ID, []byte(`{"global":{"cell":"`+seed.cell+`"}}`)); err != nil {
@@ -569,6 +579,11 @@ func (env *purgeEnv) seedTenant(id string) *tenantSeed {
 		TokenEnv: "KILASFLOW_EXTERNAL_SECRET_TOKEN_SEED_VAULT",
 	}); err != nil {
 		env.t.Fatalf("CreateSecretBinding(%s) error = %v", id, err)
+	}
+
+	// A variable every workflow of the tenant reads as $vars.API_BASE.
+	if _, err := env.variables.CreateVariable(ctx, tenant, "API_BASE", "https://"+id+".example"); err != nil {
+		env.t.Fatalf("CreateVariable(%s) error = %v", id, err)
 	}
 
 	store, err := env.engine.Create(ctx, id, "cells", []datastore.ColumnInput{{Name: "cell", Type: "string"}})

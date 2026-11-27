@@ -17,21 +17,23 @@ When the two disagree, compare versions: every page here states the server versi
 
 ## Operations
 
-84 operations, all under `/api/v1`, in 12 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
+90 operations, all under `/api/v1`, in 14 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
 
 | Group | Operations | Contents |
 | --- | --- | --- |
-| [Workflows](/reference/api/workflows/) | 17 | Create, read, update, run, activate, and version workflows. |
+| [Workflows](/reference/api/workflows/) | 18 | Create, read, update, run, activate, and version workflows. |
 | [Executions](/reference/api/executions/) | 6 | List, inspect, cancel, retry, and follow executions on the event stream. |
 | [Credentials](/reference/api/credentials/) | 9 | Credential types and stored credentials. Reads never return values. |
 | [Authentication and keys](/reference/api/auth/) | 7 | Sessions, API keys, and stream tickets. |
 | [Schedules](/reference/api/schedules/) | 4 | Cron-style triggers owned by a workflow. |
+| [Variables](/reference/api/variables/) | 4 | The tenant’s key/value pairs every workflow reads as `$vars.KEY`. |
+| [Notifications](/reference/api/notifications/) | 1 | The signed outbound notifications a tenant receives, and their delivery log. |
 | [Host events](/reference/api/host-events/) | 1 | The recommended host → workflow path: publish one event, every active workflow listening for it runs. |
 | [Node types](/reference/api/nodes/) | 5 | The node catalogue, icons, load-options, load-schema, and the expression grammar. |
 | [Datastores](/reference/api/datastores/) | 18 | Tenant-owned row stores: tables, columns, rows, and CSV import and export. |
 | [Tenants and accounts](/reference/api/tenants/) | 11 | Operator surface: tenants, their users, and keys minted for another tenant. |
 | [Interop](/reference/api/interop/) | 3 | Import and export workflows across formats. |
-| [Embed](/reference/api/embed/) | 1 | Mint a session that confines an embedded editor to one workflow. |
+| [Embed](/reference/api/embed/) | 1 | Mint an embed session: one workflow or one datastore, a scope list, one origin. |
 | [System](/reference/api/system/) | 2 | Health and readiness. |
 
 Two behaviours are worth knowing before reading any operation page, because they are easy to misread from a signature alone. Running a workflow answers `202` and does not return results — it enqueues an execution, and you follow it on the event stream at `GET /api/v1/executions/{id}/events`. This reference was generated from an instance with authentication disabled — `auth.enabled` defaults to `false` — so no operation below requires a credential **on that instance**. With `auth.enabled` set, every operation needs either a Bearer API key (`Authorization: Bearer <key>`) or a session cookie, except health, readiness, login and logout; the document the server serves then declares both schemes. See [Security posture](/operate/security/) for how to decide.
@@ -40,6 +42,7 @@ Two behaviours are worth knowing before reading any operation page, because they
 
 - [Errors](/reference/api/errors/) — every non-success response is an RFC 9457 problem document, and workflow compile failures carry a structured `WorkflowValidationIssue`.
 - [Events](/reference/api/events/) — the server-sent event types and the `Last-Event-ID` resume behaviour, which an OpenAPI document describes the endpoint of but not the vocabulary carried over it.
+- [Embed permit table](/reference/api/embed-permits/) — which operations an embed session may call, per scope, with the exact refusal for the rest. It is exported from the Go rules that enforce it.
 - [Pagination](/reference/api/pagination/) — the two cursor conventions the listing operations use, which endpoints use which, and the SDK helpers that page for you.
 - [Webhooks](/reference/api/webhooks/) — the inbound `/webhook/{route}` surface, whose behaviour is defined by the trigger node rather than by a route definition.
 - [API contract and stability](/reference/api-contract/) — what `/api/v1` promises, what it explicitly does not, and how to tell whether an upgrade will break you.

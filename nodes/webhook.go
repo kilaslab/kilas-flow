@@ -12,6 +12,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/expression"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/scheduler"
+	"github.com/kilaslab/kilas-flow/internal/triggerfilter"
 	"github.com/kilaslab/kilas-flow/internal/webhook"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
@@ -233,6 +234,7 @@ func webhookTrigger() node.Definition {
 					},
 				},
 			},
+			triggerfilter.Property(),
 		},
 		SharedSettings: sharedSettings(),
 		ExecutorID:     WebhookExecutorID,

@@ -56,8 +56,9 @@ The rest of n8n's Code-node globals are there, reading the same data an
   step works) or as `-1`, and naming an earlier run is refused.
 - `$workflow`, `$execution` (`id`, `mode`, `resumeUrl`), `$runIndex`,
   `$nodeVersion`, and `$env`, which holds only the variables an expression's
-  `$env` holds. `$vars` is an empty object: KilasFlow has no variables for it
-  to read.
+  `$env` holds. `$vars` holds the tenant's
+  [variables](/reference/expression-grammar/#variables), the same object an
+  expression reads.
 - `$now` and `$today`, and Luxon's `DateTime`, `Duration` and `Interval`,
   default to the workflow's time zone.
 - `console.log`, `info`, `warn`, `error` and `debug`. What the code prints is

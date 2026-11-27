@@ -253,6 +253,9 @@ type Request struct {
 	// Env is the allowlisted environment exposed as `$env`. The runtime decides
 	// what enters it; nothing reads os.Environ during execution.
 	Env map[string]string
+	// Vars is the tenant's variables, exposed as `$vars`. Read once when the
+	// execution starts and shared, never written, by every node run.
+	Vars map[string]any
 	// Binaries stores and reads item payloads.
 	//
 	// Threaded here alongside the credential resolver and for the same reason:
@@ -2113,8 +2116,10 @@ func cloneRequest(request Request) Request {
 		Workflows:     request.Workflows,
 		// Shared, not copied: every node run of the execution reads and
 		// writes the one handle.
-		StaticData:  request.StaticData,
-		Env:         make(map[string]string, len(request.Env)),
+		StaticData: request.StaticData,
+		Env:        make(map[string]string, len(request.Env)),
+		// Shared, not copied: nothing writes the map once the run starts.
+		Vars:        request.Vars,
 		NodeOutputs: make(map[string]map[string]any, len(request.NodeOutputs)),
 		NodeItems:   make(map[string]expression.NodeItem, len(request.NodeItems)),
 		NodeState:   make(map[string]map[string]any, len(request.NodeState)),

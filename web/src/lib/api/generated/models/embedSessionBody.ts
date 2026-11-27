@@ -7,12 +7,15 @@
  */
 import type { Actor } from './actor';
 import type { Branding } from './branding';
+import type { EmbedAllow } from './embedAllow';
 
 export interface EmbedSessionBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /** The host user this session acts for. Signed into the token and recorded as an embed actor on the revisions, publish events, and manual runs the session causes. Host-asserted: KilasFlow does not verify it. Omit it for an unnamed session. */
   actor?: Actor;
+  /** What the session's document may reference beyond what the workflow's published revision already uses. Workflow sessions only. Each id is checked against this tenant at mint (an unknown or foreign id answers 404); "tenant" opens the whole kind and needs a tenant-wide key. Omit it to confine the session to the published revision alone. */
+  allow?: EmbedAllow;
   /** Validated white-label values; never markup */
   branding?: Branding;
   /** Datastore this session may touch; exactly one of this and workflowId */

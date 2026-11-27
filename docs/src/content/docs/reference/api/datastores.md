@@ -2,7 +2,7 @@
 title: Datastores
 description: "Tenant-owned row stores: tables, columns, rows, and CSV import and export. Generated from the live OpenAPI document."
 sidebar:
-  order: 8
+  order: 10
 ---
 
 <!-- Generated from the live OpenAPI document by scripts/generate-api-reference.mjs — do not edit by hand. -->
@@ -61,7 +61,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/datastores" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — the listing names every table in the tenant, and a datastore session is confined to one.
+Embed: Deny — `403` “This embed session cannot manage datastores.” Listing names every table in the tenant, and creating one is schema work. A datastore session is confined to the one table it was minted for.
 
 ## Create a datastore (`create-datastore`)
 
@@ -140,7 +140,7 @@ resp, err := http.Post(baseURL+"/api/v1/datastores", "application/json", bytes.N
 
 :::
 
-Embed: Deny — creating a table is schema work, outside any session’s authority.
+Embed: Deny — `403` “This embed session cannot manage datastores.” Listing names every table in the tenant, and creating one is schema work. A datastore session is confined to the one table it was minted for.
 
 ## Get a datastore (`get-datastore`)
 
@@ -189,7 +189,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/datastores/{id}" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `datastore:read` — on the session’s own datastore only; another datastore’s id reads as `404`, not `403`, so a session cannot probe ids.
+Embed: Allow with `datastore:read` (every other datastore scope carries it). On the session’s own datastore only: the handler answers another datastore’s id with `404`, not `403`, so a session cannot probe ids.
 
 ## Rename a datastore (`rename-datastore`)
 
@@ -256,7 +256,7 @@ curl -X PUT "$KILASFLOW_HOST/api/v1/datastores/{id}" \
   -d '{"name":"string"}'
 ```
 
-Embed: Deny — renaming or dropping a table is schema work, not contents.
+Embed: Deny — `403` “This embed session cannot manage datastores.” Renaming, dropping, clearing and editing columns reshape the table itself, not its contents.
 
 ## Delete a datastore (`delete-datastore`)
 
@@ -282,7 +282,7 @@ curl -X DELETE "$KILASFLOW_HOST/api/v1/datastores/{id}" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — renaming or dropping a table is schema work, not contents.
+Embed: Deny — `403` “This embed session cannot manage datastores.” Renaming, dropping, clearing and editing columns reshape the table itself, not its contents.
 
 ## Add a column (`add-datastore-column`)
 
@@ -344,7 +344,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/datastores/{id}/columns" \
   -d '{"name":"string","type":"string"}'
 ```
 
-Embed: Deny — clearing every row and editing columns reshape the table itself, not its contents.
+Embed: Deny — `403` “This embed session cannot manage datastores.” Renaming, dropping, clearing and editing columns reshape the table itself, not its contents.
 
 ## Rename a column (`rename-datastore-column`)
 
@@ -405,7 +405,7 @@ curl -X PUT "$KILASFLOW_HOST/api/v1/datastores/{id}/columns/{name}" \
   -d '{"name":"string"}'
 ```
 
-Embed: Deny — clearing every row and editing columns reshape the table itself, not its contents.
+Embed: Deny — `403` “This embed session cannot manage datastores.” Renaming, dropping, clearing and editing columns reshape the table itself, not its contents.
 
 ## Delete a column (`delete-datastore-column`)
 
@@ -432,7 +432,7 @@ curl -X DELETE "$KILASFLOW_HOST/api/v1/datastores/{id}/columns/{name}" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — clearing every row and editing columns reshape the table itself, not its contents.
+Embed: Deny — `403` “This embed session cannot manage datastores.” Renaming, dropping, clearing and editing columns reshape the table itself, not its contents.
 
 ## Insert a row (`insert-datastore-row`)
 
@@ -494,7 +494,7 @@ resp, err := http.DefaultClient.Do(req)
 
 :::
 
-Embed: Allow with `datastore:write` — contents of the session’s own datastore: insert, upsert, increment, filtered update and delete, and the CSV import.
+Embed: Allow with `datastore:write`. On the session’s own datastore only: the handler answers another datastore’s id with `404`, not `403`, so a session cannot probe ids.
 
 ## Get a row (`get-datastore-row`)
 
@@ -521,7 +521,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/datastores/{id}/rows/{rowId}" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `datastore:read` — rows of the session’s own datastore; the CSV export included.
+Embed: Allow with `datastore:read` (every other datastore scope carries it). On the session’s own datastore only: the handler answers another datastore’s id with `404`, not `403`, so a session cannot probe ids.
 
 ## List rows (`list-datastore-rows`)
 
@@ -586,7 +586,7 @@ resp, err := http.Get(baseURL + "/api/v1/datastores/" + url.PathEscape(datastore
 
 :::
 
-Embed: Allow with `datastore:read` — rows of the session’s own datastore; the CSV export included.
+Embed: Allow with `datastore:read` (every other datastore scope carries it). On the session’s own datastore only: the handler answers another datastore’s id with `404`, not `403`, so a session cannot probe ids.
 
 ## Update rows (`update-datastore-rows`)
 
@@ -662,7 +662,7 @@ curl -X PUT "$KILASFLOW_HOST/api/v1/datastores/{id}/rows" \
   -d '{"filter":{"filters":[{"columnName":"string","condition":"string","value":null}],"type":"string"},"values":{}}'
 ```
 
-Embed: Allow with `datastore:write` — contents of the session’s own datastore: insert, upsert, increment, filtered update and delete, and the CSV import.
+Embed: Allow with `datastore:write`. On the session’s own datastore only: the handler answers another datastore’s id with `404`, not `403`, so a session cannot probe ids.
 
 ## Upsert rows (`upsert-datastore-row`)
 
@@ -759,7 +759,7 @@ resp, err := http.DefaultClient.Do(req)
 
 :::
 
-Embed: Allow with `datastore:write` — contents of the session’s own datastore: insert, upsert, increment, filtered update and delete, and the CSV import.
+Embed: Allow with `datastore:write`. On the session’s own datastore only: the handler answers another datastore’s id with `404`, not `403`, so a session cannot probe ids.
 
 ## Increment rows (`increment-datastore-rows`)
 
@@ -835,7 +835,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/datastores/{id}/rows/increment" \
   -d '{"column":"string","filter":{"filters":[{"columnName":"string","condition":"string","value":null}],"type":"string"}}'
 ```
 
-Embed: Allow with `datastore:write` — contents of the session’s own datastore: insert, upsert, increment, filtered update and delete, and the CSV import.
+Embed: Allow with `datastore:write`. On the session’s own datastore only: the handler answers another datastore’s id with `404`, not `403`, so a session cannot probe ids.
 
 ## Delete rows (`delete-datastore-rows`)
 
@@ -909,7 +909,7 @@ curl -X DELETE "$KILASFLOW_HOST/api/v1/datastores/{id}/rows" \
   -d '{"filter":{"filters":[{"columnName":"string","condition":"string","value":null}],"type":"string"}}'
 ```
 
-Embed: Allow with `datastore:write` — contents of the session’s own datastore: insert, upsert, increment, filtered update and delete, and the CSV import.
+Embed: Allow with `datastore:write`. On the session’s own datastore only: the handler answers another datastore’s id with `404`, not `403`, so a session cannot probe ids.
 
 ## Clear a datastore (`clear-datastore`)
 
@@ -949,7 +949,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/datastores/{id}/clear" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — clearing every row and editing columns reshape the table itself, not its contents.
+Embed: Deny — `403` “This embed session cannot manage datastores.” Renaming, dropping, clearing and editing columns reshape the table itself, not its contents.
 
 ## Import rows from CSV (`import-datastore-rows`)
 
@@ -1002,7 +1002,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/datastores/{id}/rows/import" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `datastore:write` — contents of the session’s own datastore: insert, upsert, increment, filtered update and delete, and the CSV import.
+Embed: Allow with `datastore:write`. On the session’s own datastore only: the handler answers another datastore’s id with `404`, not `403`, so a session cannot probe ids.
 
 ## Export rows as CSV (`export-datastore-rows`)
 
@@ -1029,4 +1029,4 @@ curl -X GET "$KILASFLOW_HOST/api/v1/datastores/{id}/rows/export" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `datastore:read` — rows of the session’s own datastore; the CSV export included.
+Embed: Allow with `datastore:read` (every other datastore scope carries it). On the session’s own datastore only: the handler answers another datastore’s id with `404`, not `403`, so a session cannot probe ids.

@@ -59,6 +59,14 @@ const RUN_COVERAGE = [
 	'kilasflow.sort@1',
 	'kilasflow.summarize@1',
 	'kilasflow.removeDuplicates@1',
+	'kilasflow.renameKeys@1',
+	'kilasflow.compareDatasets@1',
+	'kilasflow.crypto@1',
+	'kilasflow.xml@1',
+	'kilasflow.markdown@1',
+	'kilasflow.compression@1',
+	'kilasflow.html@1',
+	'kilasflow.convertToFile@1',
 	'kilasflow.dateTime@1',
 	'kilasflow.wait@1',
 	'kilasflow.executeWorkflow@1',
@@ -468,6 +476,114 @@ test('data-shaping nodes transform a stream end to end', async ({ server }) => {
 	expect(itemJson(record, 'sort')).toMatchObject({ name: 'Ada' });
 	expect(itemJson(record, 'sum')).toMatchObject({ count_name: 1 });
 	expect(itemJson(record, 'dedup')).toMatchObject({ count_name: 1 });
+});
+
+test('rename keys renames a field and compare datasets sorts two inputs onto four outputs', async ({ server }) => {
+	const renameId = await createWorkflow(
+		server.baseURL,
+		'Coverage Rename Keys',
+		[
+			manual(),
+			node('in', 'In', 'kilasflow.set', 1, { assignments: { first_name: 'Ada', age: 36 } }),
+			node('rename', 'Rename', 'kilasflow.renameKeys', 1, {
+				keys: { key: [{ currentKey: 'first_name', newKey: 'firstName' }] }
+			})
+		],
+		[conn('c1', 'manual', 'main', 'in', 'main'), conn('c2', 'in', 'main', 'rename', 'main')]
+	);
+	const renamed = itemJson(await runToSuccess(server.baseURL, renameId), 'rename');
+	expect(renamed).toMatchObject({ firstName: 'Ada', age: 36 });
+	expect(renamed).not.toHaveProperty('first_name');
+
+	// Both inputs carry the same record, so it leaves on the Same output (index 1).
+	const compareId = await createWorkflow(
+		server.baseURL,
+		'Coverage Compare Datasets',
+		[
+			manual(),
+			node('a', 'Set A', 'kilasflow.set', 1, { assignments: { id: 1, name: 'Ada' } }),
+			node('b', 'Set B', 'kilasflow.set', 1, { assignments: { id: 1, name: 'Ada' } }),
+			node('compare', 'Compare', 'kilasflow.compareDatasets', 1, {
+				mergeByFields: { values: [{ field1: 'id', field2: 'id' }] }
+			}),
+			node('same', 'Same', 'kilasflow.noOp')
+		],
+		[
+			conn('c1', 'manual', 'main', 'a', 'main'),
+			conn('c2', 'manual', 'main', 'b', 'main'),
+			conn('c3', 'a', 'main', 'compare', 'input1'),
+			conn('c4', 'b', 'main', 'compare', 'input2'),
+			conn('c5', 'compare', 'same', 'same', 'main')
+		]
+	);
+	const compared = await runToSuccess(server.baseURL, compareId);
+	expect(itemJson(compared, 'compare', 1)).toMatchObject({ id: 1, name: 'Ada' });
+	expect(itemJson(compared, 'same')).toMatchObject({ id: 1, name: 'Ada' });
+});
+
+test('the file and format nodes convert data end to end', async ({ server }) => {
+	// Crypto hashes a fixed value; XML writes a document and reads it back;
+	// Markdown renders; HTML extracts by CSS selector.
+	const dataId = await createWorkflow(
+		server.baseURL,
+		'Coverage Data Formats',
+		[
+			manual(),
+			node('in', 'In', 'kilasflow.set', 1, { assignments: { a: '1', b: '2' } }),
+			node('hash', 'Hash', 'kilasflow.crypto', 1, { action: 'hash', type: 'MD5', value: 'hello', dataPropertyName: 'digest' }),
+			node('toxml', 'To XML', 'kilasflow.xml', 1, { mode: 'jsonToxml', dataPropertyName: 'data', options: { headless: true, renderOpts: { pretty: false } } }),
+			node('fromxml', 'From XML', 'kilasflow.xml', 1, { mode: 'xmlToJson', dataPropertyName: 'data' }),
+			node('md', 'Markdown', 'kilasflow.markdown', 1, { mode: 'markdownToHtml', markdown: '# Hi', destinationKey: 'html' }),
+			node('extract', 'Extract', 'kilasflow.html', 1, {
+				operation: 'extractHtmlContent',
+				sourceData: 'json',
+				dataPropertyName: 'html',
+				extractionValues: { values: [{ key: 'heading', cssSelector: 'h1', returnValue: 'text' }] }
+			})
+		],
+		[
+			conn('c1', 'manual', 'main', 'in', 'main'),
+			conn('c2', 'in', 'main', 'hash', 'main'),
+			conn('c3', 'hash', 'main', 'toxml', 'main'),
+			conn('c4', 'toxml', 'main', 'fromxml', 'main'),
+			conn('c5', 'fromxml', 'main', 'md', 'main'),
+			conn('c6', 'md', 'main', 'extract', 'main')
+		]
+	);
+	const record = await runToSuccess(server.baseURL, dataId);
+	expect(itemJson(record, 'hash')).toMatchObject({ a: '1', b: '2', digest: '5d41402abc4b2a76b9719d911017c592' });
+	expect(itemJson(record, 'toxml').data).toBe(
+		'<root><a>1</a><b>2</b><digest>5d41402abc4b2a76b9719d911017c592</digest></root>'
+	);
+	expect(itemJson(record, 'fromxml')).toEqual({
+		root: { a: '1', b: '2', digest: '5d41402abc4b2a76b9719d911017c592' }
+	});
+	expect(itemJson(record, 'md').html).toBe('<h1 id="hi">Hi</h1>');
+	expect(itemJson(record, 'extract')).toEqual({ heading: 'Hi' });
+
+	// Convert to File writes a CSV into binary data, Compression zips it and
+	// unpacks it again.
+	const fileId = await createWorkflow(
+		server.baseURL,
+		'Coverage File Formats',
+		[
+			manual(),
+			node('in', 'In', 'kilasflow.set', 1, { assignments: { name: 'Ada', city: 'Jakarta' } }),
+			node('csv', 'To CSV', 'kilasflow.convertToFile', 1, { operation: 'csv', options: { fileName: 'people.csv' } }),
+			node('zip', 'Zip', 'kilasflow.compression', 1, { operation: 'compress', outputFormat: 'zip', fileName: 'people.zip' }),
+			node('unzip', 'Unzip', 'kilasflow.compression', 1, { operation: 'decompress' })
+		],
+		[
+			conn('c1', 'manual', 'main', 'in', 'main'),
+			conn('c2', 'in', 'main', 'csv', 'main'),
+			conn('c3', 'csv', 'main', 'zip', 'main'),
+			conn('c4', 'zip', 'main', 'unzip', 'main')
+		]
+	);
+	const files = await runToSuccess(server.baseURL, fileId);
+	expect(nodeRun(files, 'csv').output[0][0].binary.data.fileName).toBe('people.csv');
+	expect(nodeRun(files, 'zip').output[0][0].binary.data.fileName).toBe('people.zip');
+	expect(nodeRun(files, 'unzip').output[0][0].binary.file_0.fileName).toBe('people.csv');
 });
 
 test('http, sqlite, code, calculator, date-time and wait run against the stub', async ({ server, stub }) => {

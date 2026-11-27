@@ -20,13 +20,20 @@ import CopyMinus from '@lucide/svelte/icons/copy-minus';
 import CornerDownLeft from '@lucide/svelte/icons/corner-down-left';
 import Database from '@lucide/svelte/icons/database';
 import DatabaseSearch from '@lucide/svelte/icons/database-search';
+import FileArchive from '@lucide/svelte/icons/file-archive';
+import FileCode from '@lucide/svelte/icons/file-code';
+import FileDown from '@lucide/svelte/icons/file-down';
 import FileOutput from '@lucide/svelte/icons/file-output';
+import FileText from '@lucide/svelte/icons/file-text';
 import Filter from '@lucide/svelte/icons/filter';
 import Folder from '@lucide/svelte/icons/folder';
+import GitCompare from '@lucide/svelte/icons/git-compare';
 import Globe from '@lucide/svelte/icons/globe';
 import Group from '@lucide/svelte/icons/group';
 import HardDrive from '@lucide/svelte/icons/hard-drive';
+import KeyRound from '@lucide/svelte/icons/key-round';
 import Layers from '@lucide/svelte/icons/layers';
+import LayoutTemplate from '@lucide/svelte/icons/layout-template';
 import Link from '@lucide/svelte/icons/link';
 import ListEnd from '@lucide/svelte/icons/list-end';
 import Mail from '@lucide/svelte/icons/mail';
@@ -44,6 +51,7 @@ import Scissors from '@lucide/svelte/icons/scissors';
 import Send from '@lucide/svelte/icons/send';
 import Server from '@lucide/svelte/icons/server';
 import Sheet from '@lucide/svelte/icons/sheet';
+import ShieldCheck from '@lucide/svelte/icons/shield-check';
 import Sigma from '@lucide/svelte/icons/sigma';
 import Signpost from '@lucide/svelte/icons/signpost';
 import Sparkles from '@lucide/svelte/icons/sparkles';
@@ -107,6 +115,12 @@ const GLYPHS: Record<string, Component> = {
 	// An older name the server may still send for the alert glyph; both map to
 	// the same lucide icon so a cached catalogue and a fresh one agree.
 	'alert-triangle': TriangleAlert,
+	'file-archive': FileArchive,
+	'file-code': FileCode,
+	'file-down': FileDown,
+	'file-text': FileText,
+	'layout-template': LayoutTemplate,
+	'shield-check': ShieldCheck,
 	'triangle-alert': TriangleAlert,
 	'octagon-alert': OctagonAlert,
 	'calendar-clock': CalendarClock,
@@ -124,10 +138,12 @@ const GLYPHS: Record<string, Component> = {
 	folder: Folder,
 	form: ClipboardList,
 	'git-branch': Split,
+	'git-compare': GitCompare,
 	'git-merge': Merge,
 	globe: Globe,
 	group: Group,
 	'hard-drive': HardDrive,
+	'key-round': KeyRound,
 	layers: Layers,
 	link: Link,
 	'list-end': ListEnd,

@@ -128,5 +128,12 @@
 	"properties_condition_right_aria": "{label} right value {index}",
 	"properties_move_condition_up": "Move condition {index} up",
 	"properties_move_condition_down": "Move condition {index} down",
-	"properties_remove_condition": "Remove condition {index}"
+	"properties_remove_condition": "Remove condition {index}",
+	"properties_state_heading": "Node state",
+	"properties_disabled_label": "Disabled",
+	"properties_disabled_hint": "A disabled node is skipped: a run passes its input items through without executing it.",
+	"properties_notes_label": "Notes",
+	"properties_notes_hint": "Documentation for this node. It is saved with the workflow.",
+	"properties_notes_in_flow": "Display note in flow",
+	"properties_notes_in_flow_hint": "Shows the note under the node on the canvas."
 }

@@ -399,7 +399,7 @@ test('corpus: names match the Go loader and join baseline.json rows', async () =
 		blocked: number;
 		scores: Array<{ name: string }>;
 	};
-	expect(baseline.tiers).toEqual({ activatable: 15, imported: 40, runnable: 5 });
+	expect(baseline.tiers).toEqual({ activatable: 15, imported: 40, runnable: 15 });
 	expect(baseline.total).toBe(40);
 	const control = corpusName('control-datatable.json', 'kilasflow');
 	expect(baseline.scores.some((row) => row.name === control.name)).toBe(true);

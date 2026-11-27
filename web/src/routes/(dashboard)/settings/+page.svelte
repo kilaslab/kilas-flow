@@ -16,6 +16,7 @@
 	import { createGetHealth } from '$lib/api/generated/system/system';
 	import type { APIKeyResource, CreatedAPIKeyResource, HealthOutputBody, PrincipalResource } from '$lib/api/generated/models';
 	import ListStates from '$lib/components/dashboard/list-states.svelte';
+	import VariablesSection from '$lib/components/dashboard/variables-section.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
@@ -307,6 +308,8 @@
 				</ListStates>
 			</div>
 		</section>
+
+		<VariablesSection />
 
 		<section aria-label={m.settings_about()} class="rounded-xl border border-border bg-card p-4">
 			<h2 class="text-sm font-semibold">{m.settings_about()}</h2>

@@ -331,12 +331,46 @@ export interface BinaryRemoval {
   files: number;
 }
 
+/**
+ * default (the product font), system (the viewer's system UI font), or serif. Fonts are never loaded from elsewhere.
+ */
+export type BrandingFontFamily = typeof BrandingFontFamily[keyof typeof BrandingFontFamily];
+
+
+export const BrandingFontFamily = {
+  default: 'default',
+  system: 'system',
+  serif: 'serif',
+} as const;
+
+/**
+ * light, dark, or system to follow the viewer's colour-scheme preference. Empty keeps the default, dark.
+ */
+export type BrandingTheme = typeof BrandingTheme[keyof typeof BrandingTheme];
+
+
+export const BrandingTheme = {
+  light: 'light',
+  dark: 'dark',
+  system: 'system',
+} as const;
+
 export interface Branding {
   accent?: string;
+  /** default (the product font), system (the viewer's system UI font), or serif. Fonts are never loaded from elsewhere. */
+  fontFamily?: BrandingFontFamily;
   hideRun?: boolean;
   hideSave?: boolean;
   logoUrl?: string;
   name?: string;
+  /**
+     * Corner radius of cards, nodes, menus and dialogs, in pixels from 0 to 16; controls and chips scale from it. Omit for the default (10).
+     * @minimum 0
+     * @maximum 16
+     */
+  radius?: number;
+  /** light, dark, or system to follow the viewer's colour-scheme preference. Empty keeps the default, dark. */
+  theme?: BrandingTheme;
 }
 
 export interface CSVImportIssue {
@@ -905,11 +939,22 @@ export interface DuplicateWorkflowInputBody {
   name?: string;
 }
 
+export interface EmbedAllow {
+  /** Credential ids the document may attach, or "tenant" for every credential in the tenant. The embedded credential picker lists exactly these plus the ones the published revision uses. */
+  credentials?: string[] | 'tenant';
+  /** Data table ids the document may address (by id, or by the table's name), or "tenant" for every data table in the tenant. No session may create, rename, list, clear or drop a table whatever this says. */
+  datastores?: string[] | 'tenant';
+  /** Workflow ids an Execute Sub-workflow or Workflow Tool node may call, or "tenant" for every workflow in the tenant. A called workflow runs with what its own document uses. */
+  workflows?: string[] | 'tenant';
+}
+
 export interface EmbedSessionBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /** The host user this session acts for. Signed into the token and recorded as an embed actor on the revisions, publish events, and manual runs the session causes. Host-asserted: KilasFlow does not verify it. Omit it for an unnamed session. */
   actor?: Actor;
+  /** What the session's document may reference beyond what the workflow's published revision already uses. Workflow sessions only. Each id is checked against this tenant at mint (an unknown or foreign id answers 404); "tenant" opens the whole kind and needs a tenant-wide key. Omit it to confine the session to the published revision alone. */
+  allow?: EmbedAllow;
   /** Validated white-label values; never markup */
   branding?: Branding;
   /** Datastore this session may touch; exactly one of this and workflowId */
@@ -1579,6 +1624,44 @@ export interface NotReadyProblem {
   type?: string;
 }
 
+/**
+ * pending until a 2xx, delivered after one, dead once its attempts ran out
+ */
+export type NotificationDeliveryResourceStatus = typeof NotificationDeliveryResourceStatus[keyof typeof NotificationDeliveryResourceStatus];
+
+
+export const NotificationDeliveryResourceStatus = {
+  pending: 'pending',
+  delivered: 'delivered',
+  dead: 'dead',
+} as const;
+
+export interface NotificationDeliveryResource {
+  /** Attempts made so far */
+  attempts: number;
+  createdAt: string;
+  deliveredAt?: string;
+  /** Scheme and host of where the event is sent, as it was when the event was written; the path and query are withheld */
+  endpoint: string;
+  /** Stable event id, sent as the webhook-id header on every attempt */
+  id: string;
+  /** Why the last attempt failed */
+  lastError?: string;
+  /** HTTP status of the last attempt; absent when no response arrived */
+  lastStatusCode?: number;
+  /** When the next attempt is due; absent once delivered or dead */
+  nextAttemptAt?: string;
+  /** The exact body every attempt sends */
+  payload: unknown;
+  /** pending until a 2xx, delivered after one, dead once its attempts ran out */
+  status: NotificationDeliveryResourceStatus;
+  /** The execution or workflow the event is about */
+  subjectId?: string;
+  /** Event type, such as execution.failed */
+  type: string;
+  updatedAt: string;
+}
+
 export interface OauthStartResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -1635,9 +1718,12 @@ export type PublishEventFilterReason = typeof PublishEventFilterReason[keyof typ
 export const PublishEventFilterReason = {
   duplicate: 'duplicate',
   inactive: 'inactive',
+  filter: 'filter',
 } as const;
 
 export interface PublishEventFilter {
+  /** Why a filter entry was dropped: the event did not match the trigger filter, or the filter could not be evaluated and why. */
+  detail?: string;
   /** The execution a duplicate was collapsed with, when it is known. */
   executionId?: string;
   reason: PublishEventFilterReason;
@@ -1756,7 +1842,7 @@ export interface ScheduleBody {
   readonly $schema?: string;
   /** Whether this schedule fires */
   active: boolean;
-  /** Standard five-field cron expression, evaluated in UTC */
+  /** Cron expression: five fields, or six with a leading seconds field. Read in UTC unless it starts with a TZ=Area/City prefix and a space, for example TZ=Asia/Jakarta 0 9 * * * */
   cron: string;
   /** Schedule trigger node in that workflow */
   nodeId?: string;
@@ -1933,6 +2019,35 @@ export interface ValidateWorkflowResource {
   warnings?: ValidationWarning[] | null;
 }
 
+export interface VariableBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * Letters, digits and underscores, starting with a letter or underscore, so it reads as $vars.KEY.
+     * @minLength 1
+     * @maxLength 64
+     * @pattern ^[A-Za-z_][A-Za-z0-9_]*$
+     */
+  key: string;
+  /**
+     * Plain text, at most 4096 bytes. Stored unencrypted: a secret belongs in a credential.
+     * @maxLength 4096
+     */
+  value: string;
+}
+
+export interface VariableResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  createdAt: string;
+  id: string;
+  /** The name a workflow reads, as $vars.KEY. */
+  key: string;
+  updatedAt: string;
+  /** Plain text, stored unencrypted. Never put a secret here: use a credential. */
+  value: string;
+}
+
 export interface WebhookResponseEvent {
   at: string;
   /** Redacted, type-specific detail */
@@ -1948,6 +2063,40 @@ export interface WebhookResponseEvent {
   status?: string;
   type: string;
   workflowId?: string;
+}
+
+export type WorkflowContractSource = typeof WorkflowContractSource[keyof typeof WorkflowContractSource];
+
+
+export const WorkflowContractSource = {
+  active: 'active',
+  draft: 'draft',
+} as const;
+
+export interface WorkflowContractEntry {
+  nodeId: string;
+  nodeName: string;
+  nodeType: string;
+}
+
+export type WorkflowContractSchemaSchema = {[key: string]: unknown};
+
+export interface WorkflowContractSchema {
+  declared: boolean;
+  schema: WorkflowContractSchemaSchema;
+}
+
+export interface WorkflowContract {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  active: boolean;
+  entry: WorkflowContractEntry;
+  input: WorkflowContractSchema;
+  name: string;
+  output: WorkflowContractSchema;
+  source: WorkflowContractSource;
+  versionId: string;
+  workflowId: string;
 }
 
 export interface WorkflowDiagnosticsResource {
@@ -2416,6 +2565,28 @@ export type GetNodeIconTheme = typeof GetNodeIconTheme[keyof typeof GetNodeIconT
 export const GetNodeIconTheme = {
   light: 'light',
   dark: 'dark',
+} as const;
+
+export type ListNotificationDeliveriesParams = {
+/**
+ * Only events in this state
+ */
+status?: ListNotificationDeliveriesStatus;
+/**
+ * Maximum events to return (default 50)
+ * @minimum 1
+ * @maximum 200
+ */
+limit?: number;
+};
+
+export type ListNotificationDeliveriesStatus = typeof ListNotificationDeliveriesStatus[keyof typeof ListNotificationDeliveriesStatus];
+
+
+export const ListNotificationDeliveriesStatus = {
+  pending: 'pending',
+  delivered: 'delivered',
+  dead: 'dead',
 } as const;
 
 export type ListSchedulesParams = {
@@ -5092,6 +5263,64 @@ const res = await fetch(getLoadNodePropertySchemaUrl(type),
 
 
 
+export type listNotificationDeliveriesResponse200 = {
+  data: NotificationDeliveryResource[] | null
+  status: 200
+}
+
+export type listNotificationDeliveriesResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listNotificationDeliveriesResponseSuccess = (listNotificationDeliveriesResponse200) & {
+  headers: Headers;
+};
+export type listNotificationDeliveriesResponseError = (listNotificationDeliveriesResponseDefault) & {
+  headers: Headers;
+};
+
+export type listNotificationDeliveriesResponse = (listNotificationDeliveriesResponseSuccess | listNotificationDeliveriesResponseError)
+
+export const getListNotificationDeliveriesUrl = (params?: ListNotificationDeliveriesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/notifications/deliveries?${stringifiedParams}` : `/api/v1/notifications/deliveries`
+}
+
+/**
+ * Returns the newest outbound notification events of the caller's tenant with their delivery state: attempts made, the last response status and error, and when the next attempt is due. Events are kept for notifications.retention.
+ * @summary List notification deliveries
+ */
+export const listNotificationDeliveries = async (params?: ListNotificationDeliveriesParams, options?: RequestInit): Promise<listNotificationDeliveriesResponse> => {
+
+  const res = await fetch(getListNotificationDeliveriesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listNotificationDeliveriesResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listNotificationDeliveriesResponse
+}
+
+
+
 export type getReadyResponse200 = {
   data: ReadyOutputBody
   status: 200
@@ -5667,7 +5896,7 @@ export const getUpdateTenantUrl = (id: string,) => {
 }
 
 /**
- * Changes a tenant's settings. The body's settings object is merged into the stored one section by section, as a JSON merge patch (RFC 7396): a section set to null is removed, so the tenant falls back to the deployment configuration for it; an object is merged field by field, and a field set to null is removed. A section or field this server does not accept is refused with tenant_settings_unknown_key, a value its section rejects with tenant_settings_invalid, both as 422 with one error per problem located at body.settings.<section>.<field>; a patch with any problem writes nothing. A write that changes the document bumps settingsVersion by one, and an unchanged one keeps it. A change applies at once on the process that served it and within 5 s on every other process. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused. Sections this server accepts: rateLimit.
+ * Changes a tenant's settings. The body's settings object is merged into the stored one section by section, as a JSON merge patch (RFC 7396): a section set to null is removed, so the tenant falls back to the deployment configuration for it; an object is merged field by field, and a field set to null is removed. A section or field this server does not accept is refused with tenant_settings_unknown_key, a value its section rejects with tenant_settings_invalid, both as 422 with one error per problem located at body.settings.<section>.<field>; a patch with any problem writes nothing. A write that changes the document bumps settingsVersion by one, and an unchanged one keeps it. A change applies at once on the process that served it and within 5 s on every other process. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused. Sections this server accepts: nodes, notifications, rateLimit.
  * @summary Update a tenant's settings
  */
 export const updateTenant = async (id: string,
@@ -6026,6 +6255,223 @@ const res = await fetch(getSetTenantUserPasswordUrl(id,userId),
 
   const data: setTenantUserPasswordResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as setTenantUserPasswordResponse
+}
+
+
+
+export type listVariablesResponse200 = {
+  data: VariableResource[] | null
+  status: 200
+}
+
+export type listVariablesResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listVariablesResponseSuccess = (listVariablesResponse200) & {
+  headers: Headers;
+};
+export type listVariablesResponseError = (listVariablesResponseDefault) & {
+  headers: Headers;
+};
+
+export type listVariablesResponse = (listVariablesResponseSuccess | listVariablesResponseError)
+
+export const getListVariablesUrl = () => {
+
+
+
+
+  return `/api/v1/variables`
+}
+
+/**
+ * Returns every variable of the tenant, ordered by key. Every workflow of the tenant reads them as `$vars.KEY`. The list is not paged: a tenant holds at most 500 variables.
+ * @summary List variables
+ */
+export const listVariables = async ( options?: RequestInit): Promise<listVariablesResponse> => {
+
+  const res = await fetch(getListVariablesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listVariablesResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listVariablesResponse
+}
+
+
+
+export type createVariableResponse201 = {
+  data: VariableResource
+  status: 201
+}
+
+export type createVariableResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type createVariableResponseSuccess = (createVariableResponse201) & {
+  headers: Headers;
+};
+export type createVariableResponseError = (createVariableResponseDefault) & {
+  headers: Headers;
+};
+
+export type createVariableResponse = (createVariableResponseSuccess | createVariableResponseError)
+
+export const getCreateVariableUrl = () => {
+
+
+
+
+  return `/api/v1/variables`
+}
+
+/**
+ * Adds a variable. A key the tenant already has answers 409. The next execution that starts reads it.
+ * @summary Create a variable
+ */
+export const createVariable = async (variableBody: NonReadonly<VariableBody>, options?: RequestInit): Promise<createVariableResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getCreateVariableUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(variableBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createVariableResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createVariableResponse
+}
+
+
+
+export type deleteVariableResponse204 = {
+  data: void
+  status: 204
+}
+
+export type deleteVariableResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type deleteVariableResponseSuccess = (deleteVariableResponse204) & {
+  headers: Headers;
+};
+export type deleteVariableResponseError = (deleteVariableResponseDefault) & {
+  headers: Headers;
+};
+
+export type deleteVariableResponse = (deleteVariableResponseSuccess | deleteVariableResponseError)
+
+export const getDeleteVariableUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/variables/${id}`
+}
+
+/**
+ * Removes a variable. A workflow that still reads it gets an empty value from the next execution on.
+ * @summary Delete a variable
+ */
+export const deleteVariable = async (id: string, options?: RequestInit): Promise<deleteVariableResponse> => {
+
+  const res = await fetch(getDeleteVariableUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: deleteVariableResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as deleteVariableResponse
+}
+
+
+
+export type updateVariableResponse200 = {
+  data: VariableResource
+  status: 200
+}
+
+export type updateVariableResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type updateVariableResponseSuccess = (updateVariableResponse200) & {
+  headers: Headers;
+};
+export type updateVariableResponseError = (updateVariableResponseDefault) & {
+  headers: Headers;
+};
+
+export type updateVariableResponse = (updateVariableResponseSuccess | updateVariableResponseError)
+
+export const getUpdateVariableUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/variables/${id}`
+}
+
+/**
+ * Replaces a variable's key and value. Renaming onto a key the tenant already has answers 409. Executions already running keep the value they started with.
+ * @summary Update a variable
+ */
+export const updateVariable = async (id: string,
+    variableBody: NonReadonly<VariableBody>, options?: RequestInit): Promise<updateVariableResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getUpdateVariableUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(variableBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: updateVariableResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as updateVariableResponse
 }
 
 
@@ -6523,6 +6969,57 @@ export const activateWorkflow = async (id: string, options?: RequestInit): Promi
 
   const data: activateWorkflowResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as activateWorkflowResponse
+}
+
+
+
+export type getWorkflowContractResponse200 = {
+  data: WorkflowContract
+  status: 200
+}
+
+export type getWorkflowContractResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getWorkflowContractResponseSuccess = (getWorkflowContractResponse200) & {
+  headers: Headers;
+};
+export type getWorkflowContractResponseError = (getWorkflowContractResponseDefault) & {
+  headers: Headers;
+};
+
+export type getWorkflowContractResponse = (getWorkflowContractResponseSuccess | getWorkflowContractResponseError)
+
+export const getGetWorkflowContractUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/workflows/${id}/contract`
+}
+
+/**
+ * Returns the JSON Schema of the input the workflow's "When Executed by Another Workflow" trigger declares (its expected fields) and of the output the workflow declares in `settings.outputSchema`, for the revision a call would run: the active one, or the latest draft when the workflow is not active. A side the workflow does not declare is `{"type": "object"}` with `declared: false`. Declared fields are a check, never a filter, so the input schema allows additional properties.
+ * @summary Describe a workflow's input and output contract
+ */
+export const getWorkflowContract = async (id: string, options?: RequestInit): Promise<getWorkflowContractResponse> => {
+
+  const res = await fetch(getGetWorkflowContractUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getWorkflowContractResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getWorkflowContractResponse
 }
 
 

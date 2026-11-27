@@ -133,5 +133,12 @@
 	"properties_condition_right_aria": "Nilai kanan {label} {index}",
 	"properties_move_condition_up": "Naikkan kondisi {index}",
 	"properties_move_condition_down": "Turunkan kondisi {index}",
-	"properties_remove_condition": "Hapus kondisi {index}"
+	"properties_remove_condition": "Hapus kondisi {index}",
+	"properties_state_heading": "Status node",
+	"properties_disabled_label": "Nonaktif",
+	"properties_disabled_hint": "Node nonaktif dilewati: eksekusi meneruskan item masukannya tanpa menjalankan node ini.",
+	"properties_notes_label": "Catatan",
+	"properties_notes_hint": "Dokumentasi untuk node ini. Disimpan bersama alur kerja.",
+	"properties_notes_in_flow": "Tampilkan catatan di alur",
+	"properties_notes_in_flow_hint": "Menampilkan catatan di bawah node pada kanvas."
 }

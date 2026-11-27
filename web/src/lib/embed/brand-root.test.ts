@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { brandDocument, type BrandTarget } from './brand-root';
+import { appearanceProperties, brandDocument, resolveTheme, themeDocument, type BrandTarget } from './brand-root';
 
 function fakeRoot(): BrandTarget & { attrs: Map<string, string>; props: Map<string, string> } {
 	const attrs = new Map<string, string>();
@@ -40,5 +40,45 @@ describe('brandDocument', () => {
 		brandDocument(root, undefined)();
 		expect(root.attrs.size).toBe(0);
 		expect(root.props.size).toBe(0);
+	});
+});
+
+// A light-first host picks the palette, font and radius; portalled overlays
+// read them from <html>, so they go there as well as on the shell.
+describe('themeDocument', () => {
+	it('sets the resolved theme and appearance on the root and removes them again', () => {
+		const root = fakeRoot();
+		const cleanup = themeDocument(root, 'light', appearanceProperties({ fontFamily: 'serif', radius: 4 }));
+		expect(root.attrs.get('data-theme')).toBe('light');
+		expect(root.props.get('--kf-font-sans')).toContain('serif');
+		expect(root.props.get('--kf-radius-md')).toBe('4px');
+		expect(root.props.get('--kf-radius-sm')).toBe('2px');
+		cleanup();
+		expect(root.attrs.size).toBe(0);
+		expect(root.props.size).toBe(0);
+	});
+
+	it('leaves the root alone when the session names no theme or appearance', () => {
+		const root = fakeRoot();
+		themeDocument(root, undefined, appearanceProperties({}))();
+		expect(root.attrs.size).toBe(0);
+		expect(root.props.size).toBe(0);
+	});
+});
+
+describe('resolveTheme', () => {
+	it('follows the viewer only for system', () => {
+		expect(resolveTheme('system', true)).toBe('light');
+		expect(resolveTheme('system', false)).toBe('dark');
+		expect(resolveTheme('light', false)).toBe('light');
+		expect(resolveTheme('dark', true)).toBe('dark');
+		expect(resolveTheme(undefined, true)).toBeUndefined();
+	});
+});
+
+describe('appearanceProperties', () => {
+	it('keeps the product font for default and allows square corners', () => {
+		expect(appearanceProperties({ fontFamily: 'default' })).toEqual({});
+		expect(appearanceProperties({ radius: 0 })).toMatchObject({ '--kf-radius-md': '0px', '--kf-radius-xs': '0px' });
 	});
 });

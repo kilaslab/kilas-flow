@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 
 	import * as m from '$lib/paraglide/messages.js';
-	import { brandDocument } from '$lib/embed/brand-root';
+	import { appearanceProperties, brandDocument, resolveTheme, themeDocument } from '$lib/embed/brand-root';
 	import EmbedEditor from '$lib/embed/embed-editor.svelte';
 	import { embedSession } from '$lib/embed/session.svelte';
 
@@ -18,6 +18,29 @@
 	// Overlays portalled to <body> sit outside the shell below, so the accent
 	// also goes on <html> while this route is mounted (removed on destroy).
 	$effect(() => brandDocument(document.documentElement, branding.accent));
+
+	// The host's theme (FEAT-yrnkz0). `system` follows the viewer's
+	// prefers-color-scheme and keeps following it while the frame is open. The
+	// palette, font and radius go on <html> for the same reason the accent
+	// does: dialogs portalled to <body> must match the editor around them.
+	let prefersLight = $state(false);
+	$effect(() => {
+		if (branding.theme !== 'system') return;
+		const query = window.matchMedia('(prefers-color-scheme: light)');
+		prefersLight = query.matches;
+		const follow = (event: MediaQueryListEvent) => (prefersLight = event.matches);
+		query.addEventListener('change', follow);
+		return () => query.removeEventListener('change', follow);
+	});
+	const theme = $derived(resolveTheme(branding.theme, prefersLight));
+	const appearance = $derived(appearanceProperties(branding));
+	$effect(() => themeDocument(document.documentElement, theme, appearance));
+	const shellStyle = $derived(
+		[
+			branding.accent ? `--kf-accent-src: ${branding.accent};` : '',
+			...Object.entries(appearance).map(([name, value]) => `${name}: ${value};`)
+		].join(' ') || undefined
+	);
 </script>
 
 <svelte:head>
@@ -41,8 +64,9 @@
 <main
 	data-embed-shell
 	data-kf-brand
-	class="flex h-dvh min-h-0 flex-col bg-background"
-	style={branding.accent ? `--kf-accent-src: ${branding.accent};` : undefined}
+	data-theme={theme}
+	class="flex h-dvh min-h-0 flex-col bg-background text-foreground"
+	style={shellStyle}
 >
 	{#if embed.waiting}
 		<div aria-live="polite" class="grid flex-1 place-items-center text-sm text-muted-foreground">

@@ -418,6 +418,36 @@ idempotency:
   # Env: KILASFLOW_IDEMPOTENCY_RETENTION
   retention: 24h0m0s
 
+notifications:
+  # SigningKeyEnv names the environment variable holding the key every
+  # tenant's signing secret is derived from: any non-empty value, at least
+  # 32 bytes recommended (`openssl rand -base64 32`). Like the other keys,
+  # it never comes from the config file. A tenant's secret is
+  # base64(HMAC-SHA256(key, "kilasflow-notifications:" + tenant id)).
+  #
+  # While the variable is unset no notification is written at all, whatever
+  # a tenant's settings say: an event that could only ever be sent unsigned
+  # is not queued.
+  # Env: KILASFLOW_NOTIFICATIONS_SIGNING_KEY_ENV
+  signing_key_env: 'KILASFLOW_NOTIFICATIONS_SIGNING_KEY'
+  # MaxAttempts is how many times one event is attempted before it is
+  # dead-lettered: kept in the delivery log, never sent again. Bounded to
+  # between 1 and 50.
+  # Env: KILASFLOW_NOTIFICATIONS_MAX_ATTEMPTS
+  max_attempts: 8
+  # Retention is how long an event stays in the delivery log, delivered,
+  # dead or still pending. Bounded to between 1h and 2160h (90 days).
+  # Env: KILASFLOW_NOTIFICATIONS_RETENTION
+  retention: 168h0m0s
+  # Timeout bounds one delivery attempt, connection and response included.
+  # It is separate from outbound.timeout, which a slow API a workflow calls
+  # may need raised: a notification endpoint should answer quickly, and one
+  # that hangs costs a dispatcher lane for this long per attempt. The rest of
+  # the outbound egress policy (allowed hosts, the private-network guard)
+  # applies unchanged. Bounded to between 1s and 60s.
+  # Env: KILASFLOW_NOTIFICATIONS_TIMEOUT
+  timeout: 10s
+
 sql:
   # MaxRows is the largest row buffer a node may ask for. Zero falls back to
   # sqlnode's own ceiling rather than meaning unbounded.
@@ -503,6 +533,39 @@ packs:
   # and runs what the API would have refused.
   # Env: KILASFLOW_PACKS_VISIBLE_TO
   visible_to: []
+
+nodes:
+  # Allow limits the built-ins a tenant may use, as `"<node type>"` (every
+  # tenant) or `"<node type>=<tenant id>"` (one tenant) list entries. The
+  # allow list that applies to a tenant is every entry without a tenant plus
+  # every entry naming it, and the tenant's own nodes.allow settings; when it
+  # is not empty, only the built-ins on it are available to that tenant, plus
+  # the types the engine names itself (the sub-workflow trigger and the error
+  # trigger), which are always available. Empty, the default, limits nothing.
+  #
+  # It applies to built-in types only: a pack's nodes keep packs.visible_to. A
+  # hidden type behaves like a node scoped to other tenants: absent from the
+  # catalogue, refused as node.not_available at compile, activation and claim.
+  # An entry naming a type that is not a registered built-in refuses the boot.
+  #
+  # Give every process the same value. The API role hides an unavailable node,
+  # but the worker is the authority: a worker started without this key accepts
+  # and runs what the API would have refused.
+  # Env: KILASFLOW_NODES_ALLOW
+  allow: []
+  # Deny hides built-ins from a tenant, written like nodes.allow. Deny wins:
+  # a type on both lists is hidden. The deny list that applies to a tenant is
+  # every entry without a tenant plus every entry naming it, and the tenant's
+  # own nodes.deny settings, added together, so a tenant setting can add to
+  # what the deployment denies but never lift it.
+  #
+  # The engine-required types, kilasflow.errorTrigger and
+  # kilasflow.executeWorkflowTrigger, cannot be denied: an entry naming one
+  # refuses the boot, because a tenant's error workflows and sub-workflow
+  # calls would break from the inside. An entry naming a type that is not a
+  # registered built-in refuses the boot too, so a typo fails closed.
+  # Env: KILASFLOW_NODES_DENY
+  deny: []
 
 google:
   # ClientID is the platform Google Cloud OAuth client id. Empty means every

@@ -897,6 +897,71 @@ nothing to align with by default), keep this at or below it: a replay of
 a run whose execution has been pruned returns an id that no longer
 resolves.
 
+## notifications
+
+Notifications configures the signed deliveries a tenant receives when one
+of its runs fails or completes, or a workflow is activated or deactivated.
+
+A tenant chooses its endpoint and events in the notifications section of
+its settings (PATCH /api/v1/tenants/{id}/settings). The event is written to
+a durable outbox in the same transaction as the change it reports, and a
+dispatcher in every worker process delivers it at least once, retrying with
+a capped exponential backoff and dead-lettering it after max_attempts. Each
+tenant's deliveries are signed with a secret derived from one deployment
+key, so no secret is stored in a settings document.
+
+### notifications.signing_key_env
+
+- Type: `string`
+- Default: `'KILASFLOW_NOTIFICATIONS_SIGNING_KEY'`
+- Environment: `KILASFLOW_NOTIFICATIONS_SIGNING_KEY_ENV`
+- Required: no
+
+SigningKeyEnv names the environment variable holding the key every
+tenant's signing secret is derived from: any non-empty value, at least
+32 bytes recommended (`openssl rand -base64 32`). Like the other keys,
+it never comes from the config file. A tenant's secret is
+base64(HMAC-SHA256(key, "kilasflow-notifications:" + tenant id)).
+
+While the variable is unset no notification is written at all, whatever
+a tenant's settings say: an event that could only ever be sent unsigned
+is not queued.
+
+### notifications.max_attempts
+
+- Type: `integer`
+- Default: `8`
+- Environment: `KILASFLOW_NOTIFICATIONS_MAX_ATTEMPTS`
+- Required: no
+
+MaxAttempts is how many times one event is attempted before it is
+dead-lettered: kept in the delivery log, never sent again. Bounded to
+between 1 and 50.
+
+### notifications.retention
+
+- Type: `duration`
+- Default: `168h0m0s`
+- Environment: `KILASFLOW_NOTIFICATIONS_RETENTION`
+- Required: no
+
+Retention is how long an event stays in the delivery log, delivered,
+dead or still pending. Bounded to between 1h and 2160h (90 days).
+
+### notifications.timeout
+
+- Type: `duration`
+- Default: `10s`
+- Environment: `KILASFLOW_NOTIFICATIONS_TIMEOUT`
+- Required: no
+
+Timeout bounds one delivery attempt, connection and response included.
+It is separate from outbound.timeout, which a slow API a workflow calls
+may need raised: a notification endpoint should answer quickly, and one
+that hangs costs a dispatcher lane for this long per attempt. The rest of
+the outbound egress policy (allowed hosts, the private-network guard)
+applies unchanged. Bounded to between 1s and 60s.
+
 ## sql
 
 SQLNodes bounds what a workflow document may ask a database node for.
@@ -1073,6 +1138,62 @@ registered, or a tenant ID that is not a tenant ID, refuses the boot.
 Give every process the same value. The API role hides an invisible node,
 but the worker is the authority: a worker started without this key accepts
 and runs what the API would have refused.
+
+## nodes
+
+Nodes decides which built-in node types a tenant may use. packs.visible_to
+scopes a node pack to tenants; a built-in cannot be scoped that way, because
+the engine names some of them. This is the built-in counterpart: an allow list
+and a deny list, each for every tenant or for one, so a SaaS can keep SQLite
+(a file path on the server), Code, Postgres or HTTP Request away from its
+customers.
+
+The section name is one word for the same reason Binary is: envKeyToPath
+treats the first underscore as the section separator, so a two-word section
+could never be set from the environment.
+
+### nodes.allow
+
+- Type: `string list`
+- Default: `[]`
+- Environment: `KILASFLOW_NODES_ALLOW`
+- Required: no
+
+Allow limits the built-ins a tenant may use, as `"<node type>"` (every
+tenant) or `"<node type>=<tenant id>"` (one tenant) list entries. The
+allow list that applies to a tenant is every entry without a tenant plus
+every entry naming it, and the tenant's own nodes.allow settings; when it
+is not empty, only the built-ins on it are available to that tenant, plus
+the types the engine names itself (the sub-workflow trigger and the error
+trigger), which are always available. Empty, the default, limits nothing.
+
+It applies to built-in types only: a pack's nodes keep packs.visible_to. A
+hidden type behaves like a node scoped to other tenants: absent from the
+catalogue, refused as node.not_available at compile, activation and claim.
+An entry naming a type that is not a registered built-in refuses the boot.
+
+Give every process the same value. The API role hides an unavailable node,
+but the worker is the authority: a worker started without this key accepts
+and runs what the API would have refused.
+
+### nodes.deny
+
+- Type: `string list`
+- Default: `[]`
+- Environment: `KILASFLOW_NODES_DENY`
+- Required: no
+
+Deny hides built-ins from a tenant, written like nodes.allow. Deny wins:
+a type on both lists is hidden. The deny list that applies to a tenant is
+every entry without a tenant plus every entry naming it, and the tenant's
+own nodes.deny settings, added together, so a tenant setting can add to
+what the deployment denies but never lift it.
+
+The engine-required types, kilasflow.errorTrigger and
+kilasflow.executeWorkflowTrigger, cannot be denied: an entry naming one
+refuses the boot, because a tenant's error workflows and sub-workflow
+calls would break from the inside. An entry naming a type that is not a
+registered built-in refuses the boot too, so a typo fails closed.
 
 ## google
 

@@ -201,17 +201,31 @@ func (registry *Registry) setScope(nodeType string, tenants []string) {
 // VisibleTo reports whether tenantID may see nodeType.
 //
 // A type with no scope, and a registry with no scopes at all, is visible to
-// everyone — including an empty tenant ID. A scoped type is visible only to the
+// everyone — including an empty tenant ID — unless a built-in allow or deny rule
+// hides it from this tenant (availability.go). A scoped type is visible only to the
 // tenants in its set, and an empty or unknown ID is never in it: an unidentified
 // caller sees only what is unscoped. It answers true for a type that is not
 // registered at all, because hiding is a property of scoped types; whether a
 // type exists is the catalogue's own question.
 //
 // This is the whole cost visibility adds to a lookup: one length check and, for
-// a registry that scopes something, one map lookup by type. It allocates
-// nothing.
+// a registry that scopes something, one map lookup by type. A registry with
+// built-in availability rules also resolves the tenant's rules, which TenantView
+// does once per view rather than once per node. An unscoped registry with no
+// rules allocates nothing.
 func (registry *Registry) VisibleTo(nodeType, tenantID string) bool {
-	if registry == nil || len(registry.scopes) == 0 {
+	if registry == nil {
+		return true
+	}
+	if !registry.scopeAllows(nodeType, tenantID) {
+		return false
+	}
+	return !registry.availability.resolve(tenantID).hides(nodeType)
+}
+
+// scopeAllows is the pack-scope half of VisibleTo.
+func (registry *Registry) scopeAllows(nodeType, tenantID string) bool {
+	if len(registry.scopes) == 0 {
 		return true
 	}
 	allowed, scoped := registry.scopes[nodeType]
@@ -222,14 +236,22 @@ func (registry *Registry) VisibleTo(nodeType, tenantID string) bool {
 	return member
 }
 
-// Scoped reports whether nodeType has a visibility scope, so a caller that
-// serves something type-specific can avoid letting a shared cache hold it.
+// Scoped reports whether nodeType is visible to some tenants only, so a caller
+// that serves something type-specific can avoid letting a shared cache hold it.
+// That is a type with a visibility scope and a built-in the availability rules
+// can hide.
 func (registry *Registry) Scoped(nodeType string) bool {
 	if registry == nil {
 		return false
 	}
-	_, scoped := registry.scopes[nodeType]
-	return scoped
+	if _, scoped := registry.scopes[nodeType]; scoped {
+		return true
+	}
+	if registry.availability != nil {
+		_, managed := registry.availability.decider[nodeType]
+		return managed
+	}
+	return false
 }
 
 // Scopes returns a copy of every scoped type and its sorted tenant list, for
@@ -254,12 +276,13 @@ func (registry *Registry) Scopes() map[string][]string {
 // List. It is never nil, so it serialises as an empty array rather than null.
 func (registry *Registry) ListFor(tenantID string) []Definition {
 	definitions := registry.List()
-	if registry == nil || len(registry.scopes) == 0 {
+	if registry == nil || (len(registry.scopes) == 0 && registry.availability == nil) {
 		return definitions
 	}
+	rules := registry.availability.resolve(tenantID)
 	visible := definitions[:0]
 	for _, definition := range definitions {
-		if registry.VisibleTo(definition.Type, tenantID) {
+		if registry.scopeAllows(definition.Type, tenantID) && !rules.hides(definition.Type) {
 			visible = append(visible, definition)
 		}
 	}
@@ -291,19 +314,35 @@ var (
 // implement workflow.TenantScoper, so a narrowed view can never be widened by
 // scoping it again.
 func (registry *Registry) ForTenant(tenantID string) workflow.Catalog {
-	return TenantView{registry: registry, tenantID: tenantID}
+	if registry == nil {
+		return TenantView{tenantID: tenantID}
+	}
+	return TenantView{registry: registry, tenantID: tenantID, rules: registry.availability.resolve(tenantID)}
 }
 
 // TenantView is a registry narrowed to one tenant.
 type TenantView struct {
 	registry *Registry
 	tenantID string
+	// rules is the built-in allow and deny state worked out for tenantID when
+	// the view was made, so a compile asks it per node without reading the
+	// tenant's settings again.
+	rules resolvedAvailability
+}
+
+// visible is Registry.VisibleTo for this view's tenant, using the rules resolved
+// when the view was made.
+func (view TenantView) visible(nodeType string) bool {
+	if view.registry == nil {
+		return true
+	}
+	return view.registry.scopeAllows(nodeType, view.tenantID) && !view.rules.hides(nodeType)
 }
 
 // Lookup implements workflow.Catalog. A type the tenant may not see is refused
 // before it is resolved, so the refusal costs no clone of the definition.
 func (view TenantView) Lookup(nodeType string, version workflow.TypeVersion) (workflow.NodeDefinition, bool) {
-	if !view.registry.VisibleTo(nodeType, view.tenantID) {
+	if !view.visible(nodeType) {
 		return workflow.NodeDefinition{}, false
 	}
 	return view.registry.Lookup(nodeType, version)
@@ -313,14 +352,14 @@ func (view TenantView) Lookup(nodeType string, version workflow.TypeVersion) (wo
 // tenant may see it. A hidden type is therefore reported exactly like one that
 // does not exist, unless the caller asks Restricted.
 func (view TenantView) HasType(nodeType string) bool {
-	return view.registry.VisibleTo(nodeType, view.tenantID) && view.registry.HasType(nodeType)
+	return view.visible(nodeType) && view.registry.HasType(nodeType)
 }
 
 // Restricted implements workflow.RestrictedCatalog: the type is registered but
 // scoped away from this tenant. Only a registered type can have a scope, so
 // this is a single lookup and a type that does not exist is not restricted.
 func (view TenantView) Restricted(nodeType string) bool {
-	return !view.registry.VisibleTo(nodeType, view.tenantID)
+	return !view.visible(nodeType)
 }
 
 // ResolveN8NType is the tenant-narrowed half of Registry.ResolveN8NType: a
@@ -329,7 +368,7 @@ func (view TenantView) Restricted(nodeType string) bool {
 // cannot run.
 func (view TenantView) ResolveN8NType(packageName, nodeName string) (Definition, bool) {
 	definition, found := view.registry.ResolveN8NType(packageName, nodeName)
-	if !found || !view.registry.VisibleTo(definition.Type, view.tenantID) {
+	if !found || !view.visible(definition.Type) {
 		return Definition{}, false
 	}
 	return definition, true
@@ -339,7 +378,7 @@ func (view TenantView) ResolveN8NType(packageName, nodeName string) (Definition,
 // same reason as ResolveN8NType: a type scoped away from this tenant is not
 // this tenant's to export.
 func (view TenantView) N8NIdentity(nodeType string) (string, string, bool) {
-	if !view.registry.VisibleTo(nodeType, view.tenantID) {
+	if !view.visible(nodeType) {
 		return "", "", false
 	}
 	return view.registry.N8NIdentity(nodeType)

@@ -87,7 +87,7 @@ resp, err := http.Get(baseURL + "/api/v1/executions?workflowId=" + url.QueryEsca
 
 :::
 
-Embed: Allow with `workflow:read` — the query must name the session’s workflow (`workflowId`).
+Embed: Allow with `workflow:read` (every other workflow scope carries it), on the session’s own workflow only — the gate refuses any other workflow id. The query must name the session’s own workflow in `workflowId`.
 
 ## Get a workflow execution (`get-execution`)
 
@@ -195,7 +195,7 @@ resp, err := http.Get(baseURL + "/api/v1/executions/" + url.PathEscape(execution
 
 :::
 
-Embed: Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to.
+Embed: Allow with `workflow:read` (every other workflow scope carries it). Which workflow an execution belongs to is known only after loading it, so the handler checks it. An execution of another workflow answers `404`, not `403`; a sub-workflow run started from the session’s own workflow is readable.
 
 ## Cancel a workflow execution (`cancel-execution`)
 
@@ -263,7 +263,7 @@ resp, err := http.DefaultClient.Do(req)
 
 :::
 
-Embed: Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to.
+Embed: Allow with `workflow:read` (every other workflow scope carries it). Which workflow an execution belongs to is known only after loading it, so the handler checks it. An execution of another workflow answers `404`, not `403`; a sub-workflow run started from the session’s own workflow is readable.
 
 ## Retry a finished execution (`retry-execution`)
 
@@ -358,7 +358,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/executions/{id}/retry" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to.
+Embed: Allow with `workflow:run`. The document that would run is checked against the session’s confinement first; see [Embed sessions](/guides/embed-sessions/#confinement).
 
 ## Evaluate an expression against an execution (`eval-expression`)
 
@@ -421,7 +421,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/executions/{id}/eval" \
   -d '{"expression":"string"}'
 ```
 
-Embed: Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to.
+Embed: Allow with `workflow:read` (every other workflow scope carries it). Which workflow an execution belongs to is known only after loading it, so the handler checks it. An execution of another workflow answers `404`, not `403`; a sub-workflow run started from the session’s own workflow is readable.
 
 ## Stream execution events (`stream-execution-events`)
 
@@ -449,4 +449,4 @@ curl -X GET "$KILASFLOW_HOST/api/v1/executions/{id}/events" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to.
+Embed: Allow with `workflow:read` (every other workflow scope carries it). Which workflow an execution belongs to is known only after loading it, so the handler checks it. An execution of another workflow answers `404`, not `403`; a sub-workflow run started from the session’s own workflow is readable.

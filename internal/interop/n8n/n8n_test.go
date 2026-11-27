@@ -748,7 +748,11 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.aggregate ↔ kilasflow.aggregate",
 		"n8n-nodes-base.code ↔ kilasflow.foreignCode",
 		"n8n-nodes-base.code ↔ kilasflow.jsCode",
+		"n8n-nodes-base.compareDatasets ↔ kilasflow.compareDatasets",
+		"n8n-nodes-base.compression ↔ kilasflow.compression",
+		"n8n-nodes-base.convertToFile ↔ kilasflow.convertToFile",
 		"n8n-nodes-base.cron ↔ kilasflow.schedule",
+		"n8n-nodes-base.crypto ↔ kilasflow.crypto",
 		"n8n-nodes-base.dataTable ↔ kilasflow.datastore",
 		"n8n-nodes-base.dataTableTool ↔ kilasflow.datastoreTool",
 		"n8n-nodes-base.dateTime ↔ kilasflow.dateTime",
@@ -770,6 +774,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.googleSheets ↔ kilasflow.googleSheets",
 		"n8n-nodes-base.googleSheetsTool ↔ kilasflow.googleSheetsTool",
 		"n8n-nodes-base.googleSheetsTrigger ↔ kilasflow.googleSheetsTrigger",
+		"n8n-nodes-base.html ↔ kilasflow.html",
 		"n8n-nodes-base.httpRequest ↔ kilasflow.httpRequest",
 		"n8n-nodes-base.httpRequestTool ↔ kilasflow.httpTool",
 		"n8n-nodes-base.if ↔ kilasflow.if",
@@ -777,12 +782,14 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.itemLists ↔ kilasflow.splitOut",
 		"n8n-nodes-base.limit ↔ kilasflow.limit",
 		"n8n-nodes-base.manualTrigger ↔ kilasflow.manual",
+		"n8n-nodes-base.markdown ↔ kilasflow.markdown",
 		"n8n-nodes-base.merge ↔ kilasflow.merge",
 		"n8n-nodes-base.mySql ↔ kilasflow.mysql",
 		"n8n-nodes-base.noOp ↔ kilasflow.noOp",
 		"n8n-nodes-base.postgres ↔ kilasflow.postgres",
 		"n8n-nodes-base.postgresTool ↔ kilasflow.postgresTool",
 		"n8n-nodes-base.removeDuplicates ↔ kilasflow.removeDuplicates",
+		"n8n-nodes-base.renameKeys ↔ kilasflow.renameKeys",
 		"n8n-nodes-base.respondToWebhook ↔ kilasflow.respondToWebhook",
 		"n8n-nodes-base.rssFeedRead ↔ kilasflow.rssFeedRead",
 		"n8n-nodes-base.rssFeedReadTool ↔ kilasflow.rssFeedReadTool",
@@ -792,6 +799,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.sort ↔ kilasflow.sort",
 		"n8n-nodes-base.splitInBatches ↔ kilasflow.loop",
 		"n8n-nodes-base.splitOut ↔ kilasflow.splitOut",
+		"n8n-nodes-base.spreadsheetFile ↔ kilasflow.convertToFile",
 		"n8n-nodes-base.stickyNote ↔ kilasflow.stickyNote",
 		"n8n-nodes-base.stopAndError ↔ kilasflow.stopAndError",
 		"n8n-nodes-base.summarize ↔ kilasflow.summarize",
@@ -801,6 +809,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.telegramTrigger ↔ kilasflow.telegramTrigger",
 		"n8n-nodes-base.wait ↔ kilasflow.wait",
 		"n8n-nodes-base.webhook ↔ kilasflow.webhook",
+		"n8n-nodes-base.xml ↔ kilasflow.xml",
 		"n8n-nodes-gowa.gowa ↔ kilasflow.httpRequest",
 		"n8n-nodes-waha.WAHA ↔ pack.waha",
 		"n8n-nodes-waha.wahaTrigger ↔ pack.wahaTrigger",
@@ -930,7 +939,7 @@ const switchFixture = `{
   "name": "Three ways",
   "nodes": [
     {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
-    {"id":"b","name":"Route","type":"n8n-nodes-base.compareDatasets","typeVersion":2,"position":[220,0],"parameters":{"rules":{}}},
+    {"id":"b","name":"Route","type":"n8n-nodes-base.microsoftOutlook","typeVersion":2,"position":[220,0],"parameters":{"rules":{}}},
     {"id":"c","name":"First","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[440,-120],"parameters":{}},
     {"id":"d","name":"Second","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[440,0],"parameters":{}},
     {"id":"e","name":"Third","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[440,120],"parameters":{}}
@@ -1153,7 +1162,7 @@ func TestPlaceholderStillRefusesToCompile(t *testing.T) {
 	if err == nil {
 		t.Fatal("a workflow containing an unsupported placeholder must not compile")
 	}
-	if !strings.Contains(err.Error(), "n8n-nodes-base.compareDatasets") {
+	if !strings.Contains(err.Error(), "n8n-nodes-base.microsoftOutlook") {
 		t.Errorf("compile error = %v, want it to name the original n8n type", err)
 	}
 }

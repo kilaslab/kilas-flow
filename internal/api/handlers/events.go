@@ -115,9 +115,11 @@ type PublishEventMatch struct {
 type PublishEventFilter struct {
 	WorkflowID string `json:"workflowId" doc:"The workflow that was considered."`
 	// Reason is why it did not run: duplicate (this eventId already reached
-	// this workflow inside the delivery window) or inactive (the workflow was
-	// deactivated between the subscription listing and the queue).
-	Reason      string `json:"reason" enum:"duplicate,inactive"`
+	// this workflow inside the delivery window), inactive (the workflow was
+	// deactivated between the subscription listing and the queue) or filter
+	// (no listening trigger's filter admitted the event).
+	Reason      string `json:"reason" enum:"duplicate,inactive,filter"`
+	Detail      string `json:"detail,omitempty" doc:"Why a filter entry was dropped: the event did not match the trigger filter, or the filter could not be evaluated and why."`
 	ExecutionID string `json:"executionId,omitempty" doc:"The execution a duplicate was collapsed with, when it is known."`
 }
 
@@ -212,7 +214,10 @@ func publishEventResult(result hostevents.Result) PublishEventResult {
 		converted.Matched = append(converted.Matched, PublishEventMatch(matched))
 	}
 	for _, filtered := range result.Filtered {
-		converted.Filtered = append(converted.Filtered, PublishEventFilter(filtered))
+		converted.Filtered = append(converted.Filtered, PublishEventFilter{
+			WorkflowID: filtered.WorkflowID, Reason: filtered.Reason,
+			Detail: filtered.Detail, ExecutionID: filtered.ExecutionID,
+		})
 	}
 	return converted
 }

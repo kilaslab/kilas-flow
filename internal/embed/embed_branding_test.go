@@ -143,7 +143,8 @@ func TestBrandingWithDefaultsHandlesEveryField(t *testing.T) {
 	}
 }
 
-// writeEveryField sets every string field to text and every bool to true,
+// writeEveryField sets every string field to text, every bool to true and
+// every optional number to one derived from text,
 // failing the test on a kind the merge was never taught about.
 func writeEveryField(t *testing.T, value reflect.Value, text string) {
 	t.Helper()
@@ -156,6 +157,16 @@ func writeEveryField(t *testing.T, value reflect.Value, text string) {
 			field.SetString(text)
 		case reflect.Bool:
 			field.SetBool(true)
+		case reflect.Pointer:
+			// An optional number (the radius): a distinct value per call, so
+			// a merge that took the wrong side would show it.
+			if field.Type().Elem().Kind() != reflect.Int {
+				t.Fatalf("embed.Branding.%s points at a %s: extend Branding.WithDefaults for it, and this guard",
+					kind.Field(index).Name, field.Type().Elem().Kind())
+			}
+			number := reflect.New(field.Type().Elem())
+			number.Elem().SetInt(int64(len(text) + int(text[0])))
+			field.Set(number)
 		default:
 			t.Fatalf("embed.Branding.%s is a %s: extend Branding.WithDefaults for it, and this guard",
 				kind.Field(index).Name, field.Kind())

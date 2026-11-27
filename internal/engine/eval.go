@@ -98,6 +98,11 @@ func (service *Service) EvaluateExpression(ctx context.Context, record execution
 	if err != nil {
 		return ExpressionEvaluation{}, err
 	}
+	// `$vars` reads the tenant's variables as they are now, not as they were
+	// when the run happened: the store keeps no history of them.
+	if roots.Vars, err = service.variablesFor(ctx, record.TenantID); err != nil {
+		return ExpressionEvaluation{}, err
+	}
 
 	deadline, cancel, err := service.evaluationDeadline(ctx, document, target.NodeID)
 	if err != nil {

@@ -5,11 +5,23 @@
  * Embeddable workflow automation engine. Every operation available in the editor is available here: the canvas is a client of this API, not the owner of workflow state.
  * OpenAPI spec version: 0.1.0-dev
  */
+import type { BrandingFontFamily } from './brandingFontFamily';
+import type { BrandingTheme } from './brandingTheme';
 
 export interface Branding {
   accent?: string;
+  /** default (the product font), system (the viewer's system UI font), or serif. Fonts are never loaded from elsewhere. */
+  fontFamily?: BrandingFontFamily;
   hideRun?: boolean;
   hideSave?: boolean;
   logoUrl?: string;
   name?: string;
+  /**
+     * Corner radius of cards, nodes, menus and dialogs, in pixels from 0 to 16; controls and chips scale from it. Omit for the default (10).
+     * @minimum 0
+     * @maximum 16
+     */
+  radius?: number;
+  /** light, dark, or system to follow the viewer's colour-scheme preference. Empty keeps the default, dark. */
+  theme?: BrandingTheme;
 }

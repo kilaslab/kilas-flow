@@ -7,6 +7,21 @@ until the server surface it targets is considered stable; see `README.md`.
 
 ## Unreleased
 
+- **Additive**: `listNotificationDeliveries({ status?, limit? })` —
+  `GET /api/v1/notifications/deliveries`, the caller's tenant's log of
+  signed outbound notifications: each event's id, type, endpoint, `status`
+  (`pending`, `delivered`, `dead`), `attempts`, `lastStatusCode`,
+  `lastError`, `nextAttemptAt` and exact `payload`. The generated types gain
+  `NotificationDeliveryResource` and `ListNotificationDeliveriesParams`. A
+  server without notifications answers `404`.
+- **Additive**: `createEmbedSession` accepts an optional
+  `allow: { credentials?, datastores?, workflows? }`, each a list of ids or
+  `'tenant'`, so a workflow session's document may use resources the host
+  provisioned beyond what the published revision references. The server
+  checks every id against the minting tenant (an unknown or foreign id is a
+  `404`) and accepts `'tenant'` only from a tenant-wide key. New exported
+  types `EmbedAllowSet` and `EmbedAllowList`; the generated types gain
+  `EmbedAllow`. A server without the field refuses it with a `422`.
 - **Additive**: `createEmbedSession` accepts an optional
   `actor: { id, displayName? }` naming the host user the session acts for.
   The server signs it into the token and records it on the revisions, publish

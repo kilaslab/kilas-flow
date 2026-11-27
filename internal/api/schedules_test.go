@@ -1,8 +1,10 @@
 package api_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 )
 
 // TestCreatingAScheduleWithAnImpossibleCronIsRefused is BUG-g7ffj1's API-level
@@ -24,5 +26,41 @@ func TestCreatingAScheduleWithAnImpossibleCronIsRefused(t *testing.T) {
 		if recorder.Code != http.StatusUnprocessableEntity {
 			t.Errorf("active=%v: status = %d, want 422 (body: %s)", active, recorder.Code, recorder.Body)
 		}
+	}
+}
+
+// The cron field's documentation says an expression is read in UTC unless it
+// starts with a TZ= prefix, and that is the only zone the REST surface takes:
+// the resource carries no timezone field, because a schedule a workflow's
+// Schedule Trigger registers takes its zone from the workflow's settings
+// instead. A reference that said "evaluated in UTC" without the prefix sent a
+// reader in Jakarta to write 02:00 for nine in the morning.
+func TestAScheduleCronReadsInUTCUnlessItCarriesATimezonePrefix(t *testing.T) {
+	server, keys := newAuthenticatedAPI(t, "acme")
+	workflowID := server.createWorkflowAs(t, keys["acme"], "Zoned schedule")
+
+	nextRun := func(cron string) time.Time {
+		t.Helper()
+		recorder := server.call(t, http.MethodPost, "/api/v1/schedules", keys["acme"], map[string]any{
+			"workflowId": workflowID, "nodeId": "manual-" + cron, "cron": cron, "active": true,
+		})
+		if recorder.Code != http.StatusCreated {
+			t.Fatalf("create %q: status = %d, want 201 (body: %s)", cron, recorder.Code, recorder.Body)
+		}
+		var created struct {
+			NextRunAt time.Time `json:"nextRunAt"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &created); err != nil {
+			t.Fatalf("decode %q: %v", cron, err)
+		}
+		return created.NextRunAt.UTC()
+	}
+
+	if got := nextRun("0 9 * * *"); got.Hour() != 9 || got.Minute() != 0 {
+		t.Errorf("a bare cron fires at %s, want 09:00 UTC", got.Format(time.RFC3339))
+	}
+	// Jakarta is UTC+7 all year, so nine there is two in the morning in UTC.
+	if got := nextRun("TZ=Asia/Jakarta 0 9 * * *"); got.Hour() != 2 || got.Minute() != 0 {
+		t.Errorf("a TZ=Asia/Jakarta cron fires at %s, want 02:00 UTC", got.Format(time.RFC3339))
 	}
 }

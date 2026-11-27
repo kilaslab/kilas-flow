@@ -11,6 +11,15 @@ exists; this page assembles them into one feature. The code it quotes runs:
 `sdk/examples/reference-host` is a minimal host that serves two tenants
 from one process, and every snippet below is copied from it.
 
+For the whole integration in order, from provisioning a tenant to going to
+production, read the [SaaS integration playbook](/guides/saas-playbook/). This
+page is the detail behind its embedding steps.
+
+What a session may call, what its document may reference, how long it lives and
+which origins and CORS rules apply is collected, with the exact refusal texts,
+in [Embed sessions in depth](/guides/embed-sessions/). The per-operation answer
+is the generated [embed permit table](/reference/api/embed-permits/).
+
 Background on any single mechanism lives in [Tenancy and the embed
 boundary](/concepts/tenancy-and-embedding/), [Triggers and
 webhooks](/concepts/webhooks/), and [Credentials](/concepts/credentials/).
@@ -51,11 +60,12 @@ that key; the end user never sees it.
 
 ### 1. Provision the workflow server-side
 
-Import, rather than create, when the workflow starts from a trigger. The
-import response is the only call that reports the minted webhook address
-back — activation reports nothing — and activating never changes the
-reported address. Without it the host would own a workflow and have no
-URL to send anything to:
+Import, rather than create, when the workflow starts from a trigger and you
+want the address in the same call: the import response reports the minted
+webhook address. Activation reports nothing and never changes the address. A
+workflow made with `createWorkflow` gets the same address from
+`GET /api/v1/workflows/{id}/webhooks` (`listWorkflowWebhooks`), which mints it
+on first read, so the address is known before the workflow is active either way:
 
 ```js
 const imported = await tenant.client.importWorkflow({
@@ -229,6 +239,94 @@ await tenant.client.createEmbedSession({
 The two scopes are for embed sessions only. A scoped API key cannot be minted
 with them — publishing and activation stay with the tenant-wide key.
 
+#### What the editor may reference: confinement and `allow`
+
+Scopes bound which endpoints a session may call. Its **confinement** bounds
+what the document it saves or runs may reference: the credentials its nodes
+attach, the data tables a Data table node addresses, and the workflows an
+Execute Sub-workflow or Workflow Tool node calls. The document is checked
+against it on every save, publish, activation, restore, run and retry.
+
+By default the confinement is derived at mint from the revision the
+workflow's owner published, or the latest draft if nothing was ever
+published: whatever that revision uses, plus the workflow itself so it may
+call itself. A blank workflow references nothing, so an end user who builds a
+new automation inside the embed cannot pick the credential or data table you
+provisioned for their organisation. `allow` widens it:
+
+```js
+await tenant.client.createEmbedSession({
+  workflowId: tenant.workflowId,
+  scopes: ['workflow:read', 'workflow:write', 'workflow:run'],
+  origin,
+  allow: {
+    credentials: [tenant.crmCredentialId], // these ids...
+    datastores: [tenant.contactsTableId],
+    workflows: 'tenant' // ...or every one of the tenant's
+  }
+});
+```
+
+- Each kind is optional and is either a list of ids or the string
+  `"tenant"`. The token carries the union of the derived set and what you
+  declared. Leave `allow` out and the session gets exactly the derived set,
+  as before.
+- Every id is checked against the minting tenant before a token exists. An
+  id the tenant does not own answers `404`, whether nobody stored it or
+  another tenant did, and nothing is minted.
+- `"tenant"` opens that whole kind of this tenant. It travels in the token as
+  a flag, not as a list of ids, so it also covers resources created after the
+  mint. Only a tenant-wide key or a dashboard user may declare it. A caller
+  confined to part of the tenant, such as a scoped key or a key bound to one
+  workflow, is refused with a `403`.
+- At most 50 ids per kind, because the ids travel in the token on every
+  request. For more than that, use `"tenant"`.
+- A declared data table is granted by its id and by the name it has at mint,
+  so a node that addresses it By Name passes too.
+- `allow` is for workflow sessions. On a datastore session it is a `422`.
+- The embedded credential picker lists exactly the credentials the
+  confinement grants: the derived ones plus the declared ones, or every
+  credential in the tenant under `"tenant"`.
+- A server older than this field refuses a mint body that carries `allow`
+  with a `422`, so upgrade KilasFlow before your host starts sending it.
+
+What `allow` does not change:
+
+- No session may create, list, rename, clear or drop a data table, and no
+  node may choose its data table or sub-workflow with an expression.
+- A credential with no allowed domains is still refused on a node that sends
+  requests, whatever the grant, because the guest can edit the URL. See
+  [credentials in a confined caller's document](/concepts/tenancy-and-embedding/#credentials-in-a-confined-callers-document).
+- A workflow that a granted Execute Sub-workflow or Workflow Tool node calls
+  runs with its own document, so it uses whatever credentials and data tables
+  that workflow uses. Granting `workflows: 'tenant'` lends the guest every
+  workflow in the tenant as a building block. List ids when that is too much.
+- A declared grant can outlive its session. Later sessions derive their
+  confinement from the published revision, or from the latest draft while
+  nothing has been published. So a revision that uses a declared credential
+  becomes the source of the next session's grant once it is published (with
+  `workflow:publish` or `workflow:activate`), or as soon as it is saved on a
+  workflow that has never been published. If several of your users share one
+  workflow but are entitled to different resources, give each user their own
+  workflow instead.
+
+A document that reaches outside the confinement is refused with a `403`
+problem, and its `detail` names every offending node, separated by `; `:
+
+```text
+this embed session cannot use that workflow document: node "Collect" attaches credential cred_8f2c, which this embed session was not granted
+```
+
+The other lines it can carry name a data table (`node "Lookup" addresses
+data table ds_41, which this embed session was not granted`, or `addresses
+the data table named "Leads"` for a By Name locator), a called workflow
+(`node "Delegate" calls workflow wf_17, which this embed session was not
+granted`), a table operation (`performs the data table operation "list", and
+an embed session cannot manage data tables`), an expression target, or an
+unscoped credential. A `403` on a save means the session's grant is narrower
+than your editor assumed. Mint the next session with the resource in
+`allow`, or publish a revision that uses it.
+
 ### 4. Mount the editor, watch the run
 
 The SDK is not on npm yet, so the import below resolves only after building it
@@ -335,12 +433,18 @@ const receipt = await delivery.json();
 // repeat of the same delivery: { executionId, status, duplicate: true }.
 ```
 
-The host then finds the run through the tenant's own client — list the
-workflow's executions and take the newest, or have the trigger answer from its
-graph with a Respond to Webhook node — and polls `getExecution` until the status
-is terminal. Ticket minting and execution polling both re-check
-that the execution belongs to the tenant's workflow first — a ticket for
-another customer's run would be a cross-tenant read.
+The host then finds the run. The better way is to have the trigger answer from
+its graph: set the Webhook node's `responseMode` to `responseNode` and put a
+Respond to Webhook node first that returns `{{ $execution.id }}`, so the
+delivery answers with the run id and the workflow carries on
+([Trigger workflows from your app](/guides/trigger-workflows/#what-the-caller-gets-back)).
+The fallback, which the reference host uses, is to list the workflow's
+executions through the tenant's own client and take the newest. That can pick
+the wrong run when two deliveries land together. With the id, the host polls
+`getExecution` until the status is terminal, or follows the stream
+([Get notified of results](/guides/get-notified/)). Ticket minting and execution
+polling both re-check that the execution belongs to the tenant's workflow
+first — a ticket for another customer's run would be a cross-tenant read.
 
 ### Host events: one publish, every listening workflow
 
@@ -358,7 +462,9 @@ const outcome = await tenantClient.publishEvent(
 // outcome.filtered: [{workflowId, reason}] — duplicates and deactivations
 ```
 
-This is the recommended host → workflow path, for three reasons a webhook
+This is the recommended host → workflow path (the full comparison with
+webhooks and the run API is [Trigger workflows from your
+app](/guides/trigger-workflows/)), for three reasons a webhook
 cannot match. One request reaches every active workflow whose event trigger
 lists the type, where a webhook route is per workflow and `POST
 /workflows/{id}/run` is per workflow too — and a run call executes the latest
@@ -471,6 +577,15 @@ themeable, exactly:
 | `logoUrl` | Absolute `https` URL | `data:` and `javascript:` URLs are the classic injection through a "safe" string field |
 | `accent` | Hex, `oklch()`, `rgb()`, or a plain colour name | Anything that is not a colour literal |
 | `hideRun`, `hideSave` | Booleans | They are presentation only: the server still enforces scopes, so hiding a control can never be the thing that stops an action |
+| `theme` | `light`, `dark`, or `system` | Anything else. `system` follows the viewer's `prefers-color-scheme` and keeps following it while the editor is open. Omitted, the editor is dark |
+| `fontFamily` | `default`, `system`, or `serif` | A font name or URL: a free-form family is how a remote font, and a request to a third party from inside the frame, would arrive |
+| `radius` | Whole pixels from 0 to 16 | Anything else. It sets the corners of cards, nodes, menus and dialogs; controls get 60% of it and chips 40% |
+
+`theme` switches the whole editor, the canvas included: its background, grid,
+edges and ports read the same colour tokens as the rest of the interface, and
+dialogs that open over the editor take the same palette. Both palettes pass
+the product's contrast checks, and an `accent` is re-derived for the palette
+it lands in.
 
 `accent` is one colour, and the editor derives every accent use from it:
 the primary button with its hover and pressed shades, links, the keyboard
@@ -503,11 +618,11 @@ lookup clauses on tenant and id together, so naming another tenant's
 datastore answers 404 — isolation the host relies on rather than
 reimplements:
 
-The SDK's datastore subset covers the embed path — `getDatastore`,
-`listDatastoreRows` with its filter triples, `getDatastoreRow`, and
-`insertDatastoreRow` — while provisioning and schema stay on the
-documented REST endpoints with the tenant key. The backend key below
-provisions and writes with full authority. A browser never holds it: to
+The SDK has a method for every datastore operation, from `createDatastore`
+and `addDatastoreColumn` to `listDatastoreRows`, `insertDatastoreRow` and
+`upsertDatastoreRow` ([Using the host SDK](/guides/sdk/)). The calls below use
+the REST endpoints so the wire shape is visible. The backend key provisions
+and writes with full authority. A browser never holds it: to
 let an embedded surface touch rows, the backend mints a datastore session
 instead of a workflow one —
 
@@ -522,10 +637,13 @@ const session = await tenant.client.createEmbedSession({
 // mountWorkflowEditor refuses it outright rather than loading a dead frame.
 ```
 
-That token reads the one datastore's definition and rows, writes rows with
-`datastore:write`, and reaches nothing else: other datastores read as
-unknown, workflow routes stay forbidden, and creating, dropping, clearing,
-or changing a table's columns stays with the backend key.
+That token reads the one datastore's definition and rows (the CSV export
+included), writes rows with `datastore:write` (insert, upsert, increment,
+update, delete and the CSV import), and reaches nothing else: other
+datastores read as unknown, workflow routes stay forbidden, and listing,
+creating, renaming, dropping or clearing a table, or changing its columns,
+stays with the backend key. The full list is
+[Datastore sessions](/guides/embed-sessions/#datastore-sessions).
 
 ```js
 const created = await api('POST', '/datastores', {
@@ -549,8 +667,9 @@ while bulk update, delete, and upsert take the JSON envelope
 `neq`, `like`, `ilike`, `gt`, `gte`, `lt`, `lte`, `isEmpty`,
 `isNotEmpty`. Column types are `string`, `number`, `boolean`, `date`.
 
-Writing from inside a workflow uses the datastore node rather than the
-service API — an insert names the table by id and maps the columns:
+Writing from inside a workflow uses the Data table node
+(`kilasflow.datastore`) rather than the service API — an insert names the
+table by id and maps the columns:
 
 ```json
 { "resource": "row", "operation": "insert",
@@ -559,9 +678,9 @@ service API — an insert names the table by id and maps the columns:
 ```
 
 Manual mapping sets `mappingMode` to `defineBelow` with the column values
-as the object. The reference host writes host-side today and swaps in this
-node once it lands; the table id it passes is already the per-tenant
-datastore the backend provisioned.
+as the object. The node exists today. The reference host writes its signup row
+from the host side with the service API, which is the other valid choice, and
+either way the table id is the per-tenant datastore the backend provisioned.
 
 ## The two failure modes that matter
 

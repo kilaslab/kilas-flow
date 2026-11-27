@@ -219,7 +219,7 @@ internal/
   guardrails/           checks for invariants no single package owns
 
 nodes/                  the built-in node definitions and executors
-packs/                  declarative node packs — WAHA and GOWA (generated), Telegram (hand-written)
+packs/                  declarative node packs — WAHA (generated), Telegram (hand-written); GOWA is an importer mapping with no pack yet
 sidecar/                the JavaScript sidecar process for community nodes
 third_party/            vendored upstream specs the packs are generated from, and the Code node's JS libraries
 sdk/                    @kilasflow/sdk, the TypeScript host SDK

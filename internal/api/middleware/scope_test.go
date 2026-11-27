@@ -122,6 +122,7 @@ func TestAScopedKeyReachesWhatItsScopesName(t *testing.T) {
 		{"describes itself", http.MethodGet, "/api/v1/auth/me", reader, 0, ""},
 		{"lists workflows", http.MethodGet, "/api/v1/workflows", reader, 0, ""},
 		{"reads a workflow", http.MethodGet, "/api/v1/workflows/wf_1", reader, 0, ""},
+		{"reads a workflow's contract", http.MethodGet, "/api/v1/workflows/wf_1/contract", reader, 0, ""},
 		// The dry run is a read of the catalogue: it compiles a document the
 		// caller supplies and saves nothing, so the verb that answers "would
 		// this run" must not need a write scope.
@@ -152,6 +153,11 @@ func TestAScopedKeyReachesWhatItsScopesName(t *testing.T) {
 		{"restores a revision", http.MethodPost, "/api/v1/workflows/wf_1/versions/ver_1/restore", writer, 0, ""},
 		{"lists schedules", http.MethodGet, "/api/v1/schedules", reader, 0, ""},
 		{"creates a schedule", http.MethodPost, "/api/v1/schedules", writer, 0, ""},
+		{"lists variables", http.MethodGet, "/api/v1/variables", reader, 0, ""},
+		{"creates a variable", http.MethodPost, "/api/v1/variables", writer, 0, ""},
+		{"updates a variable", http.MethodPut, "/api/v1/variables/var_1", writer, 0, ""},
+		{"deletes a variable", http.MethodDelete, "/api/v1/variables/var_1", writer, 0, ""},
+		{"lists notification deliveries", http.MethodGet, "/api/v1/notifications/deliveries", reader, 0, ""},
 		{"runs a workflow", http.MethodPost, "/api/v1/workflows/wf_1/run", runner, 0, ""},
 		{"lists datastores", http.MethodGet, "/api/v1/datastores", datastoreReader, 0, ""},
 		{"reads a datastore", http.MethodGet, "/api/v1/datastores/ds_1", datastoreReader, 0, ""},
@@ -166,6 +172,7 @@ func TestAScopedKeyReachesWhatItsScopesName(t *testing.T) {
 		// A read scope is not a write scope, and the two families stay apart.
 		{"read cannot update a workflow", http.MethodPut, "/api/v1/workflows/wf_1", reader, http.StatusForbidden, "is read-only"},
 		{"read cannot create a workflow", http.MethodPost, "/api/v1/workflows", reader, http.StatusForbidden, "is read-only"},
+		{"read cannot create a variable", http.MethodPost, "/api/v1/variables", reader, http.StatusForbidden, "is read-only"},
 		{"read cannot run", http.MethodPost, "/api/v1/workflows/wf_1/run", reader, http.StatusForbidden, "cannot run workflows"},
 		{"write cannot run", http.MethodPost, "/api/v1/workflows/wf_1/run", writer, http.StatusForbidden, "cannot run workflows"},
 		// Retrying is starting a run, so it is held to the run scope rather
@@ -216,6 +223,12 @@ func TestAWorkflowBoundKeyReadsAnotherWorkflowAsMissing(t *testing.T) {
 		{"cannot list workflows", http.MethodGet, "/api/v1/workflows", bound, http.StatusForbidden, "cannot list workflows"},
 		{"cannot list datastores", http.MethodGet, "/api/v1/datastores", bound, http.StatusForbidden, "cannot manage datastores"},
 		{"cannot manage schedules", http.MethodGet, "/api/v1/schedules", bound, http.StatusForbidden, "cannot manage schedules"},
+		// Variables are read by every workflow of the tenant: a bound key may
+		// neither enumerate them nor change what its siblings read.
+		{"cannot list variables", http.MethodGet, "/api/v1/variables", bound, http.StatusForbidden, "cannot manage variables"},
+		{"cannot change a variable", http.MethodPut, "/api/v1/variables/var_1", bound, http.StatusForbidden, "cannot manage variables"},
+		// The delivery log spans every workflow of the tenant.
+		{"cannot read notification deliveries", http.MethodGet, "/api/v1/notifications/deliveries", bound, http.StatusForbidden, "cannot read notification deliveries"},
 		// Rows under one datastore id are still data-plane, and the binding is
 		// about the workflow rather than about which tables exist.
 		{"still reads rows", http.MethodGet, "/api/v1/datastores/ds_1/rows", bound, 0, ""},

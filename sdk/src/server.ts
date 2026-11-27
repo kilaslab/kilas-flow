@@ -47,12 +47,14 @@ import type {
 	InsertRowInputBody,
 	ListAPIKeysOutputBody,
 	ListDatastoreRowsParams,
+	ListNotificationDeliveriesParams,
 	ListTenantsOutputBody,
 	ListTenantUsersOutputBody,
 	LoadOptionsInputBody,
 	LoadOptionsResource,
 	LoadSchemaResource,
 	LoginInputBody,
+	NotificationDeliveryResource,
 	PrincipalResource,
 	PublishEventResult,
 	ReadyOutputBody,
@@ -71,7 +73,10 @@ import type {
 	UpsertRowInputBody,
 	UpsertRowOutputBody,
 	UserResource,
+	VariableBody,
+	VariableResource,
 	WebhookRouteResource,
+	WorkflowContract,
 	WorkflowDiagnosticsResource,
 	WorkflowDocumentInput,
 	WorkflowPublishEventResource,
@@ -129,6 +134,12 @@ export interface EmbedSessionRequest {
 		accent?: string;
 		hideRun?: boolean;
 		hideSave?: boolean;
+		/** `light`, `dark`, or `system` to follow the viewer's colour-scheme preference. Default: dark. */
+		theme?: 'light' | 'dark' | 'system';
+		/** `default` (the product font), `system` (the viewer's UI font) or `serif`. Never loaded from elsewhere. */
+		fontFamily?: 'default' | 'system' | 'serif';
+		/** Corner radius of cards, nodes, menus and dialogs in pixels, 0 to 16. Default: 10. */
+		radius?: number;
 	};
 	/**
 	 * The host user this session acts for. It is signed into the token and
@@ -151,6 +162,30 @@ export interface EmbedSessionRequest {
 		id: string;
 		displayName?: string;
 	};
+	/**
+	 * What a workflow session's document may reference beyond what the
+	 * workflow's published revision already uses: credentials, data tables
+	 * and workflows a sub-workflow or tool node calls. Without it, a session
+	 * may use only what that revision uses, and a blank workflow nothing.
+	 *
+	 * Each kind is a list of ids or `'tenant'`. Every id is checked against
+	 * the minting tenant, and an unknown or another tenant's id rejects the
+	 * mint with a 404. `'tenant'` opens the whole kind of this tenant and
+	 * needs a tenant-wide key. At most 50 ids per kind. The embedded
+	 * credential picker lists exactly the credentials this grants. Workflow
+	 * sessions only.
+	 */
+	allow?: EmbedAllowSet;
+}
+
+/** One kind of an embed session's `allow` set: ids, or the whole tenant. */
+export type EmbedAllowList = string[] | 'tenant';
+
+/** The host-declared half of an embed session's confinement. */
+export interface EmbedAllowSet {
+	credentials?: EmbedAllowList;
+	datastores?: EmbedAllowList;
+	workflows?: EmbedAllowList;
 }
 
 export interface ExecutionListQuery {
@@ -505,6 +540,17 @@ export class KilasFlowClient {
 	 */
 	listWorkflowWebhooks(workflowId: string, signal?: AbortSignal): Promise<WebhookRouteResource[]> {
 		return this.#transport.request('GET', `/workflows/${encodeURIComponent(workflowId)}/webhooks`, { signal });
+	}
+
+	/**
+	 * Describes the workflow as something to call: the JSON Schema of the input
+	 * its sub-workflow trigger declares and of the output in
+	 * `settings.outputSchema`, for the revision a call would run (the active one,
+	 * or the latest draft). An undeclared side is `{ type: 'object' }` with
+	 * `declared: false`. Use it to build the tool definition you show a model.
+	 */
+	getWorkflowContract(workflowId: string, signal?: AbortSignal): Promise<WorkflowContract> {
+		return this.#transport.request('GET', `/workflows/${encodeURIComponent(workflowId)}/contract`, { signal });
 	}
 
 	activateWorkflow(workflowId: string, signal?: AbortSignal): Promise<WorkflowResource> {
@@ -888,6 +934,44 @@ export class KilasFlowClient {
 
 	deleteSchedule(scheduleId: string, signal?: AbortSignal): Promise<void> {
 		return this.#transport.request('DELETE', `/schedules/${encodeURIComponent(scheduleId)}`, { signal });
+	}
+
+	// --- Variables ---------------------------------------------------------------
+	// The tenant's key/value pairs every workflow reads as `$vars.KEY`. Values
+	// are stored as plain text: put a secret in a credential instead. A running
+	// execution keeps the values it started with.
+
+	listVariables(signal?: AbortSignal): Promise<VariableResource[]> {
+		return this.#transport.request('GET', '/variables', { signal });
+	}
+
+	/** Adds a variable. A key the tenant already has is refused with 409. */
+	createVariable(variable: VariableBody, signal?: AbortSignal): Promise<VariableResource> {
+		return this.#transport.request('POST', '/variables', { body: variable, signal });
+	}
+
+	/** Replaces a variable's key and value. Renaming onto a key the tenant already has is refused with 409. */
+	updateVariable(variableId: string, variable: VariableBody, signal?: AbortSignal): Promise<VariableResource> {
+		return this.#transport.request('PUT', `/variables/${encodeURIComponent(variableId)}`, { body: variable, signal });
+	}
+
+	deleteVariable(variableId: string, signal?: AbortSignal): Promise<void> {
+		return this.#transport.request('DELETE', `/variables/${encodeURIComponent(variableId)}`, { signal });
+	}
+
+	// --- Notifications ---------------------------------------------------------
+
+	/**
+	 * The caller's tenant's notification delivery log, newest first: each
+	 * signed event with its attempts, the last response status and error, and
+	 * when the next attempt is due. `status` narrows it to `pending`,
+	 * `delivered` or `dead`; `limit` bounds it (1 to 200, default 50).
+	 */
+	listNotificationDeliveries(
+		query: ListNotificationDeliveriesParams = {},
+		signal?: AbortSignal
+	): Promise<NotificationDeliveryResource[]> {
+		return this.#transport.request('GET', '/notifications/deliveries', { query: { ...query }, signal });
 	}
 
 	// --- Node catalogue ----------------------------------------------------------

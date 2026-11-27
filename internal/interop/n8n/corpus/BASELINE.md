@@ -25,9 +25,9 @@ nor blocked actually failed to execute.
 | --- | ---: | ---: |
 | imported | 40 | 100% |
 | activatable | 15 | 38% |
-| runnable | 5 | 12% |
+| runnable | 15 | 38% |
 | _(blocked only by a Code node)_ | 0 | 0% |
-| _(blocked by the offline policy)_ | 10 | 25% |
+| _(blocked by the offline policy)_ | 0 | 0% |
 
 ## Per fixture
 
@@ -35,17 +35,17 @@ nor blocked actually failed to execute.
 | --- | --- | ---: | :---: | :---: | :---: | --- |
 | `kilasflow/control-datatable` | kilasflow | 5 | yes | yes | yes | — |
 | `kilasflow/control-manual-set` | kilasflow | 2 | yes | yes | yes | — |
-| `nodes-base/HttpRequest/test/binaryData/binaryData.test` | nodes-base | 8 | yes | yes | blocked | execute node "n8n-2": node "HTTP Request (v1)": request target is not allowed: host "dummy.domain" is not in the allowed list |
-| `nodes-base/HttpRequest/test/encoding/encoding.test` | nodes-base | 3 | yes | yes | blocked | execute node "eb243cfd-fbd6-41ef-935d-4ea98617355f": node "HTTP Request (v3)": request target is not allowed: host "dummy.domain" is not in the allowed list |
-| `nodes-base/HttpRequest/test/encodingQuoted/encodingQuoted.test` | nodes-base | 3 | yes | yes | blocked | execute node "eb243cfd-fbd6-41ef-935d-4ea98617355f": node "HTTP Request (v3)": request target is not allowed: host "dummy.domain" is not in the allowed list |
-| `nodes-base/HttpRequest/test/node/workflow.delete` | nodes-base | 2 | yes | yes | blocked | execute node "312e64ca-00bf-40e6-b21d-1f73930ef98c": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
-| `nodes-base/HttpRequest/test/node/workflow.get` | nodes-base | 5 | yes | yes | blocked | execute node "96f38d87-0bdd-420c-b981-26fd55d11cb2": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
-| `nodes-base/HttpRequest/test/node/workflow.pagination` | nodes-base | 37 | yes | yes | blocked | execute node "d8185b9f-a2ec-484e-b57c-6ac6b7ac9d57": node "Complete Expression - JSON Autodetect set": request target is not allowed: host "dummyjson.com" is… |
-| `nodes-base/HttpRequest/test/node/workflow.patch` | nodes-base | 2 | yes | yes | blocked | execute node "312e64ca-00bf-40e6-b21d-1f73930ef98c": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
-| `nodes-base/HttpRequest/test/node/workflow.post` | nodes-base | 3 | yes | yes | blocked | execute node "07670093-862f-403f-96a5-ddf7fdb0d225": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
-| `nodes-base/HttpRequest/test/node/workflow.put` | nodes-base | 2 | yes | yes | blocked | execute node "07670093-862f-403f-96a5-ddf7fdb0d225": node "HTTP Request": request target is not allowed: host "dummyjson.com" is not in the allowed list |
+| `nodes-base/HttpRequest/test/binaryData/binaryData.test` | nodes-base | 8 | yes | yes | yes | — |
+| `nodes-base/HttpRequest/test/encoding/encoding.test` | nodes-base | 3 | yes | yes | yes | — |
+| `nodes-base/HttpRequest/test/encodingQuoted/encodingQuoted.test` | nodes-base | 3 | yes | yes | yes | — |
+| `nodes-base/HttpRequest/test/node/workflow.delete` | nodes-base | 2 | yes | yes | yes | — |
+| `nodes-base/HttpRequest/test/node/workflow.get` | nodes-base | 5 | yes | yes | yes | — |
+| `nodes-base/HttpRequest/test/node/workflow.pagination` | nodes-base | 37 | yes | yes | yes | — |
+| `nodes-base/HttpRequest/test/node/workflow.patch` | nodes-base | 2 | yes | yes | yes | — |
+| `nodes-base/HttpRequest/test/node/workflow.post` | nodes-base | 3 | yes | yes | yes | — |
+| `nodes-base/HttpRequest/test/node/workflow.put` | nodes-base | 2 | yes | yes | yes | — |
 | `nodes-base/HttpRequest/test/node/workflow.use_error_output` | nodes-base | 7 | yes | yes | yes | — |
-| `nodes-base/HttpRequest/test/node/workflow.userAgent` | nodes-base | 3 | yes | yes | blocked | execute node "1aa13a8d-6e32-4a5e-9b3c-3a4d5e6f7a01": node "HTTP Request default UA": request target is not allowed: host "ua.example.com" is not in the allow… |
+| `nodes-base/HttpRequest/test/node/workflow.userAgent` | nodes-base | 3 | yes | yes | yes | — |
 | `nodes-base/If/test/v1/IF.boolean` | nodes-base | 11 | yes | no | no | node "2aa0a57b-b25a-4293-b7bf-fc240d4d21f4" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/If/test/v1/IF.date-time` | nodes-base | 8 | yes | no | no | node "c5d906bc-909a-45d9-a990-9ea6279cc807" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
 | `nodes-base/If/test/v1/IF.number` | nodes-base | 22 | yes | no | no | node "77e63f88-e5fc-4662-af2e-6947a4768cf3" configuration is invalid: this node was imported from n8n-nodes-testing.testData, which KilasFlow does not suppor… |
@@ -70,7 +70,7 @@ nor blocked actually failed to execute.
 | `waha-templates/restart-server-at-midnight/template` | waha-templates | 2 | yes | no | no | node "9002e037-ea7a-4a5d-86ca-f7466cbd2842" requires a wahaApi credential |
 | `waha-templates/send-bulk-messages/template` | waha-templates | 18 | yes | no | no | node "af16c0da-c302-4d8b-983c-3d69e12f7260" requires a postgres credential |
 | `waha-templates/send-custom-http-request-to-waha/template` | waha-templates | 8 | yes | no | no | node "052ad79c-4c69-41fe-baf5-b6e609f663ca" requires a wahaApi credential |
-| `waha-templates/send-qr-code-to-email/template` | waha-templates | 9 | yes | no | no | node "05513103-49fc-4324-80ea-5e86b61f3272" configuration is invalid: this node was imported from n8n-nodes-base.convertToFile, which KilasFlow does not supp… |
+| `waha-templates/send-qr-code-to-email/template` | waha-templates | 9 | yes | no | no | node "b9c7abc4-5585-4365-b035-df78bebe7376" requires a wahaApi credential |
 | `waha-templates/waha-trigger-explanation/template` | waha-templates | 6 | yes | no | no | node "d965e045-faab-44d2-982c-dd9be8c58c06" requires a wahaApi credential |
 | `waha-templates/whatsapp-typebot/template` | waha-templates | 42 | yes | no | no | node "259a1703-699b-4673-948c-cf21b7684667" requires a wahaApi credential |
 

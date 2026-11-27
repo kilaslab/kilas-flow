@@ -380,6 +380,59 @@ var mappings = []mapping{
 		n8nType: "n8n-nodes-base.removeDuplicates", kilasType: RemoveDuplicatesNodeType, kilasVersion: workflow.V(1),
 		exportTypeVersion: 2, toKilas: removeDuplicatesToKilas, toN8N: removeDuplicatesToN8N,
 	},
+	// The data-utility pair: Rename Keys is a Set subset, Compare Datasets a
+	// Merge variant with four outputs. Neither node's typeVersions are carried
+	// back (publishedVersions is empty): the pin is the version whose
+	// parameters the translators write.
+	{
+		n8nType: "n8n-nodes-base.renameKeys", kilasType: RenameKeysNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: renameKeysToKilas, toN8N: renameKeysToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.compareDatasets", kilasType: CompareDatasetsNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 2, toKilas: compareDatasetsToKilas, toN8N: compareDatasetsToN8N,
+		refuseKilas: refuseUnsupportedCompareDatasetsOption,
+	},
+	// The file and format family: pure-Go nodes over item data and the binary
+	// store. Their parameter names are n8n's own, so the translators copy.
+	{
+		n8nType: "n8n-nodes-base.crypto", kilasType: CryptoNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: cryptoToKilas, toN8N: cryptoToN8N,
+		refuseKilas: refuseUnsupportedCryptoAlgorithm,
+	},
+	{
+		n8nType: "n8n-nodes-base.xml", kilasType: XMLNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: xmlToKilas, toN8N: xmlToN8N,
+		refuseKilas: refuseUnsupportedXMLOption,
+	},
+	{
+		n8nType: "n8n-nodes-base.markdown", kilasType: MarkdownNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: markdownToKilas, toN8N: markdownToN8N,
+		refuseKilas: refuseUnsupportedMarkdownOption,
+	},
+	{
+		n8nType: "n8n-nodes-base.compression", kilasType: CompressionNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, toKilas: compressionToKilas, toN8N: compressionToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.html", kilasType: HTMLNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.2, toKilas: htmlToKilas, toN8N: htmlToN8N,
+		refuseKilas: refuseUnsupportedHTMLOption,
+	},
+	{
+		n8nType: "n8n-nodes-base.convertToFile", kilasType: ConvertToFileNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, toKilas: convertToFileToKilas, toN8N: convertToFileToN8N,
+		refuseKilas: refuseUnsupportedConvertToFile,
+	},
+	// The legacy Spreadsheet File node is two native nodes: reading is Extract
+	// From File and writing is Convert to File, picked from the node's own
+	// operation. The advertised pair names the writing half; importOnly,
+	// because an imported node exports as the native node it became.
+	{
+		n8nType: "n8n-nodes-base.spreadsheetFile", kilasType: ConvertToFileNodeType, kilasVersion: workflow.V(1),
+		kilasTypeFor: spreadsheetFileKilasType, toKilas: spreadsheetFileToKilas,
+		refuseKilas: refuseUnsupportedSpreadsheetFile, importOnly: true,
+	},
 	// The Item Lists node: one selector, six operations, each a native node.
 	// kilasTypeFor picks the target from the selector the way it does for the
 	// Code node's languages; the advertised pair names the default operation's
@@ -793,6 +846,8 @@ const (
 	SortNodeType             = "kilasflow.sort"
 	SummarizeNodeType        = "kilasflow.summarize"
 	RemoveDuplicatesNodeType = "kilasflow.removeDuplicates"
+	RenameKeysNodeType       = "kilasflow.renameKeys"
+	CompareDatasetsNodeType  = "kilasflow.compareDatasets"
 )
 
 // The time family's node types.
@@ -1126,6 +1181,9 @@ func unmappedReason(nodeType string) string {
 			"It was imported as an unsupported placeholder: the workflow can be edited, but it cannot run until this tool is replaced.",
 			base.n8nType, nodeType, base.kilasType)
 	}
+	if refusal, ok := deliberatelyUnavailable[nodeType]; ok {
+		return refusal.reason(nodeType)
+	}
 	reason := fmt.Sprintf("KilasFlow has no equivalent of the n8n node %q. It was imported as an unsupported placeholder: the workflow can be edited, but it cannot run until this node is replaced.", nodeType)
 	if hint, ok := replacementHints[nodeType]; ok {
 		reason += " " + hint
@@ -1146,8 +1204,79 @@ func unmappedReason(nodeType string) string {
 // node genuinely does belong here — a hint that names a node that cannot do
 // the job would send the author somewhere worse than the honest absence.
 var replacementHints = map[string]string{
-	"n8n-nodes-base.readBinaryFile":  "The closest native node is Extract From File (kilasflow.extractFromFile), which parses every format this node read once the bytes are in the workflow; the path-reading half needs an HTTP Request node beside it.",
-	"n8n-nodes-base.spreadsheetFile": "The closest native node is Extract From File (kilasflow.extractFromFile), which reads CSV, XLSX and the other spreadsheet formats from workflow binary data; its write half has no equivalent here.",
+	"n8n-nodes-base.moveBinaryData": "The closest native nodes are Extract From File (kilasflow.extractFromFile), which reads a file in workflow binary data into JSON, and Convert to File (kilasflow.convertToFile), which writes JSON or text to a file in binary data.",
+	"n8n-nodes-base.readBinaryFile": "The closest native node is Extract From File (kilasflow.extractFromFile), which parses every format this node read once the bytes are in the workflow; the path-reading half needs an HTTP Request node beside it.",
+	// The plural form of Read Binary File: the same node over a list of paths,
+	// and the same answer. (The disk is the part with no equivalent: see
+	// deliberatelyUnavailable.)
+	"n8n-nodes-base.readBinaryFiles": "The closest native node is Extract From File (kilasflow.extractFromFile), which parses every format this node read once the bytes are in the workflow; the path-reading half needs an HTTP Request node beside it.",
+	// The pre-trigger Start node did nothing but begin a run by hand, which is
+	// what the Manual Trigger is.
+	"n8n-nodes-base.start": "The closest native node is the Manual Trigger (kilasflow.manual), which is where a run started by hand begins: replace this node with it and keep its wire.",
+}
+
+// deliberateRefusal is why an n8n node is absent on purpose, and where the
+// work goes instead.
+type deliberateRefusal struct {
+	// does is what the node does, as the clause after "It ".
+	does string
+	// exposes is the host resource a workflow would reach through it.
+	exposes string
+	// instead names the native nodes that cover the legitimate uses.
+	instead string
+}
+
+// reason is the placeholder's diagnostic: what was refused, that the refusal is
+// a decision rather than a gap, and what to use instead.
+func (refusal deliberateRefusal) reason(nodeType string) string {
+	return fmt.Sprintf("KilasFlow deliberately does not offer the n8n node %q. It %s, and a workflow here runs inside a shared, multi-tenant engine "+
+		"that must not hand its host's %s to any one workflow. %s "+
+		"It was imported as an unsupported placeholder: the workflow can be edited, but it cannot run until this node is replaced.",
+		nodeType, refusal.does, refusal.exposes, refusal.instead)
+}
+
+// deliberatelyUnavailable is the reason table for the server-local nodes:
+// the ones whose whole job is to touch the machine the engine runs on. They
+// are not gaps to be filled — a hosted, multi-tenant engine that ran shell
+// commands or read its own disk for a workflow would be handing every tenant
+// the host — so the diagnostic says that, and points at the nodes that do the
+// legitimate part of the work through a boundary the engine controls: Google
+// Drive for files, HTTP Request for services, and the Data table for records.
+//
+// Only a node whose purpose is the host belongs here. A node that is merely
+// not built yet keeps the plain "no equivalent" sentence (and, where a native
+// node covers part of it, replacementHints), so this table never excuses a gap.
+var deliberatelyUnavailable = map[string]deliberateRefusal{
+	"n8n-nodes-base.executeCommand": {
+		does:    "runs shell commands on the machine that hosts the engine",
+		exposes: "shell",
+		instead: "To run the work somewhere, call a service that does it with the HTTP Request node (kilasflow.httpRequest); for pure data shaping, the Code node (kilasflow.jsCode) runs JavaScript without leaving the engine.",
+	},
+	"n8n-nodes-base.readWriteFile": {
+		does:    "reads and writes files on the host's disk",
+		exposes: "filesystem",
+		instead: "Keep a file as workflow binary data and store it with the Google Drive node (kilasflow.googleDrive), send it with the HTTP Request node (kilasflow.httpRequest), or keep structured records in a Data table (kilasflow.datastore); Extract From File (kilasflow.extractFromFile) parses the bytes once they are in the workflow.",
+	},
+	"n8n-nodes-base.writeBinaryFile": {
+		does:    "writes workflow binary data to a file on the host's disk",
+		exposes: "filesystem",
+		instead: "Store the file with the Google Drive node (kilasflow.googleDrive) or send it on with the HTTP Request node (kilasflow.httpRequest); rows that only need to persist belong in a Data table (kilasflow.datastore).",
+	},
+	"n8n-nodes-base.localFileTrigger": {
+		does:    "watches a folder on the host's disk and starts the workflow when a file changes",
+		exposes: "filesystem",
+		instead: "Start from the Google Drive Trigger node (kilasflow.googleDriveTrigger) for files in Drive, or from a Webhook node (kilasflow.webhook) that the system producing the files calls.",
+	},
+	"n8n-nodes-base.ssh": {
+		does:    "opens an SSH session from the engine's host to another machine and runs commands there",
+		exposes: "network position and keys",
+		instead: "Call an HTTP API on the target machine with the HTTP Request node (kilasflow.httpRequest) instead of a shell session.",
+	},
+	"n8n-nodes-base.ftp": {
+		does:    "connects to FTP and SFTP servers from the engine's host",
+		exposes: "network position",
+		instead: "Exchange the files through the Google Drive node (kilasflow.googleDrive), or through an HTTP API on the file host with the HTTP Request node (kilasflow.httpRequest).",
+	},
 }
 
 func byKilasType(nodeType string) (mapping, bool) {
