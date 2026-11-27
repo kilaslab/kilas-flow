@@ -1947,6 +1947,35 @@ export interface ValidateWorkflowResource {
   warnings?: ValidationWarning[] | null;
 }
 
+export interface VariableBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * Letters, digits and underscores, starting with a letter or underscore, so it reads as $vars.KEY.
+     * @minLength 1
+     * @maxLength 64
+     * @pattern ^[A-Za-z_][A-Za-z0-9_]*$
+     */
+  key: string;
+  /**
+     * Plain text, at most 4096 bytes. Stored unencrypted: a secret belongs in a credential.
+     * @maxLength 4096
+     */
+  value: string;
+}
+
+export interface VariableResource {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  createdAt: string;
+  id: string;
+  /** The name a workflow reads, as $vars.KEY. */
+  key: string;
+  updatedAt: string;
+  /** Plain text, stored unencrypted. Never put a secret here: use a credential. */
+  value: string;
+}
+
 export interface WebhookResponseEvent {
   at: string;
   /** Redacted, type-specific detail */
@@ -6040,6 +6069,223 @@ const res = await fetch(getSetTenantUserPasswordUrl(id,userId),
 
   const data: setTenantUserPasswordResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as setTenantUserPasswordResponse
+}
+
+
+
+export type listVariablesResponse200 = {
+  data: VariableResource[] | null
+  status: 200
+}
+
+export type listVariablesResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listVariablesResponseSuccess = (listVariablesResponse200) & {
+  headers: Headers;
+};
+export type listVariablesResponseError = (listVariablesResponseDefault) & {
+  headers: Headers;
+};
+
+export type listVariablesResponse = (listVariablesResponseSuccess | listVariablesResponseError)
+
+export const getListVariablesUrl = () => {
+
+
+
+
+  return `/api/v1/variables`
+}
+
+/**
+ * Returns every variable of the tenant, ordered by key. Every workflow of the tenant reads them as `$vars.KEY`. The list is not paged: a tenant holds at most 500 variables.
+ * @summary List variables
+ */
+export const listVariables = async ( options?: RequestInit): Promise<listVariablesResponse> => {
+
+  const res = await fetch(getListVariablesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listVariablesResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listVariablesResponse
+}
+
+
+
+export type createVariableResponse201 = {
+  data: VariableResource
+  status: 201
+}
+
+export type createVariableResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type createVariableResponseSuccess = (createVariableResponse201) & {
+  headers: Headers;
+};
+export type createVariableResponseError = (createVariableResponseDefault) & {
+  headers: Headers;
+};
+
+export type createVariableResponse = (createVariableResponseSuccess | createVariableResponseError)
+
+export const getCreateVariableUrl = () => {
+
+
+
+
+  return `/api/v1/variables`
+}
+
+/**
+ * Adds a variable. A key the tenant already has answers 409. The next execution that starts reads it.
+ * @summary Create a variable
+ */
+export const createVariable = async (variableBody: NonReadonly<VariableBody>, options?: RequestInit): Promise<createVariableResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getCreateVariableUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(variableBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createVariableResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createVariableResponse
+}
+
+
+
+export type deleteVariableResponse204 = {
+  data: void
+  status: 204
+}
+
+export type deleteVariableResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type deleteVariableResponseSuccess = (deleteVariableResponse204) & {
+  headers: Headers;
+};
+export type deleteVariableResponseError = (deleteVariableResponseDefault) & {
+  headers: Headers;
+};
+
+export type deleteVariableResponse = (deleteVariableResponseSuccess | deleteVariableResponseError)
+
+export const getDeleteVariableUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/variables/${id}`
+}
+
+/**
+ * Removes a variable. A workflow that still reads it gets an empty value from the next execution on.
+ * @summary Delete a variable
+ */
+export const deleteVariable = async (id: string, options?: RequestInit): Promise<deleteVariableResponse> => {
+
+  const res = await fetch(getDeleteVariableUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: deleteVariableResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as deleteVariableResponse
+}
+
+
+
+export type updateVariableResponse200 = {
+  data: VariableResource
+  status: 200
+}
+
+export type updateVariableResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type updateVariableResponseSuccess = (updateVariableResponse200) & {
+  headers: Headers;
+};
+export type updateVariableResponseError = (updateVariableResponseDefault) & {
+  headers: Headers;
+};
+
+export type updateVariableResponse = (updateVariableResponseSuccess | updateVariableResponseError)
+
+export const getUpdateVariableUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/variables/${id}`
+}
+
+/**
+ * Replaces a variable's key and value. Renaming onto a key the tenant already has answers 409. Executions already running keep the value they started with.
+ * @summary Update a variable
+ */
+export const updateVariable = async (id: string,
+    variableBody: NonReadonly<VariableBody>, options?: RequestInit): Promise<updateVariableResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Array.isArray(h)) return Object.fromEntries(h);
+    return h;
+  };
+const res = await fetch(getUpdateVariableUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(variableBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: updateVariableResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as updateVariableResponse
 }
 
 

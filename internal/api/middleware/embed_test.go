@@ -111,6 +111,8 @@ func TestPermitsKeepsTheTwoFamiliesApart(t *testing.T) {
 		// And the default arm still refuses what nothing names.
 		{"datastore refused elsewhere", http.MethodGet, "/api/v1/schedules", readDatastore, false},
 		{"workflow refused elsewhere", http.MethodGet, "/api/v1/schedules", fullWorkflow, false},
+		{"workflow refused variables", http.MethodGet, "/api/v1/variables", fullWorkflow, false},
+		{"datastore refused variables", http.MethodPost, "/api/v1/variables", readDatastore, false},
 	} {
 		t.Run(route.name, func(t *testing.T) {
 			t.Parallel()

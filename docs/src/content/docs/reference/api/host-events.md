@@ -2,7 +2,7 @@
 title: Host events
 description: "The recommended host → workflow path: publish one event, every active workflow listening for it runs. Generated from the live OpenAPI document."
 sidebar:
-  order: 6
+  order: 7
 ---
 
 <!-- Generated from the live OpenAPI document by scripts/generate-api-reference.mjs — do not edit by hand. -->

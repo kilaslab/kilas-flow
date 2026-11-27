@@ -2,7 +2,7 @@
 title: Tenants and accounts
 description: "Operator surface: tenants, their users, and keys minted for another tenant. Generated from the live OpenAPI document."
 sidebar:
-  order: 9
+  order: 10
 ---
 
 <!-- Generated from the live OpenAPI document by scripts/generate-api-reference.mjs — do not edit by hand. -->

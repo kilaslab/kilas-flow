@@ -18,6 +18,9 @@ type Roots struct {
 	Execution ExecutionInfo `json:"execution"`
 	// Env is the allowlisted environment, backing $env.
 	Env map[string]string `json:"env,omitempty"`
+	// Vars is the tenant's variables, backing $vars: the same map an
+	// expression in the same run reads.
+	Vars map[string]any `json:"vars,omitempty"`
 	// RunIndex is the Nth time this node runs in the execution, backing
 	// $runIndex.
 	RunIndex int `json:"runIndex"`
@@ -135,15 +138,19 @@ func (roots Roots) snapshot(preload []string) snapshot {
 	if env == nil {
 		env = map[string]string{}
 	}
+	vars := roots.Vars
+	if vars == nil {
+		vars = map[string]any{}
+	}
 	version := roots.NodeVersion
 	if version == 0 {
 		version = 1
 	}
 	return snapshot{
 		Workflow: roots.Workflow, Execution: roots.Execution, Env: env,
-		// $vars reads variables the host application defines; KilasFlow has
-		// none, and an expression sees the same empty object.
-		Vars:     map[string]any{},
+		// $vars reads the tenant's variables, the same map an expression
+		// sees; empty when the tenant has defined none.
+		Vars:     vars,
 		RunIndex: roots.RunIndex, NodeVersion: version, Advice: UnsupportedAdvice,
 		Caps:     callCaps{Elements: MaxElementsPerCall, Characters: MaxCharactersPerCall, Bytes: MaxBytesPerCall},
 		Timezone: roots.Timezone, Modules: moduleOrder, Requirable: requirable,

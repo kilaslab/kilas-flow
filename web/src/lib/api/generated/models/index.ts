@@ -191,6 +191,8 @@ export * from './upsertRowOutputBodyRowsItem';
 export * from './userResource';
 export * from './validateWorkflowResource';
 export * from './validationWarning';
+export * from './variableBody';
+export * from './variableResource';
 export * from './visibility';
 export * from './visibilityCondition';
 export * from './webhookDeclaration';

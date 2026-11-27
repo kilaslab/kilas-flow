@@ -66,6 +66,7 @@ const groups = [
 	{ slug: 'credentials', title: 'Credentials', blurb: 'Credential types and stored credentials. Reads never return values.', operations: ['list-credential-types', 'test-credential-payload', 'list-credentials', 'create-credential', 'get-credential', 'update-credential', 'delete-credential', 'test-credential', 'start-credential-oauth'] },
 	{ slug: 'auth', title: 'Authentication and keys', blurb: 'Sessions, API keys, and stream tickets.', operations: ['login', 'logout', 'get-me', 'list-api-keys', 'create-api-key', 'revoke-api-key', 'create-stream-ticket'] },
 	{ slug: 'schedules', title: 'Schedules', blurb: 'Cron-style triggers owned by a workflow.', operations: ['list-schedules', 'create-schedule', 'update-schedule', 'delete-schedule'] },
+	{ slug: 'variables', title: 'Variables', blurb: 'The tenant\u2019s key/value pairs every workflow reads as `$vars.KEY`.', operations: ['list-variables', 'create-variable', 'update-variable', 'delete-variable'] },
 	{ slug: 'host-events', title: 'Host events', blurb: 'The recommended host → workflow path: publish one event, every active workflow listening for it runs.', operations: ['publish-event'] },
 	{ slug: 'nodes', title: 'Node types', blurb: 'The node catalogue, icons, load-options, load-schema, and the expression grammar.', operations: ['list-node-types', 'get-node-icon', 'load-node-property-options', 'load-node-property-schema', 'get-expression-grammar'] },
 	{ slug: 'datastores', title: 'Datastores', blurb: 'Tenant-owned row stores: tables, columns, rows, and CSV import and export.', operations: ['list-datastores', 'create-datastore', 'get-datastore', 'rename-datastore', 'delete-datastore', 'add-datastore-column', 'rename-datastore-column', 'delete-datastore-column', 'insert-datastore-row', 'get-datastore-row', 'list-datastore-rows', 'update-datastore-rows', 'upsert-datastore-row', 'increment-datastore-rows', 'delete-datastore-rows', 'clear-datastore', 'import-datastore-rows', 'export-datastore-rows'] },
@@ -358,6 +359,9 @@ function curlExample(path, method, operation, requestExample) {
 // data. Paths here are the full served paths (the /api/v1 prefix included).
 function embedVerdict(method, path) {
 	const rest = path.replace(/^\/api\/v1/, '');
+	if (rest === '/variables' || rest.startsWith('/variables/')) {
+		return 'Deny — variables are tenant-wide: every workflow of the tenant reads them, so a session confined to one workflow may neither list nor change them.';
+	}
 	if (rest === '/node-types' || rest.startsWith('/node-types/')) {
 		return 'Allow with `workflow:read` — the catalogue is narrowed to the session\u2019s own tenant. `load-options` is additionally bounded to the session\u2019s workflow by the handler.';
 	}

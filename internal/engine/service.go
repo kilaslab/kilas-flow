@@ -106,7 +106,11 @@ type ServiceDeps struct {
 	// Environment is the allowlisted `$env` map. The service never reads the
 	// process environment itself, so what a workflow can see is decided once,
 	// at composition.
-	Environment    map[string]string
+	Environment map[string]string
+	// Variables supplies each tenant's `$vars` map, read once at the start of
+	// every execution. Nil leaves `$vars` empty, which is what a build with
+	// no variable store has always done.
+	Variables      VariableSource
 	WorkerID       string
 	DefaultTimeout time.Duration
 	// MaxTimeout caps the timeout a workflow asks for in its own settings
@@ -191,6 +195,7 @@ type Service struct {
 	events                 *events.Broker
 	metrics                metrics.Observer
 	environment            map[string]string
+	variables              VariableSource
 	workerID               string
 	defaultTimeout         time.Duration
 	leaseDuration          time.Duration
@@ -260,6 +265,7 @@ func NewService(deps ServiceDeps) (*Service, error) {
 		staticData:             deps.StaticData,
 		events:                 deps.Events,
 		environment:            environment,
+		variables:              deps.Variables,
 		workerID:               deps.WorkerID,
 		defaultTimeout:         deps.DefaultTimeout,
 		leaseDuration:          deps.LeaseDuration,
@@ -1049,6 +1055,9 @@ func (service *Service) runWithStack(ctx context.Context, record execution.Recor
 		return Result{}, err
 	}
 	request := service.newRequest(record, document, stack, resume, trace)
+	if request.Vars, err = service.variablesFor(ctx, record.TenantID); err != nil {
+		return Result{}, err
+	}
 	request.Input = item
 	request.TriggerNodeID = record.TriggerNodeID
 	// Left nil when this server has no binary storage, so a node can ask

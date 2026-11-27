@@ -582,3 +582,18 @@ func TestADynamicUnicodePropertyRegExpIsRefusedAtRunTime(t *testing.T) {
 		t.Fatalf("an ordinary RegExp misbehaved: %#v", result.Items)
 	}
 }
+
+// $vars in a Code node reads the tenant variables the runner hands it, the
+// same map an expression in the same run reads.
+func TestVarsReadTheTenantVariables(t *testing.T) {
+	roots := nodeRoots()
+	roots.Vars = map[string]any{"API_BASE": "https://acme.example"}
+	result := mustRun(t, newRunner(), jsrun.Task{
+		Source: "return [{ json: { base: $vars.API_BASE, missing: $vars.NOPE === undefined } }]",
+		Roots:  roots, Items: numbered(1),
+	})
+	got := result.Items[0].JSON
+	if got["base"] != "https://acme.example" || got["missing"] != true {
+		t.Fatalf("$vars read %v, want the tenant's API_BASE and undefined for an unset key", got)
+	}
+}

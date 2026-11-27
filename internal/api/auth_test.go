@@ -138,6 +138,7 @@ func newAuthenticatedAPIWith(t *testing.T, adjust func(*api.Deps), tenantIDs ...
 		Executions:          executions,
 		Credentials:         credentialStore,
 		Schedules:           repository.NewScheduleStore(db.DB),
+		Variables:           repository.NewVariableStore(db.DB),
 		ExecutionController: runtime,
 		Events:              broker,
 		EmbedIssuer:         embedIssuer,

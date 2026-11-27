@@ -139,6 +139,7 @@ func (purger *GORMTenantPurger) PurgeTriggers(ctx context.Context, tenant Tenant
 func (purger *GORMTenantPurger) PurgeDefinitions(ctx context.Context, tenant TenantScope) (map[string]int64, error) {
 	return purger.purge(ctx, tenant, []purgeStep{
 		{table: "secret_bindings", model: &secretBindingModel{}},
+		{table: "variables", model: &variableModel{}},
 		{table: "credentials", model: &credentialModel{}},
 		{table: "credential_events", model: &credentialEventModel{}},
 		{table: "workflow_versions", model: &workflowVersionModel{}},

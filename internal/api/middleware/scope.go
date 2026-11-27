@@ -382,6 +382,20 @@ func permits(subject subject, r *http.Request) (int, string) {
 		}
 		return refused(subject, subject.Allows(embed.ScopeWrite), "is read-only")
 
+	case path == "/variables" || strings.HasPrefix(path, "/variables/"):
+		// Variables are tenant-wide: every workflow of the tenant reads them.
+		// An embed session is confined to one workflow and a workflow-bound
+		// key to its one subject, so neither may read the tenant's set or
+		// change what its siblings read; an unbound scoped key reads with
+		// workflow:read and writes with workflow:write, like schedules.
+		if subject.Kind() != kindKey || bound != "" {
+			return http.StatusForbidden, subject.Denial("cannot manage variables")
+		}
+		if r.Method == http.MethodGet {
+			return refused(subject, subject.Allows(embed.ScopeRead), "cannot read")
+		}
+		return refused(subject, subject.Allows(embed.ScopeWrite), "is read-only")
+
 	case path == "/resume" || strings.HasPrefix(path, "/resume/"):
 		// Approval resume is never available to a confined credential:
 		// resuming someone else's approval is the confused-deputy shape the

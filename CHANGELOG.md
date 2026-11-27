@@ -23,6 +23,22 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- Variables: a tenant's own key/value pairs, read by every workflow as
+  `{{ $vars.KEY }}` and by the Code node's `$vars` (n8n's Settings →
+  Variables). Managed under Settings → Variables or through
+  `GET/POST /api/v1/variables` and `PUT/DELETE /api/v1/variables/{id}`.
+  A run reads them once when it starts; a store that cannot be read fails the
+  run rather than running it with an empty `$vars`. Keys follow n8n's rule
+  (letters, digits and underscores, at most 64 characters), values are plain
+  text of at most 4096 bytes, and a tenant holds at most 500. Embed sessions
+  and workflow-bound keys are refused. Migration 000033 adds the table.
+- Trigger filters. The Webhook, Host Event and pack triggers take an optional
+  `triggerFilter` (the IF/Filter conditions shape, its expressions read the
+  trigger item) checked before anything is queued. A webhook delivery it
+  refuses is answered `200 {"filtered": true, "reason"}`, queues nothing and is
+  counted as filtered; a host event it refuses appears in the publish
+  response's `filtered` list with `reason: "filter"`. Migration 000032 stores
+  the filter with each host-event subscription.
 - Host-declared confinement for embed sessions. `POST /embed-sessions`
   accepts an optional `allow: {credentials, datastores, workflows}`, each a
   list of ids (at most 50) or `"tenant"`, for a workflow session. Every id is

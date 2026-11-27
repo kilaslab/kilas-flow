@@ -5065,6 +5065,78 @@
         ],
         "type": "object"
       },
+      "VariableBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/VariableBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "key": {
+            "description": "Letters, digits and underscores, starting with a letter or underscore, so it reads as $vars.KEY.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "value": {
+            "description": "Plain text, at most 4096 bytes. Stored unencrypted: a secret belongs in a credential.",
+            "maxLength": 4096,
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "type": "object"
+      },
+      "VariableResource": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/VariableResource.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "description": "The name a workflow reads, as $vars.KEY.",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "value": {
+            "description": "Plain text, stored unencrypted. Never put a secret here: use a credential.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "value",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
       "Visibility": {
         "additionalProperties": false,
         "properties": {
@@ -9655,6 +9727,182 @@
         "summary": "Replace an account's password",
         "tags": [
           "Admin"
+        ]
+      }
+    },
+    "/api/v1/variables": {
+      "get": {
+        "description": "Returns every variable of the tenant, ordered by key. Every workflow of the tenant reads them as `$vars.KEY`. The list is not paged: a tenant holds at most 500 variables.",
+        "operationId": "list-variables",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/VariableResource"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List variables",
+        "tags": [
+          "Variables"
+        ]
+      },
+      "post": {
+        "description": "Adds a variable. A key the tenant already has answers 409. The next execution that starts reads it.",
+        "operationId": "create-variable",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VariableBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VariableResource"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create a variable",
+        "tags": [
+          "Variables"
+        ]
+      }
+    },
+    "/api/v1/variables/{id}": {
+      "delete": {
+        "description": "Removes a variable. A workflow that still reads it gets an empty value from the next execution on.",
+        "operationId": "delete-variable",
+        "parameters": [
+          {
+            "description": "Variable identifier",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Variable identifier",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete a variable",
+        "tags": [
+          "Variables"
+        ]
+      },
+      "put": {
+        "description": "Replaces a variable's key and value. Renaming onto a key the tenant already has answers 409. Executions already running keep the value they started with.",
+        "operationId": "update-variable",
+        "parameters": [
+          {
+            "description": "Variable identifier",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Variable identifier",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VariableBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VariableResource"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Update a variable",
+        "tags": [
+          "Variables"
         ]
       }
     },

@@ -393,6 +393,9 @@ func (service *Service) resumeRun(ctx context.Context, record execution.Record, 
 		return failedResume(checkpoint, err)
 	}
 	request := service.newRequest(record, document, stack, resume, trace)
+	if request.Vars, err = service.variablesFor(ctx, record.TenantID); err != nil {
+		return failedResume(checkpoint, err)
+	}
 	// The resumed run starts from the same trigger with the same input: the
 	// checkpoint carries the graph state, the record carries the entry.
 	item, err := inputItem(record.Input)

@@ -704,6 +704,7 @@ func run(args []string) error {
 		return fmt.Errorf("register the datastore schema loader: %w", err)
 	}
 	schedules := repository.NewScheduleStore(db.DB)
+	variables := repository.NewVariableStore(db.DB)
 	eventBroker := events.NewBroker(events.BrokerOptions{})
 	// Binary payloads live on a filesystem root, never in the database. An
 	// unset root leaves the store nil, and a node that needs one then fails
@@ -802,6 +803,8 @@ func run(args []string) error {
 		// KILASFLOW_WORKFLOW_ENV_ prefix, so a workflow can never read the
 		// database DSN or the credential master key out of this process.
 		Environment: workflowEnvironment(),
+		// The tenant's own variables behind `$vars`, read once per execution.
+		Variables:   variables,
 		RelayPrefix: cfg.Database.TablePrefix,
 		RelaySend:   relaySend,
 		// server.public_url prefixes the resume links handed to waiting
@@ -1022,6 +1025,7 @@ func run(args []string) error {
 		Executions:   executions,
 		Datastores:   datastoreEngine,
 		Schedules:    schedules,
+		Variables:    variables,
 		Webhook:      webhookHandler,
 		Credentials:  credentialsRepo,
 		OptionLoader: optionLoader,

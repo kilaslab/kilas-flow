@@ -95,7 +95,7 @@ An expression body must begin with one of these. Anything else is a parse error.
 | `$workflow` | `.id`, `.name` and `.active` |
 | `$itemIndex` | the current item's position, as a number |
 | `$runIndex` | the current run of this node, as a number |
-| `$vars` | the workflow's static variables, as an object |
+| `$vars` | the tenant's variables, as an object of strings |
 | `$now` | the current instant, as a date |
 | `$today` | the start of today, as a date |
 | `$fromAI('name')` | a parameter an AI agent fills in |
@@ -108,8 +108,26 @@ evaluates to the model's argument — or the call's default, in its declared typ
 — as a value, never as expression source, so an argument that spells an
 expression stays text. `$fromai` and `$fromAi` are accepted spellings.
 
-`$vars` holds what the runtime was given for this workflow, and nothing else: a
-variable that was never set stays absent rather than being invented.
+### Variables
+
+`$vars` holds the tenant's variables, n8n's Settings → Variables: key/value
+pairs every workflow of the tenant reads as `{{ $vars.API_BASE }}`. They are
+managed under **Settings → Variables** in the dashboard or through the API
+(`GET /api/v1/variables`, `POST /api/v1/variables`, `PUT` and `DELETE
+/api/v1/variables/{id}`). A run reads them once, when it starts, so an edit
+reaches the next run and never changes one already in flight. A variable that
+was never set stays absent (`undefined`) rather than being invented.
+
+- A key starts with a letter or underscore and holds only letters, digits and
+  underscores (at most 64 characters), so every key reads as `$vars.KEY`. A
+  value is text of at most 4096 bytes, and a tenant holds at most 500.
+- Values are stored and listed as plain text, as in n8n. A secret belongs in a
+  credential, never in a variable.
+- The endpoints take a tenant-wide key, or a scoped key with `workflow:read` to
+  list and `workflow:write` to change. An embed session and a key bound to one
+  workflow are refused, because every workflow of the tenant reads the same
+  set.
+- The Code node's `$vars` is the same object.
 
 `$input` answers both shapes an author may have written. `$input.item`,
 `$input.first()`, `$input.last()`, `$input.all()` and `$input.isExecuted` are the

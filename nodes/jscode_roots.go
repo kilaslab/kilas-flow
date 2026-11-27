@@ -21,6 +21,7 @@ func jsRootsOf(ir workflow.IRNode, input workflow.NodeInput, request engine.Requ
 			ResumeURL: request.Execution.ResumeURL, ApprovalURL: request.Execution.ApprovalURL,
 		},
 		Env:         request.Env,
+		Vars:        request.Vars,
 		RunIndex:    request.RunIndex,
 		NodeVersion: ir.TypeVersion.Float(),
 		// The workflow's settings.timezone, which $now and $today read in an

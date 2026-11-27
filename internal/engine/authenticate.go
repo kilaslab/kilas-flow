@@ -269,6 +269,7 @@ func (request Request) ExpressionContext(item workflow.Item, input workflow.Node
 		NodeBranches: request.NodeBranches,
 		Workflow:     request.Workflow,
 		Env:          request.Env,
+		Vars:         request.Vars,
 		Execution: expression.ExecutionContext{
 			ID:   request.Execution.ID,
 			Mode: request.Execution.Mode,

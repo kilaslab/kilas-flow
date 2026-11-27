@@ -76,6 +76,7 @@ func registerRoutes(router *chi.Mux, api huma.API, deps Deps) {
 	}
 	credentials.Register(v1)
 	handlers.NewSchedules(deps.Schedules, deps.Tenants).Register(v1)
+	handlers.NewVariables(deps.Variables, deps.Tenants).Register(v1)
 	handlers.NewDatastores(deps.Datastores, deps.Tenants).WithIdempotency(deps.Idempotency).Register(v1)
 	handlers.NewEmbedSessions(deps.EmbedIssuer, deps.Workflows, deps.Tenants).
 		WithDatastores(deps.Datastores).WithCredentials(deps.Credentials).Register(v1)
