@@ -11,6 +11,10 @@ exists; this page assembles them into one feature. The code it quotes runs:
 `sdk/examples/reference-host` is a minimal host that serves two tenants
 from one process, and every snippet below is copied from it.
 
+For the whole integration in order, from provisioning a tenant to going to
+production, read the [SaaS integration playbook](/guides/saas-playbook/). This
+page is the detail behind its embedding steps.
+
 Background on any single mechanism lives in [Tenancy and the embed
 boundary](/concepts/tenancy-and-embedding/), [Triggers and
 webhooks](/concepts/webhooks/), and [Credentials](/concepts/credentials/).
@@ -51,11 +55,12 @@ that key; the end user never sees it.
 
 ### 1. Provision the workflow server-side
 
-Import, rather than create, when the workflow starts from a trigger. The
-import response is the only call that reports the minted webhook address
-back — activation reports nothing — and activating never changes the
-reported address. Without it the host would own a workflow and have no
-URL to send anything to:
+Import, rather than create, when the workflow starts from a trigger and you
+want the address in the same call: the import response reports the minted
+webhook address. Activation reports nothing and never changes the address. A
+workflow made with `createWorkflow` gets the same address from
+`GET /api/v1/workflows/{id}/webhooks` (`listWorkflowWebhooks`), which mints it
+on first read, so the address is known before the workflow is active either way:
 
 ```js
 const imported = await tenant.client.importWorkflow({
@@ -335,12 +340,18 @@ const receipt = await delivery.json();
 // repeat of the same delivery: { executionId, status, duplicate: true }.
 ```
 
-The host then finds the run through the tenant's own client — list the
-workflow's executions and take the newest, or have the trigger answer from its
-graph with a Respond to Webhook node — and polls `getExecution` until the status
-is terminal. Ticket minting and execution polling both re-check
-that the execution belongs to the tenant's workflow first — a ticket for
-another customer's run would be a cross-tenant read.
+The host then finds the run. The better way is to have the trigger answer from
+its graph: set the Webhook node's `responseMode` to `responseNode` and put a
+Respond to Webhook node first that returns `{{ $execution.id }}`, so the
+delivery answers with the run id and the workflow carries on
+([Trigger workflows from your app](/guides/trigger-workflows/#what-the-caller-gets-back)).
+The fallback, which the reference host uses, is to list the workflow's
+executions through the tenant's own client and take the newest. That can pick
+the wrong run when two deliveries land together. With the id, the host polls
+`getExecution` until the status is terminal, or follows the stream
+([Get notified of results](/guides/get-notified/)). Ticket minting and execution
+polling both re-check that the execution belongs to the tenant's workflow
+first — a ticket for another customer's run would be a cross-tenant read.
 
 ### Host events: one publish, every listening workflow
 
@@ -358,7 +369,9 @@ const outcome = await tenantClient.publishEvent(
 // outcome.filtered: [{workflowId, reason}] — duplicates and deactivations
 ```
 
-This is the recommended host → workflow path, for three reasons a webhook
+This is the recommended host → workflow path (the full comparison with
+webhooks and the run API is [Trigger workflows from your
+app](/guides/trigger-workflows/)), for three reasons a webhook
 cannot match. One request reaches every active workflow whose event trigger
 lists the type, where a webhook route is per workflow and `POST
 /workflows/{id}/run` is per workflow too — and a run call executes the latest
@@ -503,11 +516,11 @@ lookup clauses on tenant and id together, so naming another tenant's
 datastore answers 404 — isolation the host relies on rather than
 reimplements:
 
-The SDK's datastore subset covers the embed path — `getDatastore`,
-`listDatastoreRows` with its filter triples, `getDatastoreRow`, and
-`insertDatastoreRow` — while provisioning and schema stay on the
-documented REST endpoints with the tenant key. The backend key below
-provisions and writes with full authority. A browser never holds it: to
+The SDK has a method for every datastore operation, from `createDatastore`
+and `addDatastoreColumn` to `listDatastoreRows`, `insertDatastoreRow` and
+`upsertDatastoreRow` ([Using the host SDK](/guides/sdk/)). The calls below use
+the REST endpoints so the wire shape is visible. The backend key provisions
+and writes with full authority. A browser never holds it: to
 let an embedded surface touch rows, the backend mints a datastore session
 instead of a workflow one —
 
@@ -549,8 +562,9 @@ while bulk update, delete, and upsert take the JSON envelope
 `neq`, `like`, `ilike`, `gt`, `gte`, `lt`, `lte`, `isEmpty`,
 `isNotEmpty`. Column types are `string`, `number`, `boolean`, `date`.
 
-Writing from inside a workflow uses the datastore node rather than the
-service API — an insert names the table by id and maps the columns:
+Writing from inside a workflow uses the Data table node
+(`kilasflow.datastore`) rather than the service API — an insert names the
+table by id and maps the columns:
 
 ```json
 { "resource": "row", "operation": "insert",
@@ -559,9 +573,9 @@ service API — an insert names the table by id and maps the columns:
 ```
 
 Manual mapping sets `mappingMode` to `defineBelow` with the column values
-as the object. The reference host writes host-side today and swaps in this
-node once it lands; the table id it passes is already the per-tenant
-datastore the backend provisioned.
+as the object. The node exists today. The reference host writes its signup row
+from the host side with the service API, which is the other valid choice, and
+either way the table id is the per-tenant datastore the backend provisioned.
 
 ## The two failure modes that matter
 
