@@ -10,6 +10,7 @@ import (
 
 	"github.com/kilaslab/kilas-flow/internal/execution"
 	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/triggerfilter"
 )
 
 // Runner queues one triggered execution and wakes a worker. *engine.Service
@@ -78,13 +79,19 @@ const (
 	// published but no longer active when its execution was queued — the
 	// race window between listing subscriptions and queueing.
 	FilteredInactive = "inactive"
+	// FilteredCondition: the workflow's trigger filter did not admit the
+	// event, so no execution was queued for it.
+	FilteredCondition = "filter"
 )
 
 // Filtered is one workflow the event considered but did not run, and why.
 type Filtered struct {
 	WorkflowID string `json:"workflowId"`
-	// Reason is FilteredDuplicate or FilteredInactive.
+	// Reason is FilteredDuplicate, FilteredInactive or FilteredCondition.
 	Reason string `json:"reason"`
+	// Detail says why a FilteredCondition entry was dropped: the filter did
+	// not match, or could not be evaluated and why. Empty for other reasons.
+	Detail string `json:"detail,omitempty"`
 	// ExecutionID is the execution a duplicate was collapsed with, when it is
 	// known. Empty when the first publish had not recorded its execution yet.
 	ExecutionID string `json:"executionId,omitempty"`
@@ -139,11 +146,24 @@ func (service *Service) Publish(ctx context.Context, tenant repository.TenantSco
 
 	result := Result{Matched: []Matched{}, Filtered: []Filtered{}}
 	reached := make(map[string]bool, len(targets))
-	for _, target := range targets {
+	for index, target := range targets {
 		// One execution per workflow: the first trigger node listening for
-		// the type starts the run, and a later node of the same workflow is
-		// not a second execution.
+		// the type, and admitting the event, starts the run; a later node of
+		// the same workflow is not a second execution.
 		if reached[target.WorkflowID] {
+			continue
+		}
+		triggerItem := item(target.EventPath, document)
+		// A trigger whose filter refuses the event hands it to the workflow's
+		// next listening trigger, if any. Only when none admits it is the
+		// workflow reported as filtered, once, with the last refusal's reason.
+		if check := admits(target, triggerItem); !check.Matched {
+			if !laterTriggerOf(targets, index) {
+				reached[target.WorkflowID] = true
+				result.Filtered = append(result.Filtered, Filtered{
+					WorkflowID: target.WorkflowID, Reason: FilteredCondition, Detail: check.Reason,
+				})
+			}
 			continue
 		}
 		reached[target.WorkflowID] = true
@@ -161,7 +181,7 @@ func (service *Service) Publish(ctx context.Context, tenant repository.TenantSco
 			}
 		}
 
-		record, err := service.runner.QueueHostEvent(ctx, tenant, target.WorkflowID, target.WorkflowVersionID, target.NodeID, item(target.EventPath, document))
+		record, err := service.runner.QueueHostEvent(ctx, tenant, target.WorkflowID, target.WorkflowVersionID, target.NodeID, triggerItem)
 		if errors.Is(err, repository.ErrNotFound) {
 			// The subscription said active and the queue said otherwise: the
 			// workflow was deactivated, or its active version replaced, in
@@ -180,6 +200,26 @@ func (service *Service) Publish(ctx context.Context, tenant repository.TenantSco
 		result.Matched = append(result.Matched, Matched{WorkflowID: target.WorkflowID, ExecutionID: record.ID})
 	}
 	return result, nil
+}
+
+// admits checks one subscription's trigger filter against the item its
+// trigger would emit.
+func admits(target repository.HostEventTarget, encoded json.RawMessage) triggerfilter.Result {
+	if target.Filter == nil {
+		return triggerfilter.Result{Matched: true}
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		return triggerfilter.Result{Reason: fmt.Sprintf("the trigger item could not be read: %v", err)}
+	}
+	return triggerfilter.CheckFilter(target.Filter, decoded)
+}
+
+// laterTriggerOf reports whether another subscription of the same workflow
+// follows the one at index. Subscriptions are listed ordered by workflow, so
+// the next entry is the only one to look at.
+func laterTriggerOf(targets []repository.HostEventTarget, index int) bool {
+	return index+1 < len(targets) && targets[index+1].WorkflowID == targets[index].WorkflowID
 }
 
 // document builds the trigger item every matched workflow starts from: the

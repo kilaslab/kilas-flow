@@ -23,6 +23,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/ratelimit"
 	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/triggerfilter"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
@@ -308,7 +309,19 @@ func (handler *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	payload, err := json.Marshal(kind.Shape.Apply(delivery))
+	item := kind.Shape.Apply(delivery)
+	// The author's own filter runs on the item the workflow would see, after
+	// the trigger kind's: the same 200 "filtered" answer, so a sender treats an
+	// event the workflow did not want exactly like one the node was restricted
+	// away from, and no execution is created for either.
+	if filtered := triggerfilter.Check(binding.Parameters, item); !filtered.Matched {
+		handler.logger.Info("a delivery was filtered out by its trigger filter",
+			"route", binding.Route, "workflow", binding.WorkflowID, "node", binding.NodeID, "reason", filtered.Reason)
+		handler.count(binding.TenantID, metrics.WebhookFiltered)
+		writeJSON(w, http.StatusOK, map[string]any{"filtered": true, "reason": filtered.Reason})
+		return
+	}
+	payload, err := json.Marshal(item)
 	if err != nil {
 		handler.count(binding.TenantID, metrics.WebhookRefused)
 		problem(w, http.StatusBadRequest, "The request could not be encoded.")

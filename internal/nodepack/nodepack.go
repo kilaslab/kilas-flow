@@ -31,6 +31,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/property"
 	"github.com/kilaslab/kilas-flow/internal/routing"
+	"github.com/kilaslab/kilas-flow/internal/triggerfilter"
 	"github.com/kilaslab/kilas-flow/internal/wasmpack"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
@@ -390,6 +391,16 @@ func loadTrigger(pack *Pack, definition node.Definition) (node.Definition, *rout
 		seen[parameter.Key] = true
 		definition.Parameters = append(definition.Parameters, declared)
 	}
+	// Every pack trigger is filterable at the boundary, the same as the
+	// built-in Webhook and Host Event triggers. The key is reserved rather
+	// than merged: a pack declaring it would be configuring something else
+	// under a name the filter owns.
+	if seen[triggerfilter.ParameterKey] {
+		return node.Definition{}, nil, fmt.Errorf(
+			"node pack %q declares parameter %q, which is reserved for the trigger filter",
+			pack.Type, triggerfilter.ParameterKey)
+	}
+	definition.Parameters = append(definition.Parameters, triggerfilter.Property())
 	if trigger.Webhook.PathParameter != "" && !seen[trigger.Webhook.PathParameter] {
 		return node.Definition{}, nil, fmt.Errorf(
 			"node pack %q binds its route to parameter %q, which it does not declare",

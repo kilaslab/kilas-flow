@@ -14,6 +14,7 @@ import (
 
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/triggerfilter"
 	"github.com/kilaslab/kilas-flow/internal/workflow"
 )
 
@@ -66,6 +67,9 @@ func Extract(catalog Catalog) repository.HostEventExtractor {
 				NodeType:  candidate.Type,
 				Events:    events,
 				EventPath: declaration.EventPath,
+				// Carried as authored, expressions and all: it is resolved
+				// against each event's item at publish time.
+				Filter: candidate.Parameters[triggerfilter.ParameterKey],
 			})
 		}
 		return triggers
