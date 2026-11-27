@@ -111,6 +111,63 @@ comparison, and keeping every match instead of the first — send the node to th
 placeholder with the reason, because importing them as a node that ignores them
 would sort items onto the wrong output.
 
+### Files and formats
+
+| n8n node type | KilasFlow node type |
+| --- | --- |
+| `n8n-nodes-base.convertToFile` | `kilasflow.convertToFile` |
+| `n8n-nodes-base.crypto` | `kilasflow.crypto` |
+| `n8n-nodes-base.xml` | `kilasflow.xml` |
+| `n8n-nodes-base.markdown` | `kilasflow.markdown` |
+| `n8n-nodes-base.html` | `kilasflow.html` |
+| `n8n-nodes-base.compression` | `kilasflow.compression` |
+| `n8n-nodes-base.spreadsheetFile` (legacy) | per operation: `kilasflow.extractFromFile` (reading) or `kilasflow.convertToFile` (writing) |
+
+These nodes run inside the engine with no outbound traffic, and each keeps n8n's
+own parameter names, so an import copies the parameters and an export writes
+them back. They share one rule: an option or a format the native node does not
+implement sends the node to the placeholder with the option named, never to a
+node that quietly ignores it. A node that leaves every setting at its default
+imports as that default.
+
+- **Convert to File** writes CSV, XLSX, JSON (all items in one file, or one file
+  per item), a text file, and a file decoded from a base64 string, into the
+  binary field you name. XLSX is written without a spreadsheet library, so it is
+  a plain one-sheet workbook with no styling. HTML, iCalendar, ODS, RTF, the
+  legacy XLS format and encodings other than UTF-8 import as placeholders. An
+  item does not keep the order its fields were written in, so a CSV or XLSX
+  lists its columns alphabetically.
+- **Crypto** hashes (MD5, SHA1, SHA256, SHA384, SHA512, SHA3), signs HMACs, signs
+  with an RSA or elliptic-curve PEM key (RSA-SHA1, RSA-SHA256, RSA-SHA384 and
+  RSA-SHA512), and generates a UUID or a random string. Any other signing
+  algorithm imports as a placeholder.
+- **XML** converts in both directions with the common converter options: the
+  attribute and character keys, explicit array and root, merged or ignored
+  attributes, trimming and normalising, tag lower-casing and whitespace-only
+  text. Elements are written in alphabetical order for the same reason columns
+  are. An option outside that list imports as a placeholder.
+- **Markdown** renders Markdown to HTML and converts HTML back. n8n's own
+  converter defaults differ from the native ones (tables, strikethrough, task
+  lists and auto links off; setext headings, `*` bullets and `_` emphasis), so
+  the import writes them out and the converted text stays what the workflow
+  produced. Code blocks are written fenced where n8n indents them, which the
+  import reports as a lossy difference. Emoji, underline and the other options
+  KilasFlow lacks send the node to the placeholder.
+- **HTML** extracts by CSS selector (text, inner HTML, an attribute or a form
+  control's value, with skip selectors and array results), writes an HTML table
+  from the items, and renders a template whose expressions fill in per item.
+- **Compression** zips the listed binary fields into one archive or gzips each,
+  and unpacks ZIP and gzip into numbered binary fields. The two formats are told
+  apart by their first bytes, and archives are bounded in file count and size.
+- **Spreadsheet File** (legacy) imports for CSV and XLSX only, because the
+  native nodes read and write those. A node that detects the format
+  automatically, or names another, imports as a placeholder that says which
+  format to choose. Cells read from an XLSX file come back as text.
+
+Edit Image and Move Binary Data are not mapped yet. Move Binary Data's
+placeholder names the two nodes that cover its halves: Extract From File and
+Convert to File.
+
 ### Nodes that are absent on purpose
 
 Some n8n nodes are not gaps. Execute Command, Read/Write Files from Disk, Write
@@ -615,7 +672,7 @@ Activation compiles the workflow. If a `blocking` diagnostic is still
 outstanding, compilation fails and names the node — an unsupported placeholder
 reports:
 
-> this node was imported from `n8n-nodes-base.convertToFile`, which KilasFlow
+> this node was imported from `n8n-nodes-base.editImage`, which KilasFlow
 > does not support. Replace it before activating or running this workflow
 
 Once it activates, run it once by hand before pointing live traffic at it. The
@@ -897,8 +954,10 @@ two of them are about import fidelity:
   PostgreSQL. This is the expected and correct outcome for a workflow imported
   into an instance where nobody has created a credential yet, and it is the same
   thing you will see on your first import. It is not a fidelity failure.
-- **One uses a node type with no mapping** (`n8n-nodes-base.convertToFile`).
-  This is a genuine gap, and it is what the placeholder exists for.
+- **One used a node type with no mapping** (`n8n-nodes-base.convertToFile`,
+  which KilasFlow now maps; the baseline predates that and has not been
+  regenerated). This was a genuine gap, and it is what the placeholder exists
+  for.
 - **One loses a branch.** It uses n8n's error output, and the mapped node
   declares no second output for that edge to land on, so the node on that branch
   arrives with no incoming connection and the compiler refuses the graph as
