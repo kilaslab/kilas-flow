@@ -229,6 +229,86 @@ await tenant.client.createEmbedSession({
 The two scopes are for embed sessions only. A scoped API key cannot be minted
 with them — publishing and activation stay with the tenant-wide key.
 
+#### What the editor may reference: confinement and `allow`
+
+Scopes bound which endpoints a session may call. Its **confinement** bounds
+what the document it saves or runs may reference: the credentials its nodes
+attach, the data tables a Data table node addresses, and the workflows an
+Execute Sub-workflow or Workflow Tool node calls. The document is checked
+against it on every save, publish, activation, restore, run and retry.
+
+By default the confinement is derived at mint from the revision the
+workflow's owner published, or the latest draft if nothing was ever
+published: whatever that revision uses, plus the workflow itself so it may
+call itself. A blank workflow references nothing, so an end user who builds a
+new automation inside the embed cannot pick the credential or data table you
+provisioned for their organisation. `allow` widens it:
+
+```js
+await tenant.client.createEmbedSession({
+  workflowId: tenant.workflowId,
+  scopes: ['workflow:read', 'workflow:write', 'workflow:run'],
+  origin,
+  allow: {
+    credentials: [tenant.crmCredentialId], // these ids...
+    datastores: [tenant.contactsTableId],
+    workflows: 'tenant' // ...or every one of the tenant's
+  }
+});
+```
+
+- Each kind is optional and is either a list of ids or the string
+  `"tenant"`. The token carries the union of the derived set and what you
+  declared. Leave `allow` out and the session gets exactly the derived set,
+  as before.
+- Every id is checked against the minting tenant before a token exists. An
+  id the tenant does not own answers `404`, whether nobody stored it or
+  another tenant did, and nothing is minted.
+- `"tenant"` opens that whole kind of this tenant. It travels in the token as
+  a flag, not as a list of ids, so it also covers resources created after the
+  mint. Only a tenant-wide key or a dashboard user may declare it. A caller
+  confined to part of the tenant, such as a scoped key or a key bound to one
+  workflow, is refused with a `403`.
+- At most 50 ids per kind, because the ids travel in the token on every
+  request. For more than that, use `"tenant"`.
+- A declared data table is granted by its id and by the name it has at mint,
+  so a node that addresses it By Name passes too.
+- `allow` is for workflow sessions. On a datastore session it is a `422`.
+- The embedded credential picker lists exactly the credentials the
+  confinement grants: the derived ones plus the declared ones, or every
+  credential in the tenant under `"tenant"`.
+- A server older than this field refuses a mint body that carries `allow`
+  with a `422`, so upgrade KilasFlow before your host starts sending it.
+
+What `allow` does not change:
+
+- No session may create, list, rename, clear or drop a data table, and no
+  node may choose its data table or sub-workflow with an expression.
+- A credential with no allowed domains is still refused on a node that sends
+  requests, whatever the grant, because the guest can edit the URL. See
+  [credentials in a confined caller's document](/concepts/tenancy-and-embedding/#credentials-in-a-confined-callers-document).
+- A workflow that a granted Execute Sub-workflow or Workflow Tool node calls
+  runs with its own document, so it uses whatever credentials and data tables
+  that workflow uses. Granting `workflows: 'tenant'` lends the guest every
+  workflow in the tenant as a building block. List ids when that is too much.
+
+A document that reaches outside the confinement is refused with a `403`
+problem, and its `detail` names every offending node, separated by `; `:
+
+```text
+this embed session cannot use that workflow document: node "Collect" attaches credential cred_8f2c, which this embed session was not granted
+```
+
+The other lines it can carry name a data table (`node "Lookup" addresses
+data table ds_41, which this embed session was not granted`, or `addresses
+the data table named "Leads"` for a By Name locator), a called workflow
+(`node "Delegate" calls workflow wf_17, which this embed session was not
+granted`), a table operation (`performs the data table operation "list", and
+an embed session cannot manage data tables`), an expression target, or an
+unscoped credential. A `403` on a save means the session's grant is narrower
+than your editor assumed. Mint the next session with the resource in
+`allow`, or publish a revision that uses it.
+
 ### 4. Mount the editor, watch the run
 
 The SDK is not on npm yet, so the import below resolves only after building it
