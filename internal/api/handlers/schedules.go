@@ -42,7 +42,7 @@ func NewSchedules(store repository.ScheduleRepository, tenants TenantResolver) *
 type scheduleBody struct {
 	WorkflowID string `json:"workflowId,omitempty" doc:"Workflow to run; immutable after creation"`
 	NodeID     string `json:"nodeId,omitempty" doc:"Schedule trigger node in that workflow"`
-	Cron       string `json:"cron" doc:"Standard five-field cron expression, evaluated in UTC"`
+	Cron       string `json:"cron" doc:"Cron expression: five fields, or six with a leading seconds field. Read in UTC unless it starts with a TZ=Area/City prefix and a space, for example TZ=Asia/Jakarta 0 9 * * *"`
 	Active     bool   `json:"active" doc:"Whether this schedule fires"`
 }
 

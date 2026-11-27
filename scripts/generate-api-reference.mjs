@@ -68,7 +68,7 @@ const groups = [
 	{ slug: 'executions', title: 'Executions', blurb: 'List, inspect, cancel, retry, and follow executions on the event stream.', operations: ['list-executions', 'get-execution', 'cancel-execution', 'retry-execution', 'eval-expression', 'stream-execution-events'] },
 	{ slug: 'credentials', title: 'Credentials', blurb: 'Credential types and stored credentials. Reads never return values.', operations: ['list-credential-types', 'test-credential-payload', 'list-credentials', 'create-credential', 'get-credential', 'update-credential', 'delete-credential', 'test-credential', 'start-credential-oauth'] },
 	{ slug: 'auth', title: 'Authentication and keys', blurb: 'Sessions, API keys, and stream tickets.', operations: ['login', 'logout', 'get-me', 'list-api-keys', 'create-api-key', 'revoke-api-key', 'create-stream-ticket'] },
-	{ slug: 'schedules', title: 'Schedules', blurb: 'Cron-style triggers owned by a workflow.', operations: ['list-schedules', 'create-schedule', 'update-schedule', 'delete-schedule'] },
+	{ slug: 'schedules', title: 'Schedules', blurb: 'Cron-style triggers owned by a workflow.', intro: ['Which time zone a cron is read in depends on how the schedule came to exist. A cron you send to these operations is read in UTC unless the expression starts with a `TZ=Area/City ` prefix, for example `TZ=Asia/Jakarta 0 9 * * *` (`CRON_TZ=` also works), and the expression may carry a leading seconds field. The resource does not report a zone. A schedule that activating a workflow registers from its Schedule Trigger node is different: it is read in the workflow\u2019s `timezone` setting, falling back to the instance\u2019s `execution.default_timezone`, and to UTC only when neither is set. Imported n8n workflows keep their zone this way.'], operations: ['list-schedules', 'create-schedule', 'update-schedule', 'delete-schedule'] },
 	{ slug: 'variables', title: 'Variables', blurb: 'The tenant\u2019s key/value pairs every workflow reads as `$vars.KEY`.', operations: ['list-variables', 'create-variable', 'update-variable', 'delete-variable'] },
 	{ slug: 'host-events', title: 'Host events', blurb: 'The recommended host → workflow path: publish one event, every active workflow listening for it runs.', operations: ['publish-event'] },
 	{ slug: 'nodes', title: 'Node types', blurb: 'The node catalogue, icons, load-options, load-schema, and the expression grammar.', operations: ['list-node-types', 'get-node-icon', 'load-node-property-options', 'load-node-property-schema', 'get-expression-grammar'] },
@@ -713,6 +713,10 @@ function renderGroupPage(group, version, operations, schemas, permits) {
 	lines.push('');
 	lines.push(group.blurb);
 	lines.push('');
+	for (const paragraph of group.intro ?? []) {
+		lines.push(paragraph);
+		lines.push('');
+	}
 	for (const operation of operations) {
 		lines.push(renderOperation(operation.path, operation.method, operation.operation, schemas, permits));
 	}
