@@ -91,8 +91,9 @@ what makes this directory runnable from the checkout — switch it back to a
 version range on the day the package is on npm.
 
 On first boot the server provisions each tenant idempotently — import a
-webhook workflow (the import response is the only call that reports the
-minted webhook address), store a header credential, attach it to the
+webhook workflow (the import response reports the minted webhook address in
+the same call; `listWorkflowWebhooks` reports it for a workflow made any other
+way), store a header credential, attach it to the
 trigger, activate, and ensure a datastore — and records the ids in
 `.reference-state.json` (gitignored local state, not a migration). A
 later boot reuses the state after verifying the workflow and credential

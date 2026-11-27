@@ -237,13 +237,13 @@ none
 
 
 # Acceptance Criteria
-- [ ] The embed permit table (scope × operation) is exported from Go into the reference generator and drift-gated; datastore row operations show Allow where they are allowed
-- [ ] Confinement is documented with the "pre-attach, then mint" recipe, an example and the exact 403 texts
-- [ ] Session lifetime (a 30-minute cap) and the refresh procedure are documented, using FEAT-0xsc1s once it lands; until then, the limitation is stated
-- [ ] Origins and CORS behaviour are documented, and the four inconsistent datastore-embed descriptions become one
-- [ ] DOC-2, 3, 4, 10, 11, 24 and the docs half of DOC-5 are resolved
-- [ ] Explain how confinement is derived from the saved revision, and how to seed documents (or use host-declared confinement, FEAT-r267jj)
-- [ ] Schedules reference: resolve the "cron evaluated in UTC" wording against workflow timezones; document embed publish semantics (BUG-mzk0xn)
+- [x] The embed permit table (scope × operation) is exported from Go into the reference generator and drift-gated; datastore row operations show Allow where they are allowed
+- [x] Confinement is documented with the "pre-attach, then mint" recipe, an example and the exact 403 texts
+- [x] Session lifetime (a 30-minute cap) and the refresh procedure are documented, using FEAT-0xsc1s once it lands; until then, the limitation is stated
+- [x] Origins and CORS behaviour are documented, and the four inconsistent datastore-embed descriptions become one
+- [x] DOC-2, 3, 4, 10, 11, 24 and the docs half of DOC-5 are resolved
+- [x] Explain how confinement is derived from the saved revision, and how to seed documents (or use host-declared confinement, FEAT-r267jj)
+- [x] Schedules reference: resolve the "cron evaluated in UTC" wording against workflow timezones; document embed publish semantics (BUG-mzk0xn)
 
 # Implementation Plan
 
@@ -258,3 +258,12 @@ Related tickets: BUG-9853ay, BUG-fv5fer, FEAT-1c70nt, FEAT-cwmw90, FEAT-nc6z9r, 
 # Related Files
 
 # Attachments
+
+## Progress
+
+2026-11-27, branch `worktree-agent-a9f97404b31fd72bc` on top of `feat/epic-sweep-2026-11-27` (9187afb9).
+
+- Permit table: `middleware.EmbedPermit` is the exported gate (EmbedAuth calls it, so there is one decision); `scripts/embed-permits` evaluates it for every operation of the in-process OpenAPI document and each of the seven embed scopes and commits `scripts/embed-permits/embed-permits.json`. `scripts/generate-api-reference.mjs` reads that file in place of the hand-written `embedVerdict`; the remaining prose is a note per operation group that the run refuses when it contradicts the table. A generated `reference/api/embed-permits.md` page shows the scope-by-operation grid. New targets `make generate-embed-permits` and `generate-embed-permits-check`; the check runs in the CI `drift` job ("Embed permit table", before the API reference check).
+- Docs: new `guides/embed-sessions.md` (sidebar group "Embed in your SaaS") covering scopes and subjects, confinement and its derivation, the pre-attach-then-mint recipe, `allow`, the exact 403 texts, lifetime and refresh (no refresh endpoint; `setSession` after `session-expiring`), origins and CORS. The tenancy and API contract pages now point at the generated table instead of hand-written ones; the SDK README, the reference-host README and server comments, and the embedding guide agree on one datastore-session description (held in the new page). The reference host's "import is the only call that reports the webhook address" claim is corrected (DOC-10).
+- Schedules: the `cron` doc string said "evaluated in UTC". The code reads a `TZ=Area/City` prefix, and a Schedule Trigger node's schedule takes the workflow `timezone` setting, then `execution.default_timezone`. The doc string, a handler test, the schedules reference intro, the OpenAPI document, web client and SDK types are updated. The dashboard's own `schedules_description` string ("Times are evaluated in UTC") in `web/messages` is left alone: it describes the form, which sends no zone, and is localised.
+- Noted, not changed: at the gate, `POST /executions/{id}/cancel` and `GET /executions/{id}/events` are allowed with `workflow:read` alone (ownership is checked in the handler). A read-only session can therefore cancel a run of its own workflow.

@@ -33,7 +33,9 @@ on a workflow session: mint with a workflow scope`.
 | Datastore | `datastore:write` | Insert, upsert, increment, update and delete rows, and import CSV. Carries `datastore:read`. |
 
 Scopes combine by union. Nothing implies write, run, publish or activate, and no
-scope reaches across families. A session must carry at least one scope.
+scope reaches across families. A session must carry at least one scope. What
+publishing and activating do, and why each is its own scope, is in [publish and
+activate authority](/guides/embedding/#publish-and-activate-authority).
 
 The complete answer to "may this session call that operation" is the generated
 [embed permit table](/reference/api/embed-permits/). It is exported from the Go
@@ -268,7 +270,8 @@ before it, and send the new token on the next request.
 
 ## Origins and CORS
 
-Four things use the origin list, and they are separate checks.
+Origins are checked in four separate places. Three use the deployment's
+allowlist and one uses the session's own origin.
 
 **The allowlist.** `embed.allowed_origins` (environment variable
 `KILASFLOW_EMBED_ALLOWED_ORIGINS`) is the deployment's list. Each entry is

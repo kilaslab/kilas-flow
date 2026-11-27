@@ -227,11 +227,12 @@ async function newestExecutionId(tenant) {
 
 /**
  * Provisions everything one tenant needs, reusing what a previous boot left
- * in the state file. Import is used for provisioning rather than create,
- * for one reason: it is the only operation that reports the minted webhook
- * address back. Activation keeps reporting nothing, so without the import
- * response the host would own a workflow and have no URL to send anything
- * to. Activating never changes the reported address.
+ * in the state file. Import is used for provisioning rather than create
+ * because its response reports the minted webhook address in the same call.
+ * A workflow made with create gets the same address from
+ * `GET /workflows/{id}/webhooks` (`listWorkflowWebhooks`), which mints it on
+ * first read, so either route knows the URL before the workflow is active.
+ * Activation reports nothing and never changes the address.
  */
 async function ensureTenant(slug) {
 	const tenant = tenants[slug];
