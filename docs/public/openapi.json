@@ -586,6 +586,15 @@
           "accent": {
             "type": "string"
           },
+          "fontFamily": {
+            "description": "default (the product font), system (the viewer's system UI font), or serif. Fonts are never loaded from elsewhere.",
+            "enum": [
+              "default",
+              "system",
+              "serif"
+            ],
+            "type": "string"
+          },
           "hideRun": {
             "type": "boolean"
           },
@@ -596,6 +605,22 @@
             "type": "string"
           },
           "name": {
+            "type": "string"
+          },
+          "radius": {
+            "description": "Corner radius of cards, nodes, menus and dialogs, in pixels from 0 to 16; controls and chips scale from it. Omit for the default (10).",
+            "format": "int64",
+            "maximum": 16,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "theme": {
+            "description": "light, dark, or system to follow the viewer's colour-scheme preference. Empty keeps the default, dark.",
+            "enum": [
+              "light",
+              "dark",
+              "system"
+            ],
             "type": "string"
           }
         },

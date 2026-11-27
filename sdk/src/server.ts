@@ -129,6 +129,12 @@ export interface EmbedSessionRequest {
 		accent?: string;
 		hideRun?: boolean;
 		hideSave?: boolean;
+		/** `light`, `dark`, or `system` to follow the viewer's colour-scheme preference. Default: dark. */
+		theme?: 'light' | 'dark' | 'system';
+		/** `default` (the product font), `system` (the viewer's UI font) or `serif`. Never loaded from elsewhere. */
+		fontFamily?: 'default' | 'system' | 'serif';
+		/** Corner radius of cards, nodes, menus and dialogs in pixels, 0 to 16. Default: 10. */
+		radius?: number;
 	};
 	/**
 	 * The host user this session acts for. It is signed into the token and

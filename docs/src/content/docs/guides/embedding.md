@@ -572,6 +572,15 @@ themeable, exactly:
 | `logoUrl` | Absolute `https` URL | `data:` and `javascript:` URLs are the classic injection through a "safe" string field |
 | `accent` | Hex, `oklch()`, `rgb()`, or a plain colour name | Anything that is not a colour literal |
 | `hideRun`, `hideSave` | Booleans | They are presentation only: the server still enforces scopes, so hiding a control can never be the thing that stops an action |
+| `theme` | `light`, `dark`, or `system` | Anything else. `system` follows the viewer's `prefers-color-scheme` and keeps following it while the editor is open. Omitted, the editor is dark |
+| `fontFamily` | `default`, `system`, or `serif` | A font name or URL: a free-form family is how a remote font, and a request to a third party from inside the frame, would arrive |
+| `radius` | Whole pixels from 0 to 16 | Anything else. It sets the corners of cards, nodes, menus and dialogs; controls get 60% of it and chips 40% |
+
+`theme` switches the whole editor, the canvas included: its background, grid,
+edges and ports read the same colour tokens as the rest of the interface, and
+dialogs that open over the editor take the same palette. Both palettes pass
+the product's contrast checks, and an `accent` is re-derived for the palette
+it lands in.
 
 `accent` is one colour, and the editor derives every accent use from it:
 the primary button with its hover and pressed shades, links, the keyboard

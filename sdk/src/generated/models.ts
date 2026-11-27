@@ -331,12 +331,46 @@ export interface BinaryRemoval {
   files: number;
 }
 
+/**
+ * default (the product font), system (the viewer's system UI font), or serif. Fonts are never loaded from elsewhere.
+ */
+export type BrandingFontFamily = typeof BrandingFontFamily[keyof typeof BrandingFontFamily];
+
+
+export const BrandingFontFamily = {
+  default: 'default',
+  system: 'system',
+  serif: 'serif',
+} as const;
+
+/**
+ * light, dark, or system to follow the viewer's colour-scheme preference. Empty keeps the default, dark.
+ */
+export type BrandingTheme = typeof BrandingTheme[keyof typeof BrandingTheme];
+
+
+export const BrandingTheme = {
+  light: 'light',
+  dark: 'dark',
+  system: 'system',
+} as const;
+
 export interface Branding {
   accent?: string;
+  /** default (the product font), system (the viewer's system UI font), or serif. Fonts are never loaded from elsewhere. */
+  fontFamily?: BrandingFontFamily;
   hideRun?: boolean;
   hideSave?: boolean;
   logoUrl?: string;
   name?: string;
+  /**
+     * Corner radius of cards, nodes, menus and dialogs, in pixels from 0 to 16; controls and chips scale from it. Omit for the default (10).
+     * @minimum 0
+     * @maximum 16
+     */
+  radius?: number;
+  /** light, dark, or system to follow the viewer's colour-scheme preference. Empty keeps the default, dark. */
+  theme?: BrandingTheme;
 }
 
 export interface CSVImportIssue {

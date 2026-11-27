@@ -32,10 +32,13 @@ Request fields:
 | `allow.workflows` | no |  | Workflow ids an Execute Sub-workflow or Workflow Tool node may call, or "tenant" for every workflow in the tenant. A called workflow runs with what its own document uses. |
 | `branding` | no | `Branding` | Validated white-label values; never markup |
 | `branding.accent` | no | `string` | — |
+| `branding.fontFamily` | no | `string` | default (the product font), system (the viewer's system UI font), or serif. Fonts are never loaded from elsewhere. |
 | `branding.hideRun` | no | `boolean` | — |
 | `branding.hideSave` | no | `boolean` | — |
 | `branding.logoUrl` | no | `string` | — |
 | `branding.name` | no | `string` | — |
+| `branding.radius` | no | `integer` | Corner radius of cards, nodes, menus and dialogs, in pixels from 0 to 16; controls and chips scale from it. Omit for the default (10). |
+| `branding.theme` | no | `string` | light, dark, or system to follow the viewer's colour-scheme preference. Empty keeps the default, dark. |
 | `datastoreId` | no | `string` | Datastore this session may touch; exactly one of this and workflowId |
 | `origin` | yes | `string` | Exact origin of the page that will frame the editor |
 | `scopes` | yes | `array or null` | workflow:read, workflow:write, workflow:run, workflow:publish, workflow:activate, datastore:read, datastore:write. workflow:publish pins a revision as the version production traffic runs and workflow:activate turns the workflow on and off; neither is implied by write. |
@@ -55,10 +58,13 @@ Fields of the `EmbedSessionResource` body:
 | --- | --- | --- | --- |
 | `branding` | no | `Branding` | — |
 | `branding.accent` | no | `string` | — |
+| `branding.fontFamily` | no | `string` | default (the product font), system (the viewer's system UI font), or serif. Fonts are never loaded from elsewhere. |
 | `branding.hideRun` | no | `boolean` | — |
 | `branding.hideSave` | no | `boolean` | — |
 | `branding.logoUrl` | no | `string` | — |
 | `branding.name` | no | `string` | — |
+| `branding.radius` | no | `integer` | Corner radius of cards, nodes, menus and dialogs, in pixels from 0 to 16; controls and chips scale from it. Omit for the default (10). |
+| `branding.theme` | no | `string` | light, dark, or system to follow the viewer's colour-scheme preference. Empty keeps the default, dark. |
 | `datastoreId` | no | `string` | — |
 | `embedUrl` | yes | `string` | — |
 | `expiresAt` | yes | `string` | — |
@@ -83,10 +89,13 @@ Response (skeleton — every field, placeholder values):
 {
   "branding": {
     "accent": "string",
+    "fontFamily": "default",
     "hideRun": false,
     "hideSave": false,
     "logoUrl": "https://flows.example",
-    "name": "string"
+    "name": "string",
+    "radius": 0,
+    "theme": "light"
   },
   "datastoreId": "string",
   "embedUrl": "https://flows.example",

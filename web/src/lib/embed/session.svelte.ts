@@ -13,13 +13,25 @@ import * as m from '$lib/paraglide/messages.js';
 import { baseLocale, isLocale, type Locale } from '$lib/paraglide/runtime.js';
 import { setLocale } from '$lib/i18n/locale.svelte';
 
+export type EmbedTheme = 'light' | 'dark' | 'system';
+export type EmbedFontFamily = 'default' | 'system' | 'serif';
+
 export type EmbedBranding = {
 	name?: string;
 	logoUrl?: string;
 	accent?: string;
 	hideRun?: boolean;
 	hideSave?: boolean;
+	/** light, dark, or system to follow the viewer's colour-scheme preference. */
+	theme?: EmbedTheme;
+	/** A family from a fixed list; fonts are never loaded from elsewhere. */
+	fontFamily?: EmbedFontFamily;
+	/** Corner radius of surfaces in pixels, 0 to 16. */
+	radius?: number;
 };
+
+/** The largest radius a session may ask for, matching the server's bound. */
+export const EMBED_RADIUS_MAX = 16;
 
 export type EmbedSession = {
 	token: string;
@@ -380,5 +392,14 @@ export function sanitizeBranding(value: unknown): EmbedBranding {
 	}
 	branding.hideRun = raw.hideRun === true;
 	branding.hideSave = raw.hideSave === true;
+	if (raw.theme === 'light' || raw.theme === 'dark' || raw.theme === 'system') {
+		branding.theme = raw.theme;
+	}
+	if (raw.fontFamily === 'default' || raw.fontFamily === 'system' || raw.fontFamily === 'serif') {
+		branding.fontFamily = raw.fontFamily;
+	}
+	if (typeof raw.radius === 'number' && Number.isInteger(raw.radius) && raw.radius >= 0 && raw.radius <= EMBED_RADIUS_MAX) {
+		branding.radius = raw.radius;
+	}
 	return branding;
 }

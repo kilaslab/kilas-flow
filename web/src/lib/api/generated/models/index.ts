@@ -22,6 +22,8 @@ export * from './assignment';
 export * from './binaryRef';
 export * from './binaryRemoval';
 export * from './branding';
+export * from './brandingFontFamily';
+export * from './brandingTheme';
 export * from './clearedDatastoreOutputBody';
 export * from './codeConsoleEvent';
 export * from './condition';

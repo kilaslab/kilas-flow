@@ -23,6 +23,10 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- Embed theming. Session `branding` takes `theme` (`light`, `dark`, or
+  `system` to follow the viewer), `fontFamily` (`default`, `system`, `serif`)
+  and `radius` (0 to 16 pixels), validated at mint and again in the frame. The
+  editor, its canvas and its dialogs switch together.
 - Workflow contracts. `GET /api/v1/workflows/{id}/contract` returns, for the
   revision a call would run (active, or the latest draft), the JSON Schema of
   the input the sub-workflow trigger declares (its expected fields, open to
