@@ -474,6 +474,8 @@ func TestALegacyPlaceholderNamesTheClosestNativeNode(t *testing.T) {
 	}{
 		{nodeType: "n8n-nodes-base.readBinaryFile", wantNeedle: "Extract From File (kilasflow.extractFromFile)"},
 		{nodeType: "n8n-nodes-base.spreadsheetFile", wantNeedle: "Extract From File (kilasflow.extractFromFile)"},
+		{nodeType: "n8n-nodes-base.readBinaryFiles", wantNeedle: "Extract From File (kilasflow.extractFromFile)"},
+		{nodeType: "n8n-nodes-base.start", wantNeedle: "Manual Trigger (kilasflow.manual)"},
 	}
 	for _, test := range tests {
 		t.Run(test.nodeType, func(t *testing.T) {

@@ -1166,6 +1166,13 @@ func unmappedReason(nodeType string) string {
 var replacementHints = map[string]string{
 	"n8n-nodes-base.readBinaryFile":  "The closest native node is Extract From File (kilasflow.extractFromFile), which parses every format this node read once the bytes are in the workflow; the path-reading half needs an HTTP Request node beside it.",
 	"n8n-nodes-base.spreadsheetFile": "The closest native node is Extract From File (kilasflow.extractFromFile), which reads CSV, XLSX and the other spreadsheet formats from workflow binary data; its write half has no equivalent here.",
+	// The plural form of Read Binary File: the same node over a list of paths,
+	// and the same answer. (The disk is the part with no equivalent: see
+	// deliberatelyUnavailable.)
+	"n8n-nodes-base.readBinaryFiles": "The closest native node is Extract From File (kilasflow.extractFromFile), which parses every format this node read once the bytes are in the workflow; the path-reading half needs an HTTP Request node beside it.",
+	// The pre-trigger Start node did nothing but begin a run by hand, which is
+	// what the Manual Trigger is.
+	"n8n-nodes-base.start": "The closest native node is the Manual Trigger (kilasflow.manual), which is where a run started by hand begins: replace this node with it and keep its wire.",
 }
 
 // deliberateRefusal is why an n8n node is absent on purpose, and where the
