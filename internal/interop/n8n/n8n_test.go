@@ -799,6 +799,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.sort ↔ kilasflow.sort",
 		"n8n-nodes-base.splitInBatches ↔ kilasflow.loop",
 		"n8n-nodes-base.splitOut ↔ kilasflow.splitOut",
+		"n8n-nodes-base.spreadsheetFile ↔ kilasflow.convertToFile",
 		"n8n-nodes-base.stickyNote ↔ kilasflow.stickyNote",
 		"n8n-nodes-base.stopAndError ↔ kilasflow.stopAndError",
 		"n8n-nodes-base.summarize ↔ kilasflow.summarize",
