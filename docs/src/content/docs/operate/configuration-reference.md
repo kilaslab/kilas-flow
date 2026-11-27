@@ -1074,6 +1074,62 @@ Give every process the same value. The API role hides an invisible node,
 but the worker is the authority: a worker started without this key accepts
 and runs what the API would have refused.
 
+## nodes
+
+Nodes decides which built-in node types a tenant may use. packs.visible_to
+scopes a node pack to tenants; a built-in cannot be scoped that way, because
+the engine names some of them. This is the built-in counterpart: an allow list
+and a deny list, each for every tenant or for one, so a SaaS can keep SQLite
+(a file path on the server), Code, Postgres or HTTP Request away from its
+customers.
+
+The section name is one word for the same reason Binary is: envKeyToPath
+treats the first underscore as the section separator, so a two-word section
+could never be set from the environment.
+
+### nodes.allow
+
+- Type: `string list`
+- Default: `[]`
+- Environment: `KILASFLOW_NODES_ALLOW`
+- Required: no
+
+Allow limits the built-ins a tenant may use, as `"<node type>"` (every
+tenant) or `"<node type>=<tenant id>"` (one tenant) list entries. The
+allow list that applies to a tenant is every entry without a tenant plus
+every entry naming it, and the tenant's own nodes.allow settings; when it
+is not empty, only the built-ins on it are available to that tenant, plus
+the types the engine names itself (the sub-workflow trigger and the error
+trigger), which are always available. Empty, the default, limits nothing.
+
+It applies to built-in types only: a pack's nodes keep packs.visible_to. A
+hidden type behaves like a node scoped to other tenants: absent from the
+catalogue, refused as node.not_available at compile, activation and claim.
+An entry naming a type that is not a registered built-in refuses the boot.
+
+Give every process the same value. The API role hides an unavailable node,
+but the worker is the authority: a worker started without this key accepts
+and runs what the API would have refused.
+
+### nodes.deny
+
+- Type: `string list`
+- Default: `[]`
+- Environment: `KILASFLOW_NODES_DENY`
+- Required: no
+
+Deny hides built-ins from a tenant, written like nodes.allow. Deny wins:
+a type on both lists is hidden. The deny list that applies to a tenant is
+every entry without a tenant plus every entry naming it, and the tenant's
+own nodes.deny settings, added together, so a tenant setting can add to
+what the deployment denies but never lift it.
+
+The engine-required types, kilasflow.errorTrigger and
+kilasflow.executeWorkflowTrigger, cannot be denied: an entry naming one
+refuses the boot, because a tenant's error workflows and sub-workflow
+calls would break from the inside. An entry naming a type that is not a
+registered built-in refuses the boot too, so a typo fails closed.
+
 ## google
 
 Google holds the optional platform Google Cloud OAuth client. Tenants can
