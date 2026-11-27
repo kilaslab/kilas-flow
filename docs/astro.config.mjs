@@ -71,6 +71,7 @@ const sidebar = [
 		items: [
 			{ label: 'Trigger workflows from your app', slug: 'guides/trigger-workflows' },
 			{ label: 'Get notified of results', slug: 'guides/get-notified' },
+			{ label: 'Tenant notifications', slug: 'operate/notifications' },
 			{ label: 'Using the host SDK', slug: 'guides/sdk' },
 			{ label: 'Idempotent requests', slug: 'guides/idempotency' },
 			{ label: 'Import and export n8n workflows', slug: 'guides/n8n-migration' },

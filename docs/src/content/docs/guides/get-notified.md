@@ -1,30 +1,32 @@
 ---
 title: Get notified of results
-description: How your backend learns that a run finished or failed. KilasFlow does not push execution results to you yet. This page covers the patterns that work today, with runnable examples, and what is missing.
+description: How your backend learns that a run finished or failed. Tenant notifications push signed, retried events to one endpoint. This page compares them with the other patterns, with runnable examples.
 ---
 
-:::caution[There are no outbound execution webhooks]
-KilasFlow does not call your backend when a run finishes or fails. The OpenAPI
-document has no subscription or callback operation, there is no signed delivery,
-no retry queue and no delivery log. A tenant-level notification feed is planned
-as [FEAT-39ttf6](https://github.com/kilaslab/kilas-flow/blob/main/.pine/tickets/FEAT-39ttf6.md).
-It depends on a durable outbox that does not exist yet,
-[FEAT-wdxkvw](https://github.com/kilaslab/kilas-flow/blob/main/.pine/tickets/FEAT-wdxkvw.md).
-Until then, build on the patterns below.
+:::tip[Tenant notifications]
+A tenant can name one endpoint in the `notifications` section of its settings,
+and KilasFlow posts a signed event to it when a run fails (by default) or
+completes, or a workflow is activated or deactivated. The event is written in
+the same transaction as the change, retried with backoff and recorded in a
+delivery log. Setup, the signature and the log are in
+[Notifications](/operate/notifications/). It is the pattern to start with when
+your backend must hear about every failure.
 :::
 
-Five things work today. Pick by what you need to know.
+Six patterns work. Pick by what you need to know.
 
 | You need | Use | Guarantee |
 | --- | --- | --- |
+| Every failed (or completed) run in a tenant, pushed to your backend | [Tenant notifications](/operate/notifications/) | At least once, signed, retried, with a delivery log |
 | An alert when a customer's workflow fails | [An error workflow that calls your backend](#an-error-workflow-that-calls-your-backend) | One attempt, best effort |
 | A call when a run succeeds | [A final HTTP Request node](#a-final-http-request-node) | Runs only if the workflow reaches it |
 | A complete, durable record of what failed | [Poll the execution list](#poll-the-execution-list) | You pull, so nothing is missed |
 | Live progress of one run | [The per-execution event stream](#the-per-execution-event-stream) | Best effort, one run per connection |
 | UI updates in the page that mounted the editor | [The editor's postMessage events](#the-editors-postmessage-events) | Only that page, only its own runs |
 
-For anything you cannot afford to miss, poll. The push patterns can lose a
-notification, and nothing on the KilasFlow side records that they did.
+For anything you cannot afford to miss, use tenant notifications or poll. The
+other push patterns can lose a notification, and nothing on the KilasFlow side
+records that they did.
 
 ## An error workflow that calls your backend
 
@@ -340,18 +342,8 @@ Neither of these is an API your customers can call. They are for the operator.
 
 ## What is missing
 
-The product has no way to say "tell this URL whenever any run in my tenant
-fails". The planned feature is
-[FEAT-39ttf6](https://github.com/kilaslab/kilas-flow/blob/main/.pine/tickets/FEAT-39ttf6.md):
-one signed endpoint per tenant that receives `execution.failed`, and optionally
-`execution.completed`, `workflow.activated` and `workflow.deactivated`, with
-retries and a delivery log. Only `execution.completed`, `execution.failed` and
-`execution.cancelled` exist as events today, and only on the in-process broker.
-There is no activation event.
-
-It cannot be built on that broker, because the broker is best effort and per
-process. It needs a transactional outbox written in the same transaction as the
-state change, and a dispatcher that claims rows, retries with backoff and signs
-each delivery. That work is
-[FEAT-wdxkvw](https://github.com/kilaslab/kilas-flow/blob/main/.pine/tickets/FEAT-wdxkvw.md).
-Neither is started.
+Tenant notifications cover one endpoint per tenant and four events. There is no
+tenant-wide event stream to hold open instead of an endpoint, and no event for a
+run that is cancelled. A delivery can arrive twice after a dispatcher's lease
+expires, so deduplicate on the event `id` in the body, which the signature
+covers ([Notifications](/operate/notifications/)).
