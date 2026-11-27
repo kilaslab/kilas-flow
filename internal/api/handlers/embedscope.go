@@ -199,8 +199,9 @@ func (handler *Workflows) confinedStoredProblem(ctx context.Context, workflowID 
 // embedAllowsCredential reports whether an embed session may see one credential.
 //
 // An internal caller sees every credential in its tenant. An embed session sees
-// only the ids its confinement names, so the picker offers exactly what the
-// session's document may attach instead of every name the tenant stores.
+// only the ids its confinement grants — the published revision's, plus what its
+// host declared at mint — so the picker offers exactly what the session's
+// document may attach instead of every name the tenant stores.
 func embedAllowsCredential(ctx context.Context, credentialID string) bool {
 	session, embedded := middleware.EmbedSessionFrom(ctx)
 	if !embedded {
