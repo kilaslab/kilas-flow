@@ -226,8 +226,8 @@ $ kilasflow context --json
 | Section | Holds |
 | --- | --- |
 | `cli` | the binary's `version` |
-| `server` | `url`, `ready`, and the `get-health` body |
-| `identity` | `tenantId`, `kind`, `label`, `keyId`, `userId` |
+| `server` | `url`, `ready`, the `get-health` body, and `authEnabled` lifted from it (`null` when the server does not say) |
+| `identity` | `tenantId`, `kind`, `label`, `keyId`, `userId`, and for a scoped key its `scopes` and bound `workflowId` |
 | `workflows` | `count`, `items` (`id`, `name`, `active`), `truncated` |
 | `datastores` | `count`, `items` (`id`, `name`), `truncated` |
 | `nodeTypes` | `count` |
