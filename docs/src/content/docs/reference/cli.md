@@ -68,6 +68,7 @@ token outright — see [Guardrails](#guardrails).
 | `kilasflow health` | `get-health` | available |
 | `kilasflow ready` | `get-ready` | available |
 | `kilasflow help` | — (local; generated from the verb registry) | available |
+| `kilasflow <noun>`, `kilasflow <noun> --help` | — (local; the noun's own verbs, e.g. `kilasflow workflow`) | available |
 | `kilasflow serve` | — (the server) | available |
 | `kilasflow api <operation-id>` | any id from `/api/openapi.json` | available |
 | `kilasflow context` | — (local briefing over read operations) | available |
@@ -511,16 +512,22 @@ kilasflow node describe kilasflow.httpRequest    # one entry, newest version
 kilasflow node options kilasflow.executeWorkflow --property workflowId --mode list
 kilasflow node options kilasflow.lmChatOpenAi --property model --mode list --param baseUrl=https://gateway.example.test/v1 --credential "$CREDENTIAL_ID"   # exit 1: the egress policy refuses that host, so the loader got the baseUrl
 kilasflow node options kilasflow.lmChatOpenAi --property model --mode list --parameters '{"baseUrl":{"mode":"expression","value":"{{ $json.baseUrl }}"}}'   # an expression dependency answers an empty list and says why
-kilasflow node describe httpRequest              # exit 4: a type is matched exactly, with its namespace
+kilasflow node describe httpRequest              # a bare name resolves to the one type it names: kilasflow.httpRequest
+kilasflow node describe n8n-nodes-base.httpRequest   # an n8n type name resolves the same way
+kilasflow node describe htpRequst                # exit 4: nothing by that name; the message names the closest types
 ```
 
 - `node list` and `node describe` drive the same operation. `describe` needs no
   version argument: when a type is registered at several versions it answers with
   the one the server would resolve a document to (the highest), so the definition
   it prints is the definition that would run.
-- An unknown type exits 4 (`not_found`) with the nearest catalogue names in the
-  message — a type is a name the caller has to remember, and a bare "not found"
-  is not something an agent can act on. `--quiet` on `node list` prints one type
+- `describe` takes the full type, its bare name (`httpRequest`, case ignored)
+  or the n8n type (`n8n-nodes-base.httpRequest`). A bare name two namespaces
+  share exits 2 (`usage`) naming both, so the caller passes the full type.
+- An unknown type exits 4 (`not_found`) with the nearest catalogue names, and
+  the names containing what was asked, in the message — a type is a name the
+  caller has to remember, and a bare "not found" is not something an agent can
+  act on. `--quiet` on `node list` prints one type
   per line, which is exactly what `describe` takes.
 - `node options` resolves the values a property offers at edit time. When they
   live on the customer's own service (a model list, the tables of a database) the
@@ -843,6 +850,12 @@ person, and an agent can force either.
 { "ok": false, "error": { "code": "scope_denied", "message": "…", "status": 403,
                           "detail": { "problem": { } } } }
 ```
+
+A flag the verb does not have is part of the contract too: in JSON mode it is a
+`usage` envelope (exit 2) naming the flag and the verb's `--help`, and on a
+terminal it is the flag package's own message with the verb's usage line. A
+`network_error` for nothing listening at the URL, or for a host name that does
+not resolve, ends with the step that fixes it.
 
 A real one, from this build against a local server:
 

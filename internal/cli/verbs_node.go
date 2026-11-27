@@ -5,6 +5,7 @@ import (
 	"flag"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -170,6 +171,11 @@ func runNodeDescribe(ctx *Context, args []string) error {
 		return err
 	}
 
+	resolved, err := resolveNodeType(list.Items, nodeType)
+	if err != nil {
+		return err
+	}
+
 	var (
 		best    json.RawMessage
 		bestVer float64
@@ -177,7 +183,7 @@ func runNodeDescribe(ctx *Context, args []string) error {
 	)
 
 	for _, item := range list.Items {
-		if fieldValue(item, "type") != nodeType {
+		if fieldValue(item, "type") != resolved {
 			continue
 		}
 		version := nodeVersion(item)
@@ -187,18 +193,122 @@ func runNodeDescribe(ctx *Context, args []string) error {
 		best, bestVer, found = item, version, true
 	}
 
-	if !found {
-		return &ExitError{
-			Code:    ExitNotFound,
-			ErrCode: "not_found",
-			Message: "no node type " + strconv.Quote(nodeType) + " in the catalogue" + closeTypeHint(list.Items, nodeType),
+	ctx.Data = best
+	ctx.Primary = resolved
+
+	return nil
+}
+
+// n8nTypePrefixes are the packages n8n's own nodes live in. A type written the
+// n8n way — `n8n-nodes-base.httpRequest` — is read as its bare name.
+var n8nTypePrefixes = []string{"n8n-nodes-base.", "@n8n/n8n-nodes-langchain."}
+
+// resolveNodeType finds the catalogue type a caller meant.
+//
+// The exact type wins. Otherwise a bare name (`httpRequest`) or an n8n type
+// (`n8n-nodes-base.httpRequest`) resolves to the one catalogue type whose last
+// segment is that name, ignoring case. Two types sharing the name is an
+// ambiguity the caller settles by naming one; no match at all lists the close
+// and the containing names, so the next command is one copy away.
+func resolveNodeType(items []json.RawMessage, want string) (string, error) {
+	types := make([]string, 0, len(items))
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		nodeType := fieldValue(item, "type")
+		if nodeType == "" || seen[nodeType] {
+			continue
+		}
+		seen[nodeType] = true
+		types = append(types, nodeType)
+	}
+	if seen[want] {
+		return want, nil
+	}
+
+	bare := want
+	for _, prefix := range n8nTypePrefixes {
+		if strings.HasPrefix(bare, prefix) {
+			bare = strings.TrimPrefix(bare, prefix)
+			break
+		}
+	}
+	if !strings.Contains(bare, ".") {
+		matches := make([]string, 0, 2)
+		for _, nodeType := range types {
+			if strings.EqualFold(lastSegment(nodeType), bare) {
+				matches = append(matches, nodeType)
+			}
+		}
+		switch len(matches) {
+		case 1:
+			return matches[0], nil
+		case 0:
+		default:
+			sort.Strings(matches)
+			return "", usageError("node type %s is ambiguous: it names %s; pass the full type",
+				strconv.Quote(want), strings.Join(matches, ", "))
 		}
 	}
 
-	ctx.Data = best
-	ctx.Primary = nodeType
+	return "", &ExitError{
+		Code:    ExitNotFound,
+		ErrCode: "not_found",
+		Message: "no node type " + strconv.Quote(want) + " in the catalogue" + nodeTypeHints(types, bare) +
+			"; run `kilasflow node list` for the catalogue",
+	}
+}
 
-	return nil
+// lastSegment is a type's name after its namespace: `httpRequest` for
+// `kilasflow.httpRequest`.
+func lastSegment(nodeType string) string {
+	if index := strings.LastIndex(nodeType, "."); index >= 0 {
+		return nodeType[index+1:]
+	}
+
+	return nodeType
+}
+
+// nodeTypeHints suggests types for a name that matched nothing: the ones a
+// typo away (by full type, then by bare name), then the ones whose name
+// contains it, five at most.
+func nodeTypeHints(types []string, want string) string {
+	hints := closeTypes(types, want)
+	if len(hints) == 0 {
+		for _, segment := range closeTypes(lastSegments(types), want) {
+			for _, nodeType := range types {
+				if lastSegment(nodeType) == segment && !slices.Contains(hints, nodeType) {
+					hints = append(hints, nodeType)
+				}
+			}
+		}
+	}
+	if needle := strings.ToLower(want); len(needle) >= 3 {
+		for _, nodeType := range types {
+			if len(hints) >= 5 {
+				break
+			}
+			if strings.Contains(strings.ToLower(lastSegment(nodeType)), needle) && !slices.Contains(hints, nodeType) {
+				hints = append(hints, nodeType)
+			}
+		}
+	}
+	if len(hints) > 5 {
+		hints = hints[:5]
+	}
+	if len(hints) == 0 {
+		return ""
+	}
+
+	return "; did you mean " + strings.Join(hints, ", ") + "?"
+}
+
+func lastSegments(types []string) []string {
+	segments := make([]string, 0, len(types))
+	for _, nodeType := range types {
+		segments = append(segments, lastSegment(nodeType))
+	}
+
+	return segments
 }
 
 // runNodeOptions resolves a property's selectable values.
@@ -269,32 +379,6 @@ func nodeVersion(item json.RawMessage) float64 {
 	}
 
 	return definition.Version
-}
-
-// closeTypeHint names the catalogue entries a mistyped type probably meant.
-//
-// A node type is a name a caller has to remember, and the catalogue answers a
-// wrong one with nothing at all, so the refusal carries the nearest names rather
-// than a bare "not found" the caller cannot act on. Nothing is suggested when
-// nothing is close: a wrong guess is worse than no guess.
-func closeTypeHint(items []json.RawMessage, want string) string {
-	candidates := make([]string, 0, len(items))
-	seen := make(map[string]bool, len(items))
-	for _, item := range items {
-		nodeType := fieldValue(item, "type")
-		if nodeType == "" || seen[nodeType] {
-			continue
-		}
-		seen[nodeType] = true
-		candidates = append(candidates, nodeType)
-	}
-
-	matches := closeTypes(candidates, want)
-	if len(matches) == 0 {
-		return ""
-	}
-
-	return "; did you mean " + strings.Join(matches, ", ") + "?"
 }
 
 // closeTypes returns up to five catalogue types within two edits of want.

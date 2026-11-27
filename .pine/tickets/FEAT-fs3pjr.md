@@ -186,7 +186,7 @@ BUG-719gaz
 
 
 # Acceptance Criteria
-- [ ] `node describe httpRequest` and n8n type names resolve, with substring hints
+- [x] `node describe httpRequest` and n8n type names resolve, with substring hints
 - [ ] Human output shows row data, the failing node and its message, and a node-run table with durations; `execution_failed` carries the first failed node in `error.message`
 - [ ] `--help` shows usage with named arguments, one example per verb and per-noun help; an unknown flag returns a usage envelope in JSON mode
 - [ ] Every error message names the next action
@@ -203,3 +203,14 @@ Related tickets: BUG-719gaz, BUG-b4cb1c, BUG-j7qrp2
 # Related Files
 
 # Attachments
+
+## Progress
+
+2026-11-27 (partial, on `feat/epic-sweep-2026-11-27`):
+
+- AC1 done. `node describe` resolves the exact type, a bare name (`httpRequest`, case ignored) or an n8n type (`n8n-nodes-base.httpRequest`, `@n8n/n8n-nodes-langchain.*`) to the one catalogue type whose last segment matches. A name shared by two namespaces is a usage error naming both. A miss suggests typo-close types (full and bare) plus types whose name contains the query, and names `kilasflow node list`. (internal/cli/verbs_node.go `resolveNodeType`)
+- AC3 partly done. `kilasflow <noun>` and `kilasflow <noun> --help|-h|help` list that noun's verbs (envelope in JSON mode, the help table on a terminal); `kilasflow <noun> <unknown>` is a usage error pointing at `kilasflow <noun> --help` (internal/cli/noun.go). The usage line names positional arguments: `usage: kilasflow workflow get <workflow id> [flags]`. An unknown flag in JSON mode is a `usage` envelope (exit 2) naming the flag and the verb's help. **Remaining:** one example per verb in `--help`.
+- AC4 partly done. A `network_error` for connection refused names `kilasflow serve` and `--url`/`KILASFLOW_URL`; one for an unresolvable host says to check the URL. **Remaining:** an audit of every other error message.
+- AC2 (human execution output, first failed node in `execution_failed`) and AC5 (`context` auth/scopes/counts/skills drift): not started.
+- docs/reference/cli.md updated (node describe examples, noun help row, usage envelope).
+- Tests: internal/cli/noun_test.go and verbs_node_test.go (resolution, ambiguity, hints); `go test ./internal/cli ./internal/docexamples ./scripts/cli-examples` passes.
