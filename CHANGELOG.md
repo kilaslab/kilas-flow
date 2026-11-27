@@ -23,6 +23,17 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- Allow or deny built-in node types per deployment or tenant. `nodes.deny` and
+  `nodes.allow` (environment `KILASFLOW_NODES_DENY` and `KILASFLOW_NODES_ALLOW`)
+  take entries written `type` or `type=tenant`, like `packs.visible_to`, and a
+  tenant's own lists are the new `nodes` section of its settings
+  (`PATCH /api/v1/tenants/{id}`, `allow` and `deny`). A hidden built-in is absent
+  from the catalogue and refused as `node.not_available` at compile, activation
+  and claim. Allow lists add up, deny lists add up and win, and the error
+  trigger and sub-workflow trigger can never be denied (a deny entry refuses the
+  boot, and the tenant API answers 422). A tenant setting can add to the
+  deployment's lists but never lift a deployment deny.
+
 - Actor identity in embed sessions. `POST /embed-sessions` accepts an optional
   `actor: {id, displayName}` (id 1 to 128 characters, display name at most 64),
   signed into the token. Revisions, publish events and manual runs or retries

@@ -149,6 +149,21 @@ this tenant:
 | `webhookPerMinute` | `ratelimit.webhook_per_minute` | 1 to 1,000,000 |
 | `eventsPerMinute` | `ratelimit.events_per_minute` | 1 to 1,000,000 |
 
+The `nodes` section holds the tenant's own lists of built-in node types, which
+are **added to** the deployment's `nodes.allow` and `nodes.deny` rather than
+replacing them:
+
+| Field | Adds to | Value |
+| --- | --- | --- |
+| `allow` | `nodes.allow` | built-in node types; when the combined list is not empty, only these built-ins (and the engine-required triggers) are visible to the tenant |
+| `deny` | `nodes.deny` | built-in node types hidden from the tenant; deny wins over allow, and the engine-required triggers cannot be named |
+
+A type that is not a registered built-in, or an engine-required type on `deny`,
+is refused with `tenant_settings_invalid` at `body.settings.nodes.deny[N]`. A
+hidden type is absent from the node catalogue and refused as `node.not_available`
+when a workflow is activated, run or claimed. The semantics are in
+[Tenant-scoped nodes](/guides/tenant-scoped-nodes/#allowing-or-denying-built-in-nodes).
+
 A patch with any problem writes nothing. The answer is a problem document with
 one entry in `errors[]` per problem, its `location` naming the key
 (`body.settings.rateLimit.runPerMinute`) and its `value.code` one of:
