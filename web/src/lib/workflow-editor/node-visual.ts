@@ -23,9 +23,11 @@ import DatabaseSearch from '@lucide/svelte/icons/database-search';
 import FileOutput from '@lucide/svelte/icons/file-output';
 import Filter from '@lucide/svelte/icons/filter';
 import Folder from '@lucide/svelte/icons/folder';
+import GitCompare from '@lucide/svelte/icons/git-compare';
 import Globe from '@lucide/svelte/icons/globe';
 import Group from '@lucide/svelte/icons/group';
 import HardDrive from '@lucide/svelte/icons/hard-drive';
+import KeyRound from '@lucide/svelte/icons/key-round';
 import Layers from '@lucide/svelte/icons/layers';
 import Link from '@lucide/svelte/icons/link';
 import ListEnd from '@lucide/svelte/icons/list-end';
@@ -124,10 +126,12 @@ const GLYPHS: Record<string, Component> = {
 	folder: Folder,
 	form: ClipboardList,
 	'git-branch': Split,
+	'git-compare': GitCompare,
 	'git-merge': Merge,
 	globe: Globe,
 	group: Group,
 	'hard-drive': HardDrive,
+	'key-round': KeyRound,
 	layers: Layers,
 	link: Link,
 	'list-end': ListEnd,

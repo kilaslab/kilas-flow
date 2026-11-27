@@ -105,6 +105,8 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		SortExecutorID:                   sortExecutor{javaScript: javaScript},
 		SummarizeExecutorID:              engine.ExecutorFunc(executeSummarize),
 		RemoveDuplicatesExecutorID:       engine.ExecutorFunc(executeRemoveDuplicates),
+		RenameKeysExecutorID:             engine.ExecutorFunc(executeRenameKeys),
+		CompareDatasetsExecutorID:        engine.ExecutorFunc(executeCompareDatasets),
 		DateTimeExecutorID:               engine.ExecutorFunc(executeDateTime),
 		WaitExecutorID:                   engine.ExecutorFunc(executeWait),
 		ExecuteWorkflowExecutorID:        engine.ExecutorFunc(executeExecuteWorkflow),
