@@ -590,7 +590,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}/contract" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `workflow:read` — on the session’s workflow only.
+Embed: Allow with `workflow:read` (every other workflow scope carries it), on the session’s own workflow only — the gate refuses any other workflow id.
 
 ## Save a workflow draft (`update-workflow`)
 

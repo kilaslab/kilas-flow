@@ -1671,6 +1671,39 @@
       "requires": "workflow:read",
       "ownWorkflowOnly": true
     },
+    "get-workflow-contract": {
+      "method": "GET",
+      "path": "/api/v1/workflows/{id}/contract",
+      "verdicts": {
+        "datastore:read": {
+          "allow": false,
+          "status": 403,
+          "detail": "This embed session cannot read."
+        },
+        "datastore:write": {
+          "allow": false,
+          "status": 403,
+          "detail": "This embed session cannot read."
+        },
+        "workflow:activate": {
+          "allow": true
+        },
+        "workflow:publish": {
+          "allow": true
+        },
+        "workflow:read": {
+          "allow": true
+        },
+        "workflow:run": {
+          "allow": true
+        },
+        "workflow:write": {
+          "allow": true
+        }
+      },
+      "requires": "workflow:read",
+      "ownWorkflowOnly": true
+    },
     "get-workflow-version": {
       "method": "GET",
       "path": "/api/v1/workflows/{id}/versions/{versionId}",

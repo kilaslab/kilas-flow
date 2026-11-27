@@ -291,6 +291,14 @@ listWorkflowWebhooks(workflowId: string, signal?: AbortSignal): Promise<WebhookR
 
 Lists every webhook trigger's public address: the URL a sender is configured with, minted on the first read (or the first import) and reused forever, so it is known before activation and unchanged by it.
 
+#### `getWorkflowContract`
+
+```ts
+getWorkflowContract(workflowId: string, signal?: AbortSignal): Promise<WorkflowContract>
+```
+
+Describes the workflow as something to call: the JSON Schema of the input its sub-workflow trigger declares and of the output in `settings.outputSchema`, for the revision a call would run (the active one, or the latest draft).
+
 #### `activateWorkflow`
 
 ```ts
@@ -613,6 +621,37 @@ updateSchedule(scheduleId: string, schedule: ScheduleBody, signal?: AbortSignal)
 
 ```ts
 deleteSchedule(scheduleId: string, signal?: AbortSignal): Promise<void>
+```
+
+
+### Variables
+
+#### `listVariables`
+
+```ts
+listVariables(signal?: AbortSignal): Promise<VariableResource[]>
+```
+
+#### `createVariable`
+
+```ts
+createVariable(variable: VariableBody, signal?: AbortSignal): Promise<VariableResource>
+```
+
+Adds a variable.
+
+#### `updateVariable`
+
+```ts
+updateVariable(variableId: string, variable: VariableBody, signal?: AbortSignal): Promise<VariableResource>
+```
+
+Replaces a variable's key and value.
+
+#### `deleteVariable`
+
+```ts
+deleteVariable(variableId: string, signal?: AbortSignal): Promise<void>
 ```
 
 

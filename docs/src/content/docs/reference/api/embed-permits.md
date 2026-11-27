@@ -22,6 +22,7 @@ What this table cannot show is what a handler adds after the gate lets a request
 | [`POST /api/v1/workflows/validate`](/reference/api/workflows/) | Allow | Allow | Allow | Allow | Allow | — | — |
 | [`GET /api/v1/workflows/{id}`](/reference/api/workflows/) | Allow | Allow | Allow | Allow | Allow | — | — |
 | [`GET /api/v1/workflows/{id}/webhooks`](/reference/api/workflows/) | Allow | Allow | Allow | Allow | Allow | — | — |
+| [`GET /api/v1/workflows/{id}/contract`](/reference/api/workflows/) | Allow | Allow | Allow | Allow | Allow | — | — |
 | [`PUT /api/v1/workflows/{id}`](/reference/api/workflows/) | — | Allow | — | — | — | — | — |
 | [`POST /api/v1/workflows/{id}/run`](/reference/api/workflows/) | — | — | Allow | — | — | — | — |
 | [`POST /api/v1/workflows/{id}/activate`](/reference/api/workflows/) | — | — | — | — | Allow | — | — |
