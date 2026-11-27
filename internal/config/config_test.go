@@ -1028,3 +1028,34 @@ func TestAJavaScriptWorkerUserComesAsAPair(t *testing.T) {
 		t.Fatalf("worker user = %d:%d, want 4242:4343", cfg.Code.JavaScriptWorkerUID, cfg.Code.JavaScriptWorkerGID)
 	}
 }
+
+// Notifications default to a week of delivery log and eight attempts, are set
+// from the environment like every one-word section, and refuse bounds that
+// would dead-letter everything unsent or keep the outbox for ever.
+func TestNotificationsDefaultsEnvironmentAndBounds(t *testing.T) {
+	cfg := Default()
+	if cfg.Notifications.SigningKeyEnv != "KILASFLOW_NOTIFICATIONS_SIGNING_KEY" || cfg.Notifications.MaxAttempts != 8 || cfg.Notifications.Retention != 168*time.Hour {
+		t.Fatalf("Notifications defaults = %+v", cfg.Notifications)
+	}
+	t.Setenv("KILASFLOW_NOTIFICATIONS_MAX_ATTEMPTS", "3")
+	t.Setenv("KILASFLOW_NOTIFICATIONS_RETENTION", "48h")
+	loaded, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.Notifications.MaxAttempts != 3 || loaded.Notifications.Retention != 48*time.Hour {
+		t.Fatalf("Notifications from the environment = %+v", loaded.Notifications)
+	}
+	for name, mutate := range map[string]func(*Config){
+		"zero attempts":     func(c *Config) { c.Notifications.MaxAttempts = 0 },
+		"too many attempts": func(c *Config) { c.Notifications.MaxAttempts = MaxNotificationAttempts + 1 },
+		"zero retention":    func(c *Config) { c.Notifications.Retention = 0 },
+		"over 90 days":      func(c *Config) { c.Notifications.Retention = MaxNotificationRetention + time.Hour },
+	} {
+		candidate := Default()
+		mutate(&candidate)
+		if err := candidate.Validate(); err == nil || !strings.Contains(err.Error(), "notifications.") {
+			t.Errorf("%s: Validate() = %v, want a notifications refusal", name, err)
+		}
+	}
+}
