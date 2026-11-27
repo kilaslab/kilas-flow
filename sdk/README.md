@@ -43,7 +43,7 @@ const session = await kilasflow.createEmbedSession({
 
 ## Operation surface
 
-One thin, typed method per API operation — all 83 under `/api/v1` that a
+One thin, typed method per API operation — all 84 under `/api/v1` that a
 backend can drive (the one exception is below), grouped here the way the
 [API contract](https://github.com/kilaslab/kilas-flow/blob/main/docs/src/content/docs/reference/api-contract.md)
 groups them. Every method takes an `AbortSignal` last, resolves `Promise<void>`
@@ -58,6 +58,7 @@ the three writes that can be retried safely, which take an
 | Credentials | `listCredentialTypes`, `listCredentials`, `createCredential`, `getCredential`, `updateCredential`, `deleteCredential`, `testCredential`, `testCredentialPayload` |
 | Auth and keys | `login`, `logout`, `getMe`, `listApiKeys`, `createApiKey`, `revokeApiKey`, `createStreamTicket` |
 | Schedules | `listSchedules`, `createSchedule`, `updateSchedule`, `deleteSchedule` |
+| Notifications | `listNotificationDeliveries` |
 | Host events | `publishEvent` |
 | Node catalogue | `listNodeTypes`, `nodeIconUrl`, `loadNodePropertyOptions`, `loadNodePropertySchema`, `getExpressionGrammar` |
 | Interop | `importWorkflow`, `convertWorkflowFragment`, `exportWorkflow` |

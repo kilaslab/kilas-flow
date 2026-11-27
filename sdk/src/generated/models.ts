@@ -1590,6 +1590,44 @@ export interface NotReadyProblem {
   type?: string;
 }
 
+/**
+ * pending until a 2xx, delivered after one, dead once its attempts ran out
+ */
+export type NotificationDeliveryResourceStatus = typeof NotificationDeliveryResourceStatus[keyof typeof NotificationDeliveryResourceStatus];
+
+
+export const NotificationDeliveryResourceStatus = {
+  pending: 'pending',
+  delivered: 'delivered',
+  dead: 'dead',
+} as const;
+
+export interface NotificationDeliveryResource {
+  /** Attempts made so far */
+  attempts: number;
+  createdAt: string;
+  deliveredAt?: string;
+  /** Where the event is sent, as it was when the event was written */
+  endpoint: string;
+  /** Stable event id, sent as the webhook-id header on every attempt */
+  id: string;
+  /** Why the last attempt failed */
+  lastError?: string;
+  /** HTTP status of the last attempt; absent when no response arrived */
+  lastStatusCode?: number;
+  /** When the next attempt is due; absent once delivered or dead */
+  nextAttemptAt?: string;
+  /** The exact body every attempt sends */
+  payload: unknown;
+  /** pending until a 2xx, delivered after one, dead once its attempts ran out */
+  status: NotificationDeliveryResourceStatus;
+  /** The execution or workflow the event is about */
+  subjectId?: string;
+  /** Event type, such as execution.failed */
+  type: string;
+  updatedAt: string;
+}
+
 export interface OauthStartResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -2430,6 +2468,28 @@ export type GetNodeIconTheme = typeof GetNodeIconTheme[keyof typeof GetNodeIconT
 export const GetNodeIconTheme = {
   light: 'light',
   dark: 'dark',
+} as const;
+
+export type ListNotificationDeliveriesParams = {
+/**
+ * Only events in this state
+ */
+status?: ListNotificationDeliveriesStatus;
+/**
+ * Maximum events to return (default 50)
+ * @minimum 1
+ * @maximum 200
+ */
+limit?: number;
+};
+
+export type ListNotificationDeliveriesStatus = typeof ListNotificationDeliveriesStatus[keyof typeof ListNotificationDeliveriesStatus];
+
+
+export const ListNotificationDeliveriesStatus = {
+  pending: 'pending',
+  delivered: 'delivered',
+  dead: 'dead',
 } as const;
 
 export type ListSchedulesParams = {
@@ -5106,6 +5166,64 @@ const res = await fetch(getLoadNodePropertySchemaUrl(type),
 
 
 
+export type listNotificationDeliveriesResponse200 = {
+  data: NotificationDeliveryResource[] | null
+  status: 200
+}
+
+export type listNotificationDeliveriesResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listNotificationDeliveriesResponseSuccess = (listNotificationDeliveriesResponse200) & {
+  headers: Headers;
+};
+export type listNotificationDeliveriesResponseError = (listNotificationDeliveriesResponseDefault) & {
+  headers: Headers;
+};
+
+export type listNotificationDeliveriesResponse = (listNotificationDeliveriesResponseSuccess | listNotificationDeliveriesResponseError)
+
+export const getListNotificationDeliveriesUrl = (params?: ListNotificationDeliveriesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/notifications/deliveries?${stringifiedParams}` : `/api/v1/notifications/deliveries`
+}
+
+/**
+ * Returns the newest outbound notification events of the caller's tenant with their delivery state: attempts made, the last response status and error, and when the next attempt is due. Events are kept for notifications.retention.
+ * @summary List notification deliveries
+ */
+export const listNotificationDeliveries = async (params?: ListNotificationDeliveriesParams, options?: RequestInit): Promise<listNotificationDeliveriesResponse> => {
+
+  const res = await fetch(getListNotificationDeliveriesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listNotificationDeliveriesResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listNotificationDeliveriesResponse
+}
+
+
+
 export type getReadyResponse200 = {
   data: ReadyOutputBody
   status: 200
@@ -5681,7 +5799,7 @@ export const getUpdateTenantUrl = (id: string,) => {
 }
 
 /**
- * Changes a tenant's settings. The body's settings object is merged into the stored one section by section, as a JSON merge patch (RFC 7396): a section set to null is removed, so the tenant falls back to the deployment configuration for it; an object is merged field by field, and a field set to null is removed. A section or field this server does not accept is refused with tenant_settings_unknown_key, a value its section rejects with tenant_settings_invalid, both as 422 with one error per problem located at body.settings.<section>.<field>; a patch with any problem writes nothing. A write that changes the document bumps settingsVersion by one, and an unchanged one keeps it. A change applies at once on the process that served it and within 5 s on every other process. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused. Sections this server accepts: nodes, rateLimit.
+ * Changes a tenant's settings. The body's settings object is merged into the stored one section by section, as a JSON merge patch (RFC 7396): a section set to null is removed, so the tenant falls back to the deployment configuration for it; an object is merged field by field, and a field set to null is removed. A section or field this server does not accept is refused with tenant_settings_unknown_key, a value its section rejects with tenant_settings_invalid, both as 422 with one error per problem located at body.settings.<section>.<field>; a patch with any problem writes nothing. A write that changes the document bumps settingsVersion by one, and an unchanged one keeps it. A change applies at once on the process that served it and within 5 s on every other process. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused. Sections this server accepts: nodes, notifications, rateLimit.
  * @summary Update a tenant's settings
  */
 export const updateTenant = async (id: string,

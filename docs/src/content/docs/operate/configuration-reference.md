@@ -897,6 +897,57 @@ nothing to align with by default), keep this at or below it: a replay of
 a run whose execution has been pruned returns an id that no longer
 resolves.
 
+## notifications
+
+Notifications configures the signed deliveries a tenant receives when one
+of its runs fails or completes, or a workflow is activated or deactivated.
+
+A tenant chooses its endpoint and events in the notifications section of
+its settings (PATCH /api/v1/tenants/{id}/settings). The event is written to
+a durable outbox in the same transaction as the change it reports, and a
+dispatcher in every worker process delivers it at least once, retrying with
+a capped exponential backoff and dead-lettering it after max_attempts. Each
+tenant's deliveries are signed with a secret derived from one deployment
+key, so no secret is stored in a settings document.
+
+### notifications.signing_key_env
+
+- Type: `string`
+- Default: `'KILASFLOW_NOTIFICATIONS_SIGNING_KEY'`
+- Environment: `KILASFLOW_NOTIFICATIONS_SIGNING_KEY_ENV`
+- Required: no
+
+SigningKeyEnv names the environment variable holding the key every
+tenant's signing secret is derived from: any non-empty value, at least
+32 bytes recommended (`openssl rand -base64 32`). Like the other keys,
+it never comes from the config file. A tenant's secret is
+base64(HMAC-SHA256(key, "kilasflow-notifications:" + tenant id)).
+
+While the variable is unset no notification is written at all, whatever
+a tenant's settings say: an event that could only ever be sent unsigned
+is not queued.
+
+### notifications.max_attempts
+
+- Type: `integer`
+- Default: `8`
+- Environment: `KILASFLOW_NOTIFICATIONS_MAX_ATTEMPTS`
+- Required: no
+
+MaxAttempts is how many times one event is attempted before it is
+dead-lettered: kept in the delivery log, never sent again. Bounded to
+between 1 and 50.
+
+### notifications.retention
+
+- Type: `duration`
+- Default: `168h0m0s`
+- Environment: `KILASFLOW_NOTIFICATIONS_RETENTION`
+- Required: no
+
+Retention is how long an event stays in the delivery log, delivered,
+dead or still pending. Bounded to between 1h and 2160h (90 days).
+
 ## sql
 
 SQLNodes bounds what a workflow document may ask a database node for.

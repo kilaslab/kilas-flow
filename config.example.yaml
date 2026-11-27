@@ -418,6 +418,28 @@ idempotency:
   # Env: KILASFLOW_IDEMPOTENCY_RETENTION
   retention: 24h0m0s
 
+notifications:
+  # SigningKeyEnv names the environment variable holding the key every
+  # tenant's signing secret is derived from: any non-empty value, at least
+  # 32 bytes recommended (`openssl rand -base64 32`). Like the other keys,
+  # it never comes from the config file. A tenant's secret is
+  # base64(HMAC-SHA256(key, "kilasflow-notifications:" + tenant id)).
+  #
+  # While the variable is unset no notification is written at all, whatever
+  # a tenant's settings say: an event that could only ever be sent unsigned
+  # is not queued.
+  # Env: KILASFLOW_NOTIFICATIONS_SIGNING_KEY_ENV
+  signing_key_env: 'KILASFLOW_NOTIFICATIONS_SIGNING_KEY'
+  # MaxAttempts is how many times one event is attempted before it is
+  # dead-lettered: kept in the delivery log, never sent again. Bounded to
+  # between 1 and 50.
+  # Env: KILASFLOW_NOTIFICATIONS_MAX_ATTEMPTS
+  max_attempts: 8
+  # Retention is how long an event stays in the delivery log, delivered,
+  # dead or still pending. Bounded to between 1h and 2160h (90 days).
+  # Env: KILASFLOW_NOTIFICATIONS_RETENTION
+  retention: 168h0m0s
+
 sql:
   # MaxRows is the largest row buffer a node may ask for. Zero falls back to
   # sqlnode's own ceiling rather than meaning unbounded.

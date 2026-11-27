@@ -47,12 +47,14 @@ import type {
 	InsertRowInputBody,
 	ListAPIKeysOutputBody,
 	ListDatastoreRowsParams,
+	ListNotificationDeliveriesParams,
 	ListTenantsOutputBody,
 	ListTenantUsersOutputBody,
 	LoadOptionsInputBody,
 	LoadOptionsResource,
 	LoadSchemaResource,
 	LoginInputBody,
+	NotificationDeliveryResource,
 	PrincipalResource,
 	PublishEventResult,
 	ReadyOutputBody,
@@ -912,6 +914,21 @@ export class KilasFlowClient {
 
 	deleteSchedule(scheduleId: string, signal?: AbortSignal): Promise<void> {
 		return this.#transport.request('DELETE', `/schedules/${encodeURIComponent(scheduleId)}`, { signal });
+	}
+
+	// --- Notifications ---------------------------------------------------------
+
+	/**
+	 * The caller's tenant's notification delivery log, newest first: each
+	 * signed event with its attempts, the last response status and error, and
+	 * when the next attempt is due. `status` narrows it to `pending`,
+	 * `delivered` or `dead`; `limit` bounds it (1 to 200, default 50).
+	 */
+	listNotificationDeliveries(
+		query: ListNotificationDeliveriesParams = {},
+		signal?: AbortSignal
+	): Promise<NotificationDeliveryResource[]> {
+		return this.#transport.request('GET', '/notifications/deliveries', { query: { ...query }, signal });
 	}
 
 	// --- Node catalogue ----------------------------------------------------------

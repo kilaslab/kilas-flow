@@ -71,6 +71,7 @@ const OPERATION_COVERAGE = {
 	'revoke-api-key': 'revokeApiKey',
 	'create-stream-ticket': 'createStreamTicket',
 	'list-schedules': 'listSchedules',
+	'list-notification-deliveries': 'listNotificationDeliveries',
 	'create-schedule': 'createSchedule',
 	'update-schedule': 'updateSchedule',
 	'delete-schedule': 'deleteSchedule',

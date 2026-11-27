@@ -3655,6 +3655,81 @@
         },
         "type": "object"
       },
+      "NotificationDeliveryResource": {
+        "additionalProperties": false,
+        "properties": {
+          "attempts": {
+            "description": "Attempts made so far",
+            "format": "int64",
+            "type": "integer"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "deliveredAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "endpoint": {
+            "description": "Where the event is sent, as it was when the event was written",
+            "type": "string"
+          },
+          "id": {
+            "description": "Stable event id, sent as the webhook-id header on every attempt",
+            "type": "string"
+          },
+          "lastError": {
+            "description": "Why the last attempt failed",
+            "type": "string"
+          },
+          "lastStatusCode": {
+            "description": "HTTP status of the last attempt; absent when no response arrived",
+            "format": "int64",
+            "type": "integer"
+          },
+          "nextAttemptAt": {
+            "description": "When the next attempt is due; absent once delivered or dead",
+            "format": "date-time",
+            "type": "string"
+          },
+          "payload": {
+            "description": "The exact body every attempt sends"
+          },
+          "status": {
+            "description": "pending until a 2xx, delivered after one, dead once its attempts ran out",
+            "enum": [
+              "pending",
+              "delivered",
+              "dead"
+            ],
+            "type": "string"
+          },
+          "subjectId": {
+            "description": "The execution or workflow the event is about",
+            "type": "string"
+          },
+          "type": {
+            "description": "Event type, such as execution.failed",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "endpoint",
+          "status",
+          "attempts",
+          "createdAt",
+          "updatedAt",
+          "payload"
+        ],
+        "type": "object"
+      },
       "OauthStartResource": {
         "additionalProperties": false,
         "properties": {
@@ -8816,6 +8891,74 @@
         ]
       }
     },
+    "/api/v1/notifications/deliveries": {
+      "get": {
+        "description": "Returns the newest outbound notification events of the caller's tenant with their delivery state: attempts made, the last response status and error, and when the next attempt is due. Events are kept for notifications.retention.",
+        "operationId": "list-notification-deliveries",
+        "parameters": [
+          {
+            "description": "Only events in this state",
+            "explode": false,
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "description": "Only events in this state",
+              "enum": [
+                "pending",
+                "delivered",
+                "dead"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Maximum events to return (default 50)",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "description": "Maximum events to return (default 50)",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/NotificationDeliveryResource"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List notification deliveries",
+        "tags": [
+          "Notifications"
+        ]
+      }
+    },
     "/api/v1/ready": {
       "get": {
         "description": "Reports whether the instance can serve requests. Verifies that the database is reachable and that no datastore is waiting on a schema migration; the body carries the datastore schema-version spread, counts only. Returns 503 when either check fails: a migration outstanding carries the same datastores block in the problem document, while an unreachable database — a catalogue that cannot be read — carries none.",
@@ -9278,7 +9421,7 @@
         ]
       },
       "patch": {
-        "description": "Changes a tenant's settings. The body's settings object is merged into the stored one section by section, as a JSON merge patch (RFC 7396): a section set to null is removed, so the tenant falls back to the deployment configuration for it; an object is merged field by field, and a field set to null is removed. A section or field this server does not accept is refused with tenant_settings_unknown_key, a value its section rejects with tenant_settings_invalid, both as 422 with one error per problem located at body.settings.<section>.<field>; a patch with any problem writes nothing. A write that changes the document bumps settingsVersion by one, and an unchanged one keeps it. A change applies at once on the process that served it and within 5 s on every other process. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused. Sections this server accepts: nodes, rateLimit.",
+        "description": "Changes a tenant's settings. The body's settings object is merged into the stored one section by section, as a JSON merge patch (RFC 7396): a section set to null is removed, so the tenant falls back to the deployment configuration for it; an object is merged field by field, and a field set to null is removed. A section or field this server does not accept is refused with tenant_settings_unknown_key, a value its section rejects with tenant_settings_invalid, both as 422 with one error per problem located at body.settings.<section>.<field>; a patch with any problem writes nothing. A write that changes the document bumps settingsVersion by one, and an unchanged one keeps it. A change applies at once on the process that served it and within 5 s on every other process. Requires the operator credential: an API key scoped to the operator tenant. Any other principal, a customer's key or any session, is refused. Sections this server accepts: nodes, notifications, rateLimit.",
         "operationId": "update-tenant",
         "parameters": [
           {
