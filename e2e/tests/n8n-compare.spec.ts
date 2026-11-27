@@ -361,6 +361,49 @@ test('data-shaping nodes transform a stream end to end', async ({ server }) => {
 	expect(itemJson(record, 'dedup')).toMatchObject({ count_name: 1 });
 });
 
+test('rename keys and compare datasets run end to end', async ({ server }) => {
+	const renameId = await createWorkflow(
+		server.baseURL,
+		'Compare Rename Keys',
+		[
+			manual(),
+			node('in', 'In', 'kilasflow.set', 1, { assignments: { first_name: 'Ada', age: 36 } }),
+			node('rename', 'Rename', 'kilasflow.renameKeys', 1, {
+				keys: { key: [{ currentKey: 'first_name', newKey: 'firstName' }] }
+			})
+		],
+		[conn('c1', 'manual', 'main', 'in', 'main'), conn('c2', 'in', 'main', 'rename', 'main')]
+	);
+	const renamed = itemJson(await runToSuccess(server.baseURL, renameId), 'rename');
+	expect(renamed).toMatchObject({ firstName: 'Ada', age: 36 });
+	expect(renamed).not.toHaveProperty('first_name');
+
+	// Both inputs carry the same record, so it leaves on the Same output (index 1).
+	const compareId = await createWorkflow(
+		server.baseURL,
+		'Compare Datasets',
+		[
+			manual(),
+			node('a', 'Set A', 'kilasflow.set', 1, { assignments: { id: 1, name: 'Ada' } }),
+			node('b', 'Set B', 'kilasflow.set', 1, { assignments: { id: 1, name: 'Ada' } }),
+			node('compare', 'Compare', 'kilasflow.compareDatasets', 1, {
+				mergeByFields: { values: [{ field1: 'id', field2: 'id' }] }
+			}),
+			node('same', 'Same', 'kilasflow.noOp')
+		],
+		[
+			conn('c1', 'manual', 'main', 'a', 'main'),
+			conn('c2', 'manual', 'main', 'b', 'main'),
+			conn('c3', 'a', 'main', 'compare', 'input1'),
+			conn('c4', 'b', 'main', 'compare', 'input2'),
+			conn('c5', 'compare', 'same', 'same', 'main')
+		]
+	);
+	const compared = await runToSuccess(server.baseURL, compareId);
+	expect(itemJson(compared, 'compare', 1)).toMatchObject({ id: 1, name: 'Ada' });
+	expect(itemJson(compared, 'same')).toMatchObject({ id: 1, name: 'Ada' });
+});
+
 test('http, sqlite, code, calculator, date-time and wait run against the stub', async ({ server, stub }) => {
 	const httpId = await createWorkflow(
 		server.baseURL,

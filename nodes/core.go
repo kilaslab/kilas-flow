@@ -98,6 +98,8 @@ func RegisterAll(registry *node.Registry) error {
 		sortNode(),
 		summarizeNode(),
 		removeDuplicatesNode(),
+		renameKeysNode(),
+		compareDatasetsNode(),
 		dateTimeNode(),
 		datastoreNode(),
 		datastoreToolNode(),

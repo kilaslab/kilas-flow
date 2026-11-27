@@ -102,6 +102,8 @@ export const STUB_EXECUTED = [
 	'kilasflow.sort@1',
 	'kilasflow.summarize@1',
 	'kilasflow.removeDuplicates@1',
+	'kilasflow.renameKeys@1',
+	'kilasflow.compareDatasets@1',
 	'kilasflow.dateTime@1',
 	'kilasflow.wait@1',
 	'kilasflow.executeWorkflow@1',
