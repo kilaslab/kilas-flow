@@ -1,7 +1,7 @@
 ---
 id: FEAT-sc3qrq
 title: 'n8n-style CLI workflows: import/export files, `--all` and directory forms, bulk operations, list filters'
-status: todo
+status: done
 priority: medium
 labels:
     - cli
@@ -9,7 +9,7 @@ labels:
     - import-export
 parent: EPIC-8rbys7
 created: "2026-09-23T03:06:00Z"
-updated: "2026-09-23T03:06:00Z"
+updated: "2026-11-27T07:56:44Z"
 ---
 
 # Description
@@ -33,9 +33,9 @@ Found by the 2026-09-23 n8n-parity and UX audit (source reports: cli-skills; fin
 There's no `workflow import` verb; the skills and docs call it deliberately absent. Step 3 writes `{$schema,format,workflow,lossy,supportedMappings}`, which n8n's "Import from file" doesn't accept. Getting a pure n8n file needs jq. There's no bulk import or export (a directory, `--all`), so backup and migration go one workflow at a time. `list-workflows` takes only `limit` and `cursor`: no `name`, `active` or tag filter. With more than 100 workflows on the shared server, finding one by name means paging everything. There's no execution delete, no tags, no variables. `X-N8N-API-KEY` gets a 401 (only `Authorization: Bearer` works).
 
 # Acceptance Criteria
-- [ ] `workflow import --file <n8n.json>` (guarded) and `--dir`
-- [ ] `workflow export --out` writes the bare n8n document (the lossy notes go to stderr or the envelope); `--all --out-dir`
-- [ ] `workflow list --name --active`, and bulk activate/deactivate with confirmation
+- [x] `workflow import --file <n8n.json>` (guarded) and `--dir`
+- [x] `workflow export --out` writes the bare n8n document (the lossy notes go to stderr or the envelope); `--all --out-dir`
+- [x] `workflow list --name --active`, and bulk activate/deactivate with confirmation
 
 # Implementation Plan
 
@@ -52,3 +52,14 @@ Related (from the audit): BUG-6gkd12 (round-trip fidelity, a different aspect)
 cs/e-n8n.json (the wrapper), cs/cmdlog.txt 09:11:30, the `api --list` output in the transcript, the OpenAPI parameters for list-workflows (`limit`, `cursor` only).
 
 # Attachments
+
+## Progress
+
+2026-11-27: verified already delivered by #33 (0ce9afe8, importer lane); the ticket was never closed. Evidence on main:
+
+- `workflow import --file <path>|-` and `--dir <directory>`, guarded: internal/cli/verbs_workflow.go (registerImportFlags, runWorkflowImport; Guarded: true in workflowVerbs).
+- `workflow export --out` writes the bare n8n document with the lossy report on stderr; `--all --out-dir`: registerExportFlags, runWorkflowExport, exportEveryWorkflow.
+- `workflow list --name --active` (applied client-side page by page; `--tag` server-side): registerWorkflowListFlags, runWorkflowList. Bulk `workflow activate|deactivate --all` is a guarded verb, so it asks for confirmation: runWorkflowLifecycle.
+- Tests: `go test ./internal/cli -run 'Import|Export|List|Lifecycle|Activate|Deactivate'` passes (verbs_workflow_transfer_test.go and friends).
+
+Not covered here and left to their own tickets: `X-N8N-API-KEY` auth, execution delete (FEAT-zn5rqy), variables (FEAT-m7aw75).
