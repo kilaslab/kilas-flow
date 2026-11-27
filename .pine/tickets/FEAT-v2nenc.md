@@ -36,10 +36,10 @@ Integrators read raw Markdown on GitHub, where the `/start/...` root-relative li
 
 # Acceptance Criteria
 - [ ] `docs-publish` runs on main and the site answers publicly (GitHub Pages or Cloudflare Pages; custom domain optional)
-- [ ] `site` and `base` are set; sitemap and robots.txt are served
-- [ ] Starlight `editLink` points at the repo
+- [x] `site` and `base` are set; sitemap and robots.txt are served
+- [x] Starlight `editLink` points at the repo
 - [ ] The README and the in-app Help menu link to the site
-- [ ] A subpath or domain build passes link validation
+- [x] A subpath or domain build passes link validation
 
 # Implementation Plan
 
@@ -60,3 +60,12 @@ the steps above.
 # Progress
 
 Site-side done 2026-10-25: sitemap (@astrojs/sitemap), robots.txt, README link, domain override verified (DOCS_SITE). REMAINING (repo settings, owner action): DOCS_PUBLISH=true env + GitHub Pages source=GitHub Actions so /docs pages actually answer; documented in contributing.md. In-app Help menu link deferred (web/ lane).
+
+## Progress
+
+2026-11-27 (verified on `feat/epic-sweep-2026-11-27-late`):
+
+- `site`/`base` default to `https://kilaslab.github.io` and `/kilas-flow` (the env overrides `DOCS_SITE`/`DOCS_BASE` still win). A plain `make docs-build` emits `sitemap-index.xml` with absolute `https://kilaslab.github.io/kilas-flow/…` URLs and serves `robots.txt` naming that sitemap. Asset hrefs carry `/kilas-flow/`.
+- `editLink.baseUrl` is `https://github.com/kilaslab/kilas-flow/edit/main/docs`; a built page links `edit/main/docs/src/content/docs/guides/embedding.md`.
+- The `/kilas-flow` subpath build passes link validation (73 pages, "All internal links are valid").
+- Not done, needs the repository owner: the site is not public yet. `https://kilaslab.github.io/kilas-flow/` answers 404, the Pages API answers 404 (Pages is not enabled), and the CI `docs-publish` job is skipped on main because it runs only when `vars.DOCS_PUBLISH == 'true'`. Turning Pages on (source: GitHub Actions) and setting that repository variable is an outward-facing settings change left to the owner. After it, add the README and in-app Help links (criterion 4).
