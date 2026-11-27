@@ -20,6 +20,7 @@
   "database-search": "DatabaseSearch",
   "file-code": "FileCode",
   "file-output": "FileOutput",
+  "file-text": "FileText",
   "filter": "Filter",
   "folder": "Folder",
   "form": "ClipboardList",

@@ -779,6 +779,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.itemLists ↔ kilasflow.splitOut",
 		"n8n-nodes-base.limit ↔ kilasflow.limit",
 		"n8n-nodes-base.manualTrigger ↔ kilasflow.manual",
+		"n8n-nodes-base.markdown ↔ kilasflow.markdown",
 		"n8n-nodes-base.merge ↔ kilasflow.merge",
 		"n8n-nodes-base.mySql ↔ kilasflow.mysql",
 		"n8n-nodes-base.noOp ↔ kilasflow.noOp",

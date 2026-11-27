@@ -405,6 +405,11 @@ var mappings = []mapping{
 		exportTypeVersion: 1, toKilas: xmlToKilas, toN8N: xmlToN8N,
 		refuseKilas: refuseUnsupportedXMLOption,
 	},
+	{
+		n8nType: "n8n-nodes-base.markdown", kilasType: MarkdownNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: markdownToKilas, toN8N: markdownToN8N,
+		refuseKilas: refuseUnsupportedMarkdownOption,
+	},
 	// The Item Lists node: one selector, six operations, each a native node.
 	// kilasTypeFor picks the target from the selector the way it does for the
 	// Code node's languages; the advertised pair names the default operation's

@@ -22,6 +22,7 @@ import Database from '@lucide/svelte/icons/database';
 import DatabaseSearch from '@lucide/svelte/icons/database-search';
 import FileCode from '@lucide/svelte/icons/file-code';
 import FileOutput from '@lucide/svelte/icons/file-output';
+import FileText from '@lucide/svelte/icons/file-text';
 import Filter from '@lucide/svelte/icons/filter';
 import Folder from '@lucide/svelte/icons/folder';
 import GitCompare from '@lucide/svelte/icons/git-compare';
@@ -112,6 +113,7 @@ const GLYPHS: Record<string, Component> = {
 	// the same lucide icon so a cached catalogue and a fresh one agree.
 	'alert-triangle': TriangleAlert,
 	'file-code': FileCode,
+	'file-text': FileText,
 	'shield-check': ShieldCheck,
 	'triangle-alert': TriangleAlert,
 	'octagon-alert': OctagonAlert,
