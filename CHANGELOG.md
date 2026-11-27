@@ -23,6 +23,8 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- A Help menu in the dashboard sidebar: the API reference, the OpenAPI
+  document, what's new (the changelog) and the running version.
 - First run: `/` and `/app` open the workflow list, where `/` used to show a
   status card that Settings → About this instance already carries. The boot
   log's `http server listening` line names the editor URL
