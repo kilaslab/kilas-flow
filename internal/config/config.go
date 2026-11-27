@@ -724,6 +724,14 @@ type Notifications struct {
 	// dead or still pending. Bounded to between 1h and 2160h (90 days).
 	// Env: KILASFLOW_NOTIFICATIONS_RETENTION. Default: 168h.
 	Retention time.Duration `koanf:"retention"`
+	// Timeout bounds one delivery attempt, connection and response included.
+	// It is separate from outbound.timeout, which a slow API a workflow calls
+	// may need raised: a notification endpoint should answer quickly, and one
+	// that hangs costs a dispatcher lane for this long per attempt. The rest of
+	// the outbound egress policy (allowed hosts, the private-network guard)
+	// applies unchanged. Bounded to between 1s and 60s.
+	// Env: KILASFLOW_NOTIFICATIONS_TIMEOUT. Default: 10s.
+	Timeout time.Duration `koanf:"timeout"`
 }
 
 // The bounds notifications.max_attempts and notifications.retention are
@@ -732,6 +740,8 @@ const (
 	MaxNotificationAttempts     = 50
 	MinNotificationRetention    = time.Hour
 	MaxNotificationRetention    = 90 * 24 * time.Hour
+	MinNotificationTimeout      = time.Second
+	MaxNotificationTimeout      = time.Minute
 	defaultNotificationAttempts = 8
 )
 
@@ -1229,6 +1239,7 @@ func Default() Config {
 			// that failed over a weekend, short enough that the outbox of a
 			// busy tenant stays small.
 			Retention: 7 * 24 * time.Hour,
+			Timeout:   10 * time.Second,
 		},
 		SQL: SQLNodes{
 			// Both sit well above the node defaults (10,000 rows, 30 seconds):
@@ -1715,6 +1726,10 @@ func (c Config) Validate() error {
 	if c.Notifications.Retention < MinNotificationRetention || c.Notifications.Retention > MaxNotificationRetention {
 		return fmt.Errorf("notifications.retention %s must be between %s and %s",
 			c.Notifications.Retention, MinNotificationRetention, MaxNotificationRetention)
+	}
+	if c.Notifications.Timeout < MinNotificationTimeout || c.Notifications.Timeout > MaxNotificationTimeout {
+		return fmt.Errorf("notifications.timeout %s must be between %s and %s",
+			c.Notifications.Timeout, MinNotificationTimeout, MaxNotificationTimeout)
 	}
 
 	// A negative retention puts the prune cutoff in the future, and every

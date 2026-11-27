@@ -900,10 +900,14 @@ func run(args []string) error {
 		// row at a time under a lease, so two never deliver the same row at
 		// once.
 		if len(notificationsKey) > 0 {
+			// The workflow egress policy, with the notification timeout in
+			// place of outbound.timeout: the lease is derived from it.
+			notificationPolicy := outboundPolicy(cfg.Outbound)
+			notificationPolicy.Timeout = cfg.Notifications.Timeout
 			dispatcher, err := outbound.New(outbound.Options{
 				Store:       outbox,
 				Secret:      outbound.DerivedSecrets(notificationsKey),
-				Policy:      outboundPolicy(cfg.Outbound),
+				Policy:      notificationPolicy,
 				WorkerID:    resolveWorkerID(*workerIDOverride) + "/notifications",
 				MaxAttempts: cfg.Notifications.MaxAttempts,
 				Logger:      log,

@@ -3672,7 +3672,7 @@
             "type": "string"
           },
           "endpoint": {
-            "description": "Where the event is sent, as it was when the event was written",
+            "description": "Scheme and host of where the event is sent, as it was when the event was written; the path and query are withheld",
             "type": "string"
           },
           "id": {

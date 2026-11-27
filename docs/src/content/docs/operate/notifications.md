@@ -15,7 +15,7 @@ event to it for:
 | `execution.failed` | an execution ends failed: a node error, a timeout, a wait whose deadline passed, or a run abandoned by its worker too often | on |
 | `execution.completed` | an execution ends succeeded | off |
 | `workflow.activated` | a workflow is published (activated, or a version pinned) | off |
-| `workflow.deactivated` | an active workflow is deactivated | off |
+| `workflow.deactivated` | an active workflow is deactivated or deleted | off |
 
 A cancelled execution sends nothing.
 
@@ -61,8 +61,11 @@ as the change it reports. A committed failure therefore always has its
 notification, and a change that rolled back never does, whichever process or
 worker made it.
 
-A dispatcher in every worker process claims one due event at a time under a
-lease, posts it, and records the outcome:
+A dispatcher in every worker process claims due events under a lease, four
+at a time, so one endpoint that hangs holds up one lane rather than every
+tenant's notifications. Each attempt is bounded by `notifications.timeout`
+(10 seconds by default, separate from the workflow `outbound.timeout`). The
+dispatcher posts the event and records the outcome:
 
 - A `2xx` response marks it delivered.
 - Anything else (another status, a timeout, a refused connection, a redirect)
@@ -76,7 +79,10 @@ Redirects are not followed: a redirected POST would arrive as a bodiless GET.
 Delivery is **at least once**. A dispatcher that dies mid-delivery leaves the
 event leased; when the lease runs out another dispatcher sends it again, so the
 receiver can see one event twice. Every attempt carries the same event id and
-the same body, so deduplicate on the id.
+the same body, so deduplicate on the body's `id`, which the signature covers.
+The `webhook-id` header repeats it for convenience, but it is not signed: a
+delivery captured in transit could be replayed inside the timestamp tolerance
+under a different header.
 
 ## The request
 
@@ -102,7 +108,10 @@ trigger with `hmac.preset: standardWebhooks` verifies these deliveries as they
 are.
 
 Unlike the Standard Webhooks specification, the event id is not part of what
-is signed; it is sent beside the signature for deduplication.
+is signed, and the secret below is used as its text bytes rather than decoded
+from a `whsec_` value, so an off-the-shelf Standard Webhooks library does not
+verify these deliveries as they are. Ten lines of HMAC do, as does a kilasflow
+webhook trigger.
 
 Each tenant has its own secret, derived from the deployment key, so the key
 itself never leaves the operator and no secret is stored in a settings
@@ -133,9 +142,13 @@ curl "$KILASFLOW_URL/api/v1/notifications/deliveries?status=dead" \
   -H "Authorization: Bearer $TENANT_KEY"
 ```
 
-Each entry carries the event id and type, the endpoint it was bound for,
+Each entry carries the event id and type, the scheme and host of the endpoint
+it was bound for (the path and query are withheld, since they can carry a
+token the operator set),
 `status` (`pending`, `delivered` or `dead`), `attempts`, `lastStatusCode`,
-`lastError`, `nextAttemptAt` and the exact `payload`. `status` narrows the
+`lastError`, `nextAttemptAt` and the exact `payload`. An endpoint the egress
+policy refused reads `the egress policy refused the endpoint`, without the
+address or rule. `status` narrows the
 list and `limit` (1 to 200, default 50) bounds it. It needs `workflow:read` on
 a tenant key; an embed session and a workflow-bound key are refused, because
 the log spans every workflow of the tenant.

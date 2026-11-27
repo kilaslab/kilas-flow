@@ -12,7 +12,7 @@ export interface NotificationDeliveryResource {
   attempts: number;
   createdAt: string;
   deliveredAt?: string;
-  /** Where the event is sent, as it was when the event was written */
+  /** Scheme and host of where the event is sent, as it was when the event was written; the path and query are withheld */
   endpoint: string;
   /** Stable event id, sent as the webhook-id header on every attempt */
   id: string;

@@ -1034,7 +1034,7 @@ func TestAJavaScriptWorkerUserComesAsAPair(t *testing.T) {
 // would dead-letter everything unsent or keep the outbox for ever.
 func TestNotificationsDefaultsEnvironmentAndBounds(t *testing.T) {
 	cfg := Default()
-	if cfg.Notifications.SigningKeyEnv != "KILASFLOW_NOTIFICATIONS_SIGNING_KEY" || cfg.Notifications.MaxAttempts != 8 || cfg.Notifications.Retention != 168*time.Hour {
+	if cfg.Notifications.SigningKeyEnv != "KILASFLOW_NOTIFICATIONS_SIGNING_KEY" || cfg.Notifications.MaxAttempts != 8 || cfg.Notifications.Retention != 168*time.Hour || cfg.Notifications.Timeout != 10*time.Second {
 		t.Fatalf("Notifications defaults = %+v", cfg.Notifications)
 	}
 	t.Setenv("KILASFLOW_NOTIFICATIONS_MAX_ATTEMPTS", "3")
@@ -1051,6 +1051,8 @@ func TestNotificationsDefaultsEnvironmentAndBounds(t *testing.T) {
 		"too many attempts": func(c *Config) { c.Notifications.MaxAttempts = MaxNotificationAttempts + 1 },
 		"zero retention":    func(c *Config) { c.Notifications.Retention = 0 },
 		"over 90 days":      func(c *Config) { c.Notifications.Retention = MaxNotificationRetention + time.Hour },
+		"zero timeout":      func(c *Config) { c.Notifications.Timeout = 0 },
+		"over a minute":     func(c *Config) { c.Notifications.Timeout = 2 * time.Minute },
 	} {
 		candidate := Default()
 		mutate(&candidate)

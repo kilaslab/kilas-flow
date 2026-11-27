@@ -33,9 +33,11 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   `standardWebhooks` preset (`webhook-id`, `webhook-timestamp`, `v1,`
   HMAC-SHA256 over `timestamp.body`) with a secret derived per tenant from
   `notifications.signing_key_env`. Delivery is at least once, retried with a
-  capped exponential backoff and jitter, and dead-lettered after
+  capped exponential backoff and jitter, each attempt bounded by
+  `notifications.timeout`, and dead-lettered after
   `notifications.max_attempts`. `GET /api/v1/notifications/deliveries` lists
-  the tenant's events with attempts, last status and next retry; the log is
+  the tenant's events with attempts, last status and next retry (the endpoint
+  shown as scheme and host only); the log is
   kept for `notifications.retention` (a week by default) and removed with the
   tenant. Nothing is written while no signing key is set. See
   [Notifications](docs/src/content/docs/operate/notifications.md).

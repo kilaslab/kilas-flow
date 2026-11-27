@@ -948,6 +948,20 @@ between 1 and 50.
 Retention is how long an event stays in the delivery log, delivered,
 dead or still pending. Bounded to between 1h and 2160h (90 days).
 
+### notifications.timeout
+
+- Type: `duration`
+- Default: `10s`
+- Environment: `KILASFLOW_NOTIFICATIONS_TIMEOUT`
+- Required: no
+
+Timeout bounds one delivery attempt, connection and response included.
+It is separate from outbound.timeout, which a slow API a workflow calls
+may need raised: a notification endpoint should answer quickly, and one
+that hangs costs a dispatcher lane for this long per attempt. The rest of
+the outbound egress policy (allowed hosts, the private-network guard)
+applies unchanged. Bounded to between 1s and 60s.
+
 ## sql
 
 SQLNodes bounds what a workflow document may ask a database node for.
