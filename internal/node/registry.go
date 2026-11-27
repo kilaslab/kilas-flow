@@ -349,6 +349,9 @@ type Registry struct {
 	// created on the first write, so a registry that scopes nothing — the
 	// default — carries no map, and the lookup path pays one length check.
 	scopes map[string]map[string]struct{}
+	// availability is the built-in allow and deny state (availability.go). Nil
+	// when no rule and no per-tenant source is configured, which is the default.
+	availability *availability
 }
 
 type definitionKey struct {
