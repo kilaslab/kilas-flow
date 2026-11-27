@@ -14,8 +14,13 @@ import (
 // is local (version, help, auth login). Guarded marks a verb that refuses
 // without --yes; Refusal is the sentence it refuses with.
 type Verb struct {
-	Path      string
-	Summary   string
+	Path    string
+	Summary string
+	// Example is one invocation `--help` prints under the usage line. Each is
+	// taken from docs/reference/cli.md, whose examples `make
+	// smoke-cli-examples` runs, so the help never shows a command that does
+	// not work; TestEveryVerbHasATestedExample holds the two together.
+	Example   string
 	Operation string
 	Guarded   bool
 	Refusal   string

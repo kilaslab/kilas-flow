@@ -39,6 +39,7 @@ func runVerbs() []Verb {
 	return []Verb{
 		{
 			Path:      "run",
+			Example:   `kilasflow run "$WORKFLOW_ID" --input '{"n":1}' --trigger manual`,
 			Operation: "run-workflow",
 			Summary:   "start a workflow run (`--wait` to watch it finish)",
 			Args:      []Arg{arg("workflow id")},

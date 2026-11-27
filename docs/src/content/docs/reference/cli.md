@@ -854,6 +854,8 @@ person, and an agent can force either.
 A flag the verb does not have is part of the contract too: in JSON mode it is a
 `usage` envelope (exit 2) naming the flag and the verb's `--help`, and on a
 terminal it is the flag package's own message with the verb's usage line. A
+verb's `--help` prints its usage line, one example taken from this page (so
+the example is one `make smoke-cli-examples` runs), and its flags. A
 `network_error` for nothing listening at the URL, or for a host name that does
 not resolve, ends with the step that fixes it.
 

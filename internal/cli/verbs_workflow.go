@@ -39,6 +39,7 @@ func workflowVerbs() []Verb {
 	return []Verb{
 		{
 			Path:      "workflow list",
+			Example:   `kilasflow workflow list --limit 20 --json`,
 			Operation: "list-workflows",
 			Summary:   "list workflows, newest first (`--limit`, `--cursor`, `--tag`, `--name`, `--active`)",
 			Flags:     registerWorkflowListFlags,
@@ -47,6 +48,7 @@ func workflowVerbs() []Verb {
 		},
 		{
 			Path:      "workflow get",
+			Example:   `kilasflow workflow get "$WORKFLOW_ID"`,
 			Operation: "get-workflow",
 			Summary:   "read one workflow by id",
 			Args:      []Arg{arg("workflow id")},
@@ -55,6 +57,7 @@ func workflowVerbs() []Verb {
 		},
 		{
 			Path:      "workflow create",
+			Example:   `kilasflow workflow create --file workflow.json --quiet`,
 			Operation: "create-workflow",
 			Summary:   "create a workflow from a canonical document (`--file <path>|-`)",
 			Flags:     registerCreateFlags("workflow"),
@@ -63,6 +66,7 @@ func workflowVerbs() []Verb {
 		},
 		{
 			Path:      "workflow import",
+			Example:   `kilasflow workflow import --file n8n.json --yes --quiet`,
 			Operation: "import-workflow",
 			Summary:   "import n8n workflow JSON as a draft (`--file <path>|-`, or `--dir <directory>`) (guarded)",
 			Flags:     registerImportFlags,
@@ -74,6 +78,7 @@ func workflowVerbs() []Verb {
 		},
 		{
 			Path:      "workflow validate",
+			Example:   `kilasflow workflow validate --file patch.json`,
 			Operation: "validate-workflow-document",
 			Summary:   "check a draft document the way the API would, saving nothing (`--file <path>|-`)",
 			Flags:     registerValidateFlags,
@@ -82,6 +87,7 @@ func workflowVerbs() []Verb {
 		},
 		{
 			Path:      "workflow duplicate",
+			Example:   `kilasflow workflow duplicate "$WORKFLOW_ID" --name "Orders (copy)" --quiet`,
 			Operation: "duplicate-workflow",
 			Summary:   "copy a workflow (`--name <name>` to rename the copy)",
 			Args:      []Arg{arg("workflow id")},
@@ -91,6 +97,7 @@ func workflowVerbs() []Verb {
 		},
 		{
 			Path:      "workflow versions",
+			Example:   `kilasflow workflow versions "$WORKFLOW_ID" --limit 20 --cursor "$CURSOR"`,
 			Operation: "list-workflow-versions",
 			Summary:   "list a workflow's revisions (`--limit`, `--cursor`)",
 			Args:      []Arg{arg("workflow id")},
@@ -100,6 +107,7 @@ func workflowVerbs() []Verb {
 		},
 		{
 			Path:      "workflow get-version",
+			Example:   `kilasflow workflow get-version "$WORKFLOW_ID" "$VERSION_ID"`,
 			Operation: "get-workflow-version",
 			Summary:   "read one revision of a workflow, with its document",
 			Args:      []Arg{arg("workflow id"), arg("revision id")},
@@ -108,6 +116,7 @@ func workflowVerbs() []Verb {
 		},
 		{
 			Path:      "workflow publish-events",
+			Example:   `kilasflow workflow publish-events "$WORKFLOW_ID"`,
 			Operation: "list-workflow-publish-events",
 			Summary:   "read a workflow's publish audit trail",
 			Args:      []Arg{arg("workflow id")},
@@ -116,6 +125,7 @@ func workflowVerbs() []Verb {
 		},
 		{
 			Path:      "workflow export",
+			Example:   `kilasflow workflow export "$WORKFLOW_ID" --format n8n`,
 			Operation: "export-workflow",
 			Summary: "export a workflow as n8n JSON (`--out <file>` writes the bare n8n document; " +
 				"`--all --out-dir <dir>` writes every workflow to one)",
@@ -126,6 +136,7 @@ func workflowVerbs() []Verb {
 		},
 		{
 			Path:      "workflow diagnostics",
+			Example:   `kilasflow workflow diagnostics "$WORKFLOW_ID" --version-id "$VERSION_ID"`,
 			Operation: "workflow-diagnostics",
 			Summary:   "read the import report stored with a revision",
 			Args:      []Arg{arg("workflow id")},
@@ -135,6 +146,7 @@ func workflowVerbs() []Verb {
 		},
 		{
 			Path:      "workflow activate",
+			Example:   `kilasflow workflow activate "$WORKFLOW_ID" --yes`,
 			Operation: "activate-workflow",
 			Summary:   "activate a workflow's latest revision, publishing its endpoint; `--all` activates every inactive workflow (guarded)",
 			Args:      []Arg{optionalArg("workflow id")},
@@ -146,6 +158,7 @@ func workflowVerbs() []Verb {
 		},
 		{
 			Path:      "workflow deactivate",
+			Example:   `kilasflow workflow deactivate "$WORKFLOW_ID" --yes`,
 			Operation: "deactivate-workflow",
 			Summary:   "take a workflow's published endpoint offline; `--all` deactivates every active workflow (guarded)",
 			Args:      []Arg{optionalArg("workflow id")},
@@ -157,6 +170,7 @@ func workflowVerbs() []Verb {
 		},
 		{
 			Path:      "workflow delete",
+			Example:   `kilasflow workflow delete "$WORKFLOW_ID" --yes`,
 			Operation: "delete-workflow",
 			Summary:   "delete a workflow, retaining its audit trail (guarded)",
 			Args:      []Arg{arg("workflow id")},

@@ -33,6 +33,7 @@ func tenantVerbs() []Verb {
 	return []Verb{
 		{
 			Path:      "tenant list",
+			Example:   `kilasflow tenant list`,
 			Operation: "list-tenants",
 			Summary:   "list every tenant in this deployment (operator credential)",
 			Run:       runTenantList,
@@ -40,6 +41,7 @@ func tenantVerbs() []Verb {
 		},
 		{
 			Path:      "tenant get",
+			Example:   `kilasflow tenant get acme`,
 			Operation: "get-tenant",
 			Summary:   "read one tenant (operator credential)",
 			Args:      []Arg{arg("tenant id")},
@@ -48,6 +50,7 @@ func tenantVerbs() []Verb {
 		},
 		{
 			Path:      "tenant users",
+			Example:   `kilasflow tenant users acme`,
 			Operation: "list-tenant-users",
 			Summary:   "list a tenant's accounts, without any password hash (operator credential)",
 			Args:      []Arg{arg("tenant id")},
@@ -56,6 +59,7 @@ func tenantVerbs() []Verb {
 		},
 		{
 			Path:      "tenant delete",
+			Example:   `kilasflow tenant delete acme --yes`,
 			Operation: "delete-tenant",
 			Summary:   "delete a tenant and everything it owns (operator credential, guarded)",
 			Args:      []Arg{arg("tenant id")},

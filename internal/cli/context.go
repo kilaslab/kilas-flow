@@ -23,6 +23,7 @@ func contextVerbs() []Verb {
 	return []Verb{
 		{
 			Path:    "context",
+			Example: `kilasflow context`,
 			Summary: "read-only briefing for a first turn: server, identity, workflows, datastores, node types",
 			Run:     runContext,
 			Human:   humanContext,

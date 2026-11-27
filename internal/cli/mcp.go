@@ -75,6 +75,7 @@ func mcpVerbs() []Verb {
 	return []Verb{
 		{
 			Path:    mcpServeVerb,
+			Example: "kilasflow mcp serve",
 			Summary: "serve the Model Context Protocol on stdin and stdout, one tool per verb",
 			Run:     runMCPServe,
 		},

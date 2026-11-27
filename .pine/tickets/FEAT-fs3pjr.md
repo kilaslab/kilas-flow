@@ -188,7 +188,7 @@ BUG-719gaz
 # Acceptance Criteria
 - [x] `node describe httpRequest` and n8n type names resolve, with substring hints
 - [ ] Human output shows row data, the failing node and its message, and a node-run table with durations; `execution_failed` carries the first failed node in `error.message`
-- [ ] `--help` shows usage with named arguments, one example per verb and per-noun help; an unknown flag returns a usage envelope in JSON mode
+- [x] `--help` shows usage with named arguments, one example per verb and per-noun help; an unknown flag returns a usage envelope in JSON mode
 - [ ] Every error message names the next action
 - [ ] `context` reports whether auth is disabled, scopes, counts and skills drift
 
@@ -214,3 +214,8 @@ Related tickets: BUG-719gaz, BUG-b4cb1c, BUG-j7qrp2
 - AC2 (human execution output, first failed node in `execution_failed`) and AC5 (`context` auth/scopes/counts/skills drift): not started.
 - docs/reference/cli.md updated (node describe examples, noun help row, usage envelope).
 - Tests: internal/cli/noun_test.go and verbs_node_test.go (resolution, ambiguity, hints); `go test ./internal/cli ./internal/docexamples ./scripts/cli-examples` passes.
+
+2026-11-27 (later, on `feat/epic-sweep-2026-11-27-late`):
+
+- AC3 done. `Verb.Example` holds one invocation per verb (62, `mcp serve` included), and `--help` prints it as `example:` under the usage line. 57 are copied verbatim from docs/reference/cli.md, whose examples `make smoke-cli-examples` executes. `TestEveryVerbHasATestedExample` fails if a verb lacks one, if it does not invoke that verb, or if it is not on the page. Four are exempt, each with its reason: `context`, `auth login` (the page pipes the token in), `ready` and `help`.
+- Still open: AC2 (human execution output), AC4 (audit of the remaining error messages), AC5 (`context` auth/scopes/counts/skills drift).

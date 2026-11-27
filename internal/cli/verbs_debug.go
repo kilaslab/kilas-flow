@@ -34,6 +34,7 @@ func debugVerbs() []Verb {
 	return []Verb{
 		{
 			Path:      "debug eval",
+			Example:   `kilasflow debug eval '$("HTTP Request").first().json.status' --execution "$EXECUTION_ID"`,
 			Operation: "eval-expression",
 			Summary:   "evaluate an expression against an execution's stored trace, as a node's parameters saw it (`--execution <id>`, `--node <nodeId>`, `--run <n>`, `--item <n>`)",
 			Args:      []Arg{arg("expression")},

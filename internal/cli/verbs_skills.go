@@ -36,12 +36,14 @@ func skillsVerbs() []Verb {
 	return []Verb{
 		{
 			Path:    "skills list",
+			Example: `kilasflow skills list`,
 			Summary: "list the skills this binary ships, with the situation each one is for",
 			Run:     runSkillsList,
 			Human:   humanSkillsList,
 		},
 		{
 			Path:    "skills show",
+			Example: `kilasflow skills show kilasflow-triggers`,
 			Summary: "print one skill's SKILL.md, or one of its reference files (`--reference <file>`)",
 			Args:    []Arg{arg("skill name")},
 			Flags:   registerSkillsShowFlags,
@@ -49,6 +51,7 @@ func skillsVerbs() []Verb {
 		},
 		{
 			Path:    "skills install",
+			Example: `kilasflow skills install`,
 			Summary: "install the bundle into a harness directory (`--target`, `--scope`, `--force`, `--dry-run`)",
 			Flags:   registerSkillsInstallFlags,
 			Run:     runSkillsInstall,
@@ -56,6 +59,7 @@ func skillsVerbs() []Verb {
 		},
 		{
 			Path:    "skills check",
+			Example: `kilasflow skills check`,
 			Summary: "compare an installed bundle with this binary's and exit non-zero on drift",
 			Flags:   registerSkillsCheckFlags,
 			Run:     runSkillsCheck,
@@ -63,6 +67,7 @@ func skillsVerbs() []Verb {
 		},
 		{
 			Path:    "skills export",
+			Example: `kilasflow skills export --format tar --out kilasflow-skills.tar`,
 			Summary: "write the bundle as the harness index (`--format json`) or a tarball (`--format tar`)",
 			Flags:   registerSkillsExportFlags,
 			Run:     runSkillsExport,
