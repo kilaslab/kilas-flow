@@ -804,6 +804,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.telegramTrigger ↔ kilasflow.telegramTrigger",
 		"n8n-nodes-base.wait ↔ kilasflow.wait",
 		"n8n-nodes-base.webhook ↔ kilasflow.webhook",
+		"n8n-nodes-base.xml ↔ kilasflow.xml",
 		"n8n-nodes-gowa.gowa ↔ kilasflow.httpRequest",
 		"n8n-nodes-waha.WAHA ↔ pack.waha",
 		"n8n-nodes-waha.wahaTrigger ↔ pack.wahaTrigger",

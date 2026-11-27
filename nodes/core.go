@@ -101,6 +101,7 @@ func RegisterAll(registry *node.Registry) error {
 		renameKeysNode(),
 		compareDatasetsNode(),
 		cryptoNode(),
+		xmlConvertNode(),
 		dateTimeNode(),
 		datastoreNode(),
 		datastoreToolNode(),

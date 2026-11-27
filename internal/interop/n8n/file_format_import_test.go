@@ -78,7 +78,7 @@ func binaryStoreForImport(t *testing.T) engine.BinaryStore {
 func TestTheFileFormatTypesMatchTheNodePack(t *testing.T) {
 	t.Parallel()
 
-	if n8n.CryptoNodeType != nodes.CryptoNodeType {
+	if n8n.CryptoNodeType != nodes.CryptoNodeType || n8n.XMLNodeType != nodes.XMLNodeType {
 		t.Fatalf("the adapter's mirrored types differ from the node pack's: crypto %s vs %s", n8n.CryptoNodeType, nodes.CryptoNodeType)
 	}
 }

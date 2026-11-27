@@ -108,6 +108,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		RenameKeysExecutorID:             engine.ExecutorFunc(executeRenameKeys),
 		CompareDatasetsExecutorID:        engine.ExecutorFunc(executeCompareDatasets),
 		CryptoExecutorID:                 engine.ExecutorFunc(executeCrypto),
+		XMLExecutorID:                    engine.ExecutorFunc(executeXML),
 		DateTimeExecutorID:               engine.ExecutorFunc(executeDateTime),
 		WaitExecutorID:                   engine.ExecutorFunc(executeWait),
 		ExecuteWorkflowExecutorID:        engine.ExecutorFunc(executeExecuteWorkflow),

@@ -18,6 +18,7 @@
   "copy-minus": "CopyMinus",
   "database": "Database",
   "database-search": "DatabaseSearch",
+  "file-code": "FileCode",
   "file-output": "FileOutput",
   "filter": "Filter",
   "folder": "Folder",
