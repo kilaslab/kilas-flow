@@ -1993,6 +1993,40 @@ export interface WebhookResponseEvent {
   workflowId?: string;
 }
 
+export type WorkflowContractSource = typeof WorkflowContractSource[keyof typeof WorkflowContractSource];
+
+
+export const WorkflowContractSource = {
+  active: 'active',
+  draft: 'draft',
+} as const;
+
+export interface WorkflowContractEntry {
+  nodeId: string;
+  nodeName: string;
+  nodeType: string;
+}
+
+export type WorkflowContractSchemaSchema = {[key: string]: unknown};
+
+export interface WorkflowContractSchema {
+  declared: boolean;
+  schema: WorkflowContractSchemaSchema;
+}
+
+export interface WorkflowContract {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  active: boolean;
+  entry: WorkflowContractEntry;
+  input: WorkflowContractSchema;
+  name: string;
+  output: WorkflowContractSchema;
+  source: WorkflowContractSource;
+  versionId: string;
+  workflowId: string;
+}
+
 export interface WorkflowDiagnosticsResource {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -6783,6 +6817,57 @@ export const activateWorkflow = async (id: string, options?: RequestInit): Promi
 
   const data: activateWorkflowResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as activateWorkflowResponse
+}
+
+
+
+export type getWorkflowContractResponse200 = {
+  data: WorkflowContract
+  status: 200
+}
+
+export type getWorkflowContractResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getWorkflowContractResponseSuccess = (getWorkflowContractResponse200) & {
+  headers: Headers;
+};
+export type getWorkflowContractResponseError = (getWorkflowContractResponseDefault) & {
+  headers: Headers;
+};
+
+export type getWorkflowContractResponse = (getWorkflowContractResponseSuccess | getWorkflowContractResponseError)
+
+export const getGetWorkflowContractUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/workflows/${id}/contract`
+}
+
+/**
+ * Returns the JSON Schema of the input the workflow's "When Executed by Another Workflow" trigger declares (its expected fields) and of the output the workflow declares in `settings.outputSchema`, for the revision a call would run: the active one, or the latest draft when the workflow is not active. A side the workflow does not declare is `{"type": "object"}` with `declared: false`. Declared fields are a check, never a filter, so the input schema allows additional properties.
+ * @summary Describe a workflow's input and output contract
+ */
+export const getWorkflowContract = async (id: string, options?: RequestInit): Promise<getWorkflowContractResponse> => {
+
+  const res = await fetch(getGetWorkflowContractUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getWorkflowContractResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getWorkflowContractResponse
 }
 
 

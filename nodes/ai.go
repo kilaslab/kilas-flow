@@ -3043,6 +3043,19 @@ func (tool *workflowTool) modelDefinedInputs() []WorkflowInput {
 	return inputs
 }
 
+// WorkflowInputsSchema is the JSON Schema object a caller's input must match:
+// one property per declared field, typed as the trigger declares it. Declared
+// fields are a check, never a filter, so additional properties are allowed.
+// The workflow-as-tool contract (GET /workflows/{id}/contract) and the AI
+// Agent's workflow tool read the same declaration through this function.
+func WorkflowInputsSchema(inputs []WorkflowInput) map[string]any {
+	properties := make(map[string]any, len(inputs))
+	for _, input := range inputs {
+		properties[input.Name] = workflowInputSchema(input)
+	}
+	return map[string]any{"type": "object", "properties": properties, "additionalProperties": true}
+}
+
 // workflowInputSchema is the JSON Schema property for one declared input. An
 // input declared as any accepts anything, so it carries no type; an array
 // names its items, which OpenAI refuses a function schema without.

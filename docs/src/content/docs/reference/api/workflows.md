@@ -521,6 +521,77 @@ curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}/webhooks" \
 
 Embed: Allow with `workflow:read` — on the session’s workflow only.
 
+## Describe a workflow's input and output contract (`get-workflow-contract`)
+
+`GET /api/v1/workflows/{id}/contract`
+
+Returns the JSON Schema of the input the workflow's "When Executed by Another Workflow" trigger declares (its expected fields) and of the output the workflow declares in `settings.outputSchema`, for the revision a call would run: the active one, or the latest draft when the workflow is not active. A side the workflow does not declare is `{"type": "object"}` with `declared: false`. Declared fields are a check, never a filter, so the input schema allows additional properties.
+
+Parameters:
+
+| Name | In | Required | Type | Description |
+| --- | --- | --- | --- | --- |
+| `id` | path | yes | string | Workflow identifier |
+
+Responses:
+
+| Status | Description | Body |
+| --- | --- | --- |
+| `200` | OK | `application/json` — `WorkflowContract` |
+| `default` | Error | `application/problem+json` |
+
+Fields of the `WorkflowContract` body:
+
+| Field | Required | Type | Description |
+| --- | --- | --- | --- |
+| `active` | yes | `boolean` | — |
+| `entry` | yes | `WorkflowContractEntry` | — |
+| `entry.nodeId` | yes | `string` | — |
+| `entry.nodeName` | yes | `string` | — |
+| `entry.nodeType` | yes | `string` | — |
+| `input` | yes | `WorkflowContractSchema` | — |
+| `input.declared` | yes | `boolean` | — |
+| `input.schema` | yes | `object` | — |
+| `name` | yes | `string` | — |
+| `output` | yes | `WorkflowContractSchema` | — |
+| `output.declared` | yes | `boolean` | — |
+| `output.schema` | yes | `object` | — |
+| `source` | yes | `string` | — |
+| `versionId` | yes | `string` | — |
+| `workflowId` | yes | `string` | — |
+
+Response (skeleton — every field, placeholder values):
+
+```json
+{
+  "active": false,
+  "entry": {
+    "nodeId": "string",
+    "nodeName": "string",
+    "nodeType": "string"
+  },
+  "input": {
+    "declared": false,
+    "schema": {}
+  },
+  "name": "string",
+  "output": {
+    "declared": false,
+    "schema": {}
+  },
+  "source": "active",
+  "versionId": "string",
+  "workflowId": "string"
+}
+```
+
+```sh
+curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}/contract" \
+  -H "Authorization: Bearer $KILASFLOW_API_KEY"
+```
+
+Embed: Allow with `workflow:read` — on the session’s workflow only.
+
 ## Save a workflow draft (`update-workflow`)
 
 `PUT /api/v1/workflows/{id}`

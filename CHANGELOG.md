@@ -23,6 +23,12 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- Workflow contracts. `GET /api/v1/workflows/{id}/contract` returns, for the
+  revision a call would run (active, or the latest draft), the JSON Schema of
+  the input the sub-workflow trigger declares (its expected fields, open to
+  additional properties) and of the output the document declares in
+  `settings.outputSchema`, each with a `declared` flag. It reads with
+  `workflow:read`, so a host can build a model's tool definition from it.
 - Variables: a tenant's own key/value pairs, read by every workflow as
   `{{ $vars.KEY }}` and by the Code node's `$vars` (n8n's Settings →
   Variables). Managed under Settings → Variables or through

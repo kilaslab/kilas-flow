@@ -17,11 +17,11 @@ When the two disagree, compare versions: every page here states the server versi
 
 ## Operations
 
-88 operations, all under `/api/v1`, in 13 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
+89 operations, all under `/api/v1`, in 13 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
 
 | Group | Operations | Contents |
 | --- | --- | --- |
-| [Workflows](/reference/api/workflows/) | 17 | Create, read, update, run, activate, and version workflows. |
+| [Workflows](/reference/api/workflows/) | 18 | Create, read, update, run, activate, and version workflows. |
 | [Executions](/reference/api/executions/) | 6 | List, inspect, cancel, retry, and follow executions on the event stream. |
 | [Credentials](/reference/api/credentials/) | 9 | Credential types and stored credentials. Reads never return values. |
 | [Authentication and keys](/reference/api/auth/) | 7 | Sessions, API keys, and stream tickets. |

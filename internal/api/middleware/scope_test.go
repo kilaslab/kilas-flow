@@ -122,6 +122,7 @@ func TestAScopedKeyReachesWhatItsScopesName(t *testing.T) {
 		{"describes itself", http.MethodGet, "/api/v1/auth/me", reader, 0, ""},
 		{"lists workflows", http.MethodGet, "/api/v1/workflows", reader, 0, ""},
 		{"reads a workflow", http.MethodGet, "/api/v1/workflows/wf_1", reader, 0, ""},
+		{"reads a workflow's contract", http.MethodGet, "/api/v1/workflows/wf_1/contract", reader, 0, ""},
 		// The dry run is a read of the catalogue: it compiles a document the
 		// caller supplies and saves nothing, so the verb that answers "would
 		// this run" must not need a write scope.

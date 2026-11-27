@@ -5267,6 +5267,96 @@
         ],
         "type": "object"
       },
+      "WorkflowContract": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/api/schemas/WorkflowContract.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "entry": {
+            "$ref": "#/components/schemas/WorkflowContractEntry"
+          },
+          "input": {
+            "$ref": "#/components/schemas/WorkflowContractSchema"
+          },
+          "name": {
+            "type": "string"
+          },
+          "output": {
+            "$ref": "#/components/schemas/WorkflowContractSchema"
+          },
+          "source": {
+            "enum": [
+              "active",
+              "draft"
+            ],
+            "type": "string"
+          },
+          "versionId": {
+            "type": "string"
+          },
+          "workflowId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflowId",
+          "name",
+          "active",
+          "versionId",
+          "source",
+          "entry",
+          "input",
+          "output"
+        ],
+        "type": "object"
+      },
+      "WorkflowContractEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "nodeId": {
+            "type": "string"
+          },
+          "nodeName": {
+            "type": "string"
+          },
+          "nodeType": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodeId",
+          "nodeName",
+          "nodeType"
+        ],
+        "type": "object"
+      },
+      "WorkflowContractSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "declared": {
+            "type": "boolean"
+          },
+          "schema": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "declared",
+          "schema"
+        ],
+        "type": "object"
+      },
       "WorkflowDiagnosticsResource": {
         "additionalProperties": false,
         "properties": {
@@ -10384,6 +10474,51 @@
         "summary": "Activate latest workflow revision",
         "tags": [
           "Workflow lifecycle"
+        ]
+      }
+    },
+    "/api/v1/workflows/{id}/contract": {
+      "get": {
+        "description": "Returns the JSON Schema of the input the workflow's \"When Executed by Another Workflow\" trigger declares (its expected fields) and of the output the workflow declares in `settings.outputSchema`, for the revision a call would run: the active one, or the latest draft when the workflow is not active. A side the workflow does not declare is `{\"type\": \"object\"}` with `declared: false`. Declared fields are a check, never a filter, so the input schema allows additional properties.",
+        "operationId": "get-workflow-contract",
+        "parameters": [
+          {
+            "description": "Workflow identifier",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Workflow identifier",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowContract"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Describe a workflow's input and output contract",
+        "tags": [
+          "Workflows"
         ]
       }
     },

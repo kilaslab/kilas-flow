@@ -28,6 +28,7 @@ import type {
   ListWorkflowsParams,
   ValidateWorkflowResource,
   WebhookRouteResource,
+  WorkflowContract,
   WorkflowDocumentInput,
   WorkflowResource,
   WorkflowSummary,
@@ -667,7 +668,103 @@ export const createUpdateWorkflow = <TError = ErrorType<ErrorModel>,
       > => {
       return createMutation(() => ({ ...getUpdateWorkflowMutationOptions(options?.()) }), queryClient);
     }
-    export type duplicateWorkflowResponse201 = {
+    export type getWorkflowContractResponse200 = {
+  data: WorkflowContract
+  status: 200
+}
+
+export type getWorkflowContractResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getWorkflowContractResponseSuccess = (getWorkflowContractResponse200) & {
+  headers: Headers;
+};
+export type getWorkflowContractResponseError = (getWorkflowContractResponseDefault) & {
+  headers: Headers;
+};
+
+export type getWorkflowContractResponse = (getWorkflowContractResponseSuccess | getWorkflowContractResponseError)
+
+export const getGetWorkflowContractUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/workflows/${id}/contract`
+}
+
+/**
+ * Returns the JSON Schema of the input the workflow's "When Executed by Another Workflow" trigger declares (its expected fields) and of the output the workflow declares in `settings.outputSchema`, for the revision a call would run: the active one, or the latest draft when the workflow is not active. A side the workflow does not declare is `{"type": "object"}` with `declared: false`. Declared fields are a check, never a filter, so the input schema allows additional properties.
+ * @summary Describe a workflow's input and output contract
+ */
+export const getWorkflowContract = async (id: string, options?: Parameters<typeof apiFetch>[1]): Promise<getWorkflowContractResponse> => {
+
+  return apiFetch<getWorkflowContractResponse>(getGetWorkflowContractUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetWorkflowContractQueryKey = (id: string,) => {
+    return [
+    `/api/v1/workflows/${id}/contract`
+    ] as const;
+    }
+
+
+export const getGetWorkflowContractQueryOptions = <TData = Awaited<ReturnType<typeof getWorkflowContract>>, TError = ErrorType<ErrorModel>>(id: string, options?: { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof getWorkflowContract>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetWorkflowContractQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWorkflowContract>>> = ({ signal }) => getWorkflowContract(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as CreateQueryOptions<Awaited<ReturnType<typeof getWorkflowContract>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetWorkflowContractQueryResult = NonNullable<Awaited<ReturnType<typeof getWorkflowContract>>>
+export type GetWorkflowContractQueryError = ErrorType<ErrorModel>
+
+
+/**
+ * @summary Describe a workflow's input and output contract
+ */
+
+export function createGetWorkflowContract<TData = Awaited<ReturnType<typeof getWorkflowContract>>, TError = ErrorType<ErrorModel>>(
+ id: () =>  string, options?: () => { query?:Partial<CreateQueryOptions<Awaited<ReturnType<typeof getWorkflowContract>>, TError, TData>>, request?: SecondParameter<typeof apiFetch>}
+ , queryClient?: () => QueryClient
+ ): CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+
+
+  const query = createQuery(() => getGetWorkflowContractQueryOptions(id(),options?.()), queryClient) as CreateQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return query
+}
+
+
+
+
+
+
+export type duplicateWorkflowResponse201 = {
   data: WorkflowResource
   status: 201
 }

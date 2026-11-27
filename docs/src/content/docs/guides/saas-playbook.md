@@ -570,7 +570,8 @@ Decide per tool:
 ### Schema ownership
 
 KilasFlow does not publish or enforce an input or output schema for a Webhook
-trigger. The tool definition your agent shows the model, with its name, its
+trigger (a sub-workflow trigger's declared fields are published, see
+[Reading a declared contract](#reading-a-declared-contract)). The tool definition your agent shows the model, with its name, its
 description and its JSON schema, belongs to **your** product. The workflow's
 Respond node is the other half of the contract. Keep the two together:
 
@@ -583,6 +584,34 @@ Respond node is the other half of the contract. Keep the two together:
   revision for a new schema. The webhook address does not change.
 - Do not reuse a tool route for two schemas. Add another Webhook node, which gets
   its own address.
+
+#### Reading a declared contract
+
+A workflow that starts with **When Executed by Another Workflow** set to
+*Define the fields this workflow expects* declares its input, and
+`GET /api/v1/workflows/{id}/contract` returns that declaration as JSON Schema,
+for the revision a call would run (the active one, or the latest draft):
+
+```json
+{
+  "workflowId": "wf_…", "name": "Look up a contact", "active": true,
+  "versionId": "ver_…", "source": "active",
+  "entry": { "nodeId": "entry", "nodeName": "When Executed by Another Workflow",
+             "nodeType": "kilasflow.executeWorkflowTrigger" },
+  "input":  { "declared": true, "schema": { "type": "object", "additionalProperties": true,
+              "properties": { "email": { "type": "string" }, "limit": { "type": "number" } } } },
+  "output": { "declared": false, "schema": { "type": "object" } }
+}
+```
+
+The output side is declared by putting a JSON Schema object in the document's
+`settings.outputSchema`; nothing else in the document states an output, so
+without it the side is `declared: false`. Declared fields are a check, never a
+filter, so the input schema allows additional properties. Use the contract to
+build the tool definition you show your model, but keep the rule above: the
+schema you ship is yours, and a new revision is the unit of change. The route
+reads the workflow with `workflow:read`, so an embed session or a key bound to
+the workflow may read its own contract.
 
 This is a different mechanism from the **Workflow Tool** node
 (`kilasflow.workflowTool`), which lets an AI agent running *inside* KilasFlow call
