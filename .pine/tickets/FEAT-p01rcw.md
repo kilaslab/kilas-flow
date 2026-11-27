@@ -85,7 +85,7 @@ none
 - [x] `/` and `/app` redirect to `/app/workflows` (or `/login` when auth is on); the status card moves under Settings → About
 - [x] The boot log prints the editor URL
 - [ ] The empty state offers 2–3 bundled sample workflows (for example Webhook → Set → Respond, and an Ollama agent) with "Use this", plus Import from URL/JSON
-- [ ] A Help menu with Docs, API reference, Shortcuts, What's new (from CHANGELOG.md) and the version
+- [x] A Help menu with Docs, API reference, Shortcuts, What's new (from CHANGELOG.md) and the version
 
 # Implementation Plan
 
@@ -104,3 +104,4 @@ See each finding's suggested fix above.
 - `/` (web/src/routes/+page.ts) and `/app` ((dashboard)/app/+page.ts) redirect to `/app/workflows`. With auth on, the dashboard layout sends a signed-out visitor to `/login`. The status card already existed under Settings → About this instance, so the root's own copy (messages/*/home.json) is removed. Verified in a browser against a built binary.
 - `api.EditorURL` names `server.public_url` + `/app/workflows`, or the listen address with a wildcard host (`0.0.0.0`, `::`, empty) shown as `localhost`. It appears as `editor=` on the `http server listening` log line. Covered by a unit test and checked live.
 - Left: bundled sample workflows in the empty state, and the Help menu.
+- Help menu: `web/src/lib/components/dashboard/help-menu.svelte` sits above the language select in the sidebar footer (icon-only when the rail is collapsed) and in the mobile sheet. It lists API reference (`/docs`), OpenAPI JSON (`/api/openapi.json`), What's new (CHANGELOG.md on GitHub, new tab) and a non-interactive `Version x` line from the health probe; hrefs live in `web/src/lib/dashboard/help-links.ts`. Not in the menu: a separate Docs entry (the web code has no docs-site URL) and Shortcuts (the overlay belongs to the editor, press `?` there). Left: bundled sample workflows.

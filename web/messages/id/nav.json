@@ -6,5 +6,12 @@
 	"nav_datastores": "Tabel data",
 	"nav_settings": "Pengaturan",
 	"nav_language_english": "English",
-	"nav_language_indonesian": "Bahasa Indonesia"
+	"nav_language_indonesian": "Bahasa Indonesia",
+	"nav_help": "Bantuan",
+	"nav_help_api_reference": "Referensi API",
+	"nav_help_openapi": "JSON OpenAPI",
+	"nav_help_whats_new": "Yang baru",
+	"nav_help_opens_new_tab": "(dibuka di tab baru)",
+	"nav_help_version": "Versi {version}",
+	"nav_help_version_unavailable": "Versi tidak tersedia"
 }

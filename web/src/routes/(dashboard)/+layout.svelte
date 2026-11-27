@@ -11,6 +11,7 @@
 	import { authMode } from '$lib/dashboard/auth-mode';
 	import type { PrincipalResource } from '$lib/api/generated/models';
 	import DashboardNav from '$lib/components/dashboard/dashboard-nav.svelte';
+	import HelpMenu from '$lib/components/dashboard/help-menu.svelte';
 	import LocaleSwitcher from '$lib/components/dashboard/locale-switcher.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Sheet from '$lib/components/ui/sheet';
@@ -127,7 +128,8 @@
 		<div class="flex-1 {sidebarCollapsed ? 'px-1' : 'px-2'} py-2">
 			<DashboardNav collapsed={sidebarCollapsed} />
 		</div>
-		<div class="border-t border-sidebar-border {sidebarCollapsed ? 'px-1' : 'px-2'} py-2">
+		<div class="grid gap-1 border-t border-sidebar-border {sidebarCollapsed ? 'px-1' : 'px-2'} py-2">
+			<HelpMenu collapsed={sidebarCollapsed} />
 			<LocaleSwitcher />
 		</div>
 	</aside>
@@ -152,7 +154,8 @@
 					<div class="px-2 py-2">
 						<DashboardNav onNavigate={() => (mobileNavOpen = false)} />
 					</div>
-					<div class="border-t border-border px-2 py-2">
+					<div class="grid gap-1 border-t border-border px-2 py-2">
+						<HelpMenu />
 						<LocaleSwitcher />
 					</div>
 				</Sheet.Content>
