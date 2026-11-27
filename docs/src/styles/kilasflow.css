@@ -136,3 +136,22 @@
  * Starlight already defaults to and is a deliberate difference from the product
  * rather than an oversight.
  */
+
+/* The landing page has exactly three tracks. Starlight's card grid is two
+ * columns, which leaves an empty cell beside the third card, so on a wide
+ * screen the grid there is three columns. Narrower screens keep Starlight's own
+ * one- and two-column layouts. */
+@media (min-width: 72rem) {
+	.tracks .card-grid {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+}
+
+/* The hero on the home page carries a tagline and one link and no image, so
+ * Starlight's tall default padding pushes the three tracks below the fold on a
+ * laptop screen. They are what the page is for, so the hero is tightened. */
+@media (min-width: 50rem) {
+	main .hero {
+		padding-block: clamp(1.5rem, 0.5rem + 4vmin, 3.5rem);
+	}
+}

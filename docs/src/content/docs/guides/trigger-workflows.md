@@ -240,8 +240,8 @@ Two behaviours matter:
 - **It runs the latest saved revision and ignores activation.** That is right for
   a test run. It is wrong for production traffic, where the version that is live
   should run. Use a host event or a webhook for that.
-- **A scoped key can hold only this.** A key with `workflow:run`, bound to one
-  workflow, can start that workflow and nothing else
+- **A key can be limited to this one call.** A key with `workflow:run`, bound to
+  one workflow, can start that workflow and nothing else
   ([scoped keys](/operate/tenants/#scoped-api-keys)). That suits a job runner.
 
 Each tenant has a run allowance of `ratelimit.run_per_minute` (120 by default).
