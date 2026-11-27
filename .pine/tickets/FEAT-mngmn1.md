@@ -45,7 +45,7 @@ Branch worktree-agent-a20d27b55d3377478 (FEAT-mngmn1).
 - **Failure mode**: if a tenant's lists cannot be read (settings store error and nothing cached), the tenant loses every hideable built-in (engine-required types and packs stay) and an error is logged. Chosen over failing open so a settings outage cannot switch a deny list off; the cache already serves last-known settings on a store error, so this only bites a cold cache. Other processes see a PATCH within the 5 s cache window.
 - **Tests**: `internal/node/availability_test.go` (deny, tenant-scoped deny, allow, union, deny wins, engine-required, tool forms, settings source, fail-closed, Compile code), `internal/config/nodes_availability_test.go`, `internal/tenantsettings` write-check test, `internal/api/node_availability_test.go` (PATCH, catalogue, activation, 422), `internal/engine/builtin_availability_test.go` (activation, manual run, claim, deny set after queueing).
 - **Generated**: `make generate-config-reference`, generate-types (sdk), generate-api (web), generate-api-reference, generate-docs-facts all run and committed; the only generated diff outside the config reference is the update-tenant description now reading "Sections this server accepts: nodes, rateLimit".
-- **Not done / follow-ups**: no web admin UI for the section (there is none for `rateLimit` either); the docs build (`make docs-build`) was not run in this worktree.
+- **Not done / follow-ups**: no web admin UI for the section (there is none for `rateLimit` either). `make docs-build` passes (internal links valid).
 
 # Related Files
 
