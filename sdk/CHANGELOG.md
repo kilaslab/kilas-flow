@@ -8,6 +8,14 @@ until the server surface it targets is considered stable; see `README.md`.
 ## Unreleased
 
 - **Additive**: `createEmbedSession` accepts an optional
+  `allow: { credentials?, datastores?, workflows? }`, each a list of ids or
+  `'tenant'`, so a workflow session's document may use resources the host
+  provisioned beyond what the published revision references. The server
+  checks every id against the minting tenant (an unknown or foreign id is a
+  `404`) and accepts `'tenant'` only from a tenant-wide key. New exported
+  types `EmbedAllowSet` and `EmbedAllowList`; the generated types gain
+  `EmbedAllow`. A server without the field refuses it with a `422`.
+- **Additive**: `createEmbedSession` accepts an optional
   `actor: { id, displayName? }` naming the host user the session acts for.
   The server signs it into the token and records it on the revisions, publish
   events and manual runs the session causes. It is host-asserted, not verified. A server without actor

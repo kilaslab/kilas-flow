@@ -42,6 +42,22 @@ Scopes an embed session may carry.
 export interface EmbedSessionRequest
 ```
 
+#### `EmbedAllowList`
+
+```ts
+export type EmbedAllowList = string[] | 'tenant'
+```
+
+One kind of an embed session's `allow` set: ids, or the whole tenant.
+
+#### `EmbedAllowSet`
+
+```ts
+export interface EmbedAllowSet
+```
+
+The host-declared half of an embed session's confinement.
+
 #### `ExecutionListQuery`
 
 ```ts
