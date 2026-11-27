@@ -112,6 +112,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		MarkdownExecutorID:               engine.ExecutorFunc(executeMarkdown),
 		CompressionExecutorID:            engine.ExecutorFunc(executeCompression),
 		HTMLExecutorID:                   engine.ExecutorFunc(executeHTML),
+		ConvertToFileExecutorID:          engine.ExecutorFunc(executeConvertToFile),
 		DateTimeExecutorID:               engine.ExecutorFunc(executeDateTime),
 		WaitExecutorID:                   engine.ExecutorFunc(executeWait),
 		ExecuteWorkflowExecutorID:        engine.ExecutorFunc(executeExecuteWorkflow),

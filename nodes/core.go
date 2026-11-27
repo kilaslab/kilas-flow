@@ -105,6 +105,7 @@ func RegisterAll(registry *node.Registry) error {
 		markdownNode(),
 		compressionNode(),
 		htmlNode(),
+		convertToFileNode(),
 		dateTimeNode(),
 		datastoreNode(),
 		datastoreToolNode(),

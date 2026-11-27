@@ -419,6 +419,11 @@ var mappings = []mapping{
 		exportTypeVersion: 1.2, toKilas: htmlToKilas, toN8N: htmlToN8N,
 		refuseKilas: refuseUnsupportedHTMLOption,
 	},
+	{
+		n8nType: "n8n-nodes-base.convertToFile", kilasType: ConvertToFileNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, toKilas: convertToFileToKilas, toN8N: convertToFileToN8N,
+		refuseKilas: refuseUnsupportedConvertToFile,
+	},
 	// The Item Lists node: one selector, six operations, each a native node.
 	// kilasTypeFor picks the target from the selector the way it does for the
 	// Code node's languages; the advertised pair names the default operation's

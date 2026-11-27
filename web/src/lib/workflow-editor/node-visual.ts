@@ -22,6 +22,7 @@ import Database from '@lucide/svelte/icons/database';
 import DatabaseSearch from '@lucide/svelte/icons/database-search';
 import FileArchive from '@lucide/svelte/icons/file-archive';
 import FileCode from '@lucide/svelte/icons/file-code';
+import FileDown from '@lucide/svelte/icons/file-down';
 import FileOutput from '@lucide/svelte/icons/file-output';
 import FileText from '@lucide/svelte/icons/file-text';
 import Filter from '@lucide/svelte/icons/filter';
@@ -116,6 +117,7 @@ const GLYPHS: Record<string, Component> = {
 	'alert-triangle': TriangleAlert,
 	'file-archive': FileArchive,
 	'file-code': FileCode,
+	'file-down': FileDown,
 	'file-text': FileText,
 	'layout-template': LayoutTemplate,
 	'shield-check': ShieldCheck,

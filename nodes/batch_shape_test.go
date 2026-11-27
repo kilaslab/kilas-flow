@@ -30,6 +30,7 @@ var batchShapedNodes = map[string]string{
 	nodes.GoogleSheetsNodeType:       "reads the sheet once and writes the batch in one request, and fails as one operation",
 	nodes.ChainSummarizationNodeType: "answers once for the whole batch in its together mode",
 	nodes.HTMLNodeType:               "the table operation folds every item into one table",
+	nodes.ConvertToFileNodeType:      "csv, xlsx and json write one file from every item",
 }
 
 // perItemNodes are the native nodes an item is the unit of work for: one item
