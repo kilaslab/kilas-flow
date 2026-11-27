@@ -102,6 +102,17 @@ type GORMWorkflowStore struct {
 	// lifecycleCipher seals what a trigger's registration captured. Nil keeps
 	// nothing, since a captured value may be a secret.
 	lifecycleCipher *credentials.Cipher
+	// outbox routes the workflow.activated and workflow.deactivated events a
+	// publish or unpublish writes in its own transaction. Nil writes none.
+	outbox OutboxRouter
+}
+
+// WithOutbox registers the router that decides which publishes and
+// unpublishes write an outbound event, and where it goes. Set during wiring,
+// before the store serves a request.
+func (store *GORMWorkflowStore) WithOutbox(router OutboxRouter) *GORMWorkflowStore {
+	store.outbox = router
+	return store
 }
 
 var _ WorkflowRepository = (*GORMWorkflowStore)(nil)
@@ -549,6 +560,10 @@ func (store *GORMWorkflowStore) publish(ctx context.Context, tenant TenantScope,
 				return err
 			}
 		}
+		if err := enqueueOutbound(tx, store.outbox, tenant.ID, OutboundWorkflowActivated, model.ID,
+			workflowEventData{WorkflowID: model.ID, VersionID: version.ID, Name: model.Name}, time.Now()); err != nil {
+			return err
+		}
 		return appendPublishEvent(tx, tenant, model.ID, version.ID, workflow.PublishActionPublished, ActorFrom(ctx), reason)
 	})
 	if err != nil {
@@ -740,6 +755,10 @@ func (store *GORMWorkflowStore) Deactivate(ctx context.Context, tenant TenantSco
 			pinned := ""
 			if model.ActiveVersionID != nil {
 				pinned = *model.ActiveVersionID
+			}
+			if err := enqueueOutbound(tx, store.outbox, tenant.ID, OutboundWorkflowDeactivated, workflowID,
+				workflowEventData{WorkflowID: workflowID, VersionID: pinned, Name: model.Name}, time.Now()); err != nil {
+				return err
 			}
 			return appendPublishEvent(tx, tenant, workflowID, pinned, workflow.PublishActionUnpublished, ActorFrom(ctx), "")
 		}); err != nil {

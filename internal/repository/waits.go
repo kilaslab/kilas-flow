@@ -453,13 +453,19 @@ func (store *GORMExecutionStore) SettleExpiredWait(ctx context.Context, waitID u
 			}).Error; err != nil {
 			return fmt.Errorf("consume expired wait: %w", err)
 		}
-		if err := tx.Model(&executionModel{}).
+		failed := tx.Model(&executionModel{}).
 			Where("tenant_id = ? AND id = ? AND status = ?", wait.TenantID, wait.ExecutionID, string(execution.StatusWaiting)).
 			Updates(map[string]any{
 				"status": string(execution.StatusFailed), "error": failure,
 				"finished_at": &finished, "lease_owner": "", "lease_expires_at": nil,
-			}).Error; err != nil {
-			return fmt.Errorf("fail expired wait: %w", err)
+			})
+		if failed.Error != nil {
+			return fmt.Errorf("fail expired wait: %w", failed.Error)
+		}
+		if failed.RowsAffected > 0 {
+			if err := enqueueExecutionOutcome(tx, store.outboxRouter(), wait.TenantID, wait.ExecutionID, finished); err != nil {
+				return err
+			}
 		}
 		wait.ConsumedAt = &consumed
 		wait.Outcome = WaitOutcomeExpired

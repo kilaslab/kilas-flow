@@ -100,6 +100,30 @@ type GORMExecutionStore struct {
 	// crashSettled is told about each execution ClaimNext failed as crashed,
 	// after the claim transaction committed. Nil until a service registers.
 	crashSettled atomic.Pointer[func(execution.Record)]
+	// outbox routes the execution.completed and execution.failed events a
+	// terminal transition writes in its own transaction. Nil writes none.
+	outbox atomic.Pointer[OutboxRouter]
+}
+
+// WithOutbox registers the router that decides which settled executions
+// write an outbound event, and where it goes. The event row is written in the
+// transaction that settles the execution, so a committed outcome always has
+// its event and a rolled-back one never does.
+func (store *GORMExecutionStore) WithOutbox(router OutboxRouter) *GORMExecutionStore {
+	if router == nil {
+		store.outbox.Store(nil)
+		return store
+	}
+	store.outbox.Store(&router)
+	return store
+}
+
+// outboxRouter is the registered router, or nil.
+func (store *GORMExecutionStore) outboxRouter() OutboxRouter {
+	if router := store.outbox.Load(); router != nil {
+		return *router
+	}
+	return nil
 }
 
 // OnCrashSettled registers the function ClaimNext calls with every execution it
@@ -619,7 +643,7 @@ func (store *GORMExecutionStore) ClaimNext(ctx context.Context, workerID string,
 			}
 			reclaimingExpiredLease := candidate.Status == string(execution.StatusRunning)
 			if reclaimingExpiredLease && candidate.ReclaimCount+1 > MaxExecutionReclaims {
-				crashed, err := settleCrashedExecution(tx, candidate, now)
+				crashed, err := settleCrashedExecution(tx, store.outboxRouter(), candidate, now)
 				if err != nil {
 					return err
 				}
@@ -709,7 +733,7 @@ func (store *GORMExecutionStore) ClaimNext(ctx context.Context, workerID string,
 // It returns the record as persisted, or nil when no row changed (another
 // worker settled or claimed it first), so the caller can report exactly the
 // executions this call ended.
-func settleCrashedExecution(tx *gorm.DB, candidate executionModel, now time.Time) (*execution.Record, error) {
+func settleCrashedExecution(tx *gorm.DB, router OutboxRouter, candidate executionModel, now time.Time) (*execution.Record, error) {
 	reclaims := candidate.ReclaimCount
 	message := fmt.Sprintf("execution was abandoned by its worker %d times and is not being run again; re-queue it to try once more", reclaims)
 	errorPayload, err := json.Marshal(map[string]string{"code": "execution.crashed", "message": message})
@@ -732,6 +756,9 @@ func settleCrashedExecution(tx *gorm.DB, candidate executionModel, now time.Time
 	}
 	if result.RowsAffected == 0 {
 		return nil, nil
+	}
+	if err := enqueueExecutionOutcome(tx, router, candidate.TenantID, candidate.ID, now); err != nil {
+		return nil, err
 	}
 	candidate.Status = string(execution.StatusFailed)
 	candidate.Output = []byte("null")
@@ -872,7 +899,13 @@ func (store *GORMExecutionStore) UpdateRuntime(ctx context.Context, tenant Tenan
 			return finished.Error
 		}
 		affected = finished.RowsAffected
-		return nil
+		if affected == 0 {
+			return nil
+		}
+		// In this transaction, so the outcome and its event commit together:
+		// a worker that dies after the commit leaves the event for any
+		// dispatcher, and one that dies before it leaves neither.
+		return enqueueExecutionOutcome(tx, store.outboxRouter(), tenant.ID, record.ID, time.Now())
 	})
 	if err != nil {
 		return execution.Record{}, fmt.Errorf("update execution runtime state: %w", err)

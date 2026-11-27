@@ -124,6 +124,9 @@ func (purger *GORMTenantPurger) PurgeTriggers(ctx context.Context, tenant Tenant
 		{table: "webhook_deliveries", model: &webhookDeliveryModel{}},
 		{table: "webhook_routes", model: &webhookRouteModel{}},
 		{table: "webhook_bindings", model: &webhookBindingModel{}},
+		// The tenant's outbound events, queued and delivered alike: a deleted
+		// tenant is owed no notification, and its delivery log goes with it.
+		{table: "outbound_events", model: &outboundEventModel{}},
 	})
 }
 
