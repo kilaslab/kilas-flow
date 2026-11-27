@@ -139,10 +139,18 @@ func (handler *Workflows) confinedDocumentProblem(ctx context.Context, document 
 // session's own confinement first (confinedVersionProblem, and
 // confinedStoredProblem in Activate). So the active revision is either one the
 // owner authored or one held to a confinement minted from such a revision: a
-// session can narrow what the next session is minted with, never widen it. And
-// the point of minting the confinement here rather than deriving it per request
-// is that a revision poisoned before this check existed can no longer
-// authorise itself.
+// session can narrow what the next session is minted with, never widen it
+// beyond what a mint granted. And the point of minting the confinement here
+// rather than deriving it per request is that a revision poisoned before this
+// check existed can no longer authorise itself.
+//
+// The one widening is the host's own. A session minted with an allow set may
+// publish a revision that uses what was declared — or, on a workflow never
+// activated, merely save one, since the latest draft is then the source — and
+// the next session derives it from that revision. Every declared id was checked
+// against the tenant and declared by the tenant's own key, so the trust root is
+// the same; but on a workflow shared between end users, a declared grant
+// outlives the session it was declared for.
 //
 // A workflow that has never been activated confines its session to whatever its
 // latest draft references. That draft predates the session, so it was authored

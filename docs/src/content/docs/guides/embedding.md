@@ -291,6 +291,14 @@ What `allow` does not change:
   runs with its own document, so it uses whatever credentials and data tables
   that workflow uses. Granting `workflows: 'tenant'` lends the guest every
   workflow in the tenant as a building block. List ids when that is too much.
+- A declared grant can outlive its session. Later sessions derive their
+  confinement from the published revision, or from the latest draft while
+  nothing has been published. So a revision that uses a declared credential
+  becomes the source of the next session's grant once it is published (with
+  `workflow:publish` or `workflow:activate`), or as soon as it is saved on a
+  workflow that has never been published. If several of your users share one
+  workflow but are entitled to different resources, give each user their own
+  workflow instead.
 
 A document that reaches outside the confinement is refused with a `403`
 problem, and its `detail` names every offending node, separated by `; `:
