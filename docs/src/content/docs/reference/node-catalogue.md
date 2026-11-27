@@ -9,7 +9,7 @@ sidebar:
 
 > **Generated reference — KilasFlow `0.1.0-dev`.** Produced from the node catalogue a real binary serves at `GET /api/v1/node-types`, not hand-written. The per-type counts and every table below are the committed output, and `make generate-node-catalogue-check` fails when the catalogue changes without a regeneration.
 
-A default install serves **82 distinct node types** across **89 type-and-version pairs**: 78 types (83 pairs) compiled into the binary and 4 types (6 pairs) from the declarative packs it ships with. This page lists every one — the index table first, then a section per type with its parameters, ports, credential requirements and the n8n node it maps to. What a version *resolves to* is in [the node registry](/concepts/node-registry/); what a parameter *does* at run time is in each node's own documentation, where it carries one.
+A default install serves **84 distinct node types** across **91 type-and-version pairs**: 80 types (85 pairs) compiled into the binary and 4 types (6 pairs) from the declarative packs it ships with. This page lists every one — the index table first, then a section per type with its parameters, ports, credential requirements and the n8n node it maps to. What a version *resolves to* is in [the node registry](/concepts/node-registry/); what a parameter *does* at run time is in each node's own documentation, where it carries one.
 
 The catalogue a particular install serves can be smaller: a type scoped to other tenants is absent from `GET /node-types` by design (see [Tenant-scoped nodes](/guides/tenant-scoped-nodes/)), and an install with `KILASFLOW_PACKS_DIR` set serves its packs beside these. Ask your own instance for the truth: `curl -s $KILASFLOW_HOST/api/v1/node-types | jq -r '.[].type'`.
 
@@ -27,6 +27,7 @@ The catalogue a particular install serves can be smaller: a type scoped to other
 | [`kilasflow.chatModel`](#kilasflowchatmodel) | OpenAI-Compatible Chat Model | 1 | AI | builtin | `@n8n/n8n-nodes-langchain.lmChatOllama`, `@n8n/n8n-nodes-langchain.lmOllama`, `@n8n/n8n-nodes-langchain.lmChatGoogleGemini`, `@n8n/n8n-nodes-langchain.lmChatDeepSeek`, `@n8n/n8n-nodes-langchain.lmChatGroq`, `@n8n/n8n-nodes-langchain.lmChatMistralCloud`, `@n8n/n8n-nodes-langchain.lmChatXAiGrok` |
 | [`kilasflow.chatTrigger`](#kilasflowchattrigger) | When chat message received | 1 | Triggers | builtin | — |
 | [`kilasflow.code`](#kilasflowcode) | Code | 1 | Core | builtin | — |
+| [`kilasflow.compareDatasets`](#kilasflowcomparedatasets) | Compare Datasets | 1 | Transform | builtin | — |
 | [`kilasflow.datastore`](#kilasflowdatastore) | Data table | 1 | Datastore | builtin | — |
 | [`kilasflow.datastoreTool`](#kilasflowdatastoretool) | Data table Tool | 1 | AI | builtin | — |
 | [`kilasflow.dateTime`](#kilasflowdatetime) | Date & Time | 1 | Transform | builtin | — |
@@ -71,6 +72,7 @@ The catalogue a particular install serves can be smaller: a type scoped to other
 | [`kilasflow.postgres`](#kilasflowpostgres) | PostgreSQL | 1, 2 | Database | builtin | `n8n-nodes-base.postgres` |
 | [`kilasflow.postgresTool`](#kilasflowpostgrestool) | PostgreSQL Tool | 2 | AI | builtin | — |
 | [`kilasflow.removeDuplicates`](#kilasflowremoveduplicates) | Remove Duplicates | 1 | Transform | builtin | — |
+| [`kilasflow.renameKeys`](#kilasflowrenamekeys) | Rename Keys | 1 | Transform | builtin | — |
 | [`kilasflow.respondToWebhook`](#kilasflowrespondtowebhook) | Respond to Webhook | 1 | Core | builtin | `n8n-nodes-base.respondToWebhook` |
 | [`kilasflow.rssFeedRead`](#kilasflowrssfeedread) | RSS Read | 1 | Core | builtin | — |
 | [`kilasflow.rssFeedReadTool`](#kilasflowrssfeedreadtool) | RSS Read Tool | 1 | AI | builtin | — |
@@ -333,6 +335,30 @@ Parameters:
 | `mode` | options | no | `runOnceForAllItems` | Running once for each item calls the same compiled artifact per item, so it costs one build either way — only the number of sandbox calls changes. Options: `runOnceForAllItems`, `runOnceForEachItem`. |
 | `scriptTimeoutSeconds` | number | no | `10` |  |
 | `memoryMB` | number | no | `16` |  |
+
+## kilasflow.compareDatasets
+
+Compares two item streams by matching fields and sorts every item into: in A only, same, different, or in B only.
+
+| | |
+| --- | --- |
+| Display name | Compare Datasets |
+| Category | Transform (transform) |
+| Versions | `1` |
+| Inputs | `input1` (main, Input A), `input2` (main, Input B) |
+| Outputs | `onlyInA` (main, In A only), `same` (main, Same), `different` (main, Different), `onlyInB` (main, In B only) |
+| Credentials | — |
+| n8n equivalent | — |
+
+Parameters:
+
+| Parameter | Kind | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `mergeByFields` | fixedCollection | yes | — | Pairs of fields that must be equal for an A item and a B item to be the same record. Dot notation reaches nested fields. |
+| `resolve` | options | no | `includeBoth` | What the Different output carries for a matched pair that disagrees: a report of both versions, or the whole item from one input. Options: `includeBoth`, `preferInput1`, `preferInput2`. |
+| `options` | collection | no | — |  |
+| `options.skipFields` | string | no | — | Comma-separated field names left out of the comparison, so a changing timestamp does not make every pair different. |
+| `options.disableDotNotation` | boolean | no | `false` | On, a field named `a.b` is a field whose name contains a dot rather than a path into `a`. |
 
 ## kilasflow.datastore
 
@@ -1550,6 +1576,26 @@ Parameters:
 | `compare` | options | no | `allFields` |  Options: `allFields`, `allFieldsExcept`, `selectedFields`. |
 | `fieldsToExclude` | string | no | — |  |
 | `fieldsToCompare` | string | no | — |  |
+
+## kilasflow.renameKeys
+
+Renames fields on each item. Dot notation reaches into nested objects.
+
+| | |
+| --- | --- |
+| Display name | Rename Keys |
+| Category | Transform (transform) |
+| Versions | `1` |
+| Inputs | `main` (main) |
+| Outputs | `main` (main) |
+| Credentials | — |
+| n8n equivalent | — |
+
+Parameters:
+
+| Parameter | Kind | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `keys` | fixedCollection | yes | — | The renames, applied in order. A field an item does not have is left alone; a new name that already exists is overwritten. |
 
 ## kilasflow.respondToWebhook
 

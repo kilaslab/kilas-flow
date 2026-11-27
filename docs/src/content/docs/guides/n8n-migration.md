@@ -88,6 +88,8 @@ a Schedule Trigger.
 | `n8n-nodes-base.sort` | `kilasflow.sort` |
 | `n8n-nodes-base.summarize` | `kilasflow.summarize` |
 | `n8n-nodes-base.removeDuplicates` | `kilasflow.removeDuplicates` |
+| `n8n-nodes-base.renameKeys` | `kilasflow.renameKeys` |
+| `n8n-nodes-base.compareDatasets` | `kilasflow.compareDatasets` |
 | `n8n-nodes-base.itemLists` (legacy) | per operation: `kilasflow.aggregate`, `kilasflow.splitOut`, `kilasflow.sort`, `kilasflow.limit`, `kilasflow.removeDuplicates`, `kilasflow.summarize` |
 
 The Item Lists node's selector decides: its concatenate operation (spelled
@@ -96,6 +98,29 @@ is Split Out, and sort, limit, remove duplicates and summarize are themselves.
 An operation with no mapping — the old append family — imports as a placeholder
 whose reason names the closest native node. The node imports only: it exports
 as the standalone node it became.
+
+Rename Keys carries its `currentKey` and `newKey` rows as written, with dot
+notation reaching nested fields. Its regular-expression replacement list is not
+carried, and the import says so as a blocking issue rather than dropping it
+quietly. Compare Datasets takes its two inputs in n8n's order and declares its
+four outputs in n8n's order too (In A only, Same, Different, In B only), so every
+wire lands on the output of the same name; items are paired one to one, in order,
+and the Different output reports `keys`, `same` and `different` for each pair.
+The options it does not implement — a mix of versions per field, fuzzy
+comparison, and keeping every match instead of the first — send the node to the
+placeholder with the reason, because importing them as a node that ignores them
+would sort items onto the wrong output.
+
+### Nodes that are absent on purpose
+
+Some n8n nodes are not gaps. Execute Command, Read/Write Files from Disk, Write
+Binary File, Local File Trigger, SSH and FTP all work on the machine that hosts
+the engine, and KilasFlow runs workflows from many tenants in one engine, so
+none of them is offered. Each imports as a placeholder whose reason says that
+the absence is deliberate and names what to use instead: the Google Drive node
+for files, the HTTP Request node for a service or an API on another machine, a
+Webhook or Google Drive Trigger in place of watching a folder, and a Data table
+for records that need to persist.
 
 ### Integrations
 
