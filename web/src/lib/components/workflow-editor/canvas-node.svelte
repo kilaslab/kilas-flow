@@ -311,7 +311,11 @@
 				<!-- The author's note, as plain text: it is documentation typed into
 				     Settings or carried in by an import, never markup. Clamped so a
 				     long one cannot cover the steps beneath. -->
-				<p data-node-note={node.id} class="mx-auto mt-1 line-clamp-3 whitespace-pre-wrap break-words rounded border border-dashed border-border bg-card px-2 py-1 text-[0.625rem] leading-tight text-muted-foreground">{flowNote}</p>
+				<!-- The padding sits on the box and the clamp on the text inside it: a
+				     clamped element's own padding shows the top of the line it cut. -->
+				<div data-node-note={node.id} class="mx-auto mt-1 rounded border border-dashed border-border bg-card px-2 py-1">
+					<p class="line-clamp-3 whitespace-pre-wrap break-words text-[0.625rem] leading-tight text-muted-foreground">{flowNote}</p>
+				</div>
 			{/if}
 		</div>
 
