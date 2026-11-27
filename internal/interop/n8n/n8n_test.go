@@ -773,6 +773,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.googleSheets ↔ kilasflow.googleSheets",
 		"n8n-nodes-base.googleSheetsTool ↔ kilasflow.googleSheetsTool",
 		"n8n-nodes-base.googleSheetsTrigger ↔ kilasflow.googleSheetsTrigger",
+		"n8n-nodes-base.html ↔ kilasflow.html",
 		"n8n-nodes-base.httpRequest ↔ kilasflow.httpRequest",
 		"n8n-nodes-base.httpRequestTool ↔ kilasflow.httpTool",
 		"n8n-nodes-base.if ↔ kilasflow.if",

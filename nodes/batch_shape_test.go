@@ -29,6 +29,7 @@ var batchShapedNodes = map[string]string{
 	nodes.ExecuteWorkflowNodeType:    "calls the workflow once with all items by default",
 	nodes.GoogleSheetsNodeType:       "reads the sheet once and writes the batch in one request, and fails as one operation",
 	nodes.ChainSummarizationNodeType: "answers once for the whole batch in its together mode",
+	nodes.HTMLNodeType:               "the table operation folds every item into one table",
 }
 
 // perItemNodes are the native nodes an item is the unit of work for: one item

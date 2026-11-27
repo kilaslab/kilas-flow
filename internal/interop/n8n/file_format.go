@@ -13,6 +13,7 @@ const (
 	XMLNodeType         = "kilasflow.xml"
 	MarkdownNodeType    = "kilasflow.markdown"
 	CompressionNodeType = "kilasflow.compression"
+	HTMLNodeType        = "kilasflow.html"
 )
 
 // copyToKilas carries the named parameters across, turning n8n's `=`-prefixed

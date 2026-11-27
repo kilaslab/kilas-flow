@@ -32,6 +32,7 @@ import Group from '@lucide/svelte/icons/group';
 import HardDrive from '@lucide/svelte/icons/hard-drive';
 import KeyRound from '@lucide/svelte/icons/key-round';
 import Layers from '@lucide/svelte/icons/layers';
+import LayoutTemplate from '@lucide/svelte/icons/layout-template';
 import Link from '@lucide/svelte/icons/link';
 import ListEnd from '@lucide/svelte/icons/list-end';
 import Mail from '@lucide/svelte/icons/mail';
@@ -116,6 +117,7 @@ const GLYPHS: Record<string, Component> = {
 	'file-archive': FileArchive,
 	'file-code': FileCode,
 	'file-text': FileText,
+	'layout-template': LayoutTemplate,
 	'shield-check': ShieldCheck,
 	'triangle-alert': TriangleAlert,
 	'octagon-alert': OctagonAlert,
