@@ -775,6 +775,7 @@ function renderOverview(version, title, openapi, total, document) {
 	lines.push('');
 	lines.push('- [Errors](/reference/api/errors/) — every non-success response is an RFC 9457 problem document, and workflow compile failures carry a structured `WorkflowValidationIssue`.');
 	lines.push('- [Events](/reference/api/events/) — the server-sent event types and the `Last-Event-ID` resume behaviour, which an OpenAPI document describes the endpoint of but not the vocabulary carried over it.');
+	lines.push('- [Embed permit table](/reference/api/embed-permits/) — which operations an embed session may call, per scope, with the exact refusal for the rest. It is exported from the Go rules that enforce it.');
 	lines.push('- [Pagination](/reference/api/pagination/) — the two cursor conventions the listing operations use, which endpoints use which, and the SDK helpers that page for you.');
 	lines.push('- [Webhooks](/reference/api/webhooks/) — the inbound `/webhook/{route}` surface, whose behaviour is defined by the trigger node rather than by a route definition.');
 	lines.push('- [API contract and stability](/reference/api-contract/) — what `/api/v1` promises, what it explicitly does not, and how to tell whether an upgrade will break you.');
