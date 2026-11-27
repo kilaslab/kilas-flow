@@ -39,11 +39,13 @@ const (
 // whether the tenant wants to hear about it and where the event goes.
 //
 // It returns the endpoint and true for a tenant subscribed to eventType, and
-// false for every other tenant, which then pays nothing beyond the call: no
-// row is read or written. It must not touch the database — it runs while the
-// state change holds its transaction open, so it answers from memory (a
-// settings cache, the deployment configuration).
-type OutboxRouter func(tenantID, eventType string) (endpoint string, ok bool)
+// false for every other tenant, which then has no row written. settings is
+// the tenant's stored settings document (nil when it has none) as the same
+// transaction reads it, so the decision matches the committed state and the
+// router never needs a read of its own: on SQLite the transaction holds the
+// only connection, and a router that read the database itself would wait on
+// itself for ever. It must not block.
+type OutboxRouter func(tenantID, eventType string, settings []byte) (endpoint string, ok bool)
 
 // OutboundEvent is one outbox row as the dispatcher and the delivery log see
 // it.
@@ -110,7 +112,11 @@ func enqueueOutbound(tx *gorm.DB, router OutboxRouter, tenantID, eventType, subj
 	if router == nil {
 		return nil
 	}
-	endpoint, ok := router(tenantID, eventType)
+	var tenant tenantModel
+	if err := tx.Select("id", "settings").Where("id = ?", tenantID).Limit(1).Find(&tenant).Error; err != nil {
+		return fmt.Errorf("read tenant settings for outbound routing: %w", err)
+	}
+	endpoint, ok := router(tenantID, eventType, tenant.Settings)
 	if !ok || strings.TrimSpace(endpoint) == "" {
 		return nil
 	}

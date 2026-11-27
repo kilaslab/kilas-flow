@@ -59,7 +59,7 @@ func enqueue(t *testing.T, db *database.DB, tenantID, endpoint string, count int
 	t.Helper()
 	ctx := context.Background()
 	tenant := repository.TenantScope{ID: tenantID}
-	workflows := repository.NewWorkflowStore(db.DB).WithOutbox(func(tenant, _ string) (string, bool) {
+	workflows := repository.NewWorkflowStore(db.DB).WithOutbox(func(tenant, _ string, _ []byte) (string, bool) {
 		return endpoint, tenant == tenantID
 	})
 	for index := range count {
@@ -470,4 +470,8 @@ func TestBackoffIsExponentialCappedAndJittered(t *testing.T) {
 			}
 		}
 	}
+}
+
+func quietLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

@@ -29,6 +29,7 @@ func TestEmbedSentencesAreUnchangedByTheSharedTable(t *testing.T) {
 		{http.MethodPost, "/api/v1/workflows/wf_1/versions/ver_1/publish", "This embed session cannot publish a revision without the workflow:publish scope."},
 		{http.MethodGet, "/api/v1/datastores", "This embed session cannot manage datastores."},
 		{http.MethodGet, "/api/v1/schedules", "This embed session cannot manage schedules."},
+		{http.MethodGet, "/api/v1/notifications/deliveries", "This embed session cannot read notification deliveries."},
 	} {
 		request := httptest.NewRequest(route.method, route.path, nil)
 		status, detail := permits(sessionSubject{session: session}, request)

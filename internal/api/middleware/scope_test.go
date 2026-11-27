@@ -152,6 +152,7 @@ func TestAScopedKeyReachesWhatItsScopesName(t *testing.T) {
 		{"restores a revision", http.MethodPost, "/api/v1/workflows/wf_1/versions/ver_1/restore", writer, 0, ""},
 		{"lists schedules", http.MethodGet, "/api/v1/schedules", reader, 0, ""},
 		{"creates a schedule", http.MethodPost, "/api/v1/schedules", writer, 0, ""},
+		{"lists notification deliveries", http.MethodGet, "/api/v1/notifications/deliveries", reader, 0, ""},
 		{"runs a workflow", http.MethodPost, "/api/v1/workflows/wf_1/run", runner, 0, ""},
 		{"lists datastores", http.MethodGet, "/api/v1/datastores", datastoreReader, 0, ""},
 		{"reads a datastore", http.MethodGet, "/api/v1/datastores/ds_1", datastoreReader, 0, ""},
@@ -216,6 +217,8 @@ func TestAWorkflowBoundKeyReadsAnotherWorkflowAsMissing(t *testing.T) {
 		{"cannot list workflows", http.MethodGet, "/api/v1/workflows", bound, http.StatusForbidden, "cannot list workflows"},
 		{"cannot list datastores", http.MethodGet, "/api/v1/datastores", bound, http.StatusForbidden, "cannot manage datastores"},
 		{"cannot manage schedules", http.MethodGet, "/api/v1/schedules", bound, http.StatusForbidden, "cannot manage schedules"},
+		// The delivery log spans every workflow of the tenant.
+		{"cannot read notification deliveries", http.MethodGet, "/api/v1/notifications/deliveries", bound, http.StatusForbidden, "cannot read notification deliveries"},
 		// Rows under one datastore id are still data-plane, and the binding is
 		// about the workflow rather than about which tables exist.
 		{"still reads rows", http.MethodGet, "/api/v1/datastores/ds_1/rows", bound, 0, ""},

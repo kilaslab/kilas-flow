@@ -16,7 +16,7 @@ import (
 // subscribeAll routes every event of the named tenant to one endpoint and
 // declines every other tenant.
 func subscribeAll(tenantID, endpoint string) repository.OutboxRouter {
-	return func(tenant, _ string) (string, bool) {
+	return func(tenant, _ string, _ []byte) (string, bool) {
 		return endpoint, tenant == tenantID
 	}
 }
@@ -240,7 +240,7 @@ func TestOutboxWritesWorkflowActivationAndDeactivation(t *testing.T) {
 func enqueueDirect(t *testing.T, db *database.DB, tenant repository.TenantScope, workflowID string) repository.OutboundEvent {
 	t.Helper()
 	ctx := context.Background()
-	workflows := repository.NewWorkflowStore(db.DB).WithOutbox(func(tenantID, eventType string) (string, bool) {
+	workflows := repository.NewWorkflowStore(db.DB).WithOutbox(func(tenantID, eventType string, _ []byte) (string, bool) {
 		return "https://host.example/hooks", tenantID == tenant.ID && eventType == repository.OutboundWorkflowActivated
 	})
 	if _, err := workflows.SaveDraft(ctx, tenant, workflow.Document{
