@@ -62,6 +62,7 @@ Response (skeleton — every field, placeholder values):
 {
   "filtered": [
     {
+      "detail": "string",
       "executionId": "string",
       "reason": "duplicate",
       "workflowId": "string"

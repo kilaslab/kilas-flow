@@ -1007,6 +1007,7 @@ Parameters:
 | Parameter | Kind | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `events` | multiOptions | yes | — | The host event types this workflow starts for. The list is offered by the node packs this server carries that declare a host event catalogue — the host's own product pack is the usual author — and every active workflow listening for a published type runs when it is published. |
+| `triggerFilter` | conditions | no | — | Conditions checked against the trigger item before a run is queued. An event that does not match is acknowledged and dropped without creating an execution. Leave empty to run for every event. |
 
 ## kilasflow.httpRequest
 
@@ -2175,6 +2176,7 @@ Parameters:
 | `options.ipWhitelist` | string | no | — | Comma-separated addresses or CIDR ranges allowed to call this endpoint. Empty accepts every caller. The check uses the connection's own peer address and deliberately does not trust X-Forwarded-For, so behind a reverse proxy the list should also be enforced there. |
 | `options.ignoreBots` | boolean | no | `false` | Deliveries whose User-Agent names a crawler are acknowledged and not run. |
 | `options.rawBody` | boolean | no | `false` | Send the acknowledgement with the body exactly as configured rather than as JSON. |
+| `triggerFilter` | conditions | no | — | Conditions checked against the trigger item before a run is queued. An event that does not match is acknowledged and dropped without creating an execution. Leave empty to run for every event. |
 
 ## kilasflow.workflowTool
 
@@ -2402,4 +2404,5 @@ Parameters:
 | `autoRegister` | boolean | no | `false` | Install this workflow's webhook URL into the WAHA session on activation and remove it on deactivation. Off by default: activation would otherwise write to your WAHA instance as a side effect. |
 | `deliveryIdHeader` | string | no | `X-Webhook-Request-Id` | Header carrying WAHA's own identifier for a delivery. A repeated delivery with the same identifier is answered without running the workflow again, since WAHA retries. |
 | `downloadMedia` | boolean | no | `false` | Fetch the media a delivery links to and attach it to the item, instead of leaving a URL that expires behind WAHA's own auth. Off by default: a busy session downloads a lot. |
+| `triggerFilter` | conditions | no | — | Conditions checked against the trigger item before a run is queued. An event that does not match is acknowledged and dropped without creating an execution. Leave empty to run for every event. |
 

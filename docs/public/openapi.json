@@ -4104,6 +4104,10 @@
       "PublishEventFilter": {
         "additionalProperties": false,
         "properties": {
+          "detail": {
+            "description": "Why a filter entry was dropped: the event did not match the trigger filter, or the filter could not be evaluated and why.",
+            "type": "string"
+          },
           "executionId": {
             "description": "The execution a duplicate was collapsed with, when it is known.",
             "type": "string"
@@ -4111,7 +4115,8 @@
           "reason": {
             "enum": [
               "duplicate",
-              "inactive"
+              "inactive",
+              "filter"
             ],
             "type": "string"
           },

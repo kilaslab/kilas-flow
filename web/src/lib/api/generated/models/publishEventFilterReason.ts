@@ -12,4 +12,5 @@ export type PublishEventFilterReason = typeof PublishEventFilterReason[keyof typ
 export const PublishEventFilterReason = {
   duplicate: 'duplicate',
   inactive: 'inactive',
+  filter: 'filter',
 } as const;

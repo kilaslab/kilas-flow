@@ -145,18 +145,19 @@ kilasflow api                       local                              call any 
 kilasflow auth login                local                              validate a token against the server and store it at 0600 in the configuration file
 kilasflow auth logout               local                              remove the stored token, keeping the server URL
 kilasflow auth whoami               get-me                             print the identity the configured credential resolves to
-kilasflow workflow list             list-workflows                     list workflows, newest first (--limit, --cursor, --tag)
+kilasflow workflow list             list-workflows                     list workflows, newest first (--limit, --cursor, --tag, --name, --active)
 kilasflow workflow get              get-workflow                       read one workflow by id
 kilasflow workflow create           create-workflow                    create a workflow from a canonical document (--file <path>|-)
+kilasflow workflow import           import-workflow [guarded]          import n8n workflow JSON as a draft (--file <path>|-, or --dir <directory>) (guarded)
 kilasflow workflow validate         validate-workflow-document         check a draft document the way the API would, saving nothing (--file <path>|-)
 kilasflow workflow duplicate        duplicate-workflow                 copy a workflow (--name <name> to rename the copy)
 kilasflow workflow versions         list-workflow-versions             list a workflow's revisions (--limit, --cursor)
 kilasflow workflow get-version      get-workflow-version               read one revision of a workflow, with its document
 kilasflow workflow publish-events   list-workflow-publish-events       read a workflow's publish audit trail
-kilasflow workflow export           export-workflow                    export a workflow as n8n JSON, with what could not be carried
+kilasflow workflow export           export-workflow                    export a workflow as n8n JSON (--out <file> writes the bare n8n document; --all --out-dir <dir> writes every workflow to one)
 kilasflow workflow diagnostics      workflow-diagnostics               read the import report stored with a revision
-kilasflow workflow activate         activate-workflow [guarded]        activate a workflow's latest revision, publishing its endpoint (guarded)
-kilasflow workflow deactivate       deactivate-workflow [guarded]      take a workflow's published endpoint offline (guarded)
+kilasflow workflow activate         activate-workflow [guarded]        activate a workflow's latest revision, publishing its endpoint; --all activates every inactive workflow (guarded)
+kilasflow workflow deactivate       deactivate-workflow [guarded]      take a workflow's published endpoint offline; --all deactivates every active workflow (guarded)
 kilasflow workflow delete           delete-workflow [guarded]          delete a workflow, retaining its audit trail (guarded)
 kilasflow run                       run-workflow                       start a workflow run (--wait to watch it finish)
 kilasflow exec list                 list-executions                    list executions, newest first (--workflow, --status, --trigger, --limit, --cursor)

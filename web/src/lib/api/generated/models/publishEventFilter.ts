@@ -8,6 +8,8 @@
 import type { PublishEventFilterReason } from './publishEventFilterReason';
 
 export interface PublishEventFilter {
+  /** Why a filter entry was dropped: the event did not match the trigger filter, or the filter could not be evaluated and why. */
+  detail?: string;
   /** The execution a duplicate was collapsed with, when it is known. */
   executionId?: string;
   reason: PublishEventFilterReason;

@@ -1646,9 +1646,12 @@ export type PublishEventFilterReason = typeof PublishEventFilterReason[keyof typ
 export const PublishEventFilterReason = {
   duplicate: 'duplicate',
   inactive: 'inactive',
+  filter: 'filter',
 } as const;
 
 export interface PublishEventFilter {
+  /** Why a filter entry was dropped: the event did not match the trigger filter, or the filter could not be evaluated and why. */
+  detail?: string;
   /** The execution a duplicate was collapsed with, when it is known. */
   executionId?: string;
   reason: PublishEventFilterReason;
