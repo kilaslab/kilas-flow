@@ -1,7 +1,7 @@
 ---
 id: FEAT-ez6xtm
 title: 'Node states & actions: disabled nodes look active and can''t be re-enabled; no context menu, notes or pin'
-status: todo
+status: doing
 priority: high
 labels:
     - editor
@@ -9,7 +9,7 @@ labels:
     - ux
 parent: EPIC-8rbys7
 created: "2026-09-23T01:48:14Z"
-updated: "2026-09-23T01:48:14Z"
+updated: "2026-11-27T08:51:29Z"
 ---
 
 # Description

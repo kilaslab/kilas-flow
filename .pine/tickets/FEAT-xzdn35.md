@@ -1,14 +1,14 @@
 ---
 id: FEAT-xzdn35
 title: 'Map legacy n8n types with native equivalents: Cron, Interval, Function, Item Lists, Read Binary File'
-status: doing
+status: done
 priority: medium
 labels:
     - n8n
     - importer
 parent: EPIC-8rbys7
 created: "2026-09-23T01:17:55Z"
-updated: "2026-09-23T01:17:55Z"
+updated: "2026-11-27T08:51:27Z"
 ---
 
 # Description
@@ -65,3 +65,71 @@ Related (from the audit): FEAT-8qyfh1 (done; its "one refusal mechanism" does no
 - Placeholder names the closest native node: `replacementHints` (`n8n.go:1166`) already named Extract From File for readBinaryFile and spreadsheetFile. Added today: `readBinaryFiles` (Extract From File) and the legacy `start` node (Manual Trigger), with test cases in `TestALegacyPlaceholderNamesTheClosestNativeNode`. `writeBinaryFile` is in the new deliberately-unavailable table (`n8n.go:1209`, FEAT-t38djq), because it writes to the host's disk: it points at Google Drive, HTTP Request and Data table.
 
 Remaining: nothing against the acceptance criteria. If the JS runtime ever grows the legacy Function sandbox globals, Function and FunctionItem could run instead of refusing; that is a separate decision, not part of this ticket.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-11-27.
+
+- Base: `018af94f` (last commit at or before ticket created 2026-09-23)
+- Commits (5):
+  - `a7c3ed34` — merge: Rename Keys and Compare Datasets nodes, importer reason table and legacy hints (FEAT-t38djq, FEAT-xzdn35)
+  - `d5a202b5` — FEAT-xzdn35, FEAT-t38djq: record progress, tick the criteria that are met
+  - `792ffe6a` — FEAT-xzdn35: name the native node for the legacy Start and plural Read Binary Files placeholders
+  - `0ce9afe8` — feat(cli): n8n legacy import + workflow verbs — importer lane (#33)
+  - `2f8e9b16` — chore(pine): the n8n-parity and UX audit, and the plans it produced
+- Files changed (base → working tree):
+
+```
+ .env.example                      |    8 +-
+ .github/assets/editor.png         |  Bin 0 -> 119127 bytes
+ .github/workflows/ci.yml          |  108 +++-
+ .github/workflows/code-corpus.yml |   54 ++
+ .gitignore                        |    4 +
+ .pine/MEMORY.md                   |    2 +
+ .pine/memory/code-node.md         |   30 +-
+ .pine/memory/docs.md              |    5 +-
+ .pine/memory/e2e.md               |    3 +
+ .pine/memory/licensing.md         |   15 +-
+ .pine/memory/n8n-reference.md     |   10 +-
+ .pine/memory/persistence.md       |    6 +-
+ .pine/memory/testing.md           |    4 +-
+ .pine/memory/web-editor.md        |    7 +-
+ .pine/roadmap.md                  |    8 +-
+ .pine/tickets/BUG-0592hz.md       |   62 ++
+ .pine/tickets/BUG-0bzsa1.md       |  464 +++++++++++++++
+ .pine/tickets/BUG-0grt9g.md       |  427 +++++++++++++
+ .pine/tickets/BUG-0xv7bg.md       |   68 +++
+ .pine/tickets/BUG-14gp8r.md       |  198 +++++++
+ .pine/tickets/BUG-15st2k.md       |  198 +++++++
+ .pine/tickets/BUG-1vh6k6.md       |   51 ++
+ .pine/tickets/BUG-2d1pdx.md       |   49 ++
+ .pine/tickets/BUG-2eryxn.md       |   95 +++
+ .pine/tickets/BUG-2mes2k.md       |   83 +++
+ .pine/tickets/BUG-2n4rfz.md       |   58 ++
+ .pine/tickets/BUG-2vcwjf.md       |  126 ++++
+ .pine/tickets/BUG-2xrz6c.md       |   51 ++
+ .pine/tickets/BUG-2z8geh.md       |  136 +++++
+ .pine/tickets/BUG-3k12ky.md       |  187 ++++++
+ .pine/tickets/BUG-3mem9s.md       |  105 ++++
+ .pine/tickets/BUG-3qxx0j.md       |   70 +++
+ .pine/tickets/BUG-46g75c.md       |  219 +++++++
+ .pine/tickets/BUG-49vf3j.md       |  428 ++++++++++++++
+ .pine/tickets/BUG-4ch186.md       |   85 +++
+ .pine/tickets/BUG-548bk9.md       |  179 ++++++
+ .pine/tickets/BUG-56qqgx.md       |   88 +++
+ .pine/tickets/BUG-5bgx5c.md       |   81 +++
+ .pine/tickets/BUG-5dn8hr.md       |   39 ++
+ .pine/tickets/BUG-5fhcx7.md       |   50 ++
+ .pine/tickets/BUG-5xkexq.md       |   63 ++
+ .pine/tickets/BUG-605n21.md       |  154 +++++
+ .pine/tickets/BUG-66fhea.md       |  112 ++++
+ .pine/tickets/BUG-6d6wbg.md       |  115 ++++
+ .pine/tickets/BUG-6gkd12.md       | 1183 +++++++++++++++++++++++++++++++++++++
+ .pine/tickets/BUG-719gaz.md       |  117 ++++
+ .pine/tickets/BUG-745mh2.md       |   60 ++
+ .pine/tickets/BUG-8xz9t1.md       |  511 ++++++++++++++++
+ .pine/tickets/BUG-9296bf.md       |  532 +++++++++++++++++
+ .pine/tickets/BUG-9dw5me.md       |   66 +++
+ ...
+ 1646 files changed, 275849 insertions(+), 7906 deletions(-)
+```

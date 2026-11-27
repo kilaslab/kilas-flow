@@ -1,7 +1,7 @@
 ---
 id: FEAT-re138f
 title: 'File & format utility nodes: Convert to File, HTML, Markdown, XML, Crypto, Compression, Edit Image'
-status: todo
+status: doing
 priority: high
 labels:
     - n8n
@@ -10,7 +10,7 @@ labels:
     - binary
 parent: EPIC-8rbys7
 created: "2026-09-23T01:17:54Z"
-updated: "2026-09-23T01:17:54Z"
+updated: "2026-11-27T08:51:29Z"
 ---
 
 # Description

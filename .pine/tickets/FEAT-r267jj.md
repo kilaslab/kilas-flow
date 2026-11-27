@@ -1,7 +1,7 @@
 ---
 id: FEAT-r267jj
 title: Host-declared confinement for embed sessions
-status: doing
+status: done
 priority: high
 labels:
     - saas
@@ -9,7 +9,7 @@ labels:
     - security
 parent: EPIC-7c3ry9
 created: "2026-09-23T02:07:00Z"
-updated: "2026-09-23T02:07:00Z"
+updated: "2026-11-27T08:51:26Z"
 ---
 
 # Description
@@ -53,3 +53,76 @@ Remains (not in the AC):
 # Related Files
 
 # Attachments
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-11-27.
+
+- Base: `018af94f` (last commit at or before ticket created 2026-09-23)
+- Commits (10):
+  - `0c336a97` — merge: host-declared confinement for embed sessions (FEAT-r267jj)
+  - `f8afee01` — chore(pine): FEAT-r267jj progress, acceptance boxes ticked
+  - `88954e3c` — FEAT-r267jj: say that a declared grant can outlive its session
+  - `71ab72bc` — FEAT-r267jj: document embed confinement, the allow set and its 403
+  - `07c9c8aa` — FEAT-r267jj: type the allow set on the SDK's createEmbedSession
+  - `8fb285c2` — FEAT-r267jj: regenerate the API client, SDK types and API reference for allow
+  - `ed61e418` — FEAT-r267jj: accept a host-declared allow set on embed session mint
+  - `a1d5d33d` — FEAT-r267jj: let a confinement open a kind to the tenant and take a union
+  - `bf841006` — chore(pine): EPIC-7c3ry9 records its dependencies and audit notes, and files four infra tickets
+  - `2f8e9b16` — chore(pine): the n8n-parity and UX audit, and the plans it produced
+- Files changed (base → working tree):
+
+```
+ .env.example                      |    8 +-
+ .github/assets/editor.png         |  Bin 0 -> 119127 bytes
+ .github/workflows/ci.yml          |  108 +++-
+ .github/workflows/code-corpus.yml |   54 ++
+ .gitignore                        |    4 +
+ .pine/MEMORY.md                   |    2 +
+ .pine/memory/code-node.md         |   30 +-
+ .pine/memory/docs.md              |    5 +-
+ .pine/memory/e2e.md               |    3 +
+ .pine/memory/licensing.md         |   15 +-
+ .pine/memory/n8n-reference.md     |   10 +-
+ .pine/memory/persistence.md       |    6 +-
+ .pine/memory/testing.md           |    4 +-
+ .pine/memory/web-editor.md        |    7 +-
+ .pine/roadmap.md                  |    8 +-
+ .pine/tickets/BUG-0592hz.md       |   62 ++
+ .pine/tickets/BUG-0bzsa1.md       |  464 +++++++++++++++
+ .pine/tickets/BUG-0grt9g.md       |  427 +++++++++++++
+ .pine/tickets/BUG-0xv7bg.md       |   68 +++
+ .pine/tickets/BUG-14gp8r.md       |  198 +++++++
+ .pine/tickets/BUG-15st2k.md       |  198 +++++++
+ .pine/tickets/BUG-1vh6k6.md       |   51 ++
+ .pine/tickets/BUG-2d1pdx.md       |   49 ++
+ .pine/tickets/BUG-2eryxn.md       |   95 +++
+ .pine/tickets/BUG-2mes2k.md       |   83 +++
+ .pine/tickets/BUG-2n4rfz.md       |   58 ++
+ .pine/tickets/BUG-2vcwjf.md       |  126 ++++
+ .pine/tickets/BUG-2xrz6c.md       |   51 ++
+ .pine/tickets/BUG-2z8geh.md       |  136 +++++
+ .pine/tickets/BUG-3k12ky.md       |  187 ++++++
+ .pine/tickets/BUG-3mem9s.md       |  105 ++++
+ .pine/tickets/BUG-3qxx0j.md       |   70 +++
+ .pine/tickets/BUG-46g75c.md       |  219 +++++++
+ .pine/tickets/BUG-49vf3j.md       |  428 ++++++++++++++
+ .pine/tickets/BUG-4ch186.md       |   85 +++
+ .pine/tickets/BUG-548bk9.md       |  179 ++++++
+ .pine/tickets/BUG-56qqgx.md       |   88 +++
+ .pine/tickets/BUG-5bgx5c.md       |   81 +++
+ .pine/tickets/BUG-5dn8hr.md       |   39 ++
+ .pine/tickets/BUG-5fhcx7.md       |   50 ++
+ .pine/tickets/BUG-5xkexq.md       |   63 ++
+ .pine/tickets/BUG-605n21.md       |  154 +++++
+ .pine/tickets/BUG-66fhea.md       |  112 ++++
+ .pine/tickets/BUG-6d6wbg.md       |  115 ++++
+ .pine/tickets/BUG-6gkd12.md       | 1183 +++++++++++++++++++++++++++++++++++++
+ .pine/tickets/BUG-719gaz.md       |  117 ++++
+ .pine/tickets/BUG-745mh2.md       |   60 ++
+ .pine/tickets/BUG-8xz9t1.md       |  511 ++++++++++++++++
+ .pine/tickets/BUG-9296bf.md       |  532 +++++++++++++++++
+ .pine/tickets/BUG-9dw5me.md       |   66 +++
+ ...
+ 1646 files changed, 275700 insertions(+), 7906 deletions(-)
+```

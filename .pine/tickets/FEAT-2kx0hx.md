@@ -1,7 +1,7 @@
 ---
 id: FEAT-2kx0hx
 title: 'Embed sessions deep-dive: scopes, confinement, lifetime & refresh, origins & CORS; generated permit table'
-status: todo
+status: done
 priority: high
 labels:
     - docs
@@ -9,7 +9,7 @@ labels:
     - security
 parent: EPIC-62zt4j
 created: "2026-09-23T02:04:34Z"
-updated: "2026-09-23T02:04:34Z"
+updated: "2026-11-27T08:51:28Z"
 ---
 
 # Description
@@ -267,3 +267,73 @@ Related tickets: BUG-9853ay, BUG-fv5fer, FEAT-1c70nt, FEAT-cwmw90, FEAT-nc6z9r, 
 - Docs: new `guides/embed-sessions.md` (sidebar group "Embed in your SaaS") covering scopes and subjects, confinement and its derivation, the pre-attach-then-mint recipe, `allow`, the exact 403 texts, lifetime and refresh (no refresh endpoint; `setSession` after `session-expiring`), origins and CORS. The tenancy and API contract pages now point at the generated table instead of hand-written ones; the SDK README, the reference-host README and server comments, and the embedding guide agree on one datastore-session description (held in the new page). The reference host's "import is the only call that reports the webhook address" claim is corrected (DOC-10).
 - Schedules: the `cron` doc string said "evaluated in UTC". The code reads a `TZ=Area/City` prefix, and a Schedule Trigger node's schedule takes the workflow `timezone` setting, then `execution.default_timezone`. The doc string, a handler test, the schedules reference intro, the OpenAPI document, web client and SDK types are updated. The dashboard's own `schedules_description` string ("Times are evaluated in UTC") in `web/messages` is left alone: it describes the form, which sends no zone, and is localised.
 - Noted, not changed: at the gate, `POST /executions/{id}/cancel` and `GET /executions/{id}/events` are allowed with `workflow:read` alone (ownership is checked in the handler). A read-only session can therefore cancel a run of its own workflow.
+
+## Work Evidence
+
+Closed by `pine close --evidence` on 2026-11-27.
+
+- Base: `018af94f` (last commit at or before ticket created 2026-09-23)
+- Commits (7):
+  - `663ed2b2` — merge: embed permit table export and embed docs (FEAT-2kx0hx)
+  - `95683123` — FEAT-2kx0hx: list the embed permit table on the API reference overview
+  - `cb62743a` — FEAT-2kx0hx: link the deep-dive from the playbook, fix the reference host's webhook-address claim, close the ticket criteria
+  - `1bcce3e6` — FEAT-2kx0hx: add the embed sessions deep-dive and make the datastore-embed pages agree
+  - `baf12d53` — FEAT-2kx0hx: say which zone a schedule's cron is read in
+  - `c862439b` — FEAT-2kx0hx: export the embed permit table from the Go rules
+  - `2f8e9b16` — chore(pine): the n8n-parity and UX audit, and the plans it produced
+- Files changed (base → working tree):
+
+```
+ .env.example                      |    8 +-
+ .github/assets/editor.png         |  Bin 0 -> 119127 bytes
+ .github/workflows/ci.yml          |  108 +++-
+ .github/workflows/code-corpus.yml |   54 ++
+ .gitignore                        |    4 +
+ .pine/MEMORY.md                   |    2 +
+ .pine/memory/code-node.md         |   30 +-
+ .pine/memory/docs.md              |    5 +-
+ .pine/memory/e2e.md               |    3 +
+ .pine/memory/licensing.md         |   15 +-
+ .pine/memory/n8n-reference.md     |   10 +-
+ .pine/memory/persistence.md       |    6 +-
+ .pine/memory/testing.md           |    4 +-
+ .pine/memory/web-editor.md        |    7 +-
+ .pine/roadmap.md                  |    8 +-
+ .pine/tickets/BUG-0592hz.md       |   62 ++
+ .pine/tickets/BUG-0bzsa1.md       |  464 +++++++++++++++
+ .pine/tickets/BUG-0grt9g.md       |  427 +++++++++++++
+ .pine/tickets/BUG-0xv7bg.md       |   68 +++
+ .pine/tickets/BUG-14gp8r.md       |  198 +++++++
+ .pine/tickets/BUG-15st2k.md       |  198 +++++++
+ .pine/tickets/BUG-1vh6k6.md       |   51 ++
+ .pine/tickets/BUG-2d1pdx.md       |   49 ++
+ .pine/tickets/BUG-2eryxn.md       |   95 +++
+ .pine/tickets/BUG-2mes2k.md       |   83 +++
+ .pine/tickets/BUG-2n4rfz.md       |   58 ++
+ .pine/tickets/BUG-2vcwjf.md       |  126 ++++
+ .pine/tickets/BUG-2xrz6c.md       |   51 ++
+ .pine/tickets/BUG-2z8geh.md       |  136 +++++
+ .pine/tickets/BUG-3k12ky.md       |  187 ++++++
+ .pine/tickets/BUG-3mem9s.md       |  105 ++++
+ .pine/tickets/BUG-3qxx0j.md       |   70 +++
+ .pine/tickets/BUG-46g75c.md       |  219 +++++++
+ .pine/tickets/BUG-49vf3j.md       |  428 ++++++++++++++
+ .pine/tickets/BUG-4ch186.md       |   85 +++
+ .pine/tickets/BUG-548bk9.md       |  179 ++++++
+ .pine/tickets/BUG-56qqgx.md       |   88 +++
+ .pine/tickets/BUG-5bgx5c.md       |   81 +++
+ .pine/tickets/BUG-5dn8hr.md       |   39 ++
+ .pine/tickets/BUG-5fhcx7.md       |   50 ++
+ .pine/tickets/BUG-5xkexq.md       |   63 ++
+ .pine/tickets/BUG-605n21.md       |  154 +++++
+ .pine/tickets/BUG-66fhea.md       |  112 ++++
+ .pine/tickets/BUG-6d6wbg.md       |  115 ++++
+ .pine/tickets/BUG-6gkd12.md       | 1183 +++++++++++++++++++++++++++++++++++++
+ .pine/tickets/BUG-719gaz.md       |  117 ++++
+ .pine/tickets/BUG-745mh2.md       |   60 ++
+ .pine/tickets/BUG-8xz9t1.md       |  511 ++++++++++++++++
+ .pine/tickets/BUG-9296bf.md       |  532 +++++++++++++++++
+ .pine/tickets/BUG-9dw5me.md       |   66 +++
+ ...
+ 1646 files changed, 276117 insertions(+), 7906 deletions(-)
+```

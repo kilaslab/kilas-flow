@@ -1,14 +1,14 @@
 ---
 id: FEAT-fs3pjr
 title: 'CLI ergonomics: bare/n8n node names in `node describe`, human output with data and failure reasons, real `--help`, actionable errors, richer `context`'
-status: todo
+status: doing
 priority: medium
 labels:
     - cli
     - ux
 parent: EPIC-8rbys7
 created: "2026-09-23T03:06:00Z"
-updated: "2026-09-23T03:06:00Z"
+updated: "2026-11-27T08:51:29Z"
 ---
 
 # Description
