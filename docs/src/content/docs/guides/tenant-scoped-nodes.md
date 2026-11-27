@@ -138,8 +138,11 @@ with a scope that matches nothing:
   node type, an empty tenant ID, or a tenant ID containing `=`;
 - an entry naming a node type that is not registered, so a typo in the type fails
   closed rather than silently scoping nobody;
-- an entry naming a built-in type, which can never be scoped because the engine
-  names some of them (the sub-workflow trigger, the error trigger);
+- an entry naming a built-in type: `packs.visible_to` scopes packs only, and a
+  built-in cannot be given a tenant list because the engine names some of them
+  (the sub-workflow trigger, the error trigger). To keep a built-in away from a
+  tenant, use `nodes.deny` or `nodes.allow`, described
+  [below](#allowing-or-denying-built-in-nodes);
 - an entry naming a node's agent-tool form, which always shares the node's own
   scope;
 - a `visibleTo` list present but empty in a manifest.
@@ -152,6 +155,107 @@ list, in sorted type order, so a mistake is visible to the operator:
 ```text
 level=info msg="node type is scoped to tenants" type=pack.acme.crm tenants=[acme]
 ```
+
+## Allowing or denying built-in nodes
+
+`packs.visible_to` cannot scope a built-in node, but a SaaS has good reasons to
+keep some of them away from its customers: **SQLite** opens a file path on the
+server, **Code** runs a script, **PostgreSQL** and **MySQL** dial out, and **HTTP
+Request** reaches any URL the outbound policy lets through. Two lists decide
+which built-ins a tenant may use: `nodes.deny` hides types, and `nodes.allow`
+limits a tenant to the types it names.
+
+A hidden built-in behaves exactly like a pack node scoped to other tenants. It is
+absent from `GET /api/v1/node-types` and answers the unknown-type 404 on the icon,
+load-options and load-schema routes, and a workflow that holds it is refused with
+`node.not_available` when it is activated, when a version is published, when a
+manual run is queued, and at the worker's claim (so webhook, schedule,
+sub-workflow, error-workflow and resumed runs are refused too). The same
+[narrowing caveat](#narrowing-a-scope-later) applies: deactivate affected
+workflows before denying a type they use.
+
+### In the deployment configuration
+
+Each entry is written `"<node type>"` for every tenant, or `"<node type>=<tenant
+id>"` for one tenant, the same `type=tenant` grammar as `packs.visible_to` (and
+`KILASFLOW_NODES_DENY` / `KILASFLOW_NODES_ALLOW` take it comma-separated):
+
+```yaml
+nodes:
+  deny:
+    - kilasflow.sqlite            # nobody may use SQLite
+    - kilasflow.code=acme         # acme may not use Code
+  allow:
+    - kilasflow.httpRequest=trial # trial tenants may use HTTP Request only
+    - kilasflow.set=trial
+    - kilasflow.manual=trial
+```
+
+The rules, for any one tenant:
+
+- **Allow lists add up.** The allow list that applies to a tenant is every entry
+  without a tenant, every entry naming it, and its own `nodes.allow` setting (see
+  below). If that list is **not empty**, only the built-ins on it are visible to
+  the tenant. If it is empty, `allow` limits nothing, which is the default.
+- **Deny lists add up too**, and a built-in on one is hidden.
+- **Deny wins over allow.** A type on both lists is hidden.
+- **Engine-required types are always visible.** The error trigger
+  (`kilasflow.errorTrigger`) and the sub-workflow trigger
+  (`kilasflow.executeWorkflowTrigger`) are named by the engine, so an error
+  workflow or a sub-workflow call would break from the inside without them. An
+  allow list does not need to list them, and a deny entry naming one is refused.
+- **Built-ins only.** A pack's nodes keep `packs.visible_to`; an entry naming a
+  pack node is refused with a pointer to it.
+- **A tool form follows its base.** `kilasflow.gmailTool` is the Gmail node
+  offered to an AI Agent, so denying or allowing `kilasflow.gmail` does the same
+  for its tool form, and an entry naming the tool form itself is refused with the
+  node to name instead.
+
+The boot refuses, naming the key and the entry's index (`nodes.deny[1]`), a
+malformed entry (an empty type, an empty tenant after `=`, a tenant ID containing
+a second `=`), a type that is not a registered built-in (a typo fails closed
+rather than hiding nothing), a deny entry for an engine-required type, a tool
+form, and a malformed tenant ID. Give every process the same value: the API hides
+an unavailable node, but the worker is the authority, so a worker started without
+the key accepts and runs what the API would have refused. The boot log lists the
+entries it applied:
+
+```text
+level=info msg="built-in node types are denied" entries="[kilasflow.code=acme kilasflow.sqlite]"
+```
+
+### In a tenant's settings
+
+The operator can also set the lists per tenant, live, through the
+[tenant settings](/operate/tenants/#tenant-settings) section `nodes`:
+
+```bash
+curl -X PATCH "$KILASFLOW_URL/api/v1/tenants/acme" \
+  -H "Authorization: Bearer $OPERATOR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"settings":{"nodes":{"deny":["kilasflow.sqlite","kilasflow.code"]}}}'
+```
+
+Both fields are lists of node types (no `=tenant`: the tenant is the one in the
+path), and a list is replaced whole by a patch that sets it. They are **added to
+the deployment's lists**, so a tenant's `deny` adds to `nodes.deny`, its `allow`
+adds to the deployment's allow entries, and deny still wins: a tenant setting can
+narrow what the deployment offers and can never lift a `nodes.deny` entry.
+Setting `nodes` to `null` removes the tenant's lists.
+
+The patch is refused with `422` and `tenant_settings_invalid`, one error per
+entry located at `body.settings.nodes.deny[1]`, when an entry is an
+engine-required type on the deny list (`... cannot be denied`), is not a
+registered built-in, or names a tool form. Nothing is written. Entries are
+validated when written, not when read back, so a node type removed by a later
+upgrade hides nothing and does not switch off the tenant's other entries.
+
+A change applies at once on the process that served the `PATCH` and within five
+seconds on every other process, the tenant-settings cache window. If a tenant's
+lists cannot be read at all (the settings store fails and nothing is cached), the
+tenant is shown none of the built-ins that can be hidden, only the
+engine-required types and the packs' nodes, and an error is logged: a deny list
+that failed open would be switched off by a settings outage.
 
 ## What this is not
 

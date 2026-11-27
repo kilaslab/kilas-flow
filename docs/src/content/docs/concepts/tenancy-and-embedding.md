@@ -349,8 +349,9 @@ and embed sessions supply real tenant identifiers.
 id, a name, timestamps and the tenant's settings, and `users` and `api_keys`
 reference it with an `ON DELETE RESTRICT` foreign key so an identity cannot
 outlive its tenant. The settings are changed live by the operator with
-`PATCH /api/v1/tenants/{id}`; today they hold one section, `rateLimit`, a
-tenant's own per-minute allowances. See
+`PATCH /api/v1/tenants/{id}`; today they hold two sections, `rateLimit`, a
+tenant's own per-minute allowances, and `nodes`, the built-in node types the
+tenant may or may not use. See
 [Tenant settings](/operate/tenants/#tenant-settings).
 
 ### Tenant settings versus deployment configuration
@@ -372,7 +373,10 @@ setting is validated against the same limits the configuration enforces (a
 `rateLimit` allowance is 1 to 1,000,000 per minute, as `ratelimit.*` is), and
 it can only adjust what the deployment allows, never switch off what the
 deployment forbids. Node-pack visibility (`packs.visible_to`) stays deployment
-configuration.
+configuration. The `nodes` section is the one that adds rather than replaces: a
+tenant's allow and deny lists are united with the deployment's `nodes.allow` and
+`nodes.deny`, and deny wins, so a tenant setting can hide more built-ins from
+that tenant but can never lift a deployment deny.
 
 Each section is registered by the code that reads it and validated by that
 code, so a key no consumer registered is refused with

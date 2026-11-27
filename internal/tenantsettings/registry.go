@@ -79,8 +79,9 @@ type section struct {
 	name   string
 	fields map[string]bool
 	// decode turns a merged section object into the canonical stored form
-	// and the typed value, running the consumer's validator.
-	decode func(raw []byte) (any, []byte, error)
+	// and the typed value, running the consumer's validator, and also its
+	// write check when write is true (a patch, not a read of what is stored).
+	decode func(raw []byte, write bool) (any, []byte, error)
 }
 
 // Registry holds the sections this process accepts.
@@ -98,6 +99,18 @@ func NewRegistry() *Registry {
 // whose exported fields carry json tags; those tags are the section's keys.
 // validate, when non-nil, refuses a merged value before it is stored.
 func Register[T any](r *Registry, name string, validate func(T) error) error {
+	return RegisterChecked(r, name, validate, nil)
+}
+
+// RegisterChecked is Register with a second validator that runs only when a
+// patch writes the section, never when a stored section is read back.
+//
+// validate must hold what is true of a value forever: a stored section that
+// fails it is skipped on read, and the tenant falls back to the deployment
+// configuration for the whole section. writeCheck is for what can stop being
+// true after the write, such as a reference to something the binary registers:
+// an upgrade that drops it must not switch the rest of the section off.
+func RegisterChecked[T any](r *Registry, name string, validate, writeCheck func(T) error) error {
 	if r == nil {
 		return errors.New("tenant settings: register on a nil registry")
 	}
@@ -129,7 +142,7 @@ func Register[T any](r *Registry, name string, validate func(T) error) error {
 		}
 		fields[key] = true
 	}
-	decode := func(raw []byte) (any, []byte, error) {
+	decode := func(raw []byte, write bool) (any, []byte, error) {
 		var value T
 		decoder := json.NewDecoder(bytes.NewReader(raw))
 		if err := decoder.Decode(&value); err != nil {
@@ -137,6 +150,11 @@ func Register[T any](r *Registry, name string, validate func(T) error) error {
 		}
 		if validate != nil {
 			if err := validate(value); err != nil {
+				return nil, nil, err
+			}
+		}
+		if write && writeCheck != nil {
+			if err := writeCheck(value); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -255,7 +273,7 @@ func (r *Registry) Apply(stored []byte, patch map[string]json.RawMessage) ([]byt
 			continue
 		}
 		merged, _ := json.Marshal(current)
-		_, canonical, err := sec.decode(merged)
+		_, canonical, err := sec.decode(merged, true)
 		if err != nil {
 			issues = append(issues, decodeIssues(name, err)...)
 			continue
@@ -363,7 +381,7 @@ func (r *Registry) Decode(stored []byte, version int64) (Settings, error) {
 		if sec == nil {
 			continue
 		}
-		value, _, err := sec.decode(raw)
+		value, _, err := sec.decode(raw, false)
 		if err != nil {
 			problems = append(problems, fmt.Errorf("section %s: %w", name, err))
 			continue

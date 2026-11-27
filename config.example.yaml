@@ -504,6 +504,39 @@ packs:
   # Env: KILASFLOW_PACKS_VISIBLE_TO
   visible_to: []
 
+nodes:
+  # Allow limits the built-ins a tenant may use, as `"<node type>"` (every
+  # tenant) or `"<node type>=<tenant id>"` (one tenant) list entries. The
+  # allow list that applies to a tenant is every entry without a tenant plus
+  # every entry naming it, and the tenant's own nodes.allow settings; when it
+  # is not empty, only the built-ins on it are available to that tenant, plus
+  # the types the engine names itself (the sub-workflow trigger and the error
+  # trigger), which are always available. Empty, the default, limits nothing.
+  #
+  # It applies to built-in types only: a pack's nodes keep packs.visible_to. A
+  # hidden type behaves like a node scoped to other tenants: absent from the
+  # catalogue, refused as node.not_available at compile, activation and claim.
+  # An entry naming a type that is not a registered built-in refuses the boot.
+  #
+  # Give every process the same value. The API role hides an unavailable node,
+  # but the worker is the authority: a worker started without this key accepts
+  # and runs what the API would have refused.
+  # Env: KILASFLOW_NODES_ALLOW
+  allow: []
+  # Deny hides built-ins from a tenant, written like nodes.allow. Deny wins:
+  # a type on both lists is hidden. The deny list that applies to a tenant is
+  # every entry without a tenant plus every entry naming it, and the tenant's
+  # own nodes.deny settings, added together, so a tenant setting can add to
+  # what the deployment denies but never lift it.
+  #
+  # The engine-required types, kilasflow.errorTrigger and
+  # kilasflow.executeWorkflowTrigger, cannot be denied: an entry naming one
+  # refuses the boot, because a tenant's error workflows and sub-workflow
+  # calls would break from the inside. An entry naming a type that is not a
+  # registered built-in refuses the boot too, so a typo fails closed.
+  # Env: KILASFLOW_NODES_DENY
+  deny: []
+
 google:
   # ClientID is the platform Google Cloud OAuth client id. Empty means every
   # tenant must supply their own on the credential.
