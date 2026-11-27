@@ -356,3 +356,25 @@ func TestOutboxLogIsTenantScopedAndPruned(t *testing.T) {
 		t.Fatalf("PruneOutbound(an hour ahead) = (%d, %v), want both rows", pruned, err)
 	}
 }
+
+// A wait whose deadline passed fails its execution in the sweeper's
+// transaction, and that transaction writes execution.failed too — once, even
+// when the sweeper is asked again.
+func TestOutboxWritesExecutionFailedForAnExpiredWait(t *testing.T) {
+	db := openWaitsSQLite(t)
+	tenant, store, record := queueAndClaimWaitFixture(t, db, "tenant-outbox-wait", "wf_outbox_wait")
+	store.WithOutbox(subscribeAll(tenant.ID, "https://host.example/hooks"))
+	deadline := time.Now().UTC().Add(time.Hour)
+	_, wait := suspendWaitFixture(t, store, tenant, record, deadline)
+	ctx := context.Background()
+	if _, _, err := store.SettleExpiredWait(ctx, wait.ID, repository.ExpiredResolution{}, deadline.Add(time.Minute)); err != nil {
+		t.Fatalf("SettleExpiredWait() error = %v", err)
+	}
+	if _, _, err := store.SettleExpiredWait(ctx, wait.ID, repository.ExpiredResolution{}, deadline.Add(2*time.Minute)); !errors.Is(err, repository.ErrWaitConsumed) {
+		t.Fatalf("second settle = %v, want ErrWaitConsumed", err)
+	}
+	rows := outboxRows(t, db, tenant.ID)
+	if len(rows) != 1 || rows[0].EventType != repository.OutboundExecutionFailed || rows[0].SubjectID != record.ID {
+		t.Fatalf("outbox rows = %#v, want one execution.failed for %s", rows, record.ID)
+	}
+}

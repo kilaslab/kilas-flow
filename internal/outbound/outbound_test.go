@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -339,8 +340,41 @@ func TestDispatcherDeliversAnEventLeftByACrash(t *testing.T) {
 // Several dispatchers draining the same backlog at once deliver every event
 // exactly once: the lease, not luck, keeps two of them off one row.
 func TestConcurrentDispatchersNeverDeliverTheSameRowTwice(t *testing.T) {
+	dispatchConcurrently(t, openDB(t), "tenant-race")
+}
+
+// The same race on PostgreSQL, where SKIP LOCKED is real and the dispatchers
+// land on different rows instead of contending for one.
+func TestConcurrentDispatchersNeverDeliverTheSameRowTwiceOnPostgres(t *testing.T) {
+	dsn := os.Getenv("KILASFLOW_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("set KILASFLOW_TEST_POSTGRES_DSN to run the PostgreSQL half")
+	}
+	quiet := quietLogger()
+	db, err := database.Open(context.Background(), config.Database{Driver: "postgres", DSN: dsn}, quiet)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := database.Migrate(db, quiet); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	const tenantID = "drv-outbound-race"
+	cleanup := func() {
+		for _, table := range []string{"outbound_events", "workflow_publish_events", "workflow_versions", "workflows"} {
+			db.Exec("DELETE FROM "+table+" WHERE tenant_id = ?", tenantID)
+		}
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	dispatchConcurrently(t, db, tenantID)
+}
+
+// dispatchConcurrently has four dispatchers drain twelve events at once and
+// requires every event delivered exactly once.
+func dispatchConcurrently(t *testing.T, db *database.DB, tenantID string) {
+	t.Helper()
 	ctx := context.Background()
-	db := openDB(t)
 	release := make(chan struct{})
 	recv := newReceiver(t, func(int) int {
 		// Hold each delivery open until every dispatcher has started, so the
@@ -349,7 +383,7 @@ func TestConcurrentDispatchersNeverDeliverTheSameRowTwice(t *testing.T) {
 		return http.StatusOK
 	})
 	const events, dispatchers = 12, 4
-	ids := enqueue(t, db, "tenant-race", recv.server.URL+"/hooks", events)
+	ids := enqueue(t, db, tenantID, recv.server.URL+"/hooks", events)
 	now := startClock()
 	var wg sync.WaitGroup
 	errs := make(chan error, dispatchers)
@@ -378,7 +412,7 @@ func TestConcurrentDispatchersNeverDeliverTheSameRowTwice(t *testing.T) {
 			t.Errorf("event %s delivered %d times, want exactly once", id, recv.byID[id])
 		}
 	}
-	for _, row := range logOf(t, db, "tenant-race") {
+	for _, row := range logOf(t, db, tenantID) {
 		if row.Status != repository.OutboundDelivered {
 			t.Errorf("row %s is %s, want delivered", row.ID, row.Status)
 		}
