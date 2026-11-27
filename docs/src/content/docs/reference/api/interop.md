@@ -147,7 +147,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/workflows/import" \
   -d '{"workflow":null}'
 ```
 
-Embed: Deny — importing creates a new workflow, outside any session’s single-workflow authority.
+Embed: Deny — `403` “This embed session cannot import workflows.” Creating a workflow is outside a session’s single-workflow authority.
 
 ## Convert pasted n8n nodes (`convert-workflow-fragment`)
 
@@ -242,7 +242,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/workflows/convert" \
   -d '{"workflow":null}'
 ```
 
-Embed: Allow with `workflow:read` — it translates pasted n8n JSON and saves nothing; the paste reaches the workflow only through a save the session’s scopes govern.
+Embed: Allow with `workflow:read` (every other workflow scope carries it). It translates pasted n8n JSON and saves nothing; the paste reaches the workflow only through a save the session’s scopes govern.
 
 ## Export a workflow as n8n JSON (`export-workflow`)
 
@@ -298,4 +298,4 @@ curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}/export" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `workflow:read` — on the session’s workflow only.
+Embed: Allow with `workflow:read` (every other workflow scope carries it), on the session’s own workflow only — the gate refuses any other workflow id.

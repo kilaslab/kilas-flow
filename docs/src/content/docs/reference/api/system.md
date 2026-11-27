@@ -47,7 +47,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/health" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Readiness probe (`get-ready`)
 
@@ -97,4 +97,4 @@ curl -X GET "$KILASFLOW_HOST/api/v1/ready" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”

@@ -97,7 +97,7 @@ resp, err := http.Post(baseURL+"/api/v1/auth/login", "application/json", bytes.N
 
 :::
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Sign out (`logout`)
 
@@ -117,7 +117,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/auth/logout" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Describe the current caller (`get-me`)
 
@@ -171,7 +171,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/auth/me" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## List API keys (`list-api-keys`)
 
@@ -226,7 +226,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/api-keys" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Create an API key (`create-api-key`)
 
@@ -311,7 +311,7 @@ resp, err := http.Post(baseURL+"/api/v1/api-keys", "application/json", bytes.New
 
 :::
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Revoke an API key (`revoke-api-key`)
 
@@ -369,7 +369,7 @@ curl -X DELETE "$KILASFLOW_HOST/api/v1/api-keys/{id}" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Mint an execution stream ticket (`create-stream-ticket`)
 
@@ -438,4 +438,4 @@ resp, err := http.Post(baseURL+"/api/v1/executions/"+url.PathEscape(executionId)
 
 :::
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”

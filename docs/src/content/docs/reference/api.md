@@ -32,7 +32,7 @@ When the two disagree, compare versions: every page here states the server versi
 | [Datastores](/reference/api/datastores/) | 18 | Tenant-owned row stores: tables, columns, rows, and CSV import and export. |
 | [Tenants and accounts](/reference/api/tenants/) | 11 | Operator surface: tenants, their users, and keys minted for another tenant. |
 | [Interop](/reference/api/interop/) | 3 | Import and export workflows across formats. |
-| [Embed](/reference/api/embed/) | 1 | Mint a session that confines an embedded editor to one workflow. |
+| [Embed](/reference/api/embed/) | 1 | Mint an embed session: one workflow or one datastore, a scope list, one origin. |
 | [System](/reference/api/system/) | 2 | Health and readiness. |
 
 Two behaviours are worth knowing before reading any operation page, because they are easy to misread from a signature alone. Running a workflow answers `202` and does not return results — it enqueues an execution, and you follow it on the event stream at `GET /api/v1/executions/{id}/events`. This reference was generated from an instance with authentication disabled — `auth.enabled` defaults to `false` — so no operation below requires a credential **on that instance**. With `auth.enabled` set, every operation needs either a Bearer API key (`Authorization: Bearer <key>`) or a session cookie, except health, readiness, login and logout; the document the server serves then declares both schemes. See [Security posture](/operate/security/) for how to decide.

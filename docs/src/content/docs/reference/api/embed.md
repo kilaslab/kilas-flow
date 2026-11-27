@@ -1,6 +1,6 @@
 ---
 title: Embed
-description: "Mint a session that confines an embedded editor to one workflow. Generated from the live OpenAPI document."
+description: "Mint an embed session: one workflow or one datastore, a scope list, one origin. Generated from the live OpenAPI document."
 sidebar:
   order: 12
 ---
@@ -9,7 +9,7 @@ sidebar:
 
 > **Generated reference — KilasFlow `0.1.0-dev`.** Produced from the OpenAPI document a real binary serves at `/api/openapi.json`, not hand-written. [Which reference to trust](/reference/api/).
 
-Mint a session that confines an embedded editor to one workflow.
+Mint an embed session: one workflow or one datastore, a scope list, one origin.
 
 ## Create an embed session (`create-embed-session`)
 
@@ -124,4 +124,4 @@ resp, err := http.Post(baseURL+"/api/v1/embed-sessions", "application/json", byt
 
 :::
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”

@@ -52,7 +52,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/tenants" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Create a tenant (`create-tenant`)
 
@@ -130,7 +130,7 @@ resp, err := http.Post(baseURL+"/api/v1/tenants", "application/json", bytes.NewR
 
 :::
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Read one tenant (`get-tenant`)
 
@@ -180,7 +180,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/tenants/{id}" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Update a tenant's settings (`update-tenant`)
 
@@ -246,7 +246,7 @@ curl -X PATCH "$KILASFLOW_HOST/api/v1/tenants/{id}" \
   -d '{}'
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Delete a tenant and everything it owns (`delete-tenant`)
 
@@ -301,7 +301,7 @@ curl -X DELETE "$KILASFLOW_HOST/api/v1/tenants/{id}" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## List a tenant's accounts (`list-tenant-users`)
 
@@ -350,7 +350,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/tenants/{id}/users" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Create an account in a tenant (`create-tenant-user`)
 
@@ -422,7 +422,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/tenants/{id}/users" \
   -d '{"email":"user@example.com","name":"string","password":"string"}'
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Disable an account (`disable-tenant-user`)
 
@@ -473,7 +473,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/tenants/{id}/users/{userId}/disable" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Re-enable an account (`enable-tenant-user`)
 
@@ -524,7 +524,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/tenants/{id}/users/{userId}/enable" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Replace an account's password (`set-tenant-user-password`)
 
@@ -593,7 +593,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/tenants/{id}/users/{userId}/password" \
   -d '{"password":"string"}'
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”
 
 ## Mint an API key for a tenant (`create-tenant-api-key`)
 
@@ -667,4 +667,4 @@ curl -X POST "$KILASFLOW_HOST/api/v1/tenants/{id}/api-keys" \
   -d '{"label":"string"}'
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”

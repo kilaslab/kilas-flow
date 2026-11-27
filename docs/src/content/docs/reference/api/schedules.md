@@ -36,7 +36,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/schedules" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot manage schedules.”
 
 ## Create a schedule (`create-schedule`)
 
@@ -108,7 +108,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/schedules" \
   -d '{"active":false,"cron":"string"}'
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot manage schedules.”
 
 ## Update a schedule (`update-schedule`)
 
@@ -186,7 +186,7 @@ curl -X PUT "$KILASFLOW_HOST/api/v1/schedules/{id}" \
   -d '{"active":false,"cron":"string"}'
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot manage schedules.”
 
 ## Delete a schedule (`delete-schedule`)
 
@@ -212,4 +212,4 @@ curl -X DELETE "$KILASFLOW_HOST/api/v1/schedules/{id}" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot manage schedules.”

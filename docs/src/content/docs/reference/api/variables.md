@@ -29,7 +29,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/variables" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — variables are tenant-wide: every workflow of the tenant reads them, so a session confined to one workflow may neither list nor change them.
+Embed: Deny — `403` “This embed session cannot manage variables.” Variables are tenant-wide: every workflow of the tenant reads them, so a session confined to one workflow may neither list nor change them.
 
 ## Create a variable (`create-variable`)
 
@@ -91,7 +91,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/variables" \
   -d '{"key":"string","value":"string"}'
 ```
 
-Embed: Deny — variables are tenant-wide: every workflow of the tenant reads them, so a session confined to one workflow may neither list nor change them.
+Embed: Deny — `403` “This embed session cannot manage variables.” Variables are tenant-wide: every workflow of the tenant reads them, so a session confined to one workflow may neither list nor change them.
 
 ## Update a variable (`update-variable`)
 
@@ -159,7 +159,7 @@ curl -X PUT "$KILASFLOW_HOST/api/v1/variables/{id}" \
   -d '{"key":"string","value":"string"}'
 ```
 
-Embed: Deny — variables are tenant-wide: every workflow of the tenant reads them, so a session confined to one workflow may neither list nor change them.
+Embed: Deny — `403` “This embed session cannot manage variables.” Variables are tenant-wide: every workflow of the tenant reads them, so a session confined to one workflow may neither list nor change them.
 
 ## Delete a variable (`delete-variable`)
 
@@ -185,4 +185,4 @@ curl -X DELETE "$KILASFLOW_HOST/api/v1/variables/{id}" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — variables are tenant-wide: every workflow of the tenant reads them, so a session confined to one workflow may neither list nor change them.
+Embed: Deny — `403` “This embed session cannot manage variables.” Variables are tenant-wide: every workflow of the tenant reads them, so a session confined to one workflow may neither list nor change them.

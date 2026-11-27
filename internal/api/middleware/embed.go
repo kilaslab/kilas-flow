@@ -59,7 +59,7 @@ func EmbedAuth(verifier EmbedVerifier, publicURL string) func(http.Handler) http
 				deny(w, http.StatusForbidden, "This embed session is not allowed from that origin.")
 				return
 			}
-			if status, detail := permits(sessionSubject{session: session}, r); status != 0 {
+			if status, detail := EmbedPermit(session, r); status != 0 {
 				deny(w, status, detail)
 				return
 			}

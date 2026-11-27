@@ -29,7 +29,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/credential-types" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Allow with `workflow:read` (every other workflow scope carries it). Schemas, never values: the editor reads it on every load to render a node’s credential field.
 
 ## Test an unsaved credential (`test-credential-payload`)
 
@@ -97,7 +97,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/credential-types/{type}/test" \
   -d '{"fields":{}}'
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.” Creating, changing and testing credentials stays with the host’s own key. A confined session attaches only credentials its confinement already references or its host declared at mint — see [Embedding and multi-tenancy](/guides/embedding/).
 
 ## List credentials (`list-credentials`)
 
@@ -137,7 +137,7 @@ resp, err := http.Get(baseURL + "/api/v1/credentials")
 
 :::
 
-Embed: Allow with `workflow:read` — names are needed to render a credential picker; values are never returned.
+Embed: Allow with `workflow:read` (every other workflow scope carries it). Names only, to render a credential picker; values are never returned. The handler narrows the list to the credentials the session’s confinement allows.
 
 ## Create a credential (`create-credential`)
 
@@ -235,7 +235,7 @@ resp, err := http.Post(baseURL+"/api/v1/credentials", "application/json", bytes.
 
 :::
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot manage credentials.” Creating, changing and testing credentials stays with the host’s own key. A confined session attaches only credentials its confinement already references or its host declared at mint — see [Embedding and multi-tenancy](/guides/embedding/).
 
 ## Get a credential (`get-credential`)
 
@@ -300,7 +300,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/credentials/{id}" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.” Creating, changing and testing credentials stays with the host’s own key. A confined session attaches only credentials its confinement already references or its host declared at mint — see [Embedding and multi-tenancy](/guides/embedding/).
 
 ## Update a credential (`update-credential`)
 
@@ -387,7 +387,7 @@ curl -X PUT "$KILASFLOW_HOST/api/v1/credentials/{id}" \
   -d '{"fields":{},"name":"string"}'
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot manage credentials.” Creating, changing and testing credentials stays with the host’s own key. A confined session attaches only credentials its confinement already references or its host declared at mint — see [Embedding and multi-tenancy](/guides/embedding/).
 
 ## Delete a credential (`delete-credential`)
 
@@ -414,7 +414,7 @@ curl -X DELETE "$KILASFLOW_HOST/api/v1/credentials/{id}" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot manage credentials.” Creating, changing and testing credentials stays with the host’s own key. A confined session attaches only credentials its confinement already references or its host declared at mint — see [Embedding and multi-tenancy](/guides/embedding/).
 
 ## Test a credential (`test-credential`)
 
@@ -462,7 +462,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/credentials/{id}/test" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot manage credentials.” Creating, changing and testing credentials stays with the host’s own key. A confined session attaches only credentials its confinement already references or its host declared at mint — see [Embedding and multi-tenancy](/guides/embedding/).
 
 ## Start Google OAuth (`start-credential-oauth`)
 
@@ -506,4 +506,4 @@ curl -X POST "$KILASFLOW_HOST/api/v1/credentials/{id}/oauth/start" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot manage credentials.” Creating, changing and testing credentials stays with the host’s own key. A confined session attaches only credentials its confinement already references or its host declared at mint — see [Embedding and multi-tenancy](/guides/embedding/).

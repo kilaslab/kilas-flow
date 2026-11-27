@@ -312,6 +312,23 @@ generate-api-reference: ## Regenerate the docs API reference from a freshly buil
 generate-api-reference-check: ## Fail if the committed docs API reference is stale
 	node scripts/generate-api-reference.mjs --check
 
+# The embed permit table: which operations an embed session may call, per scope.
+# It is exported from the Go gate that enforces it (internal/api/middleware's
+# EmbedPermit, the decision EmbedAuth makes) by evaluating every operation of the
+# OpenAPI document once per embed scope, and committed as
+# scripts/embed-permits/embed-permits.json. The docs API reference reads that
+# file instead of restating the rules, so a change to the gate that is not
+# exported fails the check below, and an export that the reference has not
+# rendered fails generate-api-reference-check. The operations come from an
+# in-process server, so this needs the Go toolchain and nothing else.
+.PHONY: generate-embed-permits
+generate-embed-permits: ## Regenerate the embed permit table from the Go authority gate
+	$(GO) run ./scripts/embed-permits
+
+.PHONY: generate-embed-permits-check
+generate-embed-permits-check: ## Fail if the committed embed permit table is stale
+	$(GO) run ./scripts/embed-permits --check
+
 # The host SDK's reference page is generated from the SDK's own source —
 # sdk/package.json for the entry points and version, sdk/src for every export
 # with the JSDoc that documents it. TypeDoc is not a dependency of any project

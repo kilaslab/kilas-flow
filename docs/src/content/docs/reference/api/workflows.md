@@ -204,7 +204,7 @@ resp, err := http.Post(baseURL+"/api/v1/workflows", "application/json", bytes.Ne
 
 :::
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot list workflows.” Creating a workflow is outside a session’s single-workflow authority.
 
 ## Validate a workflow document (`validate-workflow-document`)
 
@@ -315,7 +315,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/workflows/validate" \
   -d '{"connections":[{"id":"string","kind":"string","source":{"nodeId":"string","port":"string"},"target":{"nodeId":"string","port":"string"}}],"name":"string","nodes":[{"credentials":{},"disabled":false,"id":"string","name":"string","parameters":{},"position":{"x":0,"y":0},"settings":{},"type":"string","typeVersion":1}],"schemaVersion":0,"settings":{}}'
 ```
 
-Embed: Allow with `workflow:read` — a dry run that compiles the supplied document and saves nothing.
+Embed: Allow with `workflow:read` (every other workflow scope carries it). A dry run that compiles the supplied document and saves nothing.
 
 ## List workflows (`list-workflows`)
 
@@ -356,7 +356,7 @@ resp, err := http.Get(baseURL + "/api/v1/workflows?limit=100")
 
 :::
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot list workflows.”
 
 ## Get a workflow (`get-workflow`)
 
@@ -493,7 +493,7 @@ resp, err := http.Get(baseURL + "/api/v1/workflows/" + url.PathEscape(workflowId
 
 :::
 
-Embed: Allow with `workflow:read` — on the session’s workflow only.
+Embed: Allow with `workflow:read` (every other workflow scope carries it), on the session’s own workflow only — the gate refuses any other workflow id.
 
 ## List a workflow's webhook URLs (`list-workflow-webhooks`)
 
@@ -519,7 +519,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}/webhooks" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `workflow:read` — on the session’s workflow only.
+Embed: Allow with `workflow:read` (every other workflow scope carries it), on the session’s own workflow only — the gate refuses any other workflow id.
 
 ## Save a workflow draft (`update-workflow`)
 
@@ -718,7 +718,7 @@ resp, err := http.DefaultClient.Do(req)
 
 :::
 
-Embed: Allow with `workflow:write` — on the session’s workflow only.
+Embed: Allow with `workflow:write`, on the session’s own workflow only — the gate refuses any other workflow id.
 
 ## Delete a workflow (`delete-workflow`)
 
@@ -744,7 +744,7 @@ curl -X DELETE "$KILASFLOW_HOST/api/v1/workflows/{id}" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — an embed session cannot delete a workflow.
+Embed: Deny — `403` “This embed session cannot delete a workflow.” A session cannot delete the workflow it edits.
 
 ## Queue a manual workflow run (`run-workflow`)
 
@@ -832,7 +832,7 @@ resp, err := http.DefaultClient.Do(req) // 202: follow the execution on the even
 
 :::
 
-Embed: Allow with `workflow:run` — on the session’s workflow only.
+Embed: Allow with `workflow:run`, on the session’s own workflow only — the gate refuses any other workflow id. The document that would run is checked against the session’s confinement first; see [Embed sessions](/guides/embed-sessions/#confinement).
 
 ## Duplicate a workflow (`duplicate-workflow`)
 
@@ -973,7 +973,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/workflows/{id}/duplicate" \
   -d '{}'
 ```
 
-Embed: Deny — a copy is a new workflow, outside any session’s single-workflow authority.
+Embed: Deny — `403` “This embed session cannot duplicate workflows.” Creating a workflow is outside a session’s single-workflow authority.
 
 ## Activate latest workflow revision (`activate-workflow`)
 
@@ -1118,7 +1118,7 @@ resp, err := http.Post(baseURL+"/api/v1/workflows/"+url.PathEscape(workflowId)+"
 
 :::
 
-Embed: Allow with `workflow:activate` only — on the session’s workflow, through the same compile and catalogue checks as the dashboard. No other scope grants it: activation registers deployment-wide triggers, so a host opts in by minting the scope.
+Embed: Allow with `workflow:activate`, on the session’s own workflow only — the gate refuses any other workflow id. Activation registers deployment-wide triggers, so no other scope grants it: a host opts in by minting `workflow:activate`. The request reaches the same handler the dashboard uses, compiler and catalogue checks included.
 
 ## Deactivate workflow (`deactivate-workflow`)
 
@@ -1242,7 +1242,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/workflows/{id}/deactivate" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `workflow:activate` only — on the session’s workflow. `workflow:publish` does not grant it: taking a workflow offline is the activation switch.
+Embed: Allow with `workflow:activate`, on the session’s own workflow only — the gate refuses any other workflow id. Activation registers deployment-wide triggers, so no other scope grants it: a host opts in by minting `workflow:activate`. The request reaches the same handler the dashboard uses, compiler and catalogue checks included.
 
 ## List workflow revisions (`list-workflow-versions`)
 
@@ -1305,7 +1305,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}/versions" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `workflow:read` — on the session’s workflow only.
+Embed: Allow with `workflow:read` (every other workflow scope carries it), on the session’s own workflow only — the gate refuses any other workflow id.
 
 ## Get one workflow revision (`get-workflow-version`)
 
@@ -1394,7 +1394,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}/versions/{versionId}" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `workflow:read` — on the session’s workflow only.
+Embed: Allow with `workflow:read` (every other workflow scope carries it), on the session’s own workflow only — the gate refuses any other workflow id.
 
 ## Publish one workflow revision (`publish-workflow-version`)
 
@@ -1536,7 +1536,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/workflows/{id}/versions/{versionId}/publish
   -d '{}'
 ```
 
-Embed: Allow with `workflow:publish` only — on the session’s workflow; `workflow:write` alone is refused. Publishing pins the revision production traffic runs, so a host opts in by minting the scope.
+Embed: Allow with `workflow:publish`, on the session’s own workflow only — the gate refuses any other workflow id. Publishing pins the revision production traffic runs, so `workflow:write` alone is refused and a host opts in by minting `workflow:publish`. The revision is re-checked against the session’s confinement first.
 
 ## Restore one workflow revision (`restore-workflow-version`)
 
@@ -1678,7 +1678,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/workflows/{id}/versions/{versionId}/restore
   -d '{}'
 ```
 
-Embed: Allow with `workflow:write` — on the session’s workflow only.
+Embed: Allow with `workflow:write`, on the session’s own workflow only — the gate refuses any other workflow id.
 
 ## List a workflow's publish history (`list-workflow-publish-events`)
 
@@ -1704,7 +1704,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}/publish-events" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `workflow:read` — on the session’s workflow only.
+Embed: Allow with `workflow:read` (every other workflow scope carries it), on the session’s own workflow only — the gate refuses any other workflow id.
 
 ## Read a revision's import report (`workflow-diagnostics`)
 
@@ -1765,4 +1765,4 @@ curl -X GET "$KILASFLOW_HOST/api/v1/workflows/{id}/diagnostics" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Allow with `workflow:read` — on the session’s workflow only.
+Embed: Allow with `workflow:read` (every other workflow scope carries it), on the session’s own workflow only — the gate refuses any other workflow id.
