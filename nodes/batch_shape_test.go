@@ -45,6 +45,7 @@ var perItemNodes = map[string]bool{
 	nodes.InformationExtractorNodeType: true, nodes.TextClassifierNodeType: true,
 	nodes.ChainRetrievalQaNodeType: true, nodes.SentimentAnalysisNodeType: true,
 	nodes.EmailSendNodeType: true, nodes.RssFeedReadNodeType: true, nodes.RenameKeysNodeType: true,
+	nodes.CryptoNodeType: true,
 }
 
 // Every native node the runner could split into one-item calls is classified,

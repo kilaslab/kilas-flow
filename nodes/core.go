@@ -100,6 +100,7 @@ func RegisterAll(registry *node.Registry) error {
 		removeDuplicatesNode(),
 		renameKeysNode(),
 		compareDatasetsNode(),
+		cryptoNode(),
 		dateTimeNode(),
 		datastoreNode(),
 		datastoreToolNode(),

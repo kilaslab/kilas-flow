@@ -750,6 +750,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.code ↔ kilasflow.jsCode",
 		"n8n-nodes-base.compareDatasets ↔ kilasflow.compareDatasets",
 		"n8n-nodes-base.cron ↔ kilasflow.schedule",
+		"n8n-nodes-base.crypto ↔ kilasflow.crypto",
 		"n8n-nodes-base.dataTable ↔ kilasflow.datastore",
 		"n8n-nodes-base.dataTableTool ↔ kilasflow.datastoreTool",
 		"n8n-nodes-base.dateTime ↔ kilasflow.dateTime",

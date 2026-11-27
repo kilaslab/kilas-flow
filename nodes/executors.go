@@ -107,6 +107,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		RemoveDuplicatesExecutorID:       engine.ExecutorFunc(executeRemoveDuplicates),
 		RenameKeysExecutorID:             engine.ExecutorFunc(executeRenameKeys),
 		CompareDatasetsExecutorID:        engine.ExecutorFunc(executeCompareDatasets),
+		CryptoExecutorID:                 engine.ExecutorFunc(executeCrypto),
 		DateTimeExecutorID:               engine.ExecutorFunc(executeDateTime),
 		WaitExecutorID:                   engine.ExecutorFunc(executeWait),
 		ExecuteWorkflowExecutorID:        engine.ExecutorFunc(executeExecuteWorkflow),

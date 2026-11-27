@@ -393,6 +393,13 @@ var mappings = []mapping{
 		exportTypeVersion: 2, toKilas: compareDatasetsToKilas, toN8N: compareDatasetsToN8N,
 		refuseKilas: refuseUnsupportedCompareDatasetsOption,
 	},
+	// The file and format family: pure-Go nodes over item data and the binary
+	// store. Their parameter names are n8n's own, so the translators copy.
+	{
+		n8nType: "n8n-nodes-base.crypto", kilasType: CryptoNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: cryptoToKilas, toN8N: cryptoToN8N,
+		refuseKilas: refuseUnsupportedCryptoAlgorithm,
+	},
 	// The Item Lists node: one selector, six operations, each a native node.
 	// kilasTypeFor picks the target from the selector the way it does for the
 	// Code node's languages; the advertised pair names the default operation's

@@ -46,6 +46,7 @@ import Scissors from '@lucide/svelte/icons/scissors';
 import Send from '@lucide/svelte/icons/send';
 import Server from '@lucide/svelte/icons/server';
 import Sheet from '@lucide/svelte/icons/sheet';
+import ShieldCheck from '@lucide/svelte/icons/shield-check';
 import Sigma from '@lucide/svelte/icons/sigma';
 import Signpost from '@lucide/svelte/icons/signpost';
 import Sparkles from '@lucide/svelte/icons/sparkles';
@@ -109,6 +110,7 @@ const GLYPHS: Record<string, Component> = {
 	// An older name the server may still send for the alert glyph; both map to
 	// the same lucide icon so a cached catalogue and a fresh one agree.
 	'alert-triangle': TriangleAlert,
+	'shield-check': ShieldCheck,
 	'triangle-alert': TriangleAlert,
 	'octagon-alert': OctagonAlert,
 	'calendar-clock': CalendarClock,
