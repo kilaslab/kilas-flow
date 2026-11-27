@@ -748,6 +748,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.aggregate ↔ kilasflow.aggregate",
 		"n8n-nodes-base.code ↔ kilasflow.foreignCode",
 		"n8n-nodes-base.code ↔ kilasflow.jsCode",
+		"n8n-nodes-base.compareDatasets ↔ kilasflow.compareDatasets",
 		"n8n-nodes-base.cron ↔ kilasflow.schedule",
 		"n8n-nodes-base.dataTable ↔ kilasflow.datastore",
 		"n8n-nodes-base.dataTableTool ↔ kilasflow.datastoreTool",
@@ -783,6 +784,7 @@ func TestSupportedMappingsAreAdvertisedExplicitly(t *testing.T) {
 		"n8n-nodes-base.postgres ↔ kilasflow.postgres",
 		"n8n-nodes-base.postgresTool ↔ kilasflow.postgresTool",
 		"n8n-nodes-base.removeDuplicates ↔ kilasflow.removeDuplicates",
+		"n8n-nodes-base.renameKeys ↔ kilasflow.renameKeys",
 		"n8n-nodes-base.respondToWebhook ↔ kilasflow.respondToWebhook",
 		"n8n-nodes-base.rssFeedRead ↔ kilasflow.rssFeedRead",
 		"n8n-nodes-base.rssFeedReadTool ↔ kilasflow.rssFeedReadTool",
@@ -930,7 +932,7 @@ const switchFixture = `{
   "name": "Three ways",
   "nodes": [
     {"id":"a","name":"Manual","type":"n8n-nodes-base.manualTrigger","typeVersion":1,"position":[0,0],"parameters":{}},
-    {"id":"b","name":"Route","type":"n8n-nodes-base.compareDatasets","typeVersion":2,"position":[220,0],"parameters":{"rules":{}}},
+    {"id":"b","name":"Route","type":"n8n-nodes-base.microsoftOutlook","typeVersion":2,"position":[220,0],"parameters":{"rules":{}}},
     {"id":"c","name":"First","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[440,-120],"parameters":{}},
     {"id":"d","name":"Second","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[440,0],"parameters":{}},
     {"id":"e","name":"Third","type":"n8n-nodes-base.set","typeVersion":3.4,"position":[440,120],"parameters":{}}
@@ -1153,7 +1155,7 @@ func TestPlaceholderStillRefusesToCompile(t *testing.T) {
 	if err == nil {
 		t.Fatal("a workflow containing an unsupported placeholder must not compile")
 	}
-	if !strings.Contains(err.Error(), "n8n-nodes-base.compareDatasets") {
+	if !strings.Contains(err.Error(), "n8n-nodes-base.microsoftOutlook") {
 		t.Errorf("compile error = %v, want it to name the original n8n type", err)
 	}
 }
