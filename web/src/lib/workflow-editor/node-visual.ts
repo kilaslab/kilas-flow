@@ -20,6 +20,7 @@ import CopyMinus from '@lucide/svelte/icons/copy-minus';
 import CornerDownLeft from '@lucide/svelte/icons/corner-down-left';
 import Database from '@lucide/svelte/icons/database';
 import DatabaseSearch from '@lucide/svelte/icons/database-search';
+import FileArchive from '@lucide/svelte/icons/file-archive';
 import FileCode from '@lucide/svelte/icons/file-code';
 import FileOutput from '@lucide/svelte/icons/file-output';
 import FileText from '@lucide/svelte/icons/file-text';
@@ -112,6 +113,7 @@ const GLYPHS: Record<string, Component> = {
 	// An older name the server may still send for the alert glyph; both map to
 	// the same lucide icon so a cached catalogue and a fresh one agree.
 	'alert-triangle': TriangleAlert,
+	'file-archive': FileArchive,
 	'file-code': FileCode,
 	'file-text': FileText,
 	'shield-check': ShieldCheck,

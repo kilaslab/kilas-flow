@@ -9,9 +9,10 @@ import (
 // The file and format family's node types, mirrored from the node pack (a test
 // holds the two lists together).
 const (
-	CryptoNodeType   = "kilasflow.crypto"
-	XMLNodeType      = "kilasflow.xml"
-	MarkdownNodeType = "kilasflow.markdown"
+	CryptoNodeType      = "kilasflow.crypto"
+	XMLNodeType         = "kilasflow.xml"
+	MarkdownNodeType    = "kilasflow.markdown"
+	CompressionNodeType = "kilasflow.compression"
 )
 
 // copyToKilas carries the named parameters across, turning n8n's `=`-prefixed

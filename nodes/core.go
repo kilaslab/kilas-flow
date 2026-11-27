@@ -103,6 +103,7 @@ func RegisterAll(registry *node.Registry) error {
 		cryptoNode(),
 		xmlConvertNode(),
 		markdownNode(),
+		compressionNode(),
 		dateTimeNode(),
 		datastoreNode(),
 		datastoreToolNode(),

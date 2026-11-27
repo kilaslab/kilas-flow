@@ -410,6 +410,10 @@ var mappings = []mapping{
 		exportTypeVersion: 1, toKilas: markdownToKilas, toN8N: markdownToN8N,
 		refuseKilas: refuseUnsupportedMarkdownOption,
 	},
+	{
+		n8nType: "n8n-nodes-base.compression", kilasType: CompressionNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, toKilas: compressionToKilas, toN8N: compressionToN8N,
+	},
 	// The Item Lists node: one selector, six operations, each a native node.
 	// kilasTypeFor picks the target from the selector the way it does for the
 	// Code node's languages; the advertised pair names the default operation's

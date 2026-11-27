@@ -110,6 +110,7 @@ func RegisterExecutors(registry *engine.Registry, httpPolicy safehttp.Policy, da
 		CryptoExecutorID:                 engine.ExecutorFunc(executeCrypto),
 		XMLExecutorID:                    engine.ExecutorFunc(executeXML),
 		MarkdownExecutorID:               engine.ExecutorFunc(executeMarkdown),
+		CompressionExecutorID:            engine.ExecutorFunc(executeCompression),
 		DateTimeExecutorID:               engine.ExecutorFunc(executeDateTime),
 		WaitExecutorID:                   engine.ExecutorFunc(executeWait),
 		ExecuteWorkflowExecutorID:        engine.ExecutorFunc(executeExecuteWorkflow),
