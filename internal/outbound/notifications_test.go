@@ -81,6 +81,11 @@ func TestTenantSecretsAreDerivedPerTenant(t *testing.T) {
 	if first == "" || first == second || first != outbound.TenantSecret(key, "tenant-a") {
 		t.Fatalf("secrets = %q, %q: want stable and distinct per tenant", first, second)
 	}
+	// The value the operations guide's openssl pipeline prints for this key
+	// and tenant, so the documented formula and the code cannot drift apart.
+	if got := outbound.TenantSecret([]byte("deployment-key"), "acme"); got != "9H7LfxwEAeJ8vQaSrhNMyExOHQn9nuuV0kDSfsRpHIo=" {
+		t.Fatalf("TenantSecret(deployment-key, acme) = %q, want the documented derivation", got)
+	}
 	if secret, err := outbound.DerivedSecrets(nil)("tenant-a"); err != nil || secret != "" {
 		t.Fatalf("DerivedSecrets(no key) = (%q, %v), want no secret", secret, err)
 	}

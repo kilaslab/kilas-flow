@@ -164,6 +164,11 @@ hidden type is absent from the node catalogue and refused as `node.not_available
 when a workflow is activated, run or claimed. The semantics are in
 [Tenant-scoped nodes](/guides/tenant-scoped-nodes/#allowing-or-denying-built-in-nodes).
 
+The `notifications` section names the one endpoint the tenant's signed
+notifications go to (`url`) and which events it hears (`events`, by default
+`execution.failed` only). The events, the signature and the delivery log are in
+[Notifications](/operate/notifications/).
+
 A patch with any problem writes nothing. The answer is a problem document with
 one entry in `errors[]` per problem, its `location` naming the key
 (`body.settings.rateLimit.runPerMinute`) and its `value.code` one of:
