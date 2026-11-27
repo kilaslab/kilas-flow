@@ -112,6 +112,19 @@ func ScopeAuth() func(http.Handler) http.Handler {
 	}
 }
 
+// EmbedPermit is what the authority gate answers an embed session making this
+// request: a status of zero when the request is inside the session's authority,
+// otherwise the refusal's status and the sentence a host page reads back.
+//
+// EmbedAuth enforces exactly this answer, and the docs generator
+// (scripts/embed-permits) prints it, so the embed-session reference states the
+// verdicts of the code that runs rather than a copy of its rules. Only the
+// method, the path and the query of the request are read; the token and the
+// origin are checked before this and are not part of the table.
+func EmbedPermit(session embed.Session, r *http.Request) (int, string) {
+	return permits(sessionSubject{session: session}, r)
+}
+
 // permits decides whether one request is inside a subject's authority.
 //
 // The rule is deliberately about *what the request targets*, not about which

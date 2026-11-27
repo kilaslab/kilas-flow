@@ -20,8 +20,11 @@
  * Two things the OpenAPI document cannot express are curated in this file
  * rather than derived from it, because they are behaviour, not shape:
  *
- * - the embed verdict per operation mirrors permits() in
- *   internal/api/middleware/embed.go (default-deny, scoped to one workflow);
+ * - the embed verdict per operation is read from
+ *   scripts/embed-permits/embed-permits.json, which `go run ./scripts/embed-permits`
+ *   writes by asking internal/api/middleware's EmbedPermit (the gate EmbedAuth
+ *   enforces) about every operation; only the reasons behind a verdict are
+ *   curated here, and the run fails when a reason contradicts the table;
  * - the SSE behaviour prose (sequencing, terminal events, Last-Event-ID
  *   resume, the 20-second heartbeat) mirrors internal/api/handlers/executions.go
  *   and internal/events/events.go;
@@ -65,14 +68,14 @@ const groups = [
 	{ slug: 'executions', title: 'Executions', blurb: 'List, inspect, cancel, retry, and follow executions on the event stream.', operations: ['list-executions', 'get-execution', 'cancel-execution', 'retry-execution', 'eval-expression', 'stream-execution-events'] },
 	{ slug: 'credentials', title: 'Credentials', blurb: 'Credential types and stored credentials. Reads never return values.', operations: ['list-credential-types', 'test-credential-payload', 'list-credentials', 'create-credential', 'get-credential', 'update-credential', 'delete-credential', 'test-credential', 'start-credential-oauth'] },
 	{ slug: 'auth', title: 'Authentication and keys', blurb: 'Sessions, API keys, and stream tickets.', operations: ['login', 'logout', 'get-me', 'list-api-keys', 'create-api-key', 'revoke-api-key', 'create-stream-ticket'] },
-	{ slug: 'schedules', title: 'Schedules', blurb: 'Cron-style triggers owned by a workflow.', operations: ['list-schedules', 'create-schedule', 'update-schedule', 'delete-schedule'] },
+	{ slug: 'schedules', title: 'Schedules', blurb: 'Cron-style triggers owned by a workflow.', intro: ['Which time zone a cron is read in depends on how the schedule came to exist. A cron you send to these operations is read in UTC unless the expression starts with a `TZ=Area/City ` prefix, for example `TZ=Asia/Jakarta 0 9 * * *` (`CRON_TZ=` also works), and the expression may carry a leading seconds field. The resource does not report a zone. A schedule that activating a workflow registers from its Schedule Trigger node is different: it is read in the workflow\u2019s `timezone` setting, falling back to the instance\u2019s `execution.default_timezone`, and to UTC only when neither is set. Imported n8n workflows keep their zone this way.'], operations: ['list-schedules', 'create-schedule', 'update-schedule', 'delete-schedule'] },
 	{ slug: 'variables', title: 'Variables', blurb: 'The tenant\u2019s key/value pairs every workflow reads as `$vars.KEY`.', operations: ['list-variables', 'create-variable', 'update-variable', 'delete-variable'] },
 	{ slug: 'host-events', title: 'Host events', blurb: 'The recommended host → workflow path: publish one event, every active workflow listening for it runs.', operations: ['publish-event'] },
 	{ slug: 'nodes', title: 'Node types', blurb: 'The node catalogue, icons, load-options, load-schema, and the expression grammar.', operations: ['list-node-types', 'get-node-icon', 'load-node-property-options', 'load-node-property-schema', 'get-expression-grammar'] },
 	{ slug: 'datastores', title: 'Datastores', blurb: 'Tenant-owned row stores: tables, columns, rows, and CSV import and export.', operations: ['list-datastores', 'create-datastore', 'get-datastore', 'rename-datastore', 'delete-datastore', 'add-datastore-column', 'rename-datastore-column', 'delete-datastore-column', 'insert-datastore-row', 'get-datastore-row', 'list-datastore-rows', 'update-datastore-rows', 'upsert-datastore-row', 'increment-datastore-rows', 'delete-datastore-rows', 'clear-datastore', 'import-datastore-rows', 'export-datastore-rows'] },
 	{ slug: 'tenants', title: 'Tenants and accounts', blurb: 'Operator surface: tenants, their users, and keys minted for another tenant.', operations: ['list-tenants', 'create-tenant', 'get-tenant', 'update-tenant', 'delete-tenant', 'list-tenant-users', 'create-tenant-user', 'disable-tenant-user', 'enable-tenant-user', 'set-tenant-user-password', 'create-tenant-api-key'] },
 	{ slug: 'interop', title: 'Interop', blurb: 'Import and export workflows across formats.', operations: ['import-workflow', 'convert-workflow-fragment', 'export-workflow'] },
-	{ slug: 'embed', title: 'Embed', blurb: 'Mint a session that confines an embedded editor to one workflow.', operations: ['create-embed-session'] },
+	{ slug: 'embed', title: 'Embed', blurb: 'Mint an embed session: one workflow or one datastore, a scope list, one origin.', operations: ['create-embed-session'] },
 	{ slug: 'system', title: 'System', blurb: 'Health and readiness.', operations: ['get-health', 'get-ready'] },
 ];
 
@@ -353,94 +356,238 @@ function curlExample(path, method, operation, requestExample) {
 	return lines.join(' \\\n');
 }
 
-// Embed verdict per operation, mirroring permits() in
-// internal/api/middleware/scope.go: default-deny, scoped to the session's
-// single workflow, with the catalogue readable because it carries no tenant
-// data. Paths here are the full served paths (the /api/v1 prefix included).
-function embedVerdict(method, path) {
-	const rest = path.replace(/^\/api\/v1/, '');
-	if (rest === '/variables' || rest.startsWith('/variables/')) {
-		return 'Deny — variables are tenant-wide: every workflow of the tenant reads them, so a session confined to one workflow may neither list nor change them.';
+// The embed permit table. Every allow and deny below comes from
+// scripts/embed-permits/embed-permits.json, which `go run ./scripts/embed-permits`
+// writes by asking the real gate (internal/api/middleware.EmbedPermit — the
+// decision EmbedAuth enforces) about every operation, once per embed scope. Nothing
+// in this file restates a rule: when the gate changes and the table is not
+// regenerated, `make generate-embed-permits-check` fails, and when the table
+// and these pages disagree, `make generate-api-reference-check` does.
+//
+// What the gate cannot see is curated in `embedNotes`: the checks the handlers
+// add after the gate lets a request through, and the reason behind a refusal.
+// Each note declares whether the operations it covers are allowed or denied,
+// and the run fails when the table says otherwise, so a note cannot go on
+// describing a verdict the server no longer gives.
+const permitTablePath = join(repoDir, 'scripts', 'embed-permits', 'embed-permits.json');
+
+async function loadPermitTable(byId) {
+	let table;
+	try {
+		table = JSON.parse(await readFile(permitTablePath, 'utf8'));
+	} catch (error) {
+		throw new Error(`api-reference: cannot read ${permitTablePath}: ${error.message}. Run \`make generate-embed-permits\`.`);
 	}
-	if (rest === '/node-types' || rest.startsWith('/node-types/')) {
-		return 'Allow with `workflow:read` — the catalogue is narrowed to the session\u2019s own tenant. `load-options` is additionally bounded to the session\u2019s workflow by the handler.';
-	}
-	if (rest === '/credentials' && method === 'GET') {
-		return 'Allow with `workflow:read` — names are needed to render a credential picker; values are never returned.';
-	}
-	if (rest === '/workflows/import') {
-		return 'Deny — importing creates a new workflow, outside any session\u2019s single-workflow authority.';
-	}
-	if (rest === '/workflows/convert') {
-		return 'Allow with `workflow:read` — it translates pasted n8n JSON and saves nothing; the paste reaches the workflow only through a save the session\u2019s scopes govern.';
-	}
-	if (rest === '/workflows/validate') {
-		return 'Allow with `workflow:read` — a dry run that compiles the supplied document and saves nothing.';
-	}
-	if (rest.startsWith('/workflows/')) {
-		const action = rest.slice('/workflows/'.length).split('/')[1] ?? '';
-		if (action === 'run') return 'Allow with `workflow:run` — on the session\u2019s workflow only.';
-		if (action === 'duplicate') return 'Deny — a copy is a new workflow, outside any session\u2019s single-workflow authority.';
-		if (action === 'activate') {
-			return 'Allow with `workflow:activate` only — on the session’s workflow, through the same compile and catalogue checks as the dashboard. No other scope grants it: activation registers deployment-wide triggers, so a host opts in by minting the scope.';
+	const stale = [];
+	for (const [id, found] of byId) {
+		const entry = table.operations?.[id];
+		if (!entry) stale.push(`${id} is missing from the table`);
+		else if (entry.method !== found.method || entry.path !== found.path) {
+			stale.push(`${id} is ${entry.method} ${entry.path} in the table but ${found.method} ${found.path} in the document`);
 		}
-		if (action === 'deactivate') {
-			return 'Allow with `workflow:activate` only — on the session’s workflow. `workflow:publish` does not grant it: taking a workflow offline is the activation switch.';
-		}
-		if (rest.endsWith('/publish') && method === 'POST') {
-			return 'Allow with `workflow:publish` only — on the session’s workflow; `workflow:write` alone is refused. Publishing pins the revision production traffic runs, so a host opts in by minting the scope.';
-		}
-		if (method === 'GET') return 'Allow with `workflow:read` — on the session\u2019s workflow only.';
-		if (method === 'DELETE') return 'Deny — an embed session cannot delete a workflow.';
-		return 'Allow with `workflow:write` — on the session\u2019s workflow only.';
 	}
-	if (rest === '/executions' && method === 'GET') {
-		return 'Allow with `workflow:read` — the query must name the session\u2019s workflow (`workflowId`).';
+	for (const id of Object.keys(table.operations ?? {})) {
+		if (!byId.has(id)) stale.push(`${id} is in the table but not in the document`);
 	}
-	if (rest.startsWith('/executions/')) {
-		return 'Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to.';
+	if (stale.length > 0) {
+		throw new Error(`api-reference: the embed permit table does not match the OpenAPI document (${stale.join('; ')}). Run \`make generate-embed-permits\`.`);
 	}
-	if (rest === '/datastores') {
-		if (method === 'GET') {
-			return 'Deny — the listing names every table in the tenant, and a datastore session is confined to one.';
-		}
-		return 'Deny — creating a table is schema work, outside any session\u2019s authority.';
-	}
-	if (rest.startsWith('/datastores/')) {
-		const remainder = rest.slice('/datastores/'.length);
-		if (remainder === '') {
-			return 'Deny — listing every table in the tenant leaks sibling names, and a datastore session is confined to one.';
-		}
-		const [, tail = ''] = remainder.split('/');
-		const action = tail.split('/')[0];
-		if (action === '') {
-			if (method === 'GET') {
-				return 'Allow with `datastore:read` — on the session\u2019s own datastore only; another datastore\u2019s id reads as `404`, not `403`, so a session cannot probe ids.';
+	for (const note of embedNotes) {
+		for (const id of note.operations) {
+			const verdict = embedVerdictOf(table, id);
+			if ((verdict.allowing.length > 0) !== note.allow) {
+				throw new Error(`api-reference: the note for ${id} says the verdict is ${note.allow ? 'Allow' : 'Deny'} but the embed permit table says ${verdict.allowing.length > 0 ? 'Allow' : 'Deny'}. Update embedNotes in scripts/generate-api-reference.mjs.`);
 			}
-			return 'Deny — renaming or dropping a table is schema work, not contents.';
 		}
-		if (action === 'clear' || action === 'columns') {
-			return 'Deny — clearing every row and editing columns reshape the table itself, not its contents.';
-		}
-		if (action === 'rows') {
-			if (method === 'GET') {
-				return 'Allow with `datastore:read` — rows of the session\u2019s own datastore; the CSV export included.';
-			}
-			if (method === 'POST' || method === 'PUT' || method === 'DELETE') {
-				return 'Allow with `datastore:write` — contents of the session\u2019s own datastore: insert, upsert, increment, filtered update and delete, and the CSV import.';
-			}
-			return 'Deny — the verb is neither a read nor a write of contents.';
-		}
-		return 'Deny — a route under a datastore this session\u2019s scopes do not name.';
 	}
-	return 'Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.';
+	return table;
+}
+
+// embedVerdictOf reads one operation's verdicts out of the table.
+function embedVerdictOf(table, operationId) {
+	const entry = table.operations[operationId];
+	if (!entry) throw new Error(`api-reference: operation ${operationId} is not in the embed permit table. Run \`make generate-embed-permits\`.`);
+	const scopes = table.subjects.flatMap((subject) => subject.scopes);
+	const allowing = scopes.filter((scope) => entry.verdicts[scope]?.allow);
+	return { entry, scopes, allowing };
+}
+
+const embedNotes = [
+	{
+		allow: false,
+		operations: ['list-variables', 'create-variable', 'update-variable', 'delete-variable'],
+		text: 'Variables are tenant-wide: every workflow of the tenant reads them, so a session confined to one workflow may neither list nor change them.'
+	},
+	{
+		allow: true,
+		operations: ['list-node-types', 'get-node-icon', 'load-node-property-schema'],
+		text: 'The catalogue is narrowed to the session’s own tenant.'
+	},
+	{
+		allow: true,
+		operations: ['load-node-property-options'],
+		text: 'It can reach a customer’s service, so the handler bounds it to the session’s workflow, not only its tenant.'
+	},
+	{
+		allow: true,
+		operations: ['list-credentials'],
+		text: 'Names only, to render a credential picker; values are never returned. The handler narrows the list to the credentials the session’s confinement allows.'
+	},
+	{
+		allow: true,
+		operations: ['list-credential-types'],
+		text: 'Schemas, never values: the editor reads it on every load to render a node’s credential field.'
+	},
+	{
+		allow: false,
+		operations: ['get-credential', 'create-credential', 'update-credential', 'delete-credential', 'test-credential', 'start-credential-oauth', 'test-credential-payload'],
+		text: 'Creating, changing and testing credentials stays with the host’s own key. A confined session attaches only credentials its confinement already references or its host declared at mint — see [Embedding and multi-tenancy](/guides/embedding/).'
+	},
+	{
+		allow: true,
+		operations: ['convert-workflow-fragment'],
+		text: 'It translates pasted n8n JSON and saves nothing; the paste reaches the workflow only through a save the session’s scopes govern.'
+	},
+	{
+		allow: true,
+		operations: ['validate-workflow-document'],
+		text: 'A dry run that compiles the supplied document and saves nothing.'
+	},
+	{
+		allow: false,
+		operations: ['import-workflow', 'duplicate-workflow', 'create-workflow'],
+		text: 'Creating a workflow is outside a session’s single-workflow authority.'
+	},
+	{
+		allow: false,
+		operations: ['delete-workflow'],
+		text: 'A session cannot delete the workflow it edits.'
+	},
+	{
+		allow: true,
+		operations: ['activate-workflow', 'deactivate-workflow'],
+		text: 'Activation registers deployment-wide triggers, so no other scope grants it: a host opts in by minting `workflow:activate`. The request reaches the same handler the dashboard uses, compiler and catalogue checks included.'
+	},
+	{
+		allow: true,
+		operations: ['publish-workflow-version'],
+		text: 'Publishing pins the revision production traffic runs, so `workflow:write` alone is refused and a host opts in by minting `workflow:publish`. The revision is re-checked against the session’s confinement first.'
+	},
+	{
+		allow: true,
+		operations: ['run-workflow', 'retry-execution'],
+		text: 'The document that would run is checked against the session’s confinement first; see [Embed sessions](/guides/embed-sessions/#confinement).'
+	},
+	{
+		allow: true,
+		operations: ['list-executions'],
+		text: 'The query must name the session’s own workflow in `workflowId`.'
+	},
+	{
+		allow: true,
+		operations: ['get-execution', 'cancel-execution', 'eval-expression', 'stream-execution-events'],
+		text: 'Which workflow an execution belongs to is known only after loading it, so the handler checks it. An execution of another workflow answers `404`, not `403`; a sub-workflow run started from the session’s own workflow is readable.'
+	},
+	{
+		allow: false,
+		operations: ['list-datastores', 'create-datastore'],
+		text: 'Listing names every table in the tenant, and creating one is schema work. A datastore session is confined to the one table it was minted for.'
+	},
+	{
+		allow: false,
+		operations: ['rename-datastore', 'delete-datastore', 'add-datastore-column', 'rename-datastore-column', 'delete-datastore-column', 'clear-datastore'],
+		text: 'Renaming, dropping, clearing and editing columns reshape the table itself, not its contents.'
+	},
+	{
+		allow: true,
+		operations: ['get-datastore', 'list-datastore-rows', 'get-datastore-row', 'export-datastore-rows', 'insert-datastore-row', 'update-datastore-rows', 'upsert-datastore-row', 'increment-datastore-rows', 'delete-datastore-rows', 'import-datastore-rows'],
+		text: 'On the session’s own datastore only: the handler answers another datastore’s id with `404`, not `403`, so a session cannot probe ids.'
+	}
+];
+
+// The sentence under every operation. The verdict is the table's; the note, if
+// one exists, is the reason or the handler-level check the table cannot hold.
+function embedVerdict(table, operationId) {
+	const { entry, scopes, allowing } = embedVerdictOf(table, operationId);
+	const note = embedNotes.find((candidate) => candidate.operations.includes(operationId));
+	const noteText = note ? ` ${note.text}` : '';
+	if (allowing.length === 0) {
+		const refusals = [...new Set(scopes.map((scope) => `\`${entry.verdicts[scope].status}\` “${entry.verdicts[scope].detail}”`))];
+		return `Deny — ${refusals.join(' or ')}${noteText}`;
+	}
+	const list = (names) => names.map((name) => `\`${name}\``).join(', ');
+	let verdict;
+	if (entry.requires) {
+		verdict = `Allow with \`${entry.requires}\``;
+		const kind = table.subjects.find((subject) => subject.scopes.includes(entry.requires));
+		const others = allowing.filter((scope) => scope !== entry.requires);
+		if (others.length === kind.scopes.length - 1) verdict += ` (every other ${kind.kind} scope carries it)`;
+		else if (others.length > 0) verdict += ` (${list(others)} carry${others.length === 1 ? 'es' : ''} it too)`;
+	} else {
+		verdict = `Allow with any of ${list(allowing)}`;
+	}
+	if (entry.ownWorkflowOnly) verdict += ', on the session’s own workflow only — the gate refuses any other workflow id';
+	return `${verdict}.${noteText}`;
+}
+
+// The scope × operation grid, rendered from the same table. Operations no
+// scope opens are listed beneath it with the server's own sentence.
+function renderEmbedPermits(version, table) {
+	const scopes = table.subjects.flatMap((subject) => subject.scopes);
+	const lines = [];
+	lines.push('---');
+	lines.push('title: Embed permit table');
+	lines.push('description: "Which operations an embed session may call, per scope, and the exact refusal for the rest. Exported from the Go rules that enforce it."');
+	lines.push('sidebar:');
+	lines.push('  order: 14');
+	lines.push('---');
+	lines.push('');
+	lines.push('<!-- Generated from scripts/embed-permits/embed-permits.json by scripts/generate-api-reference.mjs — do not edit by hand. -->');
+	lines.push('');
+	lines.push(banner(version));
+	lines.push('');
+	lines.push('An [embed session](/guides/embed-sessions/) carries one or more scopes and is checked on every request, before the handler runs. This table is not written from the rules: `go run ./scripts/embed-permits` asks the code that enforces them (`EmbedPermit` in `internal/api/middleware`) about every operation in the OpenAPI document, once per scope, and a drift check fails CI when the answer changes.');
+	lines.push('');
+	lines.push('Each column is a session holding that one scope, on a path that names the session’s own workflow or datastore. Scopes combine by union, so a session holding two scopes may call whatever either column allows. `workflow:write`, `workflow:run`, `workflow:publish` and `workflow:activate` each carry `workflow:read`, and `datastore:write` carries `datastore:read`; no other scope implies another. A workflow session cannot hold a datastore scope or the reverse.');
+	lines.push('');
+	lines.push('What this table cannot show is what a handler adds after the gate lets a request through: an execution of another workflow answers `404`, another datastore’s id answers `404`, and a save, publish or run is refused with a `403` naming the node when the document reaches outside the session’s confinement. Those are on each operation’s page and in [Embed sessions](/guides/embed-sessions/).');
+	lines.push('');
+	lines.push('## Allowed operations');
+	lines.push('');
+	lines.push(`| Operation | ${scopes.map((scope) => `\`${scope}\``).join(' | ')} |`);
+	lines.push(`| --- | ${scopes.map(() => ':---:').join(' | ')} |`);
+	const denied = [];
+	for (const group of groups) {
+		for (const id of group.operations) {
+			const { entry, allowing } = embedVerdictOf(table, id);
+			if (allowing.length === 0) {
+				denied.push({ id, entry, group });
+				continue;
+			}
+			const cells = scopes.map((scope) => (entry.verdicts[scope].allow ? 'Allow' : '—'));
+			lines.push(`| [\`${entry.method} ${entry.path}\`](/reference/api/${group.slug}/) | ${cells.join(' | ')} |`);
+		}
+	}
+	lines.push('');
+	lines.push('## Refused operations');
+	lines.push('');
+	lines.push('Every other operation is refused to every embed scope, with the sentence below. The status is `403` unless noted.');
+	lines.push('');
+	lines.push('| Operation | Refusal |');
+	lines.push('| --- | --- |');
+	for (const { id, entry, group } of denied) {
+		const refusals = [...new Set(scopes.map((scope) => `${entry.verdicts[scope].status} “${entry.verdicts[scope].detail}”`))];
+		lines.push(`| [\`${entry.method} ${entry.path}\`](/reference/api/${group.slug}/) | ${refusals.join('; ')} |`);
+	}
+	lines.push('');
+	return lines.join('\n');
 }
 
 function banner(version) {
 	return `> **Generated reference — KilasFlow \`${version}\`.** Produced from the OpenAPI document a real binary serves at \`/api/openapi.json\`, not hand-written. [Which reference to trust](/reference/api/).`;
 }
 
-function renderOperation(path, method, operation, schemas) {
+function renderOperation(path, method, operation, schemas, permits) {
 	const lines = [];
 	const summary = oneLine(operation.summary || operation.operationId);
 	lines.push(`## ${summary} (\`${operation.operationId}\`)`);
@@ -543,12 +690,12 @@ function renderOperation(path, method, operation, schemas) {
 		lines.push('```');
 	}
 	lines.push('');
-	lines.push(`Embed: ${embedVerdict(method, path)}`);
+	lines.push(`Embed: ${embedVerdict(permits, operation.operationId)}`);
 	lines.push('');
 	return lines.join('\n');
 }
 
-function renderGroupPage(group, version, operations, schemas) {
+function renderGroupPage(group, version, operations, schemas, permits) {
 	const lines = [];
 	lines.push('---');
 	lines.push(`title: ${group.title}`);
@@ -566,8 +713,12 @@ function renderGroupPage(group, version, operations, schemas) {
 	lines.push('');
 	lines.push(group.blurb);
 	lines.push('');
+	for (const paragraph of group.intro ?? []) {
+		lines.push(paragraph);
+		lines.push('');
+	}
 	for (const operation of operations) {
-		lines.push(renderOperation(operation.path, operation.method, operation.operation, schemas));
+		lines.push(renderOperation(operation.path, operation.method, operation.operation, schemas, permits));
 	}
 	return lines.join('\n');
 }
@@ -624,6 +775,7 @@ function renderOverview(version, title, openapi, total, document) {
 	lines.push('');
 	lines.push('- [Errors](/reference/api/errors/) — every non-success response is an RFC 9457 problem document, and workflow compile failures carry a structured `WorkflowValidationIssue`.');
 	lines.push('- [Events](/reference/api/events/) — the server-sent event types and the `Last-Event-ID` resume behaviour, which an OpenAPI document describes the endpoint of but not the vocabulary carried over it.');
+	lines.push('- [Embed permit table](/reference/api/embed-permits/) — which operations an embed session may call, per scope, with the exact refusal for the rest. It is exported from the Go rules that enforce it.');
 	lines.push('- [Pagination](/reference/api/pagination/) — the two cursor conventions the listing operations use, which endpoints use which, and the SDK helpers that page for you.');
 	lines.push('- [Webhooks](/reference/api/webhooks/) — the inbound `/webhook/{route}` surface, whose behaviour is defined by the trigger node rather than by a route definition.');
 	lines.push('- [API contract and stability](/reference/api-contract/) — what `/api/v1` promises, what it explicitly does not, and how to tell whether an upgrade will break you.');
@@ -774,6 +926,7 @@ async function main() {
 		if (unmapped.length > 0) {
 			throw new Error(`api-reference: operations without a contract group: ${unmapped.sort().join(', ')}. Map them in scripts/generate-api-reference.mjs and update the contract page.`);
 		}
+		const permits = await loadPermitTable(byId);
 		const outputs = new Map();
 		for (const group of groups) {
 			const operations = group.operations.map((id) => {
@@ -781,8 +934,9 @@ async function main() {
 				if (!found) throw new Error(`api-reference: contract group ${group.slug} lists unknown operation ${id}`);
 				return found;
 			});
-			outputs.set(join(generatedDir, `${group.slug}.md`), renderGroupPage(group, version, operations, schemas));
+			outputs.set(join(generatedDir, `${group.slug}.md`), renderGroupPage(group, version, operations, schemas, permits));
 		}
+		outputs.set(join(generatedDir, 'embed-permits.md'), renderEmbedPermits(version, permits));
 		outputs.set(join(generatedDir, 'errors.md'), renderErrors(version, schemas));
 		outputs.set(join(generatedDir, 'events.md'), renderEvents(version, schemas));
 		outputs.set(join(docsDir, 'api.md'), renderOverview(version, serverDocument.info?.title ?? 'KilasFlow API', serverDocument.openapi ?? '3.1', byId.size, serverDocument));

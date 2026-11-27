@@ -325,21 +325,24 @@ treat any non-semver `info.version` as "unreleased".
 
 ## Drift gates
 
-Three detectors keep the contract honest, and all are blocking — a
+Four detectors keep the contract honest, and all are blocking — a
 handler-type change that is not regenerated fails the build:
 
 | Detector | Regenerates | Fails when | Fix |
 | --- | --- | --- | --- |
 | `web/scripts/check-api-client.mjs` | `web/src/lib/api/generated/` | Committed web client differs from a freshly built binary's document | `pnpm generate:api` in `web/` |
 | `sdk/scripts/check-types.mjs` | `sdk/src/generated/models.ts` | Committed SDK types differ from a freshly built binary's document | `pnpm generate:types` in `sdk/` |
-| `scripts/generate-api-reference.mjs --check` | `docs/src/content/docs/reference/api.md` and `docs/src/content/docs/reference/api/` | Committed reference pages differ from a freshly built binary's document | `node scripts/generate-api-reference.mjs` |
+| `scripts/embed-permits` (`--check`) | `scripts/embed-permits/embed-permits.json`, which the reference pages read for every embed verdict | The committed table differs from what the Go authority gate answers for each operation and embed scope | `make generate-embed-permits` |
+| `scripts/generate-api-reference.mjs --check` | `docs/src/content/docs/reference/api.md` and `docs/src/content/docs/reference/api/` | Committed reference pages differ from a freshly built binary's document or from the permit table | `node scripts/generate-api-reference.mjs` |
 
-All three build and boot a real binary via `scripts/openapi-spec.mjs`, so the
-spec can never be a checked-in copy that fell behind. In the Makefile they
-are `make generate-api-check`, `make generate-types-check`, and
-`make generate-api-reference-check`; in CI they are the `drift` job, which
-runs on every pull request alongside `make sdk-version-check` in the `sdk`
-job.
+The web client, SDK types and reference detectors build and boot a real binary
+via `scripts/openapi-spec.mjs`, so the spec can never be a checked-in copy that
+fell behind. The permit table reads the same document from an in-process server
+and evaluates the real gate against it. In the Makefile they are `make
+generate-api-check`, `make generate-types-check`, `make
+generate-embed-permits-check` and `make generate-api-reference-check`; in CI they
+are the `drift` job, which runs on every pull request alongside `make
+sdk-version-check` in the `sdk` job.
 
 ## Authentication: the escape hatch is the contract
 
@@ -353,30 +356,29 @@ transitional.
 
 ## Embed boundary
 
-An embed session is confined to one workflow and its executions; everything
-else is refused by default rather than enumerated as forbidden. That
-default-deny boundary is part of the public contract:
+An embed session is confined to one subject, a workflow and its executions or a
+datastore and its rows, and carries up to five workflow scopes or two datastore
+scopes; everything else is refused by default rather than enumerated as
+forbidden. That default-deny boundary is part of the public contract.
 
-| Request | Verdict |
-| --- | --- |
-| `GET /node-types/**` (catalogue, icons, load-options, load-schema) | Allow with `workflow:read` — the catalogue is narrowed to the session's own tenant; load-options is additionally bounded to the session's workflow by the handler |
-| `GET /credentials` (list; values are never returned) | Allow with `workflow:read` — names are needed to render a credential picker |
-| `GET /workflows/{id}` where `{id}` is the session's workflow | Allow with `workflow:read` |
-| `PUT` (and other writes) to the session's workflow, except below | Allow with `workflow:write` |
-| `POST /workflows/{id}/run` on the session's workflow | Allow with `workflow:run` |
-| `GET /executions?workflowId={session workflow}` | Allow with `workflow:read` — the query MUST name the session's workflow |
-| `/executions/{id}/**` | Allow with `workflow:read` — ownership is checked in the handler, which alone can know which workflow an execution belongs to |
-| `POST /workflows/import` | Deny — importing creates a new workflow, outside any session's single-workflow authority |
-| `POST /workflows/convert` | Allow with `workflow:read` — it translates pasted n8n JSON and saves nothing; the paste reaches the workflow only through a save the session's scopes govern |
-| `POST /workflows/{id}/versions/{versionId}/publish` on the session's workflow | Allow with `workflow:publish` only — `workflow:write` alone is refused |
-| `POST /workflows/{id}/activate`, `/deactivate` on the session's workflow | Allow with `workflow:activate` only — activation registers deployment-wide triggers, so no other scope grants it; the request meets the same compile and catalogue checks as the dashboard's |
-| `DELETE /workflows/{id}` | Deny |
-| Any `/workflows/{other-id}/**` | Deny — scoped to a different workflow |
-| `GET /workflows` (list), `POST /embed-sessions`, schedules, credential writes, credential-type endpoints | Deny — none belongs to an embedded editor |
+The verdict for every operation, per scope, is the generated
+[embed permit table](/reference/api/embed-permits/). It is exported from the Go
+rules that enforce it, and `make generate-embed-permits-check` fails when the two
+differ, so this page does not restate it. The scopes, their implications, the
+confinement of a workflow session's document and the refusal texts are in
+[Embed sessions in depth](/guides/embed-sessions/).
+
+Two parts of the boundary are contract in their own right:
+
+- A request naming a workflow other than the session's own is refused, and an
+  execution or a datastore that is not the session's answers `404` rather than
+  `403`.
+- A route added later is refused to every embed scope until it is permitted on
+  purpose.
 
 A request without a token passes through untouched: the internal dashboard
 is unaffected. A request *with* one is confined as above, so a token that
-leaked out of an iframe is useless for anything but the one workflow it was
+leaked out of an iframe is useless for anything but the one subject it was
 minted for.
 
 ## Licence

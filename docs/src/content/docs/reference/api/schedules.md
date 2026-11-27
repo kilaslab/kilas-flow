@@ -11,6 +11,8 @@ sidebar:
 
 Cron-style triggers owned by a workflow.
 
+Which time zone a cron is read in depends on how the schedule came to exist. A cron you send to these operations is read in UTC unless the expression starts with a `TZ=Area/City ` prefix, for example `TZ=Asia/Jakarta 0 9 * * *` (`CRON_TZ=` also works), and the expression may carry a leading seconds field. The resource does not report a zone. A schedule that activating a workflow registers from its Schedule Trigger node is different: it is read in the workflow’s `timezone` setting, falling back to the instance’s `execution.default_timezone`, and to UTC only when neither is set. Imported n8n workflows keep their zone this way.
+
 ## List schedules (`list-schedules`)
 
 `GET /api/v1/schedules`
@@ -36,7 +38,7 @@ curl -X GET "$KILASFLOW_HOST/api/v1/schedules" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot manage schedules.”
 
 ## Create a schedule (`create-schedule`)
 
@@ -51,7 +53,7 @@ Request fields:
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
 | `active` | yes | `boolean` | Whether this schedule fires |
-| `cron` | yes | `string` | Standard five-field cron expression, evaluated in UTC |
+| `cron` | yes | `string` | Cron expression: five fields, or six with a leading seconds field. Read in UTC unless it starts with a TZ=Area/City prefix and a space, for example TZ=Asia/Jakarta 0 9 * * * |
 | `nodeId` | no | `string` | Schedule trigger node in that workflow |
 | `workflowId` | no | `string` | Workflow to run; immutable after creation |
 
@@ -108,7 +110,7 @@ curl -X POST "$KILASFLOW_HOST/api/v1/schedules" \
   -d '{"active":false,"cron":"string"}'
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot manage schedules.”
 
 ## Update a schedule (`update-schedule`)
 
@@ -129,7 +131,7 @@ Request fields:
 | Field | Required | Type | Description |
 | --- | --- | --- | --- |
 | `active` | yes | `boolean` | Whether this schedule fires |
-| `cron` | yes | `string` | Standard five-field cron expression, evaluated in UTC |
+| `cron` | yes | `string` | Cron expression: five fields, or six with a leading seconds field. Read in UTC unless it starts with a TZ=Area/City prefix and a space, for example TZ=Asia/Jakarta 0 9 * * * |
 | `nodeId` | no | `string` | Schedule trigger node in that workflow |
 | `workflowId` | no | `string` | Workflow to run; immutable after creation |
 
@@ -186,7 +188,7 @@ curl -X PUT "$KILASFLOW_HOST/api/v1/schedules/{id}" \
   -d '{"active":false,"cron":"string"}'
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot manage schedules.”
 
 ## Delete a schedule (`delete-schedule`)
 
@@ -212,4 +214,4 @@ curl -X DELETE "$KILASFLOW_HOST/api/v1/schedules/{id}" \
   -H "Authorization: Bearer $KILASFLOW_API_KEY"
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot manage schedules.”

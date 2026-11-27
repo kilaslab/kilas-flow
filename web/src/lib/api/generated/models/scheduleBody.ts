@@ -11,7 +11,7 @@ export interface ScheduleBody {
   readonly $schema?: string;
   /** Whether this schedule fires */
   active: boolean;
-  /** Standard five-field cron expression, evaluated in UTC */
+  /** Cron expression: five fields, or six with a leading seconds field. Read in UTC unless it starts with a TZ=Area/City prefix and a space, for example TZ=Asia/Jakarta 0 9 * * * */
   cron: string;
   /** Schedule trigger node in that workflow */
   nodeId?: string;

@@ -15,6 +15,11 @@ For the whole integration in order, from provisioning a tenant to going to
 production, read the [SaaS integration playbook](/guides/saas-playbook/). This
 page is the detail behind its embedding steps.
 
+What a session may call, what its document may reference, how long it lives and
+which origins and CORS rules apply is collected, with the exact refusal texts,
+in [Embed sessions in depth](/guides/embed-sessions/). The per-operation answer
+is the generated [embed permit table](/reference/api/embed-permits/).
+
 Background on any single mechanism lives in [Tenancy and the embed
 boundary](/concepts/tenancy-and-embedding/), [Triggers and
 webhooks](/concepts/webhooks/), and [Credentials](/concepts/credentials/).
@@ -632,10 +637,13 @@ const session = await tenant.client.createEmbedSession({
 // mountWorkflowEditor refuses it outright rather than loading a dead frame.
 ```
 
-That token reads the one datastore's definition and rows, writes rows with
-`datastore:write`, and reaches nothing else: other datastores read as
-unknown, workflow routes stay forbidden, and creating, dropping, clearing,
-or changing a table's columns stays with the backend key.
+That token reads the one datastore's definition and rows (the CSV export
+included), writes rows with `datastore:write` (insert, upsert, increment,
+update, delete and the CSV import), and reaches nothing else: other
+datastores read as unknown, workflow routes stay forbidden, and listing,
+creating, renaming, dropping or clearing a table, or changing its columns,
+stays with the backend key. The full list is
+[Datastore sessions](/guides/embed-sessions/#datastore-sessions).
 
 ```js
 const created = await api('POST', '/datastores', {

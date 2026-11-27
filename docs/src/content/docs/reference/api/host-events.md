@@ -84,4 +84,4 @@ curl -X POST "$KILASFLOW_HOST/api/v1/events" \
   -d '{"type":"string"}'
 ```
 
-Embed: Deny — listing workflows, minting sessions, schedules, credential writes, and credential-type endpoints do not belong to an embedded editor.
+Embed: Deny — `403` “This embed session cannot use this endpoint.”

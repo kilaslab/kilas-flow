@@ -287,6 +287,10 @@ list. Mint again. A credential that a node sends over HTTP must have
 `allowedDomains`, or the session may not save a document that attaches it
 ([credentials in a confined caller's document](/concepts/tenancy-and-embedding/#credentials-in-a-confined-callers-document)).
 
+How the list is derived, a worked example, the exact `403` texts, session
+lifetime and refresh, and the origin and CORS rules are in
+[Embed sessions in depth](/guides/embed-sessions/).
+
 ## 6. Proxy activation
 
 Activating a workflow publishes an endpoint for the whole deployment, so no

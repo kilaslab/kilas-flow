@@ -128,11 +128,16 @@ correct. The whole contract is in
 
 ## Datastores: embed reads versus backend management
 
-Two halves, one API. The embed half — `getDatastore`, `listDatastoreRows`,
-`getDatastoreRow`, `insertDatastoreRow` — is what a datastore-scoped session
-may reach: one datastore, no schema work, refused outright for anything else.
-Everything below is the backend half and sends the host's own tenant API key;
-an embed token cannot reach it by design.
+Two halves, one API. A datastore-scoped session may reach the rows of one
+datastore and nothing else. With `datastore:read` that is `getDatastore`,
+`listDatastoreRows`, `iterateDatastoreRows`, `getDatastoreRow` and
+`exportDatastoreRows`. With `datastore:write` it adds `insertDatastoreRow`,
+`upsertDatastoreRow`, `incrementDatastoreRows`, `updateDatastoreRows`,
+`deleteDatastoreRows` and `importDatastoreRows`. Schema work — `listDatastores`,
+`createDatastore`, `renameDatastore`, `deleteDatastore`, `clearDatastore` and the
+three column methods — is the backend half: it sends the host's own tenant API
+key, and an embed token cannot reach it. The exact permissions are
+[Datastore sessions](../docs/src/content/docs/guides/embed-sessions.md#datastore-sessions).
 
 ```ts
 // Provisioning from the backend: create, shape, fill.
