@@ -437,6 +437,30 @@ func run(args []string) error {
 		log.Info("node type is scoped to tenants", "type", nodeType, "tenants", scopes[nodeType])
 	}
 
+	// nodes.allow and nodes.deny: which built-ins a tenant may use. The
+	// built-in counterpart of packs.visible_to, applied here for the same
+	// reason: it refuses a type that is not registered, so it belongs after
+	// every registration above, and every process role gets the same value
+	// because the worker is the authority at claim. A tenant's own lists
+	// (the "nodes" settings section) are attached below, once the tenant
+	// settings cache exists.
+	nodeRules, err := cfg.Nodes.AvailabilityRules()
+	if err != nil {
+		return err
+	}
+	if err := nodeRegistry.ApplyAvailability(nodeRules); err != nil {
+		return fmt.Errorf("apply nodes.allow and nodes.deny: %w", err)
+	}
+	// The entries as written, so a mistyped tenant ID, the one mistake the
+	// registry cannot catch, is visible to the operator here.
+	allowedEntries, deniedEntries := nodeRegistry.AvailabilityRulesApplied()
+	if len(allowedEntries) > 0 {
+		log.Info("built-in node types are limited by an allow list", "entries", allowedEntries)
+	}
+	if len(deniedEntries) > 0 {
+		log.Info("built-in node types are denied", "entries", deniedEntries)
+	}
+
 	// The JavaScript sidecar is opt-in and off by default. It is loaded here,
 	// before the registry is shared and before anything reads
 	// credentials.Default(), because a community package's credential types
@@ -728,7 +752,15 @@ func run(args []string) error {
 	if err := ratelimit.RegisterSettings(tenantSettingsRegistry); err != nil {
 		return err
 	}
+	// The "nodes" section is the tenant API's half of nodes.allow and
+	// nodes.deny: a tenant's own lists, added to the deployment's. The node
+	// registry reads them through the same cache, so the catalogue, the
+	// compiler and the worker's claim all see a PATCH within the cache TTL.
+	if err := nodeRegistry.RegisterSettings(tenantSettingsRegistry); err != nil {
+		return err
+	}
 	tenantSettings := tenantsettings.NewCache(tenantSettingsRegistry, authStore)
+	nodeRegistry.SetTenantAvailabilitySource(node.SettingsAvailability{Cache: tenantSettings})
 	rateLimiter := ratelimit.NewService(rateLimitStore, map[string]int{
 		ratelimit.BucketRun:     cfg.RateLimit.RunPerMinute,
 		ratelimit.BucketWebhook: cfg.RateLimit.WebhookPerMinute,
