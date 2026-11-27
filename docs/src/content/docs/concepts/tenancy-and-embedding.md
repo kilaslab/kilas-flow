@@ -288,7 +288,11 @@ The table bounds what a session may *call*. The document it saves is checked
 too, at every point where it hands one to the server or makes one live — a save,
 a publish, an activation, a restore, a run and a retry — against a confinement
 minted into the token from the revision the workflow's owner published: the
-credentials, data tables and sub-workflows that revision uses, and nothing else.
+credentials, data tables and sub-workflows that revision uses, plus whatever
+the host declared in the mint body's `allow` set, and nothing else. The host's
+ids are checked against its tenant at mint, and `"tenant"` opens a whole kind
+only for a tenant-wide key; see
+[the embedding guide](/guides/embedding/#what-the-editor-may-reference-confinement-and-allow).
 
 That check on credential **ids** is not enough on its own. A guest holding
 `workflow:write` may edit where a request goes — an HTTP node's URL, a chat model

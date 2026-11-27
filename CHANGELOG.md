@@ -23,6 +23,17 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 
 ### Added
 
+- Host-declared confinement for embed sessions. `POST /embed-sessions`
+  accepts an optional `allow: {credentials, datastores, workflows}`, each a
+  list of ids (at most 50) or `"tenant"`, for a workflow session. Every id is
+  checked against the minting tenant and an unknown or another tenant's id
+  answers 404; `"tenant"` opens the whole kind as a flag in the token and is
+  refused with 403 unless the minter holds tenant-wide authority. The token
+  carries the union of the set derived from the published revision and the
+  declared one, so save, publish, activation, restore, run and retry accept
+  both, and the embedded credential picker lists exactly that union. Without
+  `allow` a session is confined exactly as before, and tokens minted before
+  the change verify unchanged.
 - Actor identity in embed sessions. `POST /embed-sessions` accepts an optional
   `actor: {id, displayName}` (id 1 to 128 characters, display name at most 64),
   signed into the token. Revisions, publish events and manual runs or retries

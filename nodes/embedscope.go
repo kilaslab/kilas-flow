@@ -269,6 +269,12 @@ func datastoreTargetIssues(node workflow.Node, confinement embed.Confinement) []
 // picks out one table is a different question — the run's — and it is asked
 // against the tenant's live list, where a name two tables share is refused.
 func grantsDatastoreName(confinement embed.Confinement, name string) bool {
+	// A kind its host opened to the whole tenant grants every name: the run
+	// resolves it against the session tenant's own list, so it can only ever
+	// find one of that tenant's tables.
+	if confinement.TenantDatastores {
+		return strings.TrimSpace(name) != ""
+	}
 	granted := make([]datastore.Datastore, 0, len(confinement.Datastores))
 	for _, ref := range confinement.Datastores {
 		// A grant by id carries no name, and an empty name matches nothing.

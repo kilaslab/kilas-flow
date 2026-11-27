@@ -558,6 +558,24 @@ describe('embed sessions', () => {
 		});
 	});
 
+	it('forwards a host-declared allow set in the mint body', async () => {
+		const { calls, fetchImpl } = recordingFetch({
+			status: 201,
+			body: { token: 'kfe1.a.b', embedUrl: '/embed/wf-1', scopes: ['workflow:write'], origin: 'https://host.example' }
+		});
+		await client(fetchImpl, { Authorization: 'Bearer host-key' }).createEmbedSession({
+			workflowId: 'wf-1',
+			scopes: ['workflow:write'],
+			origin: 'https://host.example',
+			allow: { credentials: ['cred-1'], datastores: 'tenant' }
+		});
+
+		expect(JSON.parse(String(calls[0]!.init.body))).toMatchObject({
+			workflowId: 'wf-1',
+			allow: { credentials: ['cred-1'], datastores: 'tenant' }
+		});
+	});
+
 	it('needs exactly one subject before it reaches the network', async () => {
 		const { calls, fetchImpl } = recordingFetch({ status: 201, body: {} });
 		const sdk = client(fetchImpl);

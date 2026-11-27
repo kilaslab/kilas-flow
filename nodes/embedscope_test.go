@@ -340,3 +340,39 @@ func TestEmbedScopeIssuesNamesTheNodeItRefused(t *testing.T) {
 		t.Fatalf("issues = %v, want the node name and the credential", issues)
 	}
 }
+
+// A kind its host opened to the whole tenant grants every target of that kind,
+// by id and by name alike. It does not relax what no session may do: a table
+// operation and an expression target are refused exactly as before, because
+// neither is a question of which resource the session was granted.
+func TestEmbedScopeIssuesHonoursATenantWideGrant(t *testing.T) {
+	open := embed.Confinement{TenantCredentials: true, TenantDatastores: true, TenantWorkflows: true}
+	granted := workflow.Document{Nodes: []workflow.Node{
+		embedTestNode(DatastoreNodeType, "byId", map[string]any{
+			"resource": "row", "operation": DatastoreOperationGet, "dataTableId": embedTestLocator("id", "ds_any"),
+		}),
+		embedTestNode(DatastoreNodeType, "byName", map[string]any{
+			"resource": "row", "operation": DatastoreOperationGet, "dataTableId": embedTestLocator("name", "Any table"),
+		}),
+		embedTestNode(ExecuteWorkflowNodeType, "call", map[string]any{
+			"workflowId": embedTestLocator("id", "wf_any"),
+		}),
+	}}
+	granted.Nodes[0].Credentials = map[string]string{"httpHeaderAuth": "cred_any"}
+	if issues := EmbedScopeIssues(granted, open); len(issues) != 0 {
+		t.Fatalf("a tenant-wide grant refused %v", issues)
+	}
+
+	refused := workflow.Document{Nodes: []workflow.Node{
+		embedTestNode(DatastoreNodeType, "drop", map[string]any{
+			"resource": "table", "operation": DatastoreOperationDeleteTable, "dataTableId": embedTestLocator("id", "ds_any"),
+		}),
+		embedTestNode(DatastoreNodeType, "dynamic", map[string]any{
+			"resource": "row", "operation": DatastoreOperationGet,
+			"dataTableId": embedTestLocator("id", map[string]any{"mode": "expression", "value": "={{ $json.table }}"}),
+		}),
+	}}
+	if issues := EmbedScopeIssues(refused, open); len(issues) != 2 {
+		t.Fatalf("issues = %v, want the table operation and the expression target refused", issues)
+	}
+}

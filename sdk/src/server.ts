@@ -151,6 +151,30 @@ export interface EmbedSessionRequest {
 		id: string;
 		displayName?: string;
 	};
+	/**
+	 * What a workflow session's document may reference beyond what the
+	 * workflow's published revision already uses: credentials, data tables
+	 * and workflows a sub-workflow or tool node calls. Without it, a session
+	 * may use only what that revision uses, and a blank workflow nothing.
+	 *
+	 * Each kind is a list of ids or `'tenant'`. Every id is checked against
+	 * the minting tenant, and an unknown or another tenant's id rejects the
+	 * mint with a 404. `'tenant'` opens the whole kind of this tenant and
+	 * needs a tenant-wide key. At most 50 ids per kind. The embedded
+	 * credential picker lists exactly the credentials this grants. Workflow
+	 * sessions only.
+	 */
+	allow?: EmbedAllowSet;
+}
+
+/** One kind of an embed session's `allow` set: ids, or the whole tenant. */
+export type EmbedAllowList = string[] | 'tenant';
+
+/** The host-declared half of an embed session's confinement. */
+export interface EmbedAllowSet {
+	credentials?: EmbedAllowList;
+	datastores?: EmbedAllowList;
+	workflows?: EmbedAllowList;
 }
 
 export interface ExecutionListQuery {

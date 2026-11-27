@@ -26,6 +26,10 @@ Request fields:
 | `actor` | no | `Actor` | The host user this session acts for. Signed into the token and recorded as an embed actor on the revisions, publish events, and manual runs the session causes. Host-asserted: KilasFlow does not verify it. Omit it for an unnamed session. |
 | `actor.displayName` | no | `string` | The name KilasFlow shows for this user: at most 64 letters, digits, spaces, and simple punctuation, without leading or trailing spaces. |
 | `actor.id` | yes | `string` | The host's own stable identifier for its user: 1 to 128 letters, digits, and . _ - : @ \| + / =. Returned by the API to anyone who can read the workflow's history, so use an opaque identifier rather than an email address. Host-asserted, never verified. |
+| `allow` | no | `EmbedAllow` | What the session's document may reference beyond what the workflow's published revision already uses. Workflow sessions only. Each id is checked against this tenant at mint (an unknown or foreign id answers 404); "tenant" opens the whole kind and needs a tenant-wide key. Omit it to confine the session to the published revision alone. |
+| `allow.credentials` | no |  | Credential ids the document may attach, or "tenant" for every credential in the tenant. The embedded credential picker lists exactly these plus the ones the published revision uses. |
+| `allow.datastores` | no |  | Data table ids the document may address (by id, or by the table's name), or "tenant" for every data table in the tenant. No session may create, rename, list, clear or drop a table whatever this says. |
+| `allow.workflows` | no |  | Workflow ids an Execute Sub-workflow or Workflow Tool node may call, or "tenant" for every workflow in the tenant. A called workflow runs with what its own document uses. |
 | `branding` | no | `Branding` | Validated white-label values; never markup |
 | `branding.accent` | no | `string` | — |
 | `branding.hideRun` | no | `boolean` | — |
