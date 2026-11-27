@@ -137,8 +137,11 @@ same way the embedding guide attaches one to a trigger
 ### What to know before relying on it
 
 - **It is a separate workflow for each tenant.** A workflow can only name an
-  error workflow in its own tenant. Create the error workflow in each customer's
-  tenant when you provision it, with that tenant's own secret.
+  error workflow in its own tenant. An id from another tenant, or one that was
+  deleted, is not found, and the failed run's `error` says so
+  (`"errorWorkflowError": "repository record not found: workflow"`). Create the
+  error workflow in each customer's tenant when you provision it, with that
+  tenant's own secret.
 - **It runs the latest saved revision of the error workflow,** active or not. An
   error workflow you saved and never activated still runs.
 - **It starts after the failed run is final,** so the error workflow reads a

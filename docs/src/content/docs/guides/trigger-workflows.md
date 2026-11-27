@@ -240,9 +240,11 @@ Two behaviours matter:
 - **It runs the latest saved revision and ignores activation.** That is right for
   a test run. It is wrong for production traffic, where the version that is live
   should run. Use a host event or a webhook for that.
-- **A key can be limited to this one call.** A key with `workflow:run`, bound to
-  one workflow, can start that workflow and nothing else
-  ([scoped keys](/operate/tenants/#scoped-api-keys)). That suits a job runner.
+- **A key can be limited to this one workflow.** A key with `workflow:run`, bound
+  to one workflow, can start that workflow, retry its runs, and read it and its
+  runs, because `workflow:run` implies `workflow:read`. Every other workflow
+  answers `404`. See [scoped keys](/operate/tenants/#scoped-api-keys). That
+  suits a job runner.
 
 Each tenant has a run allowance of `ratelimit.run_per_minute` (120 by default).
 Over it, the answer is `429` with `Retry-After`.

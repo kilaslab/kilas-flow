@@ -187,8 +187,9 @@ Three rules follow from how the scopes work:
 For your own jobs, not for people, mint a **scoped API key** instead: up to five
 scopes (`workflow:read`, `workflow:write`, `workflow:run`, `datastore:read`,
 `datastore:write`), optionally bound to one workflow, optionally expiring.
-A key bound to one workflow with only `workflow:run` can start that workflow and
-nothing else. See [Scoped API keys](/operate/tenants/#scoped-api-keys).
+A key bound to one workflow with only `workflow:run` can start, retry and read
+that workflow and its runs, and every other workflow answers `404`. See
+[Scoped API keys](/operate/tenants/#scoped-api-keys).
 
 ## 4. Build the list and create UI with the tenant key
 
