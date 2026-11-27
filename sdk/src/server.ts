@@ -71,7 +71,10 @@ import type {
 	UpsertRowInputBody,
 	UpsertRowOutputBody,
 	UserResource,
+	VariableBody,
+	VariableResource,
 	WebhookRouteResource,
+	WorkflowContract,
 	WorkflowDiagnosticsResource,
 	WorkflowDocumentInput,
 	WorkflowPublishEventResource,
@@ -537,6 +540,17 @@ export class KilasFlowClient {
 		return this.#transport.request('GET', `/workflows/${encodeURIComponent(workflowId)}/webhooks`, { signal });
 	}
 
+	/**
+	 * Describes the workflow as something to call: the JSON Schema of the input
+	 * its sub-workflow trigger declares and of the output in
+	 * `settings.outputSchema`, for the revision a call would run (the active one,
+	 * or the latest draft). An undeclared side is `{ type: 'object' }` with
+	 * `declared: false`. Use it to build the tool definition you show a model.
+	 */
+	getWorkflowContract(workflowId: string, signal?: AbortSignal): Promise<WorkflowContract> {
+		return this.#transport.request('GET', `/workflows/${encodeURIComponent(workflowId)}/contract`, { signal });
+	}
+
 	activateWorkflow(workflowId: string, signal?: AbortSignal): Promise<WorkflowResource> {
 		return this.#transport.request('POST', `/workflows/${encodeURIComponent(workflowId)}/activate`, { signal });
 	}
@@ -918,6 +932,29 @@ export class KilasFlowClient {
 
 	deleteSchedule(scheduleId: string, signal?: AbortSignal): Promise<void> {
 		return this.#transport.request('DELETE', `/schedules/${encodeURIComponent(scheduleId)}`, { signal });
+	}
+
+	// --- Variables ---------------------------------------------------------------
+	// The tenant's key/value pairs every workflow reads as `$vars.KEY`. Values
+	// are stored as plain text: put a secret in a credential instead. A running
+	// execution keeps the values it started with.
+
+	listVariables(signal?: AbortSignal): Promise<VariableResource[]> {
+		return this.#transport.request('GET', '/variables', { signal });
+	}
+
+	/** Adds a variable. A key the tenant already has is refused with 409. */
+	createVariable(variable: VariableBody, signal?: AbortSignal): Promise<VariableResource> {
+		return this.#transport.request('POST', '/variables', { body: variable, signal });
+	}
+
+	/** Replaces a variable's key and value. Renaming onto a key the tenant already has is refused with 409. */
+	updateVariable(variableId: string, variable: VariableBody, signal?: AbortSignal): Promise<VariableResource> {
+		return this.#transport.request('PUT', `/variables/${encodeURIComponent(variableId)}`, { body: variable, signal });
+	}
+
+	deleteVariable(variableId: string, signal?: AbortSignal): Promise<void> {
+		return this.#transport.request('DELETE', `/variables/${encodeURIComponent(variableId)}`, { signal });
 	}
 
 	// --- Node catalogue ----------------------------------------------------------

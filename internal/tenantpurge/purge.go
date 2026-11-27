@@ -202,7 +202,7 @@ func (s *Service) steps() []step {
 		{
 			name: "definitions",
 			tables: []string{
-				"secret_bindings", "credentials", "credential_events", "workflow_versions", "workflow_publish_events",
+				"secret_bindings", "variables", "credentials", "credential_events", "workflow_versions", "workflow_publish_events",
 				"workflow_static_data", "workflow_tags", "workflows",
 			},
 			run: func(ctx context.Context, tenant repository.TenantScope, _ *Result) (map[string]int64, error) {

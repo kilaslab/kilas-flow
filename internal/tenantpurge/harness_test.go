@@ -334,6 +334,7 @@ type purgeEnv struct {
 	secrets     *repository.GORMCredentialStore
 	engine      *datastore.Engine
 	idempotency *repository.GORMIdempotencyStore
+	variables   *repository.GORMVariableStore
 }
 
 func newPurgeEnv(t *testing.T, db *database.DB, prefix string) *purgeEnv {
@@ -372,6 +373,7 @@ func newPurgeEnv(t *testing.T, db *database.DB, prefix string) *purgeEnv {
 		secrets:     repository.NewCredentialStore(db.DB, cipher),
 		engine:      engine,
 		idempotency: repository.NewIdempotencyStore(db.DB),
+		variables:   repository.NewVariableStore(db.DB),
 	}
 }
 
@@ -569,6 +571,11 @@ func (env *purgeEnv) seedTenant(id string) *tenantSeed {
 		TokenEnv: "KILASFLOW_EXTERNAL_SECRET_TOKEN_SEED_VAULT",
 	}); err != nil {
 		env.t.Fatalf("CreateSecretBinding(%s) error = %v", id, err)
+	}
+
+	// A variable every workflow of the tenant reads as $vars.API_BASE.
+	if _, err := env.variables.CreateVariable(ctx, tenant, "API_BASE", "https://"+id+".example"); err != nil {
+		env.t.Fatalf("CreateVariable(%s) error = %v", id, err)
 	}
 
 	store, err := env.engine.Create(ctx, id, "cells", []datastore.ColumnInput{{Name: "cell", Type: "string"}})
