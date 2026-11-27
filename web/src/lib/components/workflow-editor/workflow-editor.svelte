@@ -61,6 +61,7 @@
 	import Power from '@lucide/svelte/icons/power';
 	import PowerOff from '@lucide/svelte/icons/power-off';
 	import Save from '@lucide/svelte/icons/save';
+	import Settings from '@lucide/svelte/icons/settings';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import WandSparkles from '@lucide/svelte/icons/wand-sparkles';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
@@ -130,9 +131,13 @@
 	import NodePicker from './node-picker.svelte';
 	import PropertiesPanel from './properties-panel.svelte';
 	import VersionPanel from './version-panel.svelte';
+	import WorkflowSettingsDialog from './workflow-settings-dialog.svelte';
+	import WorkflowTitle from './workflow-title.svelte';
+	import { applySettingsForm, readSettingsForm, renameWorkflow, type RenameProblem, type SettingsProblem, type WorkflowSettingsForm } from '$lib/workflow-editor/workflow-settings';
 
 	let {
 		header,
+		workflowId = '',
 		document,
 		definitions,
 		credentials = [],
@@ -163,8 +168,14 @@
 		onReloadConflict,
 		onOverwriteConflict
 	}: {
-		/** Rendered at the head of the toolbar. The embed surface passes none. */
-		header?: Snippet;
+		/**
+		 * Rendered at the head of the toolbar, and handed the workflow's title to
+		 * place in it. The embed surface passes none, and so shows neither the
+		 * title nor the settings entry.
+		 */
+		header?: Snippet<[Snippet]>;
+		/** The workflow being edited; the settings dialog keeps it out of the error-workflow choices. */
+		workflowId?: string;
 		document: Document;
 		definitions: Definition[];
 		credentials?: CredentialResource[];
@@ -322,6 +333,7 @@
 	let canvasRegion = $state<HTMLDivElement>();
 	let inspectorRegion = $state<HTMLElement>();
 	let historyOpen = $state(false);
+	let settingsOpen = $state(false);
 	/**
 	 * The stored revision being previewed on the canvas, or null for the draft.
 	 *
@@ -412,7 +424,7 @@
 	// A surface that owns the keyboard while it is open. The canvas shortcuts
 	// must not act behind a dialog, and on a narrow screen the inspector *is* a
 	// modal.
-	const overlayOpen = $derived(shortcutsOpen || pickerOpen || historyOpen || nodeMenu !== null || (narrow.current && propertyPanelOpen));
+	const overlayOpen = $derived(shortcutsOpen || settingsOpen || pickerOpen || historyOpen || nodeMenu !== null || (narrow.current && propertyPanelOpen));
 
 	// What the open context menu acts on: the whole selection when the node it
 	// was asked on is part of it (the editor selects the node first when not),
@@ -563,6 +575,24 @@
 		if (next === draft) return;
 		undoStack = recordHistory(undoStack, draft, { key: options.key ?? null });
 		draft = next;
+	}
+
+	/** Renames the draft; the name saves with the rest of the document. */
+	function renameDraft(raw: string): RenameProblem | null {
+		if (locked) return null;
+		const result = renameWorkflow(draft, raw);
+		if ('problem' in result) return result.problem;
+		replaceDraft(result.document);
+		return null;
+	}
+
+	/** Writes the settings dialog's form into the draft's `settings`. */
+	function applyDraftSettings(form: WorkflowSettingsForm): SettingsProblem | null {
+		if (locked) return null;
+		const result = applySettingsForm(draft, form);
+		if ('problem' in result) return result.problem;
+		replaceDraft(result.document);
+		return null;
 	}
 
 	function initialDraft(): Document {
@@ -1519,9 +1549,12 @@
 <svelte:window onkeydown={handleShortcut} />
 
 <section bind:this={editorSection} data-workflow-editor onpaste={onPaste} class="relative flex h-full min-h-0 flex-col bg-background" aria-label={m.editor_aria_label()}>
+	{#snippet workflowTitle()}
+		<WorkflowTitle name={draft.name} editable={!locked} onRename={renameDraft} />
+	{/snippet}
 	<header class="flex h-10 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-card px-2">
 		{#if header}
-			{@render header()}
+			{@render header(workflowTitle)}
 			<span aria-hidden="true" class="mx-1 h-4 w-px shrink-0 bg-border"></span>
 		{/if}
 		{#if !locked}
@@ -1563,6 +1596,11 @@
 			<a href="/executions" data-testid="open-executions" class="grid size-7 shrink-0 place-items-center rounded-md border border-border transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2" title={m.editor_open_executions()} aria-label={m.editor_open_executions()}>
 				<Activity aria-hidden="true" class="size-3.5" />
 			</a>
+		{/if}
+		{#if header && !locked}
+			<button type="button" class="grid size-7 shrink-0 place-items-center rounded-md border border-border transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2" title={m.editor_settings_open()} aria-label={m.editor_settings_open()} aria-haspopup="dialog" aria-expanded={settingsOpen} data-testid="workflow-settings-toolbar" onclick={() => (settingsOpen = true)}>
+				<Settings aria-hidden="true" class="size-3.5" />
+			</button>
 		{/if}
 		{#if history}
 			<button type="button" class="grid size-7 shrink-0 place-items-center rounded-md border border-border transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2" title={m.editor_history()} aria-label={m.editor_history()} aria-haspopup="dialog" aria-expanded={historyOpen} onclick={() => (historyOpen = true)}>
@@ -1926,6 +1964,10 @@
 			pendingPosition = null;
 		}}
 	/>
+
+	{#if header && !locked}
+		<WorkflowSettingsDialog bind:open={settingsOpen} {workflowId} initial={readSettingsForm(draft)} onApply={applyDraftSettings} />
+	{/if}
 
 	{#if shortcutsOpen}
 		<div class="absolute inset-0 z-50 grid place-items-center bg-background/60 p-4 backdrop-blur-sm" role="presentation">
