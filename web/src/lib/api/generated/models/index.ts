@@ -57,6 +57,7 @@ export * from './document';
 export * from './documentPinData';
 export * from './documentSettings';
 export * from './duplicateWorkflowInputBody';
+export * from './embedAllow';
 export * from './embedSessionBody';
 export * from './embedSessionResource';
 export * from './endpoint';

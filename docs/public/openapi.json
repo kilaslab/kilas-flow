@@ -1705,6 +1705,72 @@
         },
         "type": "object"
       },
+      "EmbedAllow": {
+        "additionalProperties": false,
+        "properties": {
+          "credentials": {
+            "description": "Credential ids the document may attach, or \"tenant\" for every credential in the tenant. The embedded credential picker lists exactly these plus the ones the published revision uses.",
+            "oneOf": [
+              {
+                "items": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "enum": [
+                  "tenant"
+                ],
+                "type": "string"
+              }
+            ]
+          },
+          "datastores": {
+            "description": "Data table ids the document may address (by id, or by the table's name), or \"tenant\" for every data table in the tenant. No session may create, rename, list, clear or drop a table whatever this says.",
+            "oneOf": [
+              {
+                "items": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "enum": [
+                  "tenant"
+                ],
+                "type": "string"
+              }
+            ]
+          },
+          "workflows": {
+            "description": "Workflow ids an Execute Sub-workflow or Workflow Tool node may call, or \"tenant\" for every workflow in the tenant. A called workflow runs with what its own document uses.",
+            "oneOf": [
+              {
+                "items": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "enum": [
+                  "tenant"
+                ],
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
       "EmbedSessionBody": {
         "additionalProperties": false,
         "properties": {
@@ -1720,6 +1786,10 @@
           "actor": {
             "$ref": "#/components/schemas/Actor",
             "description": "The host user this session acts for. Signed into the token and recorded as an embed actor on the revisions, publish events, and manual runs the session causes. Host-asserted: KilasFlow does not verify it. Omit it for an unnamed session."
+          },
+          "allow": {
+            "$ref": "#/components/schemas/EmbedAllow",
+            "description": "What the session's document may reference beyond what the workflow's published revision already uses. Workflow sessions only. Each id is checked against this tenant at mint (an unknown or foreign id answers 404); \"tenant\" opens the whole kind and needs a tenant-wide key. Omit it to confine the session to the published revision alone."
           },
           "branding": {
             "$ref": "#/components/schemas/Branding",

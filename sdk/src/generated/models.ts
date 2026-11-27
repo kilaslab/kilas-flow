@@ -905,11 +905,22 @@ export interface DuplicateWorkflowInputBody {
   name?: string;
 }
 
+export interface EmbedAllow {
+  /** Credential ids the document may attach, or "tenant" for every credential in the tenant. The embedded credential picker lists exactly these plus the ones the published revision uses. */
+  credentials?: string[] | 'tenant';
+  /** Data table ids the document may address (by id, or by the table's name), or "tenant" for every data table in the tenant. No session may create, rename, list, clear or drop a table whatever this says. */
+  datastores?: string[] | 'tenant';
+  /** Workflow ids an Execute Sub-workflow or Workflow Tool node may call, or "tenant" for every workflow in the tenant. A called workflow runs with what its own document uses. */
+  workflows?: string[] | 'tenant';
+}
+
 export interface EmbedSessionBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /** The host user this session acts for. Signed into the token and recorded as an embed actor on the revisions, publish events, and manual runs the session causes. Host-asserted: KilasFlow does not verify it. Omit it for an unnamed session. */
   actor?: Actor;
+  /** What the session's document may reference beyond what the workflow's published revision already uses. Workflow sessions only. Each id is checked against this tenant at mint (an unknown or foreign id answers 404); "tenant" opens the whole kind and needs a tenant-wide key. Omit it to confine the session to the published revision alone. */
+  allow?: EmbedAllow;
   /** Validated white-label values; never markup */
   branding?: Branding;
   /** Datastore this session may touch; exactly one of this and workflowId */
