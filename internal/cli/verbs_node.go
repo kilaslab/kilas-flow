@@ -32,6 +32,7 @@ func nodeVerbs() []Verb {
 	return []Verb{
 		{
 			Path:      "node list",
+			Example:   `kilasflow node list --json`,
 			Operation: "list-node-types",
 			Summary:   "list the node catalogue the server will run",
 			Run:       runNodeList,
@@ -39,6 +40,7 @@ func nodeVerbs() []Verb {
 		},
 		{
 			Path:      "node describe",
+			Example:   `kilasflow node describe kilasflow.httpRequest`,
 			Operation: "list-node-types",
 			Summary:   "print one node type's definition from the catalogue",
 			Args:      []Arg{arg("node type")},
@@ -47,6 +49,7 @@ func nodeVerbs() []Verb {
 		},
 		{
 			Path:      "node options",
+			Example:   `kilasflow node options kilasflow.executeWorkflow --property workflowId --mode list`,
 			Operation: "load-node-property-options",
 			Summary:   "load a property's selectable values from the service that owns them (`--property`, `--version`, `--mode`, `--credential`, `--param`, `--parameters`)",
 			Args:      []Arg{arg("node type")},

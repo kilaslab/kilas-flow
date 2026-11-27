@@ -58,7 +58,7 @@ database:
   # Empty (the default) leaves every identifier exactly as it is today, so
   # an existing install upgrades untouched. A non-empty prefix must be
   # lowercase letters, digits and underscores ending in an underscore, and
-  # no longer than MaxTablePrefixLength so every identifier stays within
+  # at most 16 characters (MaxTablePrefixLength) so every identifier stays within
   # PostgreSQL's 63-byte limit. It is fixed for the life of an install:
   # starting with a different prefix than the database already holds
   # refuses to boot rather than creating a second empty schema alongside

@@ -23,6 +23,7 @@ func execVerbs() []Verb {
 	return []Verb{
 		{
 			Path:      "exec list",
+			Example:   `kilasflow exec list --workflow "$WORKFLOW_ID" --status failed --limit 10`,
 			Operation: "list-executions",
 			Summary:   "list executions, newest first (`--workflow`, `--status`, `--trigger`, `--limit`, `--cursor`)",
 			Flags:     registerExecListFlags,
@@ -31,6 +32,7 @@ func execVerbs() []Verb {
 		},
 		{
 			Path:      "exec get",
+			Example:   `kilasflow exec get "$EXECUTION_ID"`,
 			Operation: "get-execution",
 			Summary:   "read one execution, with its node-run trace",
 			Args:      []Arg{arg("execution id")},
@@ -39,6 +41,7 @@ func execVerbs() []Verb {
 		},
 		{
 			Path:      "exec cancel",
+			Example:   `kilasflow exec cancel "$EXECUTION_ID"`,
 			Operation: "cancel-execution",
 			Summary:   "request cancellation of a queued or running execution",
 			Args:      []Arg{arg("execution id")},
@@ -47,6 +50,7 @@ func execVerbs() []Verb {
 		},
 		{
 			Path:      "exec retry",
+			Example:   `kilasflow exec retry "$EXECUTION_ID" --quiet`,
 			Operation: "retry-execution",
 			Summary:   "start a fresh execution of the same workflow, input and trigger as one that finished",
 			Args:      []Arg{arg("execution id")},
@@ -55,6 +59,7 @@ func execVerbs() []Verb {
 		},
 		{
 			Path:      "exec trace",
+			Example:   `kilasflow exec trace "$EXECUTION_ID" --json`,
 			Operation: "stream-execution-events",
 			Summary:   "collect an execution's events into one envelope, stopping at its outcome",
 			Args:      []Arg{arg("execution id")},
@@ -64,6 +69,7 @@ func execVerbs() []Verb {
 		},
 		{
 			Path:      "exec tail",
+			Example:   `kilasflow exec tail "$EXECUTION_ID"`,
 			Operation: "stream-execution-events",
 			Summary:   "stream an execution's events as they arrive (one object per line; the documented exception)",
 			Args:      []Arg{arg("execution id")},

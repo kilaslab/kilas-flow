@@ -33,6 +33,7 @@ func credentialVerbs() []Verb {
 	return []Verb{
 		{
 			Path:      "credential list",
+			Example:   `kilasflow credential list --limit 20`,
 			Operation: "list-credentials",
 			Summary:   "list stored credentials, without any secret value (`--limit`, `--cursor`)",
 			Flags:     registerPageFlags,
@@ -41,6 +42,7 @@ func credentialVerbs() []Verb {
 		},
 		{
 			Path:      "credential get",
+			Example:   `kilasflow credential get "$CREDENTIAL_ID"`,
 			Operation: "get-credential",
 			Summary:   "read one credential, without its secret value",
 			Args:      []Arg{arg("credential id")},
@@ -49,6 +51,7 @@ func credentialVerbs() []Verb {
 		},
 		{
 			Path:      "credential test",
+			Example:   `kilasflow credential test "$CREDENTIAL_ID" --quiet`,
 			Operation: "test-credential",
 			Summary:   "run the credential type's probe and report pass or fail",
 			Args:      []Arg{arg("credential id")},
@@ -57,6 +60,7 @@ func credentialVerbs() []Verb {
 		},
 		{
 			Path:      "credential create",
+			Example:   `kilasflow credential create --file credential.json --yes --quiet`,
 			Operation: "create-credential",
 			Summary:   "store a credential from a JSON document (`--file <path>|-`, guarded)",
 			Guarded:   true,
@@ -67,6 +71,7 @@ func credentialVerbs() []Verb {
 		},
 		{
 			Path:      "credential update",
+			Example:   `kilasflow credential update "$CREDENTIAL_ID" --file credential.json --yes`,
 			Operation: "update-credential",
 			Summary:   "replace a stored credential from a JSON document (`--file <path>|-`, guarded)",
 			Args:      []Arg{arg("credential id")},
@@ -78,6 +83,7 @@ func credentialVerbs() []Verb {
 		},
 		{
 			Path:      "credential delete",
+			Example:   `kilasflow credential delete "$CREDENTIAL_ID" --yes`,
 			Operation: "delete-credential",
 			Summary:   "remove a stored credential; one a workflow attaches is refused unless `--force` (guarded)",
 			Args:      []Arg{arg("credential id")},

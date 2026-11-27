@@ -133,6 +133,9 @@ func run(verbs []Verb, env Env) (code int, handled bool) {
 	// the reference page tells an agent to look.
 	fs.Usage = func() {
 		fmt.Fprintf(stderr(env), "usage: %s\n  %s\n", usageLine(verb), verb.Summary)
+		if verb.Example != "" {
+			fmt.Fprintf(stderr(env), "example:\n  %s\n", verb.Example)
+		}
 		fs.PrintDefaults()
 	}
 

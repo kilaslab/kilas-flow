@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount, tick } from 'svelte';
+	import { onDestroy, onMount, tick, type Snippet } from 'svelte';
 
 	import { useQueryClient } from '@tanstack/svelte-query';
 
@@ -556,11 +556,13 @@
 	<title>{m.workflows_detail_page_title({ name: workflow.data?.name ?? m.workflows_noun_capitalised() })}</title>
 </svelte:head>
 
-{#snippet breadcrumb()}
+{#snippet breadcrumb(title: Snippet)}
 	<a href="/app/workflows" class="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" aria-label={m.workflows_all_workflows()}>
 		<ArrowLeft aria-hidden="true" class="size-3.5" />
 	</a>
-	<p class="min-w-0 max-w-32 flex-1 truncate text-xs font-medium sm:max-w-44">{currentWorkflow?.name ?? m.workflows_loading()}</p>
+	<!-- The title is the editor's: it edits the draft, so a rename is undoable
+	     and saves with the rest of the document. -->
+	{@render title()}
 	{#if currentWorkflow}
 		<span class="ml-auto flex shrink-0 items-center gap-2">
 			{#if importReport?.source}
@@ -633,6 +635,7 @@
 			<WorkflowEditor
 				bind:this={editor}
 				header={breadcrumb}
+				workflowId={currentWorkflow.id}
 				document={currentWorkflow.latestVersion.document}
 				definitions={nodeTypes.data ?? []}
 				credentials={credentials}

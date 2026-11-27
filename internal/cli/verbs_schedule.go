@@ -12,6 +12,7 @@ func scheduleVerbs() []Verb {
 	return []Verb{
 		{
 			Path:      "schedule list",
+			Example:   `kilasflow schedule list --limit 20`,
 			Operation: "list-schedules",
 			Summary:   "list cron schedules (`--limit`, `--cursor`)",
 			Flags:     registerPageFlags,

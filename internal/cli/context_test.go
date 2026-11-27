@@ -234,3 +234,38 @@ func TestContextRefusesToBriefWithoutAServerURL(t *testing.T) {
 		t.Fatalf("error.code = %v, want usage", failure["code"])
 	}
 }
+
+// The briefing lifts whether authentication is on, and a scoped key's
+// permissions and binding, to fields an agent reads without parsing the
+// health body or calling whoami.
+func TestContextReportsAuthAndTheCallersScopes(t *testing.T) {
+	stub := newContextStub()
+	stub.health = jsonBody(http.StatusOK, `{"status":"ok","version":"9.9.9","authEnabled":true}`)
+	stub.me = jsonBody(http.StatusOK, `{"tenantId":"t_1","kind":"api_key","label":"agent","keyId":"k_1","scopes":["workflow:read","workflow:run"],"workflowId":"wf_1"}`)
+	srv := stubAPI(t, stub.routes(t))
+
+	code, _, stdout, stderr := runCLI(t, Env{Args: []string{"context", "--url", srv.URL, "--json"}, TTY: true})
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want %d (stderr=%q)", code, ExitOK, stderr)
+	}
+	data, _ := envelope(t, stdout)["data"].(map[string]any)
+	server, _ := data["server"].(map[string]any)
+	if server["authEnabled"] != true {
+		t.Fatalf("data.server.authEnabled = %v, want true", server["authEnabled"])
+	}
+	identity, _ := data["identity"].(map[string]any)
+	scopes, _ := identity["scopes"].([]any)
+	if len(scopes) != 2 || scopes[0] != "workflow:read" || identity["workflowId"] != "wf_1" {
+		t.Fatalf("data.identity = %v, want the key's two scopes and its workflow", identity)
+	}
+
+	// A health answer that does not say leaves the flag null, not false.
+	stub = newContextStub()
+	srv = stubAPI(t, stub.routes(t))
+	_, _, stdout, _ = runCLI(t, Env{Args: []string{"context", "--url", srv.URL, "--json"}, TTY: true})
+	data, _ = envelope(t, stdout)["data"].(map[string]any)
+	server, _ = data["server"].(map[string]any)
+	if value, present := server["authEnabled"]; !present || value != nil {
+		t.Fatalf("data.server.authEnabled = %v (present %v), want null", value, present)
+	}
+}

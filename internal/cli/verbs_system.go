@@ -14,12 +14,14 @@ func systemVerbs() []Verb {
 	return []Verb{
 		{
 			Path:    "version",
+			Example: `kilasflow version`,
 			Summary: "print this binary's version and, when a server is reachable, its version",
 			Run:     runVersion,
 			Human:   humanVersion,
 		},
 		{
 			Path:      "health",
+			Example:   `kilasflow health --url http://127.0.0.1:1`,
 			Operation: "get-health",
 			Summary:   "report that the process is up (does not check dependencies)",
 			Run:       runHealth,
@@ -27,6 +29,7 @@ func systemVerbs() []Verb {
 		},
 		{
 			Path:      "ready",
+			Example:   `kilasflow ready`,
 			Operation: "get-ready",
 			Summary:   "report whether the instance can serve; exits 6 when it cannot",
 			Run:       runReady,
@@ -34,6 +37,7 @@ func systemVerbs() []Verb {
 		},
 		{
 			Path:    "help",
+			Example: `kilasflow help`,
 			Summary: "list the verbs this binary implements",
 			Run:     runHelp,
 			Human:   humanHelp,

@@ -23,6 +23,7 @@ func contextVerbs() []Verb {
 	return []Verb{
 		{
 			Path:    "context",
+			Example: `kilasflow context`,
 			Summary: "read-only briefing for a first turn: server, identity, workflows, datastores, node types",
 			Run:     runContext,
 			Human:   humanContext,
@@ -55,6 +56,11 @@ type contextServer struct {
 	URL    string `json:"url"`
 	Ready  bool   `json:"ready"`
 	Health any    `json:"health"`
+	// AuthEnabled lifts the health answer's flag to the top of the section:
+	// an instance with authentication off accepts every call without a key,
+	// which changes what an agent should expect from every other section.
+	// Nil when the health answer did not say.
+	AuthEnabled *bool `json:"authEnabled"`
 }
 
 // contextListing is one capped, paged listing.
@@ -81,12 +87,17 @@ type contextError struct {
 // can act on. The credential itself has no field here and never will, and a
 // failure to read it is recorded under `error` the way every other section's is.
 type contextIdentity struct {
-	TenantID string        `json:"tenantId,omitempty"`
-	Kind     string        `json:"kind,omitempty"`
-	Label    string        `json:"label,omitempty"`
-	KeyID    string        `json:"keyId,omitempty"`
-	UserID   string        `json:"userId,omitempty"`
-	Error    *contextError `json:"error,omitempty"`
+	TenantID string `json:"tenantId,omitempty"`
+	Kind     string `json:"kind,omitempty"`
+	Label    string `json:"label,omitempty"`
+	KeyID    string `json:"keyId,omitempty"`
+	UserID   string `json:"userId,omitempty"`
+	// Scopes are the caller's permissions when it is a scoped key; empty
+	// means a tenant-wide key or a signed-in user, which hold every scope.
+	Scopes []string `json:"scopes,omitempty"`
+	// WorkflowID is set when the key is bound to one workflow.
+	WorkflowID string        `json:"workflowId,omitempty"`
+	Error      *contextError `json:"error,omitempty"`
 }
 
 // runContext composes the briefing from six read operations.
@@ -108,6 +119,14 @@ func runContext(ctx *Context, _ []string) error {
 	}
 	payload.Server.Ready = true
 	payload.Server.Health = ctx.sectionJSON("/health")
+	if raw, ok := payload.Server.Health.(json.RawMessage); ok {
+		var health struct {
+			AuthEnabled *bool `json:"authEnabled"`
+		}
+		if json.Unmarshal(raw, &health) == nil {
+			payload.Server.AuthEnabled = health.AuthEnabled
+		}
+	}
 
 	identity, err := ctx.get(apiPath("/auth/me"))
 	// An auth-disabled instance genuinely has no identity, so a refused or
@@ -220,22 +239,26 @@ func (ctx *Context) listSection(path string, collect func([]byte) ([]map[string]
 // tenant.
 func projectIdentity(principal []byte) (contextIdentity, error) {
 	var resource struct {
-		TenantID string `json:"tenantId"`
-		Kind     string `json:"kind"`
-		Label    string `json:"label"`
-		KeyID    string `json:"keyId"`
-		UserID   string `json:"userId"`
+		TenantID   string   `json:"tenantId"`
+		Kind       string   `json:"kind"`
+		Label      string   `json:"label"`
+		KeyID      string   `json:"keyId"`
+		UserID     string   `json:"userId"`
+		Scopes     []string `json:"scopes"`
+		WorkflowID string   `json:"workflowId"`
 	}
 	if err := json.Unmarshal(principal, &resource); err != nil {
 		return contextIdentity{}, fmt.Errorf("principal is not an object: %w", err)
 	}
 
 	return contextIdentity{
-		TenantID: resource.TenantID,
-		Kind:     resource.Kind,
-		Label:    resource.Label,
-		KeyID:    resource.KeyID,
-		UserID:   resource.UserID,
+		TenantID:   resource.TenantID,
+		Kind:       resource.Kind,
+		Label:      resource.Label,
+		KeyID:      resource.KeyID,
+		UserID:     resource.UserID,
+		Scopes:     resource.Scopes,
+		WorkflowID: resource.WorkflowID,
 	}, nil
 }
 

@@ -35,6 +35,7 @@ func datastoreVerbs() []Verb {
 	return []Verb{
 		{
 			Path:      "datastore list",
+			Example:   `kilasflow datastore list`,
 			Operation: "list-datastores",
 			Summary:   "list datastores (`--limit`, `--cursor`)",
 			Flags:     registerPageFlags,
@@ -43,6 +44,7 @@ func datastoreVerbs() []Verb {
 		},
 		{
 			Path:      "datastore get",
+			Example:   `kilasflow datastore get "$DATASTORE_ID"`,
 			Operation: "get-datastore",
 			Summary:   "read one datastore and its columns",
 			Args:      []Arg{arg("datastore id")},
@@ -51,6 +53,7 @@ func datastoreVerbs() []Verb {
 		},
 		{
 			Path:      "datastore rows",
+			Example:   `kilasflow datastore rows "$DATASTORE_ID" --limit 50`,
 			Operation: "list-datastore-rows",
 			Summary:   "read one page of a datastore's rows (`--limit`, `--cursor`)",
 			Args:      []Arg{arg("datastore id")},
@@ -60,6 +63,7 @@ func datastoreVerbs() []Verb {
 		},
 		{
 			Path:      "datastore export",
+			Example:   `kilasflow datastore export "$DATASTORE_ID" > rows.csv`,
 			Operation: "export-datastore-rows",
 			Summary:   "export a datastore's rows as CSV (`--out <path>` writes a file; the default streams to stdout)",
 			Args:      []Arg{arg("datastore id")},
@@ -69,6 +73,7 @@ func datastoreVerbs() []Verb {
 		},
 		{
 			Path:      "datastore create",
+			Example:   `kilasflow datastore create orders --yes --quiet`,
 			Operation: "create-datastore",
 			Summary:   "create a data table; columns are added afterwards (guarded)",
 			Args:      []Arg{arg("datastore name")},
@@ -79,6 +84,7 @@ func datastoreVerbs() []Verb {
 		},
 		{
 			Path:      "datastore rename",
+			Example:   `kilasflow datastore rename "$DATASTORE_ID" orders-2026 --yes`,
 			Operation: "rename-datastore",
 			Summary:   "rename a data table (`<datastoreId> <newName>`, guarded)",
 			Args:      []Arg{arg("datastore id"), arg("new name")},
@@ -89,6 +95,7 @@ func datastoreVerbs() []Verb {
 		},
 		{
 			Path:      "datastore delete",
+			Example:   `kilasflow datastore delete "$DATASTORE_ID" --yes`,
 			Operation: "delete-datastore",
 			Summary:   "delete a data table and every row it holds (guarded)",
 			Args:      []Arg{arg("datastore id")},
@@ -99,6 +106,7 @@ func datastoreVerbs() []Verb {
 		},
 		{
 			Path:      "datastore clear",
+			Example:   `kilasflow datastore clear "$DATASTORE_ID" --yes`,
 			Operation: "clear-datastore",
 			Summary:   "delete every row of a data table, keeping its schema (guarded)",
 			Args:      []Arg{arg("datastore id")},
@@ -109,6 +117,7 @@ func datastoreVerbs() []Verb {
 		},
 		{
 			Path:      "datastore columns add",
+			Example:   `kilasflow datastore columns add "$DATASTORE_ID" note --type string --yes`,
 			Operation: "add-datastore-column",
 			Summary:   "append one column to a data table (`<datastoreId> <name> --type <type>`, guarded)",
 			Args:      []Arg{arg("datastore id"), arg("column name")},
@@ -120,6 +129,7 @@ func datastoreVerbs() []Verb {
 		},
 		{
 			Path:      "datastore columns rename",
+			Example:   `kilasflow datastore columns rename "$DATASTORE_ID" note memo --yes`,
 			Operation: "rename-datastore-column",
 			Summary:   "rename one column of a data table (`<datastoreId> <name> <newName>`, guarded)",
 			Args:      []Arg{arg("datastore id"), arg("column name"), arg("new column name")},
@@ -130,6 +140,7 @@ func datastoreVerbs() []Verb {
 		},
 		{
 			Path:      "datastore columns drop",
+			Example:   `kilasflow datastore columns drop "$DATASTORE_ID" memo --yes`,
 			Operation: "delete-datastore-column",
 			Summary:   "drop one column of a data table and the values in it (guarded)",
 			Args:      []Arg{arg("datastore id"), arg("column name")},

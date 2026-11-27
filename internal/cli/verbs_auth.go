@@ -21,18 +21,21 @@ func authVerbs() []Verb {
 	return []Verb{
 		{
 			Path:    "auth login",
+			Example: `kilasflow auth login --token -`,
 			Summary: "validate a token against the server and store it at 0600 in the configuration file",
 			Run:     runAuthLogin,
 			Human:   humanAuthLogin,
 		},
 		{
 			Path:    "auth logout",
+			Example: `kilasflow auth logout`,
 			Summary: "remove the stored token, keeping the server URL",
 			Run:     runAuthLogout,
 			Human:   humanAuthLogout,
 		},
 		{
 			Path:      "auth whoami",
+			Example:   `kilasflow auth whoami --json`,
 			Operation: "get-me",
 			Summary:   "print the identity the configured credential resolves to",
 			Run:       runAuthWhoami,
