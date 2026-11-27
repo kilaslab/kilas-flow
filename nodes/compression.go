@@ -234,7 +234,11 @@ func compressFiles(files []compressionFile, parameters map[string]any) (map[stri
 		for index, file := range files {
 			var packed bytes.Buffer
 			writer := gzip.NewWriter(&packed)
-			writer.Name = path.Base(file.name)
+			// The gzip header carries Latin-1 text only; a name outside it is
+			// left out of the header, and the output file keeps its own.
+			if name := path.Base(file.name); isLatin1(name) {
+				writer.Name = name
+			}
 			if _, err := writer.Write(file.contents); err != nil {
 				return nil, nil, err
 			}
@@ -381,4 +385,13 @@ func mediaTypeByName(name string) string {
 		return found
 	}
 	return "application/octet-stream"
+}
+
+func isLatin1(text string) bool {
+	for _, character := range text {
+		if character > 0xFF {
+			return false
+		}
+	}
+	return true
 }

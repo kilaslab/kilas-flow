@@ -298,3 +298,22 @@ func TestCompressionValidationNamesTheBadChoice(t *testing.T) {
 		t.Errorf("Validate() of a good node = %v", err)
 	}
 }
+
+func TestCompressionGzipsAFileWhoseNameIsNotLatin1(t *testing.T) {
+	t.Parallel()
+
+	store := binaryStore(t)
+	item := workflow.Item{Binary: map[string]workflow.BinaryRef{"data": putFile(t, store, "報告.csv", "text/csv", []byte("a,b"))}}
+	out := runCompression(t, store, map[string]any{"operation": "compress", "outputFormat": "gzip"}, item)
+	file := out[0].Binary["file_0"]
+	if file.FileName != "報告.csv.gz" {
+		t.Fatalf("file = %#v, want the name kept on the output", file)
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(readFile(t, store, file)))
+	if err != nil {
+		t.Fatalf("the output is not gzip: %v", err)
+	}
+	if body, _ := io.ReadAll(reader); string(body) != "a,b" {
+		t.Fatalf("gunzipped = %q", body)
+	}
+}
