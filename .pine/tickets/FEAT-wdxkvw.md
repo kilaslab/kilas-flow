@@ -65,8 +65,22 @@ Landed on the integration branch feat/epic-sweep-2026-11-27 (worktree branch):
   over 12 rows (each delivered exactly once, -race), loopback port not admitted
   is refused while the admitted one works (no allow_private_networks).
 
-Remains: the PostgreSQL halves of the repository tests ran only as skips
-locally (no KILASFLOW_TEST_POSTGRES_DSN); CI runs them.
+After one review round: the lease owner is a per-claim token; Deactivate
+re-reads under the row lock (one workflow.deactivated per transition, and
+Delete of a live workflow writes one); the log shows the endpoint as scheme
+and host and egress refusals without the address; last_error is cut on a
+UTF-8 boundary; four dispatch lanes per process with notifications.timeout
+(default 10s) bounding an attempt; batched pruning; outbox rows are purged in
+the definitions step, after runs and workflows.
+
+Verified: make test, go vet, generator checks, SDK tests, docs build; the
+PostgreSQL halves (repository, database, tenantpurge, dispatcher race) passed
+against a throwaway pg17 container.
+
+Remains (decide before release): the signature does not cover webhook-id
+(kept identical to the inbound preset; docs say deduplicate on the signed
+body id), and off-the-shelf Standard Webhooks libraries will not verify these
+deliveries as they are.
 
 # Related Files
 

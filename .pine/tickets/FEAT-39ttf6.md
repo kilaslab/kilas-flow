@@ -54,6 +54,9 @@ Landed on top of FEAT-wdxkvw's outbox:
   CHANGELOG entries. End-to-end test: settings -> failed run -> signed
   delivery verified with the derived secret; a succeeded run sends nothing.
 
+Config: notifications.signing_key_env, max_attempts (8), retention (168h),
+timeout (10s). The log hides the endpoint's path and query from tenant keys.
+
 Not done: the "tenant-wide SSE stream" alternative (the criterion is an
 alternative to the delivered endpoint, so left open). No CLI helper prints a
 tenant's derived secret yet; the docs give the openssl pipeline.
