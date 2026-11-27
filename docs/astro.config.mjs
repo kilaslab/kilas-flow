@@ -1,4 +1,5 @@
 // @ts-check
+import { readdirSync } from 'node:fs';
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
@@ -33,6 +34,146 @@ import { baseLinks } from './plugins/base-links.mjs';
 // `kilas-flow`), which is why the override exists at all.
 const site = process.env.DOCS_SITE || 'https://kilaslab.github.io';
 const base = process.env.DOCS_BASE || '/kilas-flow';
+
+// The sidebar is written out by hand, group by group, because the grouping is
+// the information architecture: an integrator looks for "embed", "API" or
+// "build nodes" before looking for a directory name, and the directories were
+// never arranged that way. Pages therefore keep their URLs (nothing is moved,
+// so no link in the wild breaks) and the sidebar says where they belong.
+//
+// The price of a hand-written list is that a new page can be forgotten. The
+// check below turns that into a failed build: every page under
+// `src/content/docs/` must be listed in the sidebar below or sit in a directory
+// the sidebar autogenerates, so the navigation cannot grow an orphan. The home
+// page and the 404 page are the two that are deliberately in no group.
+const sidebar = [
+	{
+		label: 'Start',
+		items: [
+			{ label: 'What KilasFlow is', slug: 'start/what-kilasflow-is' },
+			{ label: 'Install', slug: 'start/install' },
+			{ label: 'Your first workflow', slug: 'start/first-workflow' },
+		],
+	},
+	{
+		label: 'Embed in your SaaS',
+		items: [
+			{ label: 'SaaS integration playbook', slug: 'guides/saas-playbook' },
+			{ label: 'Embedding and multi-tenancy', slug: 'guides/embedding' },
+			{ label: 'Tenants, provisioning and identity', slug: 'operate/tenants' },
+			{ label: 'Tenancy and the embed boundary', slug: 'concepts/tenancy-and-embedding' },
+			{ label: 'White-label, localisation and go-live', slug: 'guides/white-label' },
+		],
+	},
+	{
+		label: 'Integrate via API',
+		items: [
+			{ label: 'Trigger workflows from your app', slug: 'guides/trigger-workflows' },
+			{ label: 'Get notified of results', slug: 'guides/get-notified' },
+			{ label: 'Using the host SDK', slug: 'guides/sdk' },
+			{ label: 'Idempotent requests', slug: 'guides/idempotency' },
+			{ label: 'Import and export n8n workflows', slug: 'guides/n8n-migration' },
+		],
+	},
+	{
+		label: 'Build nodes for your API',
+		items: [
+			{ label: 'Choose a path', slug: 'guides/build-nodes-for-your-api' },
+			{ label: 'Author a node pack', slug: 'guides/node-authoring' },
+			{ label: 'Generate a pack from OpenAPI', slug: 'guides/openapi-pack' },
+			{ label: 'App events as triggers', slug: 'guides/app-events' },
+			{ label: 'Tenant-scoped nodes', slug: 'guides/tenant-scoped-nodes' },
+			{ label: 'Community nodes', slug: 'guides/community-nodes' },
+			{ label: 'JavaScript sidecar', slug: 'operate/javascript-sidecar' },
+		],
+	},
+	{
+		label: 'Workflows',
+		items: [
+			{ label: 'Architecture', slug: 'concepts/architecture' },
+			{ label: 'The execution model', slug: 'concepts/execution-model' },
+			{ label: 'Items and lineage', slug: 'concepts/items-and-lineage' },
+			{ label: 'Expressions', slug: 'concepts/expressions' },
+			{ label: 'The node registry', slug: 'concepts/node-registry' },
+			{ label: 'Credentials', slug: 'concepts/credentials' },
+			{ label: 'Triggers and webhooks', slug: 'concepts/webhooks' },
+			{ label: 'Safety boundaries', slug: 'concepts/safety-boundaries' },
+			{ label: 'Datastore concurrency', slug: 'concepts/datastore-concurrency' },
+			{ label: 'Code (JavaScript)', slug: 'guides/code-javascript' },
+		],
+	},
+	{
+		label: 'Operate',
+		items: [
+			{ label: 'Deployment', slug: 'operate/deployment' },
+			{ label: 'Deploy for SaaS', slug: 'operate/deploy-for-saas' },
+			{ label: 'Configuration', slug: 'operate/configuration' },
+			{ label: 'Configuration reference', slug: 'operate/configuration-reference' },
+			{ label: 'Security posture', slug: 'operate/security' },
+			{ label: 'Metrics', slug: 'operate/metrics' },
+			{ label: 'Backups and upgrades', slug: 'operate/upgrades' },
+			{ label: 'Key rotation', slug: 'operate/key-rotation' },
+			{ label: 'Tenant deletion', slug: 'operate/tenant-deletion' },
+			{ label: 'Runtime benchmark vs n8n', slug: 'operate/benchmark' },
+		],
+	},
+	// Starlight 0.39 removed the `{ label, autogenerate }` shorthand; a group now
+	// always has `items`, and autogenerate is an entry inside it. Reference is
+	// the one group left on autogenerate: its pages are generated, and a
+	// regenerated page must appear without a config edit.
+	{ label: 'Reference', items: [{ autogenerate: { directory: 'reference' } }] },
+	{
+		label: 'About these docs',
+		items: [
+			{ label: 'Contributing', slug: 'contributing' },
+			{ label: 'The epic acceptance capstone', slug: 'operate/acceptance-capstone' },
+		],
+	},
+];
+
+assertNoOrphanPages(sidebar);
+
+/**
+ * Fail the build when a page is in no sidebar group.
+ *
+ * @param {Array<{ items?: any[] }>} groups
+ */
+function assertNoOrphanPages(groups) {
+	const listed = new Set();
+	const generatedDirectories = [];
+	const collect = (entries) => {
+		for (const entry of entries) {
+			if (entry.slug) listed.add(entry.slug);
+			if (entry.autogenerate) generatedDirectories.push(`${entry.autogenerate.directory}/`);
+			if (entry.items) collect(entry.items);
+		}
+	};
+	collect(groups);
+
+	const outsideAnyGroup = new Set(['index', '404']);
+	const root = new URL('./src/content/docs/', import.meta.url);
+	const orphans = [];
+	const walk = (directory, prefix) => {
+		for (const entry of readdirSync(directory, { withFileTypes: true })) {
+			if (entry.isDirectory()) {
+				walk(new URL(`${entry.name}/`, directory), `${prefix}${entry.name}/`);
+				continue;
+			}
+			const match = /^(.*)\.(md|mdx)$/.exec(entry.name);
+			if (!match) continue;
+			const slug = `${prefix}${match[1]}`;
+			if (outsideAnyGroup.has(slug) || listed.has(slug)) continue;
+			if (generatedDirectories.some((dir) => slug.startsWith(dir))) continue;
+			orphans.push(slug);
+		}
+	};
+	walk(root, '');
+	if (orphans.length > 0) {
+		throw new Error(
+			`These pages are in no sidebar group: ${orphans.join(', ')}. Add each to the sidebar in docs/astro.config.mjs.`,
+		);
+	}
+}
 
 export default defineConfig({
 	site,
@@ -96,32 +237,7 @@ export default defineConfig({
 				styleOverrides: { borderRadius: '0.5rem' },
 			},
 
-			// Start is ordered by hand because the order is the content: a reader
-			// meeting the project needs "what is this" before "install" before
-			// "first workflow". Every other group is autogenerated from its
-			// directory, so the six documentation tickets that fill this site add a
-			// page and get a sidebar entry without touching this file — which is the
-			// point of settling the structure before the prose.
-			sidebar: [
-				{
-					label: 'Start',
-					items: [
-						{ label: 'What KilasFlow is', slug: 'start/what-kilasflow-is' },
-						{ label: 'Install', slug: 'start/install' },
-						{ label: 'Your first workflow', slug: 'start/first-workflow' },
-					],
-				},
-				// Starlight 0.39 removed the `{ label, autogenerate }` shorthand; a
-				// group now always has `items`, and autogenerate is an entry inside it.
-				{ label: 'Concepts', items: [{ autogenerate: { directory: 'concepts' } }] },
-				{ label: 'Guides', items: [{ autogenerate: { directory: 'guides' } }] },
-				{ label: 'Operate', items: [{ autogenerate: { directory: 'operate' } }] },
-				{ label: 'Reference', items: [{ autogenerate: { directory: 'reference' } }] },
-				{
-					label: 'About these docs',
-					items: [{ label: 'Contributing', slug: 'contributing' }],
-				},
-			],
+			sidebar,
 
 			plugins: [
 				// Coding agents are a first-class audience of this product — the
@@ -130,14 +246,19 @@ export default defineConfig({
 				// plugin serves /llms.txt (a curated table of contents), and
 				// /llms-full.txt with every page's body, per llmstxt.org. The
 				// integrator path leads: a host's engineer lands on the start
-				// track and the embedding guide before the operator material,
-				// and an agent reading the site gets the same order.
+				// track, the playbook and the three tracks' entry pages before
+				// the operator material, and an agent reading the site gets the
+				// same order.
 				starlightLlmsTxt({
 					promote: [
 						'index*',
 						'start/**',
+						'guides/saas-playbook',
 						'guides/embedding',
 						'concepts/tenancy-and-embedding',
+						'guides/trigger-workflows',
+						'guides/get-notified',
+						'guides/build-nodes-for-your-api',
 					],
 					details:
 						'The documentation describes the system that exists on main — features not yet shipped are marked as such rather than omitted. Counts the prose quotes (node types, operations, credential types) are generated from the product by scripts/docs-facts and cannot drift.',
@@ -146,7 +267,7 @@ export default defineConfig({
 							label: 'Agent skills bundle',
 							url: 'https://github.com/kilaslab/kilas-flow/tree/main/skills',
 							description:
-								'Fifteen skills embedded in the binary; `kilasflow skills install --target claude` (or codex, agents) installs them for a coding agent. `kilasflow mcp serve` exposes the same verbs over stdio.',
+								'The skills embedded in the binary; `kilasflow skills install --target claude` (or codex, agents) installs them for a coding agent. `kilasflow mcp serve` exposes the same verbs over stdio.',
 						},
 					],
 				}),

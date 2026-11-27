@@ -109,6 +109,14 @@ fails by name at its own deadline — 24 hours when the node names none — rath
 than staying parked for ever. A wait inside a called sub-workflow is refused
 outright, because a child runs inline in its caller.
 
+**There are no outbound execution events.** KilasFlow starts runs from your
+app, but it does not call your app back when a run finishes or fails. There is
+no webhook subscription, no signed delivery and no delivery log. You learn about
+results by polling the execution list, by following one run's event stream, or
+by building the call into the workflow itself with an error workflow or a final
+HTTP Request node. [Get notified of results](/guides/get-notified/) covers each.
+A tenant-level notification feed is planned and needs a durable outbox first.
+
 **Scheduling is single-process.** The cron scheduler claims due rows
 transactionally, so a second instance will not double-fire, but distributed
 scheduling is not designed yet.

@@ -228,8 +228,8 @@ what it claims.
 
 | Source | Meaning | Status |
 | --- | --- | --- |
-| `builtin` | compiled into this binary | 46 types today |
-| `pack` | a declarative node pack | 3 types today |
+| `builtin` | compiled into this binary | the types counted above as compiled in |
+| `pack` | a declarative node pack | the shipped packs, plus any pack loaded from `packs.dir` |
 | `sidecar` | an implementation running outside this process | registered at boot when `sidecar.enabled` is true; see [JavaScript sidecar](/operate/javascript-sidecar/) |
 
 `Register` adds a built-in. `RegisterFrom` adds a pack or a sidecar and
