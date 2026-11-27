@@ -393,6 +393,46 @@ var mappings = []mapping{
 		exportTypeVersion: 2, toKilas: compareDatasetsToKilas, toN8N: compareDatasetsToN8N,
 		refuseKilas: refuseUnsupportedCompareDatasetsOption,
 	},
+	// The file and format family: pure-Go nodes over item data and the binary
+	// store. Their parameter names are n8n's own, so the translators copy.
+	{
+		n8nType: "n8n-nodes-base.crypto", kilasType: CryptoNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: cryptoToKilas, toN8N: cryptoToN8N,
+		refuseKilas: refuseUnsupportedCryptoAlgorithm,
+	},
+	{
+		n8nType: "n8n-nodes-base.xml", kilasType: XMLNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: xmlToKilas, toN8N: xmlToN8N,
+		refuseKilas: refuseUnsupportedXMLOption,
+	},
+	{
+		n8nType: "n8n-nodes-base.markdown", kilasType: MarkdownNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1, toKilas: markdownToKilas, toN8N: markdownToN8N,
+		refuseKilas: refuseUnsupportedMarkdownOption,
+	},
+	{
+		n8nType: "n8n-nodes-base.compression", kilasType: CompressionNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, toKilas: compressionToKilas, toN8N: compressionToN8N,
+	},
+	{
+		n8nType: "n8n-nodes-base.html", kilasType: HTMLNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.2, toKilas: htmlToKilas, toN8N: htmlToN8N,
+		refuseKilas: refuseUnsupportedHTMLOption,
+	},
+	{
+		n8nType: "n8n-nodes-base.convertToFile", kilasType: ConvertToFileNodeType, kilasVersion: workflow.V(1),
+		exportTypeVersion: 1.1, toKilas: convertToFileToKilas, toN8N: convertToFileToN8N,
+		refuseKilas: refuseUnsupportedConvertToFile,
+	},
+	// The legacy Spreadsheet File node is two native nodes: reading is Extract
+	// From File and writing is Convert to File, picked from the node's own
+	// operation. The advertised pair names the writing half; importOnly,
+	// because an imported node exports as the native node it became.
+	{
+		n8nType: "n8n-nodes-base.spreadsheetFile", kilasType: ConvertToFileNodeType, kilasVersion: workflow.V(1),
+		kilasTypeFor: spreadsheetFileKilasType, toKilas: spreadsheetFileToKilas,
+		refuseKilas: refuseUnsupportedSpreadsheetFile, importOnly: true,
+	},
 	// The Item Lists node: one selector, six operations, each a native node.
 	// kilasTypeFor picks the target from the selector the way it does for the
 	// Code node's languages; the advertised pair names the default operation's
@@ -1164,8 +1204,8 @@ func unmappedReason(nodeType string) string {
 // node genuinely does belong here — a hint that names a node that cannot do
 // the job would send the author somewhere worse than the honest absence.
 var replacementHints = map[string]string{
-	"n8n-nodes-base.readBinaryFile":  "The closest native node is Extract From File (kilasflow.extractFromFile), which parses every format this node read once the bytes are in the workflow; the path-reading half needs an HTTP Request node beside it.",
-	"n8n-nodes-base.spreadsheetFile": "The closest native node is Extract From File (kilasflow.extractFromFile), which reads CSV, XLSX and the other spreadsheet formats from workflow binary data; its write half has no equivalent here.",
+	"n8n-nodes-base.moveBinaryData": "The closest native nodes are Extract From File (kilasflow.extractFromFile), which reads a file in workflow binary data into JSON, and Convert to File (kilasflow.convertToFile), which writes JSON or text to a file in binary data.",
+	"n8n-nodes-base.readBinaryFile": "The closest native node is Extract From File (kilasflow.extractFromFile), which parses every format this node read once the bytes are in the workflow; the path-reading half needs an HTTP Request node beside it.",
 	// The plural form of Read Binary File: the same node over a list of paths,
 	// and the same answer. (The disk is the part with no equivalent: see
 	// deliberatelyUnavailable.)

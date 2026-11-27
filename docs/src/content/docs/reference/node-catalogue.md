@@ -9,7 +9,7 @@ sidebar:
 
 > **Generated reference — KilasFlow `0.1.0-dev`.** Produced from the node catalogue a real binary serves at `GET /api/v1/node-types`, not hand-written. The per-type counts and every table below are the committed output, and `make generate-node-catalogue-check` fails when the catalogue changes without a regeneration.
 
-A default install serves **84 distinct node types** across **91 type-and-version pairs**: 80 types (85 pairs) compiled into the binary and 4 types (6 pairs) from the declarative packs it ships with. This page lists every one — the index table first, then a section per type with its parameters, ports, credential requirements and the n8n node it maps to. What a version *resolves to* is in [the node registry](/concepts/node-registry/); what a parameter *does* at run time is in each node's own documentation, where it carries one.
+A default install serves **90 distinct node types** across **97 type-and-version pairs**: 86 types (91 pairs) compiled into the binary and 4 types (6 pairs) from the declarative packs it ships with. This page lists every one — the index table first, then a section per type with its parameters, ports, credential requirements and the n8n node it maps to. What a version *resolves to* is in [the node registry](/concepts/node-registry/); what a parameter *does* at run time is in each node's own documentation, where it carries one.
 
 The catalogue a particular install serves can be smaller: a type scoped to other tenants is absent from `GET /node-types` by design (see [Tenant-scoped nodes](/guides/tenant-scoped-nodes/)), and an install with `KILASFLOW_PACKS_DIR` set serves its packs beside these. Ask your own instance for the truth: `curl -s $KILASFLOW_HOST/api/v1/node-types | jq -r '.[].type'`.
 
@@ -28,6 +28,9 @@ The catalogue a particular install serves can be smaller: a type scoped to other
 | [`kilasflow.chatTrigger`](#kilasflowchattrigger) | When chat message received | 1 | Triggers | builtin | — |
 | [`kilasflow.code`](#kilasflowcode) | Code | 1 | Core | builtin | — |
 | [`kilasflow.compareDatasets`](#kilasflowcomparedatasets) | Compare Datasets | 1 | Transform | builtin | — |
+| [`kilasflow.compression`](#kilasflowcompression) | Compression | 1 | Transform | builtin | — |
+| [`kilasflow.convertToFile`](#kilasflowconverttofile) | Convert to File | 1 | Transform | builtin | — |
+| [`kilasflow.crypto`](#kilasflowcrypto) | Crypto | 1 | Transform | builtin | — |
 | [`kilasflow.datastore`](#kilasflowdatastore) | Data table | 1 | Datastore | builtin | — |
 | [`kilasflow.datastoreTool`](#kilasflowdatastoretool) | Data table Tool | 1 | AI | builtin | — |
 | [`kilasflow.dateTime`](#kilasflowdatetime) | Date & Time | 1 | Transform | builtin | — |
@@ -52,6 +55,7 @@ The catalogue a particular install serves can be smaller: a type scoped to other
 | [`kilasflow.googleSheetsTool`](#kilasflowgooglesheetstool) | Google Sheets Tool | 1 | AI | builtin | — |
 | [`kilasflow.googleSheetsTrigger`](#kilasflowgooglesheetstrigger) | Google Sheets Trigger | 1 | Triggers | builtin | — |
 | [`kilasflow.hostEvent`](#kilasflowhostevent) | Host Event | 1 | Triggers | builtin | — |
+| [`kilasflow.html`](#kilasflowhtml) | HTML | 1 | Transform | builtin | — |
 | [`kilasflow.httpRequest`](#kilasflowhttprequest) | HTTP Request | 1 | Core | builtin | `n8n-nodes-base.httpRequest`, `@aldinokemal2104/n8n-nodes-gowa.gowa`, `n8n-nodes-gowa.gowa` |
 | [`kilasflow.httpTool`](#kilasflowhttptool) | HTTP Request Tool | 1 | AI | builtin | `@n8n/n8n-nodes-langchain.toolHttpRequest` |
 | [`kilasflow.if`](#kilasflowif) | IF | 1 | Core | builtin | `n8n-nodes-base.if` |
@@ -62,6 +66,7 @@ The catalogue a particular install serves can be smaller: a type scoped to other
 | [`kilasflow.lmChatOpenRouter`](#kilasflowlmchatopenrouter) | OpenRouter Chat Model | 1 | AI | builtin | `@n8n/n8n-nodes-langchain.lmChatOpenRouter` |
 | [`kilasflow.loop`](#kilasflowloop) | Loop Over Items | 1 | Flow | builtin | — |
 | [`kilasflow.manual`](#kilasflowmanual) | Manual Trigger | 1 | Triggers | builtin | `n8n-nodes-base.manualTrigger` |
+| [`kilasflow.markdown`](#kilasflowmarkdown) | Markdown | 1 | Transform | builtin | — |
 | [`kilasflow.mcpClientTool`](#kilasflowmcpclienttool) | MCP Client Tool | 1 | AI | builtin | `@n8n/n8n-nodes-langchain.mcpClientTool` |
 | [`kilasflow.memoryBuffer`](#kilasflowmemorybuffer) | Simple Memory | 1 | AI | builtin | `@n8n/n8n-nodes-langchain.memoryBufferWindow` |
 | [`kilasflow.merge`](#kilasflowmerge) | Merge | 1 | Core | builtin | `n8n-nodes-base.merge` |
@@ -97,6 +102,7 @@ The catalogue a particular install serves can be smaller: a type scoped to other
 | [`kilasflow.wait`](#kilasflowwait) | Wait | 1 | Flow | builtin | — |
 | [`kilasflow.webhook`](#kilasflowwebhook) | Webhook | 1 | Triggers | builtin | `n8n-nodes-base.webhook` |
 | [`kilasflow.workflowTool`](#kilasflowworkflowtool) | Workflow Tool | 1 | AI | builtin | `@n8n/n8n-nodes-langchain.toolWorkflow` |
+| [`kilasflow.xml`](#kilasflowxml) | XML | 1 | Transform | builtin | — |
 | [`pack.telegram`](#packtelegram) | Telegram | 1 | Messaging | pack | — |
 | [`pack.telegramTool`](#packtelegramtool) | Telegram Tool | 1 | AI | pack | — |
 | [`pack.waha`](#packwaha) | WAHA | 202409, 202502 | Messaging | pack | — |
@@ -359,6 +365,92 @@ Parameters:
 | `options` | collection | no | — |  |
 | `options.skipFields` | string | no | — | Comma-separated field names left out of the comparison, so a changing timestamp does not make every pair different. |
 | `options.disableDotNotation` | boolean | no | `false` | On, a field named `a.b` is a field whose name contains a dot rather than a path into `a`. |
+
+## kilasflow.compression
+
+Compresses files into a ZIP archive or gzip files, or unpacks ZIP and gzip files, in the item's binary data.
+
+| | |
+| --- | --- |
+| Display name | Compression |
+| Category | Transform (transform) |
+| Versions | `1` |
+| Inputs | `main` (main) |
+| Outputs | `main` (main) |
+| Credentials | — |
+| n8n equivalent | — |
+
+Parameters:
+
+| Parameter | Kind | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `operation` | options | yes | `decompress` |  Options: `compress`, `decompress`. |
+| `binaryPropertyName` | string | no | `data` | The binary field(s) on the item that hold the files. Several fields are separated by commas. |
+| `outputFormat` | options | no | `zip` | Zip packs every input file into one archive. Gzip compresses each file on its own. Options: `gzip`, `zip`. |
+| `fileName` | string | no | — | The archive's file name when the format is zip. Empty names it data.zip. |
+| `binaryPropertyOutput` | string | no | `data` | The binary field the zip archive is written to. |
+| `outputPrefix` | string | no | `file_` | Decompress names each unpacked file's binary field this prefix plus a number from 0. Gzip compress does the same with its own output. |
+
+## kilasflow.convertToFile
+
+Turns items into a file in binary data: CSV, XLSX, JSON, a text file, or a file decoded from a base64 string.
+
+| | |
+| --- | --- |
+| Display name | Convert to File |
+| Category | Transform (transform) |
+| Versions | `1` |
+| Inputs | `main` (main) |
+| Outputs | `main` (main) |
+| Credentials | — |
+| n8n equivalent | — |
+
+Parameters:
+
+| Parameter | Kind | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `operation` | options | yes | `csv` | CSV and XLSX write one file with a row per item. JSON writes the items' data. Text file and Base64 write one file per item from one field. Options: `csv`, `xlsx`, `toJson`, `toText`, `toBinary`. |
+| `mode` | options | no | `once` |  Options: `once`, `each`. |
+| `sourceProperty` | string | no | — | The field that holds the text, or the base64 string. Dot notation reaches a nested field. |
+| `binaryPropertyName` | string | no | `data` | The binary field the file is written to. |
+| `options` | collection | no | — |  |
+| `options.fileName` | string | no | — | The file's name. Empty names it file.csv, file.xlsx, file.json, file.txt or file. |
+| `options.delimiter` | string | no | `,` | The character that separates the columns. |
+| `options.headerRow` | boolean | no | `true` | Write the field names as the first row. |
+| `options.sheetName` | string | no | `Sheet` | The worksheet's name, up to 31 characters and without []:*?/\. |
+| `options.format` | boolean | no | `false` | Indent the JSON so it reads easily. |
+| `options.encoding` | options | no | `utf8` | Text files are written as UTF-8. Options: `utf8`. |
+| `options.addBOM` | boolean | no | `false` | Start a text file with a byte order mark, which some spreadsheet programs need to read UTF-8. |
+| `options.mimeType` | string | no | — | The file's media type. Empty detects it from the bytes. |
+
+## kilasflow.crypto
+
+Hashes or signs a value, or generates a random string or UUID, and writes the result to a field.
+
+| | |
+| --- | --- |
+| Display name | Crypto |
+| Category | Transform (transform) |
+| Versions | `1` |
+| Inputs | `main` (main) |
+| Outputs | `main` (main) |
+| Credentials | — |
+| n8n equivalent | — |
+
+Parameters:
+
+| Parameter | Kind | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `action` | options | yes | `hash` | Hash a string, authenticate it with a secret (Hmac), sign it with an RSA or EC private key, or generate random text. Options: `hash`, `hmac`, `sign`, `generate`. |
+| `type` | options | no | `MD5` | The digest. MD5 and SHA1 are checksums, not protection against a determined attacker. Options: `MD5`, `SHA1`, `SHA256`, `SHA384`, `SHA512`, `SHA3-224`, `SHA3-256`, `SHA3-384`, `SHA3-512`. |
+| `value` | string | no | — | The text to hash or sign. |
+| `dataPropertyName` | string | no | `data` | The field the result is written to. Dot notation reaches a nested field. |
+| `secret` | string | no | — | The key the Hmac is computed with. |
+| `algorithm` | options | no | `RSA-SHA256` | The signature algorithm. A PEM key that is an elliptic-curve key signs with ECDSA over the same digest. Options: `RSA-SHA1`, `RSA-SHA256`, `RSA-SHA384`, `RSA-SHA512`. |
+| `encoding` | options | no | `hex` | How the digest or signature bytes are written as text. Options: `hex`, `base64`. |
+| `privateKey` | string | no | — | A PEM private key (PKCS#1, PKCS#8 or SEC1). |
+| `encodingType` | options | no | `uuid` | A random string in this alphabet, or a version 4 UUID. Options: `ascii`, `base64`, `hex`, `uuid`. |
+| `stringLength` | number | no | `32` | How many characters to generate. |
 
 ## kilasflow.datastore
 
@@ -1009,6 +1101,40 @@ Parameters:
 | `events` | multiOptions | yes | — | The host event types this workflow starts for. The list is offered by the node packs this server carries that declare a host event catalogue — the host's own product pack is the usual author — and every active workflow listening for a published type runs when it is published. |
 | `triggerFilter` | conditions | no | — | Conditions checked against the trigger item before a run is queued. An event that does not match is acknowledged and dropped without creating an execution. Leave empty to run for every event. |
 
+## kilasflow.html
+
+Extracts values from HTML with CSS selectors, writes an HTML table from items, or renders an HTML template.
+
+| | |
+| --- | --- |
+| Display name | HTML |
+| Category | Transform (transform) |
+| Versions | `1` |
+| Inputs | `main` (main) |
+| Outputs | `main` (main) |
+| Credentials | — |
+| n8n equivalent | — |
+
+Parameters:
+
+| Parameter | Kind | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `operation` | options | yes | `generateHtmlTemplate` |  Options: `generateHtmlTemplate`, `extractHtmlContent`, `convertToHtmlTable`. |
+| `html` | string | no | — | The HTML to write to the html field. Expressions such as {{ $json.name }} are filled in per item. |
+| `sourceData` | options | no | `json` | Where the HTML comes from: a field of the item, or a binary file. Options: `json`, `binary`. |
+| `dataPropertyName` | string | no | `data` | The JSON field, or the binary field, that holds the HTML. |
+| `extractionValues` | fixedCollection | no | — | What to read out of the HTML. Each row becomes one field of the output item. |
+| `options` | collection | no | — |  |
+| `options.trimValues` | boolean | no | `true` | Remove whitespace from the start and end of each value. |
+| `options.cleanUpText` | boolean | no | `true` | Trim each value and turn every run of whitespace and line breaks into one space. |
+| `options.capitalize` | boolean | no | `false` | Capitalise the first letter of each column header. |
+| `options.customStyling` | boolean | no | `false` | Add the attribute options below to the table. Off, the table is written without attributes. |
+| `options.caption` | string | no | — | A caption for the table. |
+| `options.tableAttributes` | string | no | — | Attributes for the table element, written as they would be in HTML: class="data" id="report". |
+| `options.headerAttributes` | string | no | — | Attributes for each header cell. |
+| `options.rowAttributes` | string | no | — | Attributes for each body row. |
+| `options.cellAttributes` | string | no | — | Attributes for each body cell. |
+
 ## kilasflow.httpRequest
 
 Calls an external HTTP API and returns its response as items.
@@ -1273,6 +1399,46 @@ Starts a workflow from the editor or API.
 | Outputs | `main` (main) |
 | Credentials | — |
 | n8n equivalent | `n8n-nodes-base.manualTrigger` |
+
+## kilasflow.markdown
+
+Converts Markdown to HTML, or HTML to Markdown, and writes the result to a field.
+
+| | |
+| --- | --- |
+| Display name | Markdown |
+| Category | Transform (transform) |
+| Versions | `1` |
+| Inputs | `main` (main) |
+| Outputs | `main` (main) |
+| Credentials | — |
+| n8n equivalent | — |
+
+Parameters:
+
+| Parameter | Kind | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `mode` | options | yes | `markdownToHtml` |  Options: `markdownToHtml`, `htmlToMarkdown`. |
+| `markdown` | string | no | — | The Markdown to convert. |
+| `html` | string | no | — | The HTML to convert. |
+| `destinationKey` | string | no | `data` | The field the result is written to. Dot notation reaches a nested field. The rest of the item is kept. |
+| `options` | collection | no | — |  |
+| `options.openLinksInNewWindow` | boolean | no | `false` | Give every link target="_blank". |
+| `options.simpleLineBreaks` | boolean | no | `false` | Turn a single line break inside a paragraph into <br>. |
+| `options.strikethrough` | boolean | no | `true` | Read ~~text~~ as struck-through text. |
+| `options.tables` | boolean | no | `true` | Read pipe tables. |
+| `options.tasklists` | boolean | no | `true` | Read - [ ] and - [x] as check boxes. |
+| `options.simplifiedAutoLink` | boolean | no | `false` | Turn a bare web address into a link. |
+| `options.noHeaderId` | boolean | no | `false` | Leave the id attribute off headings. |
+| `options.completeHTMLDocument` | boolean | no | `false` | Wrap the result in a full HTML page. |
+| `options.allowRawHtml` | boolean | no | `true` | Keep HTML written inside the Markdown, as Markdown specifies. Turn off to replace it with a comment when the Markdown comes from someone you do not trust. |
+| `options.headingStyle` | options | no | `atx` |  Options: `atx`, `setext`. |
+| `options.bulletMarker` | options | no | `-` |  Options: `-`, `*`, `+`. |
+| `options.emDelimiter` | options | no | `*` |  Options: `*`, `_`. |
+| `options.strongDelimiter` | options | no | `**` |  Options: `**`, `__`. |
+| `options.fence` | options | no | ````` |  Options: `````, `~~~`. |
+| `options.hr` | string | no | `* * *` | What a horizontal rule is written as. |
+| `options.codeBlockStyle` | options | no | `fenced` | Code blocks are always fenced. Options: `fenced`. |
 
 ## kilasflow.mcpClientTool
 
@@ -2200,6 +2366,42 @@ Parameters:
 | `toolDescription` | string | yes | — | What the tool does, written for the model. |
 | `workflowId` | resourceLocator | yes | — | The workflow to run. It must belong to this tenant and be active. The model's arguments become the sub-workflow's input item. Modes: `list`, `id`. |
 | `workflowInputs` | resourceMapper | no | — | What the sub-workflow receives, one column per field its trigger declares. A column set to the model is filled in by the model when it calls the tool, typed as the field is declared. A column you fix is sent exactly as you wrote it (expressions are allowed) and is not offered to the model. A field you leave out stays the model's. Plain JSON written in this property by an earlier version still works: each key in it is fixed. |
+
+## kilasflow.xml
+
+Converts an XML document held in a field into JSON, or an item's JSON into an XML document.
+
+| | |
+| --- | --- |
+| Display name | XML |
+| Category | Transform (transform) |
+| Versions | `1` |
+| Inputs | `main` (main) |
+| Outputs | `main` (main) |
+| Credentials | — |
+| n8n equivalent | — |
+
+Parameters:
+
+| Parameter | Kind | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `mode` | options | yes | `xmlToJson` | XML to JSON replaces the item with the parsed document. JSON to XML replaces the item with one field holding the document. Options: `xmlToJson`, `jsonToxml`. |
+| `dataPropertyName` | string | no | `data` | XML to JSON: the field that holds the XML text. JSON to XML: the field the XML text is written to. |
+| `options` | collection | no | — |  |
+| `options.attrkey` | string | no | `$` | The key an element's attributes are collected under (when they are not merged into the element). |
+| `options.charkey` | string | no | `_` | The key an element's text is stored under when the element also has attributes or children. |
+| `options.explicitArray` | boolean | no | `false` | Always wrap an element's children in an array, even when there is only one. |
+| `options.explicitRoot` | boolean | no | `true` | Keep the root element's name as the top-level key. |
+| `options.ignoreAttrs` | boolean | no | `false` | Drop element attributes. |
+| `options.mergeAttrs` | boolean | no | `true` | Write attributes as fields of the element, beside its children, instead of under the attribute key. |
+| `options.normalize` | boolean | no | `false` | Collapse runs of whitespace in text to one space. |
+| `options.normalizeTags` | boolean | no | `false` | Lower-case every element name. |
+| `options.trim` | boolean | no | `false` | Trim whitespace from the start and end of text. |
+| `options.includeWhiteChars` | boolean | no | `false` | Keep text that is only whitespace, which is dropped otherwise. |
+| `options.cdata` | boolean | no | `false` | Wrap text that contains &, < or > in a CDATA section instead of escaping it. |
+| `options.headless` | boolean | no | `false` | Leave out the XML declaration at the top of the document. |
+| `options.rootName` | string | no | `root` | The root element's name. An item with a single top-level field uses that field as the root instead. |
+| `options.renderOpts` | collection | no | — | How the document is laid out. |
 
 ## pack.telegram
 
