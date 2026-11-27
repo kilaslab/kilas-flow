@@ -157,6 +157,7 @@ func TestAScopedKeyReachesWhatItsScopesName(t *testing.T) {
 		{"creates a variable", http.MethodPost, "/api/v1/variables", writer, 0, ""},
 		{"updates a variable", http.MethodPut, "/api/v1/variables/var_1", writer, 0, ""},
 		{"deletes a variable", http.MethodDelete, "/api/v1/variables/var_1", writer, 0, ""},
+		{"lists notification deliveries", http.MethodGet, "/api/v1/notifications/deliveries", reader, 0, ""},
 		{"runs a workflow", http.MethodPost, "/api/v1/workflows/wf_1/run", runner, 0, ""},
 		{"lists datastores", http.MethodGet, "/api/v1/datastores", datastoreReader, 0, ""},
 		{"reads a datastore", http.MethodGet, "/api/v1/datastores/ds_1", datastoreReader, 0, ""},
@@ -226,6 +227,8 @@ func TestAWorkflowBoundKeyReadsAnotherWorkflowAsMissing(t *testing.T) {
 		// neither enumerate them nor change what its siblings read.
 		{"cannot list variables", http.MethodGet, "/api/v1/variables", bound, http.StatusForbidden, "cannot manage variables"},
 		{"cannot change a variable", http.MethodPut, "/api/v1/variables/var_1", bound, http.StatusForbidden, "cannot manage variables"},
+		// The delivery log spans every workflow of the tenant.
+		{"cannot read notification deliveries", http.MethodGet, "/api/v1/notifications/deliveries", bound, http.StatusForbidden, "cannot read notification deliveries"},
 		// Rows under one datastore id are still data-plane, and the binding is
 		// about the workflow rather than about which tables exist.
 		{"still reads rows", http.MethodGet, "/api/v1/datastores/ds_1/rows", bound, 0, ""},

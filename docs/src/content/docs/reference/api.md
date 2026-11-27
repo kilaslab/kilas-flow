@@ -17,7 +17,7 @@ When the two disagree, compare versions: every page here states the server versi
 
 ## Operations
 
-89 operations, all under `/api/v1`, in 13 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
+90 operations, all under `/api/v1`, in 14 groups. Paths, HTTP methods, and operation ids are stable — see [API contract and stability](/reference/api-contract/).
 
 | Group | Operations | Contents |
 | --- | --- | --- |
@@ -27,6 +27,7 @@ When the two disagree, compare versions: every page here states the server versi
 | [Authentication and keys](/reference/api/auth/) | 7 | Sessions, API keys, and stream tickets. |
 | [Schedules](/reference/api/schedules/) | 4 | Cron-style triggers owned by a workflow. |
 | [Variables](/reference/api/variables/) | 4 | The tenant’s key/value pairs every workflow reads as `$vars.KEY`. |
+| [Notifications](/reference/api/notifications/) | 1 | The signed outbound notifications a tenant receives, and their delivery log. |
 | [Host events](/reference/api/host-events/) | 1 | The recommended host → workflow path: publish one event, every active workflow listening for it runs. |
 | [Node types](/reference/api/nodes/) | 5 | The node catalogue, icons, load-options, load-schema, and the expression grammar. |
 | [Datastores](/reference/api/datastores/) | 18 | Tenant-owned row stores: tables, columns, rows, and CSV import and export. |

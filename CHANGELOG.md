@@ -49,6 +49,24 @@ Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
   counted as filtered; a host event it refuses appears in the publish
   response's `filtered` list with `reason: "filter"`. Migration 000032 stores
   the filter with each host-event subscription.
+- Tenant notifications over a durable outbox. A tenant's settings gain a
+  `notifications` section naming one endpoint and its events
+  (`execution.failed` by default; `execution.completed`,
+  `workflow.activated` and `workflow.deactivated` on request). The event is
+  written to a new `outbound_events` table (migration 000034) in the same
+  transaction as the change it reports, and a leased dispatcher in every
+  worker process posts it through the egress policy, signed like the inbound
+  `standardWebhooks` preset (`webhook-id`, `webhook-timestamp`, `v1,`
+  HMAC-SHA256 over `timestamp.body`) with a secret derived per tenant from
+  `notifications.signing_key_env`. Delivery is at least once, retried with a
+  capped exponential backoff and jitter, each attempt bounded by
+  `notifications.timeout`, and dead-lettered after
+  `notifications.max_attempts`. `GET /api/v1/notifications/deliveries` lists
+  the tenant's events with attempts, last status and next retry (the endpoint
+  shown as scheme and host only); the log is
+  kept for `notifications.retention` (a week by default) and removed with the
+  tenant. Nothing is written while no signing key is set. See
+  [Notifications](docs/src/content/docs/operate/notifications.md).
 - Host-declared confinement for embed sessions. `POST /embed-sessions`
   accepts an optional `allow: {credentials, datastores, workflows}`, each a
   list of ids (at most 50) or `"tenant"`, for a workflow session. Every id is

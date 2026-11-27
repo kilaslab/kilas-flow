@@ -2,7 +2,7 @@
 title: Embed
 description: "Mint an embed session: one workflow or one datastore, a scope list, one origin. Generated from the live OpenAPI document."
 sidebar:
-  order: 12
+  order: 13
 ---
 
 <!-- Generated from the live OpenAPI document by scripts/generate-api-reference.mjs — do not edit by hand. -->

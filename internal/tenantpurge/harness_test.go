@@ -518,6 +518,14 @@ func (env *purgeEnv) seedTenant(id string) *tenantSeed {
 	).Error; err != nil {
 		env.t.Fatalf("seed rate_limit_buckets(%s) error = %v", id, err)
 	}
+	// One outbound event, which the triggers step claims with the rest of
+	// the tenant's delivery rows.
+	if err := env.db.Exec(
+		"INSERT INTO "+env.prefix+"outbound_events (id, tenant_id, event_type, subject_id, endpoint, payload, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"evt-seed-"+id, id, "execution.failed", stored.ID, "https://host.example/hooks", []byte(`{}`), "pending", time.Now(), time.Now(),
+	).Error; err != nil {
+		env.t.Fatalf("seed outbound_events(%s) error = %v", id, err)
+	}
 
 	// The static data its Code nodes keep between runs.
 	if err := repository.NewStaticDataStore(env.db.DB).SaveStaticData(ctx, tenant, stored.ID, []byte(`{"global":{"cell":"`+seed.cell+`"}}`)); err != nil {

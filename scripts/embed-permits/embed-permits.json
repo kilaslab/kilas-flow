@@ -2147,6 +2147,47 @@
       },
       "requires": "workflow:read"
     },
+    "list-notification-deliveries": {
+      "method": "GET",
+      "path": "/api/v1/notifications/deliveries",
+      "verdicts": {
+        "datastore:read": {
+          "allow": false,
+          "status": 403,
+          "detail": "This embed session cannot read notification deliveries."
+        },
+        "datastore:write": {
+          "allow": false,
+          "status": 403,
+          "detail": "This embed session cannot read notification deliveries."
+        },
+        "workflow:activate": {
+          "allow": false,
+          "status": 403,
+          "detail": "This embed session cannot read notification deliveries."
+        },
+        "workflow:publish": {
+          "allow": false,
+          "status": 403,
+          "detail": "This embed session cannot read notification deliveries."
+        },
+        "workflow:read": {
+          "allow": false,
+          "status": 403,
+          "detail": "This embed session cannot read notification deliveries."
+        },
+        "workflow:run": {
+          "allow": false,
+          "status": 403,
+          "detail": "This embed session cannot read notification deliveries."
+        },
+        "workflow:write": {
+          "allow": false,
+          "status": 403,
+          "detail": "This embed session cannot read notification deliveries."
+        }
+      }
+    },
     "list-schedules": {
       "method": "GET",
       "path": "/api/v1/schedules",

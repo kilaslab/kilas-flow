@@ -409,6 +409,19 @@ func permits(subject subject, r *http.Request) (int, string) {
 		}
 		return refused(subject, subject.Allows(embed.ScopeWrite), "is read-only")
 
+	case path == "/notifications" || strings.HasPrefix(path, "/notifications/"):
+		// The delivery log covers every workflow of the tenant, and its
+		// payloads name executions and workflows a confined credential was
+		// never given: a tenant-level surface, refused to an embed session and
+		// a workflow-bound key exactly like the schedules above.
+		if subject.Kind() != kindKey || bound != "" {
+			return http.StatusForbidden, subject.Denial("cannot read notification deliveries")
+		}
+		if r.Method == http.MethodGet {
+			return refused(subject, subject.Allows(embed.ScopeRead), "cannot read")
+		}
+		return http.StatusForbidden, subject.Denial("cannot use this endpoint")
+
 	case path == "/resume" || strings.HasPrefix(path, "/resume/"):
 		// Approval resume is never available to a confined credential:
 		// resuming someone else's approval is the confused-deputy shape the

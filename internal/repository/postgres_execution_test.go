@@ -70,6 +70,7 @@ func eachDriver(t *testing.T, run func(t *testing.T, db *database.DB)) {
 		// invisible until a test tried to count what was in the table.
 		t.Cleanup(func() {
 			db.Exec(`DELETE FROM idempotency_keys WHERE tenant_id LIKE 'drv-%'`)
+			db.Exec(`DELETE FROM outbound_events WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM poll_cursors WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM host_event_deliveries WHERE tenant_id LIKE 'drv-%'`)
 			db.Exec(`DELETE FROM host_event_subscriptions WHERE tenant_id LIKE 'drv-%'`)

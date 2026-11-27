@@ -127,6 +127,20 @@ describe('authentication and keys', () => {
 	});
 });
 
+describe('notifications', () => {
+	it('reads the delivery log with its filters', async () => {
+		const { calls, fetchImpl } = recordingFetch({ body: [] });
+		await client(fetchImpl).listNotificationDeliveries({ status: 'dead', limit: 10 });
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0]!.init.method).toBe('GET');
+		const url = new URL(calls[0]!.url);
+		expect(url.pathname).toBe('/api/v1/notifications/deliveries');
+		expect(url.searchParams.get('status')).toBe('dead');
+		expect(url.searchParams.get('limit')).toBe('10');
+	});
+});
+
 describe('schedules', () => {
 	it('completes the surface listSchedules starts', async () => {
 		const { calls, fetchImpl } = recordingFetch({ body: {} });

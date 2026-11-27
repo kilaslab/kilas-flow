@@ -33,7 +33,7 @@ filesystem has no transaction to join.
 | `triggers` | `poll_cursors`, `schedules`, `host_event_deliveries`, `host_event_subscriptions`, `rate_limit_buckets`, `webhook_deliveries`, `webhook_routes`, `webhook_bindings` | Intake is closed. A webhook arriving after this would queue an execution that the definitions step could then not delete, because `workflow_versions` refuses to lose its executions. Leased Gmail and Drive poll cursors go with the other intake rows so a replica cannot emit into a tenant that is being deleted. |
 | `binaries` | — | A filesystem has no transaction to join, so it is a step of its own, and the payload directory goes before the rows that name its payloads. |
 | `runs` | `execution_node_runs`, `execution_waits`, `executions`, `idempotency_keys` | Waits are deleted before executions: `execution_waits.execution_id` is `ON DELETE RESTRICT`, so the other order fails the whole transaction for any tenant with a suspended run — the ordinary case for a deletion request. |
-| `definitions` | `secret_bindings`, `variables`, `credentials`, `credential_events`, `workflow_versions`, `workflow_publish_events`, `workflow_static_data`, `workflow_tags`, `workflows` | Versions before workflows (also `RESTRICT`). Workflows are hard-deleted, not soft-deleted. The credential audit trail goes with the credentials it describes. `variables` are the tenant's `$vars` key/value pairs. `workflow_tags` is the per-tenant index of each workflow's tags; the tags themselves live in the version documents. |
+| `definitions` | `secret_bindings`, `variables`, `credentials`, `credential_events`, `workflow_versions`, `workflow_publish_events`, `workflow_static_data`, `workflow_tags`, `workflows`, `outbound_events` | Versions before workflows (also `RESTRICT`). Workflows are hard-deleted, not soft-deleted. The credential audit trail goes with the credentials it describes. `variables` are the tenant's `$vars` key/value pairs. `workflow_tags` is the per-tenant index of each workflow's tags; the tags themselves live in the version documents. The tenant's outbound notification events go last, queued or delivered: a deleted tenant is owed no notification, and once its executions and workflows are gone nothing can write another. |
 | `sessions` | — | The in-process agent conversation memory of this process. Best effort by construction: it is not in a database. |
 | `datastores` | `datastore_columns`, `datastores` | The catalogue rows and the physical tables they name, together, so no table is left with no row describing it and no row is left describing a table that is gone. |
 | `vectors` | `vector_documents_384`, `vector_documents_768`, `vector_documents_1024`, `vector_documents_1536`, `vector_collections` | Each one is guarded, because a SQLite install and a PostgreSQL install without the `vector` extension have none of them. |
@@ -115,6 +115,7 @@ operation refuses every caller, exactly like any other operator route.
     "host_event_deliveries": 1,
     "host_event_subscriptions": 1,
     "idempotency_keys": 2,
+    "outbound_events": 3,
     "poll_cursors": 1,
     "rate_limit_buckets": 2,
     "schedules": 1,

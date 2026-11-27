@@ -147,6 +147,13 @@ func (purger *GORMTenantPurger) PurgeDefinitions(ctx context.Context, tenant Ten
 		{table: "workflow_static_data", model: &workflowStaticDataModel{}},
 		{table: "workflow_tags", model: &workflowTagModel{}},
 		{table: "workflows", model: &workflowModel{}, unscoped: true},
+		// The tenant's outbound events, queued and delivered alike: a deleted
+		// tenant is owed no notification, and its delivery log goes with it.
+		// Last, after the runs step and the workflows: until both are gone a
+		// settling execution or an in-flight publish can still write one, and
+		// an event written after its table was cleared would be delivered for
+		// a tenant that no longer exists.
+		{table: "outbound_events", model: &outboundEventModel{}},
 	})
 }
 

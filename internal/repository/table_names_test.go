@@ -119,3 +119,14 @@ func TestRateLimitBucketsTableNameSurvivesTheNamerRoundTrip(t *testing.T) {
 		t.Fatalf("kflow_ prefix: TableName = %q, want kflow_rate_limit_buckets", got)
 	}
 }
+
+func TestOutboundEventsTableNameSurvivesTheNamerRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	if got := (outboundEventModel{}).TableName(schema.NamingStrategy{}); got != "outbound_events" {
+		t.Fatalf("empty prefix: TableName = %q, want outbound_events", got)
+	}
+	if got := (outboundEventModel{}).TableName(schema.NamingStrategy{TablePrefix: "kflow_"}); got != "kflow_outbound_events" {
+		t.Fatalf("kflow_ prefix: TableName = %q, want kflow_outbound_events", got)
+	}
+}

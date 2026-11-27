@@ -7,6 +7,13 @@ until the server surface it targets is considered stable; see `README.md`.
 
 ## Unreleased
 
+- **Additive**: `listNotificationDeliveries({ status?, limit? })` —
+  `GET /api/v1/notifications/deliveries`, the caller's tenant's log of
+  signed outbound notifications: each event's id, type, endpoint, `status`
+  (`pending`, `delivered`, `dead`), `attempts`, `lastStatusCode`,
+  `lastError`, `nextAttemptAt` and exact `payload`. The generated types gain
+  `NotificationDeliveryResource` and `ListNotificationDeliveriesParams`. A
+  server without notifications answers `404`.
 - **Additive**: `createEmbedSession` accepts an optional
   `allow: { credentials?, datastores?, workflows? }`, each a list of ids or
   `'tenant'`, so a workflow session's document may use resources the host

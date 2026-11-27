@@ -90,6 +90,7 @@ Every other operation is refused to every embed scope, with the sentence below. 
 | [`POST /api/v1/variables`](/reference/api/variables/) | 403 “This embed session cannot manage variables.” |
 | [`PUT /api/v1/variables/{id}`](/reference/api/variables/) | 403 “This embed session cannot manage variables.” |
 | [`DELETE /api/v1/variables/{id}`](/reference/api/variables/) | 403 “This embed session cannot manage variables.” |
+| [`GET /api/v1/notifications/deliveries`](/reference/api/notifications/) | 403 “This embed session cannot read notification deliveries.” |
 | [`POST /api/v1/events`](/reference/api/host-events/) | 403 “This embed session cannot use this endpoint.” |
 | [`GET /api/v1/expression-grammar`](/reference/api/nodes/) | 403 “This embed session cannot use this endpoint.” |
 | [`GET /api/v1/datastores`](/reference/api/datastores/) | 403 “This embed session cannot manage datastores.” |

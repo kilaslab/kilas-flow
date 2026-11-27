@@ -43,6 +43,7 @@ import (
 	"github.com/kilaslab/kilas-flow/internal/metrics"
 	"github.com/kilaslab/kilas-flow/internal/node"
 	"github.com/kilaslab/kilas-flow/internal/nodepack"
+	"github.com/kilaslab/kilas-flow/internal/outbound"
 	"github.com/kilaslab/kilas-flow/internal/poller"
 	"github.com/kilaslab/kilas-flow/internal/ratelimit"
 	"github.com/kilaslab/kilas-flow/internal/repository"
@@ -600,6 +601,18 @@ func run(args []string) error {
 			MaxVersions: cfg.History.MaxVersions,
 		})
 
+	// Tenant notifications. A tenant names its endpoint in the notifications
+	// section of its settings, and the event is written to the outbox in the
+	// same transaction as the change it reports, so a committed failure always
+	// has its notification. Without a signing key nothing is written: an event
+	// that could only ever be sent unsigned is not queued.
+	notificationsKey := notificationsSigningKey(cfg.Notifications, log)
+	outbox := repository.NewOutboxStore(db.DB)
+	if len(notificationsKey) > 0 {
+		executions.WithOutbox(outbound.Router())
+		workflows.WithOutbox(outbound.Router())
+	}
+
 	// The Execute Sub-workflow node's list mode. Registered here because this
 	// is the only place that has both the loader registry and the workflow
 	// store; the node names the loader and never reaches storage itself.
@@ -760,6 +773,12 @@ func run(args []string) error {
 	if err := nodeRegistry.RegisterSettings(tenantSettingsRegistry); err != nil {
 		return err
 	}
+	// The "notifications" section: the endpoint a tenant's events go to and
+	// which events it hears. The outbox router reads it from the settings the
+	// state change's own transaction read, never through this cache.
+	if err := outbound.RegisterSettings(tenantSettingsRegistry); err != nil {
+		return err
+	}
 	tenantSettings := tenantsettings.NewCache(tenantSettingsRegistry, authStore)
 	nodeRegistry.SetTenantAvailabilitySource(node.SettingsAvailability{Cache: tenantSettings})
 	rateLimiter := ratelimit.NewService(rateLimitStore, map[string]int{
@@ -879,6 +898,28 @@ func run(args []string) error {
 		if err := runtime.Start(ctx, cfg.Execution.MaxConcurrent); err != nil {
 			return fmt.Errorf("start execution runtime: %w", err)
 		}
+		// The notification dispatcher runs beside the workers, one per
+		// worker process. Several are safe together: each claims one outbox
+		// row at a time under a lease, so two never deliver the same row at
+		// once.
+		if len(notificationsKey) > 0 {
+			// The workflow egress policy, with the notification timeout in
+			// place of outbound.timeout: the lease is derived from it.
+			notificationPolicy := outboundPolicy(cfg.Outbound)
+			notificationPolicy.Timeout = cfg.Notifications.Timeout
+			dispatcher, err := outbound.New(outbound.Options{
+				Store:       outbox,
+				Secret:      outbound.DerivedSecrets(notificationsKey),
+				Policy:      notificationPolicy,
+				WorkerID:    resolveWorkerID(*workerIDOverride) + "/notifications",
+				MaxAttempts: cfg.Notifications.MaxAttempts,
+				Logger:      log,
+			})
+			if err != nil {
+				return fmt.Errorf("configure the notification dispatcher: %w", err)
+			}
+			dispatcher.Start(ctx)
+		}
 	}
 	// PostgreSQL wakes idle workers in every process the moment an execution
 	// is queued, instead of leaving each process to find it on its next poll
@@ -944,6 +985,7 @@ func run(args []string) error {
 	// same database from several processes is safe rather than coordinated.
 	startHistorySweeper(ctx, cfg.History, workflows, log)
 	startExecutionPruner(ctx, cfg.Execution, executions, runtime.DiscardBinaries, log)
+	startOutboxPruner(ctx, cfg.Notifications, outbox, log)
 	// Expired keys cost disk, not correctness: the claim enforces expiry too.
 	// Stop waits for the sweep in flight and runs before the database close
 	// registered above, because defers unwind in reverse.
@@ -1017,18 +1059,19 @@ func run(args []string) error {
 		return fmt.Errorf("configure tenant purge: %w", err)
 	}
 	server := api.NewServer(api.Deps{
-		Config:       cfg,
-		Logger:       log,
-		DB:           handlers.Pinger(db),
-		NodeRegistry: nodeRegistry,
-		Workflows:    workflows,
-		Executions:   executions,
-		Datastores:   datastoreEngine,
-		Schedules:    schedules,
-		Variables:    variables,
-		Webhook:      webhookHandler,
-		Credentials:  credentialsRepo,
-		OptionLoader: optionLoader,
+		Config:          cfg,
+		Logger:          log,
+		DB:              handlers.Pinger(db),
+		NodeRegistry:    nodeRegistry,
+		Workflows:       workflows,
+		Executions:      executions,
+		Datastores:      datastoreEngine,
+		Schedules:       schedules,
+		Variables:       variables,
+		NotificationLog: outbox,
+		Webhook:         webhookHandler,
+		Credentials:     credentialsRepo,
+		OptionLoader:    optionLoader,
 		CredentialResolverFor: func(tenant repository.TenantScope) loadoptions.CredentialResolver {
 			return credentialLookup{store: credentialsRepo, tenant: tenant}
 		},
@@ -1332,6 +1375,55 @@ func startExecutionPruner(
 			}
 		}
 	}()
+}
+
+// startOutboxPruner bounds the notification delivery log to
+// notifications.retention. It runs on every process role, like the execution
+// pruner, because deleting by created_at is idempotent and safe from several
+// processes at once, and it runs even without a signing key: rows written
+// before the key was removed still have to age out.
+func startOutboxPruner(ctx context.Context, cfg config.Notifications, store *repository.GORMOutboxStore, log *slog.Logger) {
+	if cfg.Retention <= 0 {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(executionSweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				pruned, err := store.PruneOutbound(ctx, time.Now().Add(-cfg.Retention))
+				if err != nil {
+					log.Error("pruning the notification delivery log", "error", err)
+				}
+				if pruned > 0 {
+					log.Info("pruned the notification delivery log", "events", pruned)
+				}
+			}
+		}
+	}()
+}
+
+// notificationsSigningKey reads the key tenant notification secrets are
+// derived from. Its value is used as bytes, so the operator derives a tenant's
+// secret from exactly what they put in the variable. Empty means
+// notifications are off, which is said once at boot rather than discovered.
+func notificationsSigningKey(cfg config.Notifications, log *slog.Logger) []byte {
+	if cfg.SigningKeyEnv == "" {
+		return nil
+	}
+	value := os.Getenv(cfg.SigningKeyEnv)
+	if value == "" {
+		log.Info("tenant notifications are off: no signing key", "variable", cfg.SigningKeyEnv)
+		return nil
+	}
+	if len(value) < 32 {
+		log.Warn("the notifications signing key is shorter than 32 bytes; generate one with openssl rand -base64 32",
+			"variable", cfg.SigningKeyEnv)
+	}
+	return []byte(value)
 }
 
 // fallbackTenant is the tenant a request with no principal resolves to.
