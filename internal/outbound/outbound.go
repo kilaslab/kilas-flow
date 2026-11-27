@@ -50,6 +50,14 @@ const (
 	DefaultBaseDelay   = 30 * time.Second
 	DefaultMaxDelay    = time.Hour
 	DefaultInterval    = 2 * time.Second
+	// DefaultConcurrency is how many deliveries one dispatcher has in flight.
+	// More than one, so an endpoint that hangs until the timeout holds up one
+	// lane rather than every tenant's notifications behind it.
+	DefaultConcurrency = 4
+	// recordTimeout bounds writing an attempt's outcome. The write runs on a
+	// context detached from shutdown, so a 2xx received as the process stops
+	// is still recorded rather than sent again.
+	recordTimeout = 10 * time.Second
 	// leaseMargin is how much longer than one request a lease lasts, so a
 	// dispatcher still waiting on a slow endpoint is not overtaken by another
 	// that delivers the same row in parallel.
@@ -84,7 +92,9 @@ type Options struct {
 	Lease time.Duration
 	// Interval is how long the loop sleeps when nothing is due.
 	Interval time.Duration
-	Clock    func() time.Time
+	// Concurrency is how many deliveries run at once, each its own claim.
+	Concurrency int
+	Clock       func() time.Time
 	// Jitter returns a value in [0, 1); tests pin it.
 	Jitter func() float64
 	Logger *slog.Logger
@@ -104,6 +114,7 @@ type Dispatcher struct {
 	maxDelay    time.Duration
 	lease       time.Duration
 	interval    time.Duration
+	concurrency int
 	clock       func() time.Time
 	jitter      func() float64
 	logger      *slog.Logger
@@ -138,6 +149,9 @@ func New(options Options) (*Dispatcher, error) {
 	if options.Interval <= 0 {
 		options.Interval = DefaultInterval
 	}
+	if options.Concurrency <= 0 {
+		options.Concurrency = DefaultConcurrency
+	}
 	if options.Clock == nil {
 		options.Clock = func() time.Time { return time.Now().UTC() }
 	}
@@ -162,12 +176,20 @@ func New(options Options) (*Dispatcher, error) {
 		store: options.Store, secret: options.Secret, policy: options.Policy, client: &noRedirects,
 		workerID: options.WorkerID, maxAttempts: options.MaxAttempts,
 		baseDelay: options.BaseDelay, maxDelay: options.MaxDelay, lease: options.Lease,
-		interval: options.Interval, clock: options.Clock, jitter: options.Jitter, logger: options.Logger,
+		interval: options.Interval, concurrency: options.Concurrency,
+		clock: options.Clock, jitter: options.Jitter, logger: options.Logger,
 	}, nil
 }
 
-// Start runs the dispatch loop until ctx ends.
+// Start runs Concurrency dispatch loops until ctx ends. Each claims its own
+// rows, so the loops never share one.
 func (dispatcher *Dispatcher) Start(ctx context.Context) {
+	for range dispatcher.concurrency {
+		dispatcher.loop(ctx)
+	}
+}
+
+func (dispatcher *Dispatcher) loop(ctx context.Context) {
 	go func() {
 		timer := time.NewTimer(0)
 		defer timer.Stop()
@@ -220,7 +242,7 @@ func (dispatcher *Dispatcher) DispatchOne(ctx context.Context) (bool, error) {
 	}
 	status, attemptErr := dispatcher.deliver(ctx, event)
 	attempt := repository.OutboundAttempt{
-		ID: event.ID, WorkerID: dispatcher.workerID, StatusCode: status, At: dispatcher.clock(),
+		ID: event.ID, LeaseOwner: event.LeaseOwner, StatusCode: status, At: dispatcher.clock(),
 	}
 	switch {
 	case attemptErr == nil:
@@ -232,7 +254,9 @@ func (dispatcher *Dispatcher) DispatchOne(ctx context.Context) (bool, error) {
 		attempt.Error = attemptErr.Error()
 		attempt.NextAttemptAt = attempt.At.Add(dispatcher.Backoff(event.Attempts + 1))
 	}
-	if err := dispatcher.store.RecordAttempt(ctx, attempt); err != nil {
+	record, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+	defer cancel()
+	if err := dispatcher.store.RecordAttempt(record, attempt); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			// The lease ran out under this attempt and another dispatcher
 			// owns the row now (or retention removed it). Its outcome wins;
@@ -258,10 +282,10 @@ func (dispatcher *Dispatcher) Backoff(attempt int) time.Duration {
 		attempt = 1
 	}
 	delay := dispatcher.maxDelay
-	if shift := attempt - 1; shift < 32 {
-		if scaled := dispatcher.baseDelay << shift; scaled > 0 && scaled < dispatcher.maxDelay {
-			delay = scaled
-		}
+	// Compared before shifting, so a large attempt can never wrap the
+	// duration round to a small positive one.
+	if shift := attempt - 1; shift < 63 && dispatcher.baseDelay <= dispatcher.maxDelay>>shift {
+		delay = dispatcher.baseDelay << shift
 	}
 	half := delay / 2
 	return half + time.Duration(dispatcher.jitter()*float64(delay-half))
@@ -275,7 +299,7 @@ func (dispatcher *Dispatcher) deliver(ctx context.Context, event repository.Outb
 		return 0, fmt.Errorf("the endpoint is not a URL")
 	}
 	if err := dispatcher.policy.CheckURL(target); err != nil {
-		return 0, err
+		return 0, errEgressRefused
 	}
 	secret, err := dispatcher.secret(event.TenantID)
 	if err != nil {
@@ -295,6 +319,12 @@ func (dispatcher *Dispatcher) deliver(ctx context.Context, event repository.Outb
 	}
 	response, err := dispatcher.client.Do(request)
 	if err != nil {
+		if errors.Is(err, safehttp.ErrBlocked) {
+			// The reason names the address the endpoint resolved to, which
+			// is the operator's network, and the delivery log is read by
+			// tenant keys.
+			return 0, errEgressRefused
+		}
 		return 0, safehttp.RedactError(err)
 	}
 	defer response.Body.Close()
@@ -304,6 +334,10 @@ func (dispatcher *Dispatcher) deliver(ctx context.Context, event repository.Outb
 	}
 	return response.StatusCode, nil
 }
+
+// errEgressRefused is what the delivery log says when the egress policy
+// refused the endpoint, without the address or rule that refused it.
+var errEgressRefused = errors.New("the egress policy refused the endpoint")
 
 // Sign returns the headers that sign one delivery: the event id, the unix
 // timestamp, and a base64 HMAC-SHA256 over `timestamp.body` behind `v1,`.

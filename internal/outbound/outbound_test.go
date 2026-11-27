@@ -309,7 +309,7 @@ func TestDispatcherDeliversAnEventLeftByACrash(t *testing.T) {
 	// The first event: committed, then the process died. A dispatcher that
 	// starts afterwards has nothing but the row to go on.
 	// The second: a dispatcher claimed it and died before recording anything.
-	crashed, found, err := repository.NewOutboxStore(db.DB).ClaimDue(ctx, now.Now(), "crashed-dispatcher", time.Minute)
+	crashed, found, err := repository.NewOutboxStore(db.DB).ClaimDue(ctx, now.Now(), "survivor", time.Minute)
 	if err != nil || !found {
 		t.Fatalf("ClaimDue(crashed) = (%v, %v)", found, err)
 	}
@@ -439,7 +439,7 @@ func TestDispatcherRefusesAnEndpointTheEgressPolicyBlocks(t *testing.T) {
 		t.Fatalf("a blocked endpoint received %d requests", blocked.count())
 	}
 	row := logOf(t, db, "tenant-egress")[0]
-	if row.Status != repository.OutboundPending || row.Attempts != 1 || row.LastStatusCode != 0 || !strings.Contains(row.LastError, "not allowed") {
+	if row.Status != repository.OutboundPending || row.Attempts != 1 || row.LastStatusCode != 0 || row.LastError != "the egress policy refused the endpoint" {
 		t.Fatalf("log after a blocked attempt = %#v", row)
 	}
 }

@@ -188,7 +188,7 @@ func (s *Service) steps() []step {
 		{name: "stop-triggers", run: s.stopTriggers},
 		{
 			name:   "triggers",
-			tables: []string{"poll_cursors", "schedules", "host_event_deliveries", "host_event_subscriptions", "rate_limit_buckets", "webhook_deliveries", "webhook_routes", "webhook_bindings", "outbound_events"},
+			tables: []string{"poll_cursors", "schedules", "host_event_deliveries", "host_event_subscriptions", "rate_limit_buckets", "webhook_deliveries", "webhook_routes", "webhook_bindings"},
 			run: func(ctx context.Context, tenant repository.TenantScope, _ *Result) (map[string]int64, error) {
 				return s.rows.PurgeTriggers(ctx, tenant)
 			},
@@ -203,7 +203,7 @@ func (s *Service) steps() []step {
 			name: "definitions",
 			tables: []string{
 				"secret_bindings", "credentials", "credential_events", "workflow_versions", "workflow_publish_events",
-				"workflow_static_data", "workflow_tags", "workflows",
+				"workflow_static_data", "workflow_tags", "workflows", "outbound_events",
 			},
 			run: func(ctx context.Context, tenant repository.TenantScope, _ *Result) (map[string]int64, error) {
 				return s.rows.PurgeDefinitions(ctx, tenant)

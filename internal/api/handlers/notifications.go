@@ -10,6 +10,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/kilaslab/kilas-flow/internal/repository"
+	"github.com/kilaslab/kilas-flow/internal/safehttp"
 )
 
 // DeliveryLog reads one tenant's outbound notification log.
@@ -23,7 +24,7 @@ type NotificationDeliveryResource struct {
 	ID             string          `json:"id" doc:"Stable event id, sent as the webhook-id header on every attempt"`
 	Type           string          `json:"type" doc:"Event type, such as execution.failed"`
 	SubjectID      string          `json:"subjectId,omitempty" doc:"The execution or workflow the event is about"`
-	Endpoint       string          `json:"endpoint" doc:"Where the event is sent, as it was when the event was written"`
+	Endpoint       string          `json:"endpoint" doc:"Scheme and host of where the event is sent, as it was when the event was written; the path and query are withheld"`
 	Status         string          `json:"status" enum:"pending,delivered,dead" doc:"pending until a 2xx, delivered after one, dead once its attempts ran out"`
 	Attempts       int             `json:"attempts" doc:"Attempts made so far"`
 	LastStatusCode int             `json:"lastStatusCode,omitempty" doc:"HTTP status of the last attempt; absent when no response arrived"`
@@ -83,8 +84,11 @@ func (handler *Notifications) List(ctx context.Context, input *listNotificationD
 	}
 	resources := make([]NotificationDeliveryResource, 0, len(events))
 	for _, event := range events {
+		// The endpoint is the operator's setting, and its path or query can
+		// be a capability (a chat webhook, a ?token= URL): a tenant key reads
+		// the scheme and host it needs to recognise its endpoint, and no more.
 		resources = append(resources, NotificationDeliveryResource{
-			ID: event.ID, Type: event.EventType, SubjectID: event.SubjectID, Endpoint: event.Endpoint,
+			ID: event.ID, Type: event.EventType, SubjectID: event.SubjectID, Endpoint: safehttp.RedactURL(event.Endpoint),
 			Status: event.Status, Attempts: event.Attempts, LastStatusCode: event.LastStatusCode,
 			LastError: event.LastError, NextAttemptAt: event.NextAttemptAt, DeliveredAt: event.DeliveredAt,
 			CreatedAt: event.CreatedAt, UpdatedAt: event.UpdatedAt, Payload: event.Payload,

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kilaslab/kilas-flow/internal/database"
 	"github.com/kilaslab/kilas-flow/internal/execution"
@@ -274,17 +276,21 @@ func TestOutboxClaimLeasesARowToOneDispatcher(t *testing.T) {
 		now := time.Now().UTC().Add(time.Second)
 
 		first, found, err := outbox.ClaimDue(ctx, now, "dispatcher-a", time.Minute)
-		if err != nil || !found || first.ID != row.ID || first.LeaseOwner != "dispatcher-a" {
+		if err != nil || !found || first.ID != row.ID || !strings.HasPrefix(first.LeaseOwner, "dispatcher-a/") {
 			t.Fatalf("ClaimDue(a) = (%#v, %v, %v), want %s leased to a", first, found, err, row.ID)
 		}
 		if _, found, err := outbox.ClaimDue(ctx, now, "dispatcher-b", time.Minute); err != nil || found {
 			t.Fatalf("ClaimDue(b) under a's lease = (%v, %v), want nothing", found, err)
 		}
-		if err := outbox.RecordAttempt(ctx, repository.OutboundAttempt{ID: row.ID, WorkerID: "dispatcher-b", Delivered: true, StatusCode: 200, At: now}); !errors.Is(err, repository.ErrNotFound) {
-			t.Fatalf("RecordAttempt by a non-holder = %v, want ErrNotFound", err)
+		// The fence is the claim's own token, not the worker's name: a second
+		// process started with the same worker ID does not pass it.
+		for _, impostor := range []string{"dispatcher-b", "dispatcher-a"} {
+			if err := outbox.RecordAttempt(ctx, repository.OutboundAttempt{ID: row.ID, LeaseOwner: impostor, Delivered: true, StatusCode: 200, At: now}); !errors.Is(err, repository.ErrNotFound) {
+				t.Fatalf("RecordAttempt by %q, not the claim = %v, want ErrNotFound", impostor, err)
+			}
 		}
 		retryAt := now.Add(10 * time.Minute)
-		if err := outbox.RecordAttempt(ctx, repository.OutboundAttempt{ID: row.ID, WorkerID: "dispatcher-a", StatusCode: 503, Error: "the endpoint answered 503", NextAttemptAt: retryAt, At: now}); err != nil {
+		if err := outbox.RecordAttempt(ctx, repository.OutboundAttempt{ID: row.ID, LeaseOwner: first.LeaseOwner, StatusCode: 503, Error: "the endpoint answered 503", NextAttemptAt: retryAt, At: now}); err != nil {
 			t.Fatalf("RecordAttempt(retry) error = %v", err)
 		}
 		if _, found, err := outbox.ClaimDue(ctx, now.Add(time.Minute), "dispatcher-b", time.Minute); err != nil || found {
@@ -299,7 +305,7 @@ func TestOutboxClaimLeasesARowToOneDispatcher(t *testing.T) {
 		if err != nil || !found || second.ID != row.ID {
 			t.Fatalf("ClaimDue() once due = (%v, %v), want the row again", found, err)
 		}
-		if err := outbox.RecordAttempt(ctx, repository.OutboundAttempt{ID: row.ID, WorkerID: "dispatcher-b", Delivered: true, StatusCode: 204, At: retryAt}); err != nil {
+		if err := outbox.RecordAttempt(ctx, repository.OutboundAttempt{ID: row.ID, LeaseOwner: second.LeaseOwner, Delivered: true, StatusCode: 204, At: retryAt}); err != nil {
 			t.Fatalf("RecordAttempt(delivered) error = %v", err)
 		}
 		if _, found, err := outbox.ClaimDue(ctx, retryAt.Add(time.Hour), "dispatcher-a", time.Minute); err != nil || found {
@@ -376,5 +382,66 @@ func TestOutboxWritesExecutionFailedForAnExpiredWait(t *testing.T) {
 	rows := outboxRows(t, db, tenant.ID)
 	if len(rows) != 1 || rows[0].EventType != repository.OutboundExecutionFailed || rows[0].SubjectID != record.ID {
 		t.Fatalf("outbox rows = %#v, want one execution.failed for %s", rows, record.ID)
+	}
+}
+
+// An error text past the stored bound is cut on a character boundary, so the
+// write PostgreSQL would refuse as invalid UTF-8 is never attempted.
+func TestOutboxCutsALongErrorOnACharacterBoundary(t *testing.T) {
+	eachDriver(t, func(t *testing.T, db *database.DB) {
+		ctx := context.Background()
+		tenant := repository.TenantScope{ID: "drv-outbox-utf8"}
+		row := enqueueDirect(t, db, tenant, "wf_outbox_utf8")
+		outbox := repository.NewOutboxStore(db.DB)
+		claimed, found, err := outbox.ClaimDue(ctx, time.Now().UTC().Add(time.Second), "dispatcher", time.Minute)
+		if err != nil || !found {
+			t.Fatalf("ClaimDue() = (%v, %v)", found, err)
+		}
+		long := "x" + strings.Repeat("é", 600)
+		if err := outbox.RecordAttempt(ctx, repository.OutboundAttempt{ID: row.ID, LeaseOwner: claimed.LeaseOwner, Error: long, NextAttemptAt: time.Now().Add(time.Hour)}); err != nil {
+			t.Fatalf("RecordAttempt(long multi-byte error) error = %v", err)
+		}
+		logged := outboxRows(t, db, tenant.ID)[0]
+		if !utf8.ValidString(logged.LastError) || len(logged.LastError) > 512 || len(logged.LastError) < 500 || logged.Attempts != 1 {
+			t.Fatalf("stored error is %d bytes, valid UTF-8 %v, attempts %d", len(logged.LastError), utf8.ValidString(logged.LastError), logged.Attempts)
+		}
+	})
+}
+
+// Deactivating twice, or deleting a live workflow, says workflow.deactivated
+// exactly once per time the workflow actually went offline.
+func TestOutboxWritesOneDeactivationPerOfflineTransition(t *testing.T) {
+	ctx := context.Background()
+	db := openClaimDB(t, "kilasflow.db")
+	tenant := repository.TenantScope{ID: "tenant-outbox-offline"}
+	workflows := repository.NewWorkflowStore(db.DB).WithOutbox(func(tenantID, eventType string, _ []byte) (string, bool) {
+		return "https://host.example/hooks", tenantID == tenant.ID && eventType == repository.OutboundWorkflowDeactivated
+	})
+	for _, id := range []string{"wf_offline_twice", "wf_offline_deleted"} {
+		if _, err := workflows.SaveDraft(ctx, tenant, workflow.Document{
+			SchemaVersion: workflow.CurrentSchemaVersion, ID: id, Name: "Offline",
+			Nodes:       []workflow.Node{{ID: "manual", Name: "Manual Trigger", Type: "kilasflow.manual", TypeVersion: workflow.V(1)}},
+			Connections: []workflow.Connection{}, Settings: map[string]any{},
+		}); err != nil {
+			t.Fatalf("SaveDraft(%s) error = %v", id, err)
+		}
+		if _, err := workflows.Activate(ctx, tenant, id, driverCatalog()); err != nil {
+			t.Fatalf("Activate(%s) error = %v", id, err)
+		}
+	}
+	for range 2 {
+		if _, err := workflows.Deactivate(ctx, tenant, "wf_offline_twice"); err != nil {
+			t.Fatalf("Deactivate() error = %v", err)
+		}
+	}
+	if err := workflows.Delete(ctx, tenant, "wf_offline_deleted"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	seen := map[string]int{}
+	for _, row := range outboxRows(t, db, tenant.ID) {
+		seen[row.SubjectID]++
+	}
+	if seen["wf_offline_twice"] != 1 || seen["wf_offline_deleted"] != 1 || len(seen) != 2 {
+		t.Fatalf("workflow.deactivated per workflow = %v, want one each", seen)
 	}
 }

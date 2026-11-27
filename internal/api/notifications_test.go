@@ -28,7 +28,7 @@ func TestNotificationDeliveriesListOnlyTheCallersTenant(t *testing.T) {
 		} {
 			if err := db.Exec(
 				"INSERT INTO outbound_events (id, tenant_id, event_type, subject_id, endpoint, payload, status, attempts, last_status_code, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-				row.id, row.tenant, "execution.failed", "exec_1", "https://host.example/hooks", []byte(`{"id":"`+row.id+`"}`), row.status, 1, 503, row.at, row.at,
+				row.id, row.tenant, "execution.failed", "exec_1", "https://host.example/hooks/T0123/secret-path?token=abc", []byte(`{"id":"`+row.id+`"}`), row.status, 1, 503, row.at, row.at,
 			).Error; err != nil {
 				t.Fatalf("seed %s: %v", row.id, err)
 			}
@@ -45,6 +45,7 @@ func TestNotificationDeliveriesListOnlyTheCallersTenant(t *testing.T) {
 		Status         string          `json:"status"`
 		Attempts       int             `json:"attempts"`
 		LastStatusCode int             `json:"lastStatusCode"`
+		Endpoint       string          `json:"endpoint"`
 		Payload        json.RawMessage `json:"payload"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &listed); err != nil {
@@ -52,6 +53,11 @@ func TestNotificationDeliveriesListOnlyTheCallersTenant(t *testing.T) {
 	}
 	if len(listed) != 2 || listed[0].ID != "evt_acme_new" || listed[1].ID != "evt_acme_old" {
 		t.Fatalf("acme's log = %+v, want its two events newest first", listed)
+	}
+	// The endpoint is the operator's setting; its path and query can be a
+	// capability, so a tenant key reads the scheme and host only.
+	if listed[0].Endpoint != "https://host.example" {
+		t.Fatalf("endpoint = %q, want the scheme and host only", listed[0].Endpoint)
 	}
 	if listed[0].Type != "execution.failed" || listed[0].Attempts != 1 || listed[0].LastStatusCode != 503 || string(listed[0].Payload) != `{"id":"evt_acme_new"}` {
 		t.Fatalf("acme's newest event = %+v", listed[0])

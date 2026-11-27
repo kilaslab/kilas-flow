@@ -718,8 +718,27 @@ func (store *GORMWorkflowStore) Deactivate(ctx context.Context, tenant TenantSco
 	}
 	if model.Active {
 		if err := store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := tx.Model(&model).Update("active", false).Error; err != nil {
-				return fmt.Errorf("deactivate workflow: %w", err)
+			// Re-read under the row lock and switch off only a row that is
+			// still active: the read above is outside this transaction, and
+			// two deactivations racing (a double click, a rollback beside the
+			// user's own deactivate) must write one workflow.deactivated, naming
+			// the version that was actually live, not two.
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("tenant_id = ? AND id = ?", tenant.ID, workflowID).
+				First(&model).Error; err != nil {
+				return mapNotFound(err, "workflow")
+			}
+			if !model.Active {
+				return nil
+			}
+			switched := tx.Model(&workflowModel{}).
+				Where("tenant_id = ? AND id = ? AND active = ?", tenant.ID, workflowID, true).
+				Update("active", false)
+			if switched.Error != nil {
+				return fmt.Errorf("deactivate workflow: %w", switched.Error)
+			}
+			if switched.RowsAffected == 0 {
+				return nil
 			}
 			// Dropping the bindings with the same commit is what makes the
 			// endpoint stop answering the instant the workflow is inactive.
@@ -781,6 +800,18 @@ func (store *GORMWorkflowStore) Delete(ctx context.Context, tenant TenantScope, 
 	return store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Delete(&model).Error; err != nil {
 			return fmt.Errorf("delete workflow: %w", err)
+		}
+		// Deleting a live workflow takes it offline as surely as deactivating
+		// it does, so a tenant listening for workflow.deactivated hears it.
+		if model.Active {
+			pinned := ""
+			if model.ActiveVersionID != nil {
+				pinned = *model.ActiveVersionID
+			}
+			if err := enqueueOutbound(tx, store.outbox, tenant.ID, OutboundWorkflowDeactivated, workflowID,
+				workflowEventData{WorkflowID: workflowID, VersionID: pinned, Name: model.Name}, time.Now()); err != nil {
+				return err
+			}
 		}
 		// A soft-deleted workflow keeps its version and execution history,
 		// but its static data is scratch space for runs it will never have.

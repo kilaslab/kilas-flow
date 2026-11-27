@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -213,8 +214,11 @@ type OutboxStore interface {
 // OutboundAttempt is the outcome of one delivery attempt, as the dispatcher
 // reports it.
 type OutboundAttempt struct {
-	ID         string
-	WorkerID   string
+	ID string
+	// LeaseOwner is the claimed event's LeaseOwner: the token of that one
+	// claim, not the worker's name, so a stale attempt never passes the fence
+	// of a later claim, even one made by a process with the same worker ID.
+	LeaseOwner string
 	StatusCode int
 	Error      string
 	// Delivered is set for a 2xx response.
@@ -257,9 +261,14 @@ func (store *GORMOutboxStore) ClaimDue(ctx context.Context, now time.Time, worke
 		lease = time.Minute
 	}
 	until := now.Add(lease)
+	leaseID, err := workflow.NewID("lease")
+	if err != nil {
+		return OutboundEvent{}, false, err
+	}
+	leaseOwner := workerID + "/" + leaseID
 	var claimed outboundEventModel
 	found := false
-	err := store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = store.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		due := "status = ? AND next_attempt_at IS NOT NULL AND next_attempt_at <= ? AND (lease_until IS NULL OR lease_until < ?)"
 		for range claimScanLimit {
 			var model outboundEventModel
@@ -275,7 +284,7 @@ func (store *GORMOutboxStore) ClaimDue(ctx context.Context, now time.Time, worke
 			}
 			result := tx.Model(&outboundEventModel{}).
 				Where("id = ? AND "+due, model.ID, OutboundPending, now, now).
-				Updates(map[string]any{"lease_until": until, "lease_owner": workerID, "updated_at": now})
+				Updates(map[string]any{"lease_until": until, "lease_owner": leaseOwner, "updated_at": now})
 			if result.Error != nil {
 				return fmt.Errorf("lease outbound event: %w", result.Error)
 			}
@@ -283,7 +292,7 @@ func (store *GORMOutboxStore) ClaimDue(ctx context.Context, now time.Time, worke
 				continue
 			}
 			model.LeaseUntil = &until
-			model.LeaseOwner = workerID
+			model.LeaseOwner = leaseOwner
 			model.UpdatedAt = now
 			claimed, found = model, true
 			return nil
@@ -307,8 +316,8 @@ func (store *GORMOutboxStore) ClaimDue(ctx context.Context, now time.Time, worke
 // ErrNotFound, which the caller logs: the delivery may have been made twice,
 // which at-least-once allows and the event id lets the receiver absorb.
 func (store *GORMOutboxStore) RecordAttempt(ctx context.Context, attempt OutboundAttempt) error {
-	if attempt.ID == "" || strings.TrimSpace(attempt.WorkerID) == "" {
-		return fmt.Errorf("outbound attempt requires the event and the claiming worker")
+	if attempt.ID == "" || strings.TrimSpace(attempt.LeaseOwner) == "" {
+		return fmt.Errorf("outbound attempt requires the event and the lease it was claimed under")
 	}
 	at := attempt.At.UTC()
 	if attempt.At.IsZero() {
@@ -316,8 +325,16 @@ func (store *GORMOutboxStore) RecordAttempt(ctx context.Context, attempt Outboun
 	}
 	errText := attempt.Error
 	if len(errText) > maxOutboundErrorLength {
-		errText = errText[:maxOutboundErrorLength]
+		// Cut on a character boundary: PostgreSQL refuses text that is not
+		// valid UTF-8, and a refused write would leave the attempt uncounted
+		// and the row retried for ever.
+		cut := maxOutboundErrorLength
+		for cut > 0 && !utf8.RuneStart(errText[cut]) {
+			cut--
+		}
+		errText = errText[:cut]
 	}
+	errText = strings.ToValidUTF8(errText, "")
 	updates := map[string]any{
 		"attempts":         gorm.Expr("attempts + 1"),
 		"last_status_code": attempt.StatusCode,
@@ -339,7 +356,7 @@ func (store *GORMOutboxStore) RecordAttempt(ctx context.Context, attempt Outboun
 		updates["next_attempt_at"] = next
 	}
 	result := store.db.WithContext(ctx).Model(&outboundEventModel{}).
-		Where("id = ? AND lease_owner = ? AND status = ?", attempt.ID, attempt.WorkerID, OutboundPending).
+		Where("id = ? AND lease_owner = ? AND status = ?", attempt.ID, attempt.LeaseOwner, OutboundPending).
 		Updates(updates)
 	if result.Error != nil {
 		return fmt.Errorf("record outbound attempt: %w", result.Error)
@@ -385,13 +402,37 @@ func (store *GORMOutboxStore) List(ctx context.Context, tenant TenantScope, filt
 // table, and a row nobody can deliver is the one that would otherwise grow it
 // for ever. A row deleted while a dispatcher holds it only makes that
 // dispatcher's RecordAttempt miss.
+//
+// It deletes in batches, each its own short statement, so a first prune of a
+// large log (after retention was shortened, say) never holds SQLite's single
+// connection long enough to stall the terminal transitions waiting behind it.
 func (store *GORMOutboxStore) PruneOutbound(ctx context.Context, cutoff time.Time) (int64, error) {
-	result := store.db.WithContext(ctx).Where("created_at < ?", cutoff.UTC()).Delete(&outboundEventModel{})
-	if result.Error != nil {
-		return 0, fmt.Errorf("prune outbound events: %w", result.Error)
+	cutoff = cutoff.UTC()
+	var pruned int64
+	for ctx.Err() == nil {
+		var ids []string
+		if err := store.db.WithContext(ctx).Model(&outboundEventModel{}).
+			Where("created_at < ?", cutoff).Order("created_at ASC, id ASC").
+			Limit(outboundPruneBatch).Pluck("id", &ids).Error; err != nil {
+			return pruned, fmt.Errorf("find expired outbound events: %w", err)
+		}
+		if len(ids) == 0 {
+			return pruned, nil
+		}
+		result := store.db.WithContext(ctx).Where("id IN ? AND created_at < ?", ids, cutoff).Delete(&outboundEventModel{})
+		if result.Error != nil {
+			return pruned, fmt.Errorf("prune outbound events: %w", result.Error)
+		}
+		pruned += result.RowsAffected
+		if len(ids) < outboundPruneBatch {
+			return pruned, nil
+		}
 	}
-	return result.RowsAffected, nil
+	return pruned, ctx.Err()
 }
+
+// outboundPruneBatch is how many outbox rows one prune statement deletes.
+const outboundPruneBatch = 500
 
 func outboundFromModel(model outboundEventModel) OutboundEvent {
 	return OutboundEvent{

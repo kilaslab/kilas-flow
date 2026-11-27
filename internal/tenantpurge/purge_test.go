@@ -65,7 +65,7 @@ func (stubRows) ActiveTriggerWorkflows(context.Context, repository.TenantScope) 
 func (stubRows) PurgeTriggers(context.Context, repository.TenantScope) (map[string]int64, error) {
 	return map[string]int64{
 		"schedules": 1, "host_event_deliveries": 1, "host_event_subscriptions": 1, "rate_limit_buckets": 1,
-		"webhook_deliveries": 3, "webhook_routes": 1, "webhook_bindings": 1, "outbound_events": 1,
+		"webhook_deliveries": 3, "webhook_routes": 1, "webhook_bindings": 1,
 	}, nil
 }
 
@@ -73,6 +73,7 @@ func (stubRows) PurgeDefinitions(context.Context, repository.TenantScope) (map[s
 	return map[string]int64{
 		"secret_bindings": 1, "credentials": 1, "credential_events": 1, "workflow_versions": 2,
 		"workflow_publish_events": 1, "workflow_static_data": 1, "workflow_tags": 1, "workflows": 2,
+		"outbound_events": 1,
 	}, nil
 }
 
