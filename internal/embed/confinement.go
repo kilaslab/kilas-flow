@@ -31,6 +31,12 @@ type DatastoreRef struct {
 // authored. An empty confinement is therefore the strict reading, not the loose
 // one: a session whose workflow has never been published may reference no
 // credential and no data table at all.
+//
+// The host may widen it at mint (the `allow` field of the mint body): the ids
+// it names, which the mint has checked belong to the tenant, are added to the
+// derived set, and a kind it declares "tenant" opens that whole kind of the
+// session's tenant. Either way the token carries the union, so every check
+// downstream still asks one value.
 type Confinement struct {
 	// Credentials are the credential ids the document may attach.
 	Credentials []string `json:"crd,omitempty"`
@@ -40,10 +46,26 @@ type Confinement struct {
 	// The session's own workflow is added when the session is issued, so
 	// recursion into itself never needs a second entry.
 	Workflows []string `json:"wfw,omitempty"`
+
+	// TenantCredentials, TenantDatastores and TenantWorkflows open one kind to
+	// every resource of that kind the session's tenant owns. They are flags
+	// rather than the tenant's ids expanded into the token, so the token stays
+	// small and a resource the tenant adds after the mint is covered too.
+	//
+	// The flags only ever widen, so a server that predates them and ignores
+	// the fields reads the token as narrower, never broader. Every resource is
+	// still looked up inside the session's tenant when it is used, so a flag
+	// cannot reach another tenant's id: it reads as unknown there.
+	TenantCredentials bool `json:"tcr,omitempty"`
+	TenantDatastores  bool `json:"tds,omitempty"`
+	TenantWorkflows   bool `json:"twf,omitempty"`
 }
 
-// AllowsCredential reports whether the confinement names a credential id.
+// AllowsCredential reports whether the confinement grants a credential id.
 func (confinement Confinement) AllowsCredential(id string) bool {
+	if confinement.TenantCredentials {
+		return strings.TrimSpace(id) != ""
+	}
 	return containsExact(confinement.Credentials, id)
 }
 
@@ -56,6 +78,9 @@ func (confinement Confinement) AllowsDatastoreID(id string) bool {
 	if strings.TrimSpace(id) == "" {
 		return false
 	}
+	if confinement.TenantDatastores {
+		return true
+	}
 	for _, datastore := range confinement.Datastores {
 		if datastore.ID == id {
 			return true
@@ -64,26 +89,71 @@ func (confinement Confinement) AllowsDatastoreID(id string) bool {
 	return false
 }
 
-// AllowsWorkflow reports whether the confinement names a workflow id.
+// AllowsWorkflow reports whether the confinement grants a workflow id.
 func (confinement Confinement) AllowsWorkflow(id string) bool {
+	if confinement.TenantWorkflows {
+		return strings.TrimSpace(id) != ""
+	}
 	return containsExact(confinement.Workflows, id)
 }
 
-// Empty reports whether the confinement names nothing at all.
+// Empty reports whether the confinement grants nothing at all.
 func (confinement Confinement) Empty() bool {
-	return len(confinement.Credentials) == 0 && len(confinement.Datastores) == 0 && len(confinement.Workflows) == 0
+	return len(confinement.Credentials) == 0 && len(confinement.Datastores) == 0 && len(confinement.Workflows) == 0 &&
+		!confinement.TenantCredentials && !confinement.TenantDatastores && !confinement.TenantWorkflows
+}
+
+// Union returns a confinement that grants whatever either one grants. Neither
+// input is modified; the result is normalized when the session is issued.
+func (confinement Confinement) Union(other Confinement) Confinement {
+	return Confinement{
+		Credentials:       append(append([]string(nil), confinement.Credentials...), other.Credentials...),
+		Datastores:        append(append([]DatastoreRef(nil), confinement.Datastores...), other.Datastores...),
+		Workflows:         append(append([]string(nil), confinement.Workflows...), other.Workflows...),
+		TenantCredentials: confinement.TenantCredentials || other.TenantCredentials,
+		TenantDatastores:  confinement.TenantDatastores || other.TenantDatastores,
+		TenantWorkflows:   confinement.TenantWorkflows || other.TenantWorkflows,
+	}
 }
 
 // normalized returns the confinement with duplicates, blanks, and stray
 // whitespace removed and a deterministic order, so two tokens minted from the
 // same workflow are byte-identical and a test can compare them directly.
+//
+// A kind opened to the whole tenant drops its list: the flag already grants
+// every entry, and carrying both would only make the token longer.
 func (confinement Confinement) normalized(selfWorkflowID string) Confinement {
 	normalized := Confinement{
-		Credentials: trimSorted(confinement.Credentials),
-		Workflows:   trimSorted(confinement.Workflows),
+		TenantCredentials: confinement.TenantCredentials,
+		TenantDatastores:  confinement.TenantDatastores,
+		TenantWorkflows:   confinement.TenantWorkflows,
+	}
+	if !confinement.TenantCredentials {
+		normalized.Credentials = trimSorted(confinement.Credentials)
+	}
+	if confinement.TenantWorkflows {
+		return normalized.withDatastores(confinement.Datastores)
+	}
+	normalized.Workflows = trimSorted(confinement.Workflows)
+	normalized = normalized.withDatastores(confinement.Datastores)
+
+	// A workflow may always call itself: recursion is the one sub-workflow
+	// reference a session cannot be confined out of, because the workflow it
+	// names is the one the session already owns.
+	if self := strings.TrimSpace(selfWorkflowID); self != "" {
+		normalized.Workflows = trimSorted(append(normalized.Workflows, self))
+	}
+	return normalized
+}
+
+// withDatastores sets the normalized data table list, unless the kind is open
+// to the whole tenant.
+func (normalized Confinement) withDatastores(datastores []DatastoreRef) Confinement {
+	if normalized.TenantDatastores {
+		return normalized
 	}
 	seen := map[string]bool{}
-	for _, datastore := range confinement.Datastores {
+	for _, datastore := range datastores {
 		id := strings.TrimSpace(datastore.ID)
 		name := strings.TrimSpace(datastore.Name)
 		if id == "" && name == "" {
@@ -102,13 +172,6 @@ func (confinement Confinement) normalized(selfWorkflowID string) Confinement {
 		}
 		return normalized.Datastores[left].Name < normalized.Datastores[right].Name
 	})
-
-	// A workflow may always call itself: recursion is the one sub-workflow
-	// reference a session cannot be confined out of, because the workflow it
-	// names is the one the session already owns.
-	if self := strings.TrimSpace(selfWorkflowID); self != "" {
-		normalized.Workflows = trimSorted(append(normalized.Workflows, self))
-	}
 	return normalized
 }
 
